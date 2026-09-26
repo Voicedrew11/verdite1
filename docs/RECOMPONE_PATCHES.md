@@ -13,8 +13,8 @@ amendment's diff appended to its `.patch` file, and the source comments keep its
 number. `0016` and `0057` predate this and keep their numbers, since the source
 refers to them.
 
-Fifty-three of the sixty are load-bearing; `0002`, `0003`, `0015`, `0046`,
-`0065` and `0069` are diagnostics and `0013` is a settings-placement hook. `0063` is retired:
+Sixty-four of the seventy-two are load-bearing; `0002`, `0003`, `0015`, `0045`,
+`0046`, `0065` and `0069` are diagnostics and `0013` is a settings-placement hook. `0063` is retired:
 it was folded into `0054` as an amendment, and the number is not reused. **Three force a recompile** —
 `0004`, `0035` and `0037`; every other one changes runtime behaviour only. **One
 patch has an asset beside it**: `patches/recompone/assets/` holds the TTF `0033`
@@ -1054,6 +1054,34 @@ Four files in the directory have no entry below:
   blending off. The port half is `patches/RetainedMap.cs`, `RetainedPlanes.cs` and
   `RetainedModels.cs`. Off by default. GL core only. **No recompile.** See "The
   retained scene" in `docs/RENDERING.md`.
+
+- `0073-texture-replacement-on-the-port-path.patch` — upstream's texture packs
+  (`Assets/`) made to work in this port, and a way to see what they would key.
+  **A draw with no display target marked VRAM GPU-dirty from boot.** `GlCore.V`
+  took a batch's first vertex as `_count == 0`, but every caller writes
+  `_verts[_count++] = V(...)`, which increments `_count` before `V` runs, so the
+  batch bounds were never reset and grew to everything drawn since boot; the game's
+  first untargeted draw (a 32x32 black box at `(0,344)`, clip 1024x1024) marked
+  `(0,0)` 748x481 dirty, and the resolver refused every texture under it: 74 of
+  area 1's 86 keys, which would never have been replaced. A flag now starts the
+  bounds per batch; the dest-copy rectangle reads the same bounds and shrinks with
+  it. **One piece of art had several keys**, because the key is the UV bounding box
+  and this game's faces read a texel past their texture (`[191,63,65,64]` beside
+  `[191,63,64,64]` for one tile); a clipped fan's triangles were keyed on their own
+  UVs too. `VramTracker.NoteUpload` keeps which LoadImage last wrote each VRAM word,
+  and `TextureResolver` keys a rectangle on that upload's when it lies inside it to
+  within two texels (`KeyOnUpload`); `DrawTri` looks up by the face's `0060`
+  rectangle (`KeyOnFaceRect`). Area 1: 109 keys by triangle, 86 by face, 21 by
+  upload, and 471 overlapping pairs down to 6. **A replacement is filtered by the
+  port's slider**: a mip chain at load, `LinearMipmapLinear` and the anisotropy
+  level while mipmaps are on (`RepFilter`, set per texture when the slider moves),
+  sampled by `textureGrad` on the unwrapped UV's gradients so a texture window's
+  wrap is no seam; a replaced CLUT keeps the anisotropic taps and not the mip atlas
+  (decoded through the game's CLUT). `TextureResolver.Observer` and
+  `VramTracker.Uploaded` feed the port's census (`patches/remaster/TextureCensus.cs`);
+  while an observer is set a lookup runs with no pack. With no pack the pinned
+  area-1 view is `210d55698c875fb8`, as before. GL core only for the filter.
+  **No recompile.** See "Phase 4, the first slice" in `docs/REMASTER.md`.
 
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a

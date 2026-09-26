@@ -25,7 +25,7 @@ namespace Kf2.Remaster;
 /// </summary>
 public static class Shell
 {
-    public static readonly string[] Verbs = ["edit", "select", "set", "pack", "remaster", "light"];
+    public static readonly string[] Verbs = ["edit", "select", "set", "pack", "remaster", "light", "textures"];
 
     public static readonly string[] Help =
     [
@@ -39,6 +39,7 @@ public static class Shell
             "set NAME position X Y Z|colour R G B|intensity V|radius V|type point|spot|direction X Y Z|cone IN OUT|flicker AMOUNT HZ|enabled on|off - " +
             "the area's authored lights; pick places one short of the surface under game pixel GX GY",
         "remaster - area, fingerprint, what is applied",
+        "textures [on|off|reset|save] - the texture-key census of this area: keys, art, overlapping rects, what a pack covers; save writes dump/GAME/census/area-N.json",
     ];
 
     public static string Run(string verb, string args)
@@ -54,6 +55,7 @@ public static class Shell
                 "pack" => PackVerb(a),
                 "remaster" => Status(),
                 "light" => LightVerb(a),
+                "textures" => Ok("textures", TextureCensus.Verb(a)),
                 _ => Err(verb, "unknown verb"),
             };
         }

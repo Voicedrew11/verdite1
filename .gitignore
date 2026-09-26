@@ -33,6 +33,9 @@ interface.ini
 # Optional runtime asset-replacement packs
 packs/
 
+# Upstream's texture dumper writes the disc's textures here, and the census its reports.
+dump/
+
 __pycache__/
 *.pyc
 

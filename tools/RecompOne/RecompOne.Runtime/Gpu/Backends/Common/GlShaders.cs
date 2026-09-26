@@ -1535,7 +1535,10 @@ internal static class GlShaders
                 vec2 win = vec2(uTexWindow.xy) + 1.0;
                 vec2 fuv = mod(vUV, win) + vec2(uTexWindow.zw);
                 vec2 t = (fuv - uRepRect.xy) / uRepRect.zw;
-                vec4 img = texture(uRepTex, t);
+                // 0073. A replacement is a real texture, so the GL sampler filters it
+                // (mipmaps and anisotropy, set by the Texture filtering slider), with the
+                // gradients of the unwrapped UV so a texture window's wrap is not a seam.
+                vec4 img = textureGrad(uRepTex, t, dUVdx / uRepRect.zw, dUVdy / uRepRect.zw);
                 if (img.a < 0.5) discard;
                 ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + post(img.rgb);
                 float stp = img.a < 0.95 ? 1.0 : 0.0;
@@ -1552,7 +1555,9 @@ internal static class GlShaders
             // decides the silhouette and the semi-transparency bit; the filters only
             // replace its colour, and every tap stays inside the polygon's texture
             // rectangle (0060), since past it is other art read through this CLUT.
-            if ((uAniso > 1.5 || uMipOn > 0.5) && vRepClut == 0
+            // 0073. A replaced CLUT keeps the anisotropic taps (each decodes through it), not
+            // the mip atlas, which was decoded through the game's CLUT.
+            if ((uAniso > 1.5 || (uMipOn > 0.5 && vRepClut == 0))
                     && !(texel.rgb == vec3(0.0) && texel.a < 0.5)) {
                 bool hasRect = (vTex.y & 0x80000000u) != 0u;
                 ivec2 rMin = hasRect ? ivec2(int(vTex.x & 255u), int((vTex.x >> 8) & 255u)) : ivec2(0);
@@ -1562,7 +1567,7 @@ internal static class GlShaders
                 float major = max(lx, ly), minor = min(lx, ly);
                 bool done = false;
                 // `major > 0.0` is false for the NaN a degenerate triangle hands dFdx.
-                if (major > 0.0 && uMipOn > 0.5 && (vTex.y & 0x40000000u) != 0u) {
+                if (major > 0.0 && uMipOn > 0.5 && vRepClut == 0 && (vTex.y & 0x40000000u) != 0u) {
                     float n = clamp(ceil(major / max(minor, 1e-4)), 1.0, max(uAniso, 1.0));
                     float maxLod = float((vTex.y >> 16) & 15u);
                     float lod = min(log2(max(major / n, minor)), maxLod);

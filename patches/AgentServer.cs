@@ -327,6 +327,7 @@ public static class AgentServer
             case "pack":
             case "remaster":
             case "light":
+            case "textures":
             case "snap":
             case "view":
                 Enqueue(_fast, cmd);
@@ -402,7 +403,7 @@ public static class AgentServer
         "map" => DoMap(cmd.Arg1),
         "goto" => DoGoto(cmd.Arg1),
         "view" => DoView(cmd.Arg1),
-        "edit" or "select" or "set" or "pack" or "remaster" or "light" => Remaster.Shell.Run(cmd.Name, cmd.Arg1),
+        "edit" or "select" or "set" or "pack" or "remaster" or "light" or "textures" => Remaster.Shell.Run(cmd.Name, cmd.Arg1),
         _ => Err($"unknown command '{cmd.Name}'; try help"),
     };
 

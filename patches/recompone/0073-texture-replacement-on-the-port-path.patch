@@ -1,0 +1,282 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Assets/Textures/TextureResolver.cs b/tools/RecompOne/RecompOne.Runtime/Assets/Textures/TextureResolver.cs
+index fcc365e..7530f09 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Assets/Textures/TextureResolver.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Assets/Textures/TextureResolver.cs
+@@ -103,6 +103,40 @@ public static class TextureResolver
+ 
+     public static bool Enabled { get; set; } = true;
+ 
++    /// <summary>0073. The port's texture-key census: every lookup, with the key it resolved
++    /// to. Null unless something listens; while set, a lookup runs with no pack loaded.</summary>
++    public delegate void LookupObserver(int tpage, int clut, in TileRect rect, ulong indexHash, ulong clutHash,
++        bool valid, bool dirty, bool hit);
++
++    public static LookupObserver? Observer;
++
++    /// <summary>0073. Look a triangle up by its face's texture rectangle when the
++    /// assembler recorded one; false keys each triangle on its own UVs, as upstream does.</summary>
++    public static bool KeyOnFaceRect = true;
++
++    /// <summary>0073. Key a rectangle on the image the game uploaded it as, when it lies
++    /// inside one to within <see cref="UploadSlop"/> texels: this game's faces read
++    /// a texel past their texture's edge, so one 64x64 tile had three keys.</summary>
++    public static bool KeyOnUpload = true;
++
++    public const int UploadSlop = 2;
++
++    private static void ToUpload(int tpage, ref int u0, ref int v0, ref int w, ref int h)
++    {
++        var depth = (tpage >> 7) & 3;
++        var per = depth switch { 0 => 4, 1 => 2, _ => 1 };
++        int pageX = (tpage & 0xF) * 64, pageY = ((tpage >> 4) & 1) * 256;
++        if (!VramTracker.UploadAt(pageX + (u0 + w / 2) / per, pageY + v0 + h / 2,
++                out var ux, out var uy, out var uw, out var uh))
++            return;
++        int nu0 = Math.Max(0, (ux - pageX) * per), nv0 = Math.Max(0, uy - pageY);
++        int nu1 = Math.Min(256, (ux + uw - pageX) * per), nv1 = Math.Min(256, uy + uh - pageY);
++        if (nu1 <= nu0 || nv1 <= nv0) return;
++        if (u0 < nu0 - UploadSlop || v0 < nv0 - UploadSlop
++            || u0 + w > nu1 + UploadSlop || v0 + h > nv1 + UploadSlop) return;
++        u0 = nu0; v0 = nv0; w = nu1 - nu0; h = nv1 - nv0;
++    }
++
+     public static void ResetStats()
+     {
+         Volatile.Write(ref _statCalls, 0);
+@@ -153,7 +187,8 @@ public static class TextureResolver
+ 
+         var mgr = AssetReplacerManager.Instance;
+         var dumping = TextureDumper.Enabled;
+-        var observing = dumping || TextureRegistry.Enabled;
++        var observer = Observer;
++        var observing = dumping || TextureRegistry.Enabled || observer != null;
+         if (!observing && !mgr.HasTextures) return false;
+ 
+         var gpu = Runtime.Gpu;
+@@ -184,6 +219,9 @@ public static class TextureResolver
+             h = vMax - vMin + 1;
+         }
+ 
++        if (KeyOnUpload && twAndX == 0xFF && twOrX == 0 && twAndY == 0xFF && twOrY == 0)
++            ToUpload(tpage, ref u0, ref v0, ref w, ref h);
++
+         if (w <= 0 || h <= 0 || w > 256 || h > 256)
+         {
+             Interlocked.Increment(ref _statRejectSize);
+@@ -268,6 +306,9 @@ public static class TextureResolver
+             }
+         }
+ 
++        observer?.Invoke(tpage, clut, rect, entry.IndexHash, entry.ClutHash, entry.Valid, dirty,
++            entry.Valid && (entry.Texture != null || entry.Clut != null || entry.PageTexture != null));
++
+         if (!entry.Valid || (entry.Texture == null && entry.Clut == null && entry.PageTexture == null)) return false;
+ 
+         if (entry.Texture == null && entry.PageTexture != null)
+diff --git a/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs b/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs
+index d040c1c..7143e65 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs
+@@ -15,6 +15,43 @@ public static class VramTracker
+     /// generations while nothing has been written.</summary>
+     public static int Clock => _clock;
+ 
++    /// <summary>0073. Every image a LoadImage finished writing: x, y, w, h. The port's
++    /// texture census counts what the game uploads at a time.</summary>
++    public static Action<int, int, int, int>? Uploaded;
++
++    // 0073. Which LoadImage last wrote each VRAM word, by id into a ring of rectangles.
++    // A texture's key is normalised to the image the game uploaded it as, so that
++    // one piece of art has one key whatever UVs a face reads it through.
++    private static readonly ushort[] _uploadAt = new ushort[1024 * 512];
++    private static readonly (short X, short Y, short W, short H)[] _uploads = new (short, short, short, short)[65536];
++    private static int _uploadNext;
++
++    public static void NoteUpload(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        _uploadNext = _uploadNext % 65535 + 1;
++        var id = (ushort)_uploadNext;
++        _uploads[id] = ((short)x, (short)y, (short)w, (short)h);
++        for (var r = 0; r < h; r++)
++        {
++            var row = ((y + r) & 511) * 1024;
++            if (x + w <= 1024) _uploadAt.AsSpan(row + x, w).Fill(id);
++            else
++                for (var c = 0; c < w; c++)
++                    _uploadAt[row + ((x + c) & 1023)] = id;
++        }
++
++        Uploaded?.Invoke(x, y, w, h);
++    }
++
++    /// <summary>The rectangle of the LoadImage that last wrote VRAM word (x, y).</summary>
++    public static bool UploadAt(int x, int y, out int ux, out int uy, out int uw, out int uh)
++    {
++        var id = _uploadAt[(y & 511) * 1024 + (x & 1023)];
++        (ux, uy, uw, uh) = id == 0 ? default : _uploads[id];
++        return id != 0 && x >= ux && y >= uy && x < ux + uw && y < uy + uh;
++    }
++
+     public static void Reset()
+     {
+         Array.Clear(_gen);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index c8ca00e..b5d9784 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -130,6 +130,7 @@ public sealed partial class GlCore : IGpuBackend
+     int _vboCursor;
+     bool _lightAttribs;
+     float _drawMinX, _drawMinY, _drawMaxX, _drawMaxY;
++    bool _drawEmpty = true;
+ 
+     HleDrawEnv _env;
+ 
+@@ -806,12 +807,31 @@ public sealed partial class GlCore : IGpuBackend
+         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+         _gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)tex.Width, (uint)tex.Height, 0,
+             PixelFormat.Rgba, PixelType.UnsignedByte, tex.Rgba);
++        // 0073. A mip chain always; whether it is read is RepFilter's.
++        _gl.GenerateMipmap(TextureTarget.Texture2D);
+         _gl.ActiveTexture(TextureUnit.Texture0);
+ 
+         _repTextures[tex] = handle;
+         return handle;
+     }
+ 
++    readonly Dictionary<uint, int> _repFilterKey = [];
++
++    /// <summary>0073. A replacement texture is filtered by the Texture filtering
++    /// slider: trilinear with anisotropy to its level while mipmaps are on, bilinear
++    /// off. Set on the bound texture when the slider has moved since.</summary>
++    void RepFilter(uint tex)
++    {
++        bool mips = GteDepth.Mipmaps;
++        int key = mips ? Math.Clamp(GteDepth.Anisotropy, 1, 16) : 0;
++        if (_repFilterKey.TryGetValue(tex, out int had) && had == key) return;
++        _repFilterKey[tex] = key;
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
++            (int)(mips ? GLEnum.LinearMipmapLinear : GLEnum.Linear));
++        _gl.TexParameter(TextureTarget.Texture2D, (TextureParameterName)0x84FE, (float)Math.Max(1, key));
++        GteDepth.RepFilterSets++;
++    }
++
+     unsafe uint EnsureRepClut(Assets.ReplacementClut clut)
+     {
+         if (_repCluts.TryGetValue(clut, out uint handle)) return handle;
+@@ -861,8 +881,14 @@ public sealed partial class GlCore : IGpuBackend
+         if (dither && _pendingRepTex == 0) tpage |= 0x400;
+         if (_pendingRepTex != 0) tpage |= 0x2000;
+         else if (_pendingRepClut != 0) tpage |= 0x1000;
+-        if (_count == 0)
+-        {
++        // 0073. Every caller writes `_verts[_count++] = V(...)`, which increments _count
++        // before V runs, so `_count == 0` never held here and the bounds grew from
++        // boot: an untargeted batch marked VRAM GPU-dirty up to 748x481, and the
++        // replacement resolver refused every texture under it. See "Phase 4, the
++        // first slice" in docs/REMASTER.md.
++        if (_drawEmpty)
++        {
++            _drawEmpty = false;
+             _drawMinX = _drawMaxX = v.X;
+             _drawMinY = _drawMaxY = v.Y;
+         }
+@@ -889,9 +915,16 @@ public sealed partial class GlCore : IGpuBackend
+     public void DrawTri(in HleVertex a, in HleVertex b, in HleVertex c, in PrimFlags f)
+     {
+         if (PlanarReflections.Capturing && PlanarDrop()) return;
+-        ResolveReplacement(f,
+-            (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
+-            (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
++        // 0073. A replacement is keyed on the face's texture rectangle (0060), not the
++        // triangle's: a clipped fan's triangles each cover part of the face, and
++        // a key per part is a key the pack never names.
++        if (a.HasTexRect && Assets.Textures.TextureResolver.KeyOnFaceRect)
++            ResolveReplacement(f, (int)(a.TexRect & 0xFF), (int)((a.TexRect >> 8) & 0xFF),
++                (int)((a.TexRect >> 16) & 0xFF), (int)(a.TexRect >> 24));
++        else
++            ResolveReplacement(f,
++                (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
++                (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
+         // 0 = painter's (2D, or a vertex missed). 1 = opaque 3D, test and write.
+         // 2 = semi-transparent 3D, test but leave Z so overlapping additives still
+         // blend in table order. 3 = the occlusion pass's mask: an opaque primitive
+@@ -1595,6 +1628,7 @@ public sealed partial class GlCore : IGpuBackend
+         {
+             _gl.ActiveTexture(TextureUnit.Texture3);
+             _gl.BindTexture(TextureTarget.Texture2D, _kRepTex);
++            RepFilter(_kRepTex);
+             _gl.Uniform4(_uRepRect, _kRepX, _kRepY, _kRepW, _kRepH);
+         }
+         if (_kRepClut != 0)
+@@ -1842,6 +1876,7 @@ public sealed partial class GlCore : IGpuBackend
+             }
+         }
+         _count = 0;
++        _drawEmpty = true;
+         _litFilled = 0;
+         _texFilled = 0;
+     }
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index f350a79..50b1329 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -1535,7 +1535,10 @@ internal static class GlShaders
+                 vec2 win = vec2(uTexWindow.xy) + 1.0;
+                 vec2 fuv = mod(vUV, win) + vec2(uTexWindow.zw);
+                 vec2 t = (fuv - uRepRect.xy) / uRepRect.zw;
+-                vec4 img = texture(uRepTex, t);
++                // 0073. A replacement is a real texture, so the GL sampler filters it
++                // (mipmaps and anisotropy, set by the Texture filtering slider), with the
++                // gradients of the unwrapped UV so a texture window's wrap is not a seam.
++                vec4 img = textureGrad(uRepTex, t, dUVdx / uRepRect.zw, dUVdy / uRepRect.zw);
+                 if (img.a < 0.5) discard;
+                 ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + post(img.rgb);
+                 float stp = img.a < 0.95 ? 1.0 : 0.0;
+@@ -1552,7 +1555,9 @@ internal static class GlShaders
+             // decides the silhouette and the semi-transparency bit; the filters only
+             // replace its colour, and every tap stays inside the polygon's texture
+             // rectangle (0060), since past it is other art read through this CLUT.
+-            if ((uAniso > 1.5 || uMipOn > 0.5) && vRepClut == 0
++            // 0073. A replaced CLUT keeps the anisotropic taps (each decodes through it), not
++            // the mip atlas, which was decoded through the game's CLUT.
++            if ((uAniso > 1.5 || (uMipOn > 0.5 && vRepClut == 0))
+                     && !(texel.rgb == vec3(0.0) && texel.a < 0.5)) {
+                 bool hasRect = (vTex.y & 0x80000000u) != 0u;
+                 ivec2 rMin = hasRect ? ivec2(int(vTex.x & 255u), int((vTex.x >> 8) & 255u)) : ivec2(0);
+@@ -1562,7 +1567,7 @@ internal static class GlShaders
+                 float major = max(lx, ly), minor = min(lx, ly);
+                 bool done = false;
+                 // `major > 0.0` is false for the NaN a degenerate triangle hands dFdx.
+-                if (major > 0.0 && uMipOn > 0.5 && (vTex.y & 0x40000000u) != 0u) {
++                if (major > 0.0 && uMipOn > 0.5 && vRepClut == 0 && (vTex.y & 0x40000000u) != 0u) {
+                     float n = clamp(ceil(major / max(minor, 1e-4)), 1.0, max(uAniso, 1.0));
+                     float maxLod = float((vTex.y >> 16) & 15u);
+                     float lod = min(log2(max(major / n, minor)), maxLod);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuCommands.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuCommands.cs
+index efdb146..296bb43 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuCommands.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuCommands.cs
+@@ -188,6 +188,7 @@ public sealed partial class Gpu
+             _loadImage = false;
+             if (Detached) return;
+             Assets.Textures.VramTracker.MarkCpuWrite(_loadX, _loadY, _loadW, _loadH);
++            Assets.Textures.VramTracker.NoteUpload(_loadX, _loadY, _loadW, _loadH);
+             HleLoadFlush();
+             Hle.GpuTrace.Sink?.Executed();
+         }
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index 3968b23..d9a275d 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -625,6 +625,9 @@ public static class GteDepth
+     /// <summary>True once the GL backend has built the atlas and found <c>uMipOn</c>.</summary>
+     public static bool MipmapsLive;
+ 
++    /// <summary>0073. How often a replacement texture's filter was set.</summary>
++    public static long RepFilterSets;
++
+     /// <summary>Atlas entries live, decoded (first or again), evicted, and polygons
+     /// that asked and found no room. Never reset.</summary>
+     public static long MipEntries, MipDecodes, MipEvictions, MipFull;

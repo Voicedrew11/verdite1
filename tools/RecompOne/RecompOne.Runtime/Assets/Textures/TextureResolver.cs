@@ -103,6 +103,40 @@ public static class TextureResolver
 
     public static bool Enabled { get; set; } = true;
 
+    /// <summary>0073. The port's texture-key census: every lookup, with the key it resolved
+    /// to. Null unless something listens; while set, a lookup runs with no pack loaded.</summary>
+    public delegate void LookupObserver(int tpage, int clut, in TileRect rect, ulong indexHash, ulong clutHash,
+        bool valid, bool dirty, bool hit);
+
+    public static LookupObserver? Observer;
+
+    /// <summary>0073. Look a triangle up by its face's texture rectangle when the
+    /// assembler recorded one; false keys each triangle on its own UVs, as upstream does.</summary>
+    public static bool KeyOnFaceRect = true;
+
+    /// <summary>0073. Key a rectangle on the image the game uploaded it as, when it lies
+    /// inside one to within <see cref="UploadSlop"/> texels: this game's faces read
+    /// a texel past their texture's edge, so one 64x64 tile had three keys.</summary>
+    public static bool KeyOnUpload = true;
+
+    public const int UploadSlop = 2;
+
+    private static void ToUpload(int tpage, ref int u0, ref int v0, ref int w, ref int h)
+    {
+        var depth = (tpage >> 7) & 3;
+        var per = depth switch { 0 => 4, 1 => 2, _ => 1 };
+        int pageX = (tpage & 0xF) * 64, pageY = ((tpage >> 4) & 1) * 256;
+        if (!VramTracker.UploadAt(pageX + (u0 + w / 2) / per, pageY + v0 + h / 2,
+                out var ux, out var uy, out var uw, out var uh))
+            return;
+        int nu0 = Math.Max(0, (ux - pageX) * per), nv0 = Math.Max(0, uy - pageY);
+        int nu1 = Math.Min(256, (ux + uw - pageX) * per), nv1 = Math.Min(256, uy + uh - pageY);
+        if (nu1 <= nu0 || nv1 <= nv0) return;
+        if (u0 < nu0 - UploadSlop || v0 < nv0 - UploadSlop
+            || u0 + w > nu1 + UploadSlop || v0 + h > nv1 + UploadSlop) return;
+        u0 = nu0; v0 = nv0; w = nu1 - nu0; h = nv1 - nv0;
+    }
+
     public static void ResetStats()
     {
         Volatile.Write(ref _statCalls, 0);
@@ -153,7 +187,8 @@ public static class TextureResolver
 
         var mgr = AssetReplacerManager.Instance;
         var dumping = TextureDumper.Enabled;
-        var observing = dumping || TextureRegistry.Enabled;
+        var observer = Observer;
+        var observing = dumping || TextureRegistry.Enabled || observer != null;
         if (!observing && !mgr.HasTextures) return false;
 
         var gpu = Runtime.Gpu;
@@ -183,6 +218,9 @@ public static class TextureResolver
             v0 = vMin;
             h = vMax - vMin + 1;
         }
+
+        if (KeyOnUpload && twAndX == 0xFF && twOrX == 0 && twAndY == 0xFF && twOrY == 0)
+            ToUpload(tpage, ref u0, ref v0, ref w, ref h);
 
         if (w <= 0 || h <= 0 || w > 256 || h > 256)
         {
@@ -267,6 +305,9 @@ public static class TextureResolver
                     entry.Texture != null || entry.Clut != null || entry.PageTexture != null, false, dirty);
             }
         }
+
+        observer?.Invoke(tpage, clut, rect, entry.IndexHash, entry.ClutHash, entry.Valid, dirty,
+            entry.Valid && (entry.Texture != null || entry.Clut != null || entry.PageTexture != null));
 
         if (!entry.Valid || (entry.Texture == null && entry.Clut == null && entry.PageTexture == null)) return false;
 

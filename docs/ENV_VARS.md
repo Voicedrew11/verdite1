@@ -185,6 +185,8 @@ KF2_REMASTER_PACK=dir                  # the working pack (packs/working)
 KF2_REMASTER_PROBE=1                   # a line every 2 s: the area, its fingerprint, what applied; a diff of the tile bytes when an area's fingerprint changes
 KF2_REMASTER_LIGHTS=0                  # leave the pack's authored lights out (they apply with the remaster by default; 0071)
 KF2_FACE_PROBE=1                       # every tile face given one of the ids 4-7 by its key; checks the subdivider's face order and a pick from the frame's triangles against the GPU's ids (needs KF2_SSR=1 KF2_SSR_PROBE=1; overrides any authored material)
+KF2_TEXCENSUS=1                        # the texture-key census: keys, art, overlapping rects, dynamic places, what a pack covers, uploads, every 5 s; the `textures` shell verb saves it (0073)
+KF2_TEXKEY=face                        # key a replacement on the face's texture rectangle, not the image the game uploaded it as; =triangle each triangle's own UVs, as upstream does
 KF2_ANALOG=0                             # twin-stick control off (it is on by default)
 KF2_ANALOG_TURN=1.0 KF2_ANALOG_MOVE=1.0 KF2_ANALOG_DEADZONE=0.15  # its sensitivities
 KF2_ANALOG_INVERTY=1 KF2_ANALOG_PROBE=1  # look-Y inversion, and the control-state report

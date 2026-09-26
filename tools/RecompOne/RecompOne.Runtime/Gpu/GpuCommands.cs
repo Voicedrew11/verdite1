@@ -188,6 +188,7 @@ public sealed partial class Gpu
             _loadImage = false;
             if (Detached) return;
             Assets.Textures.VramTracker.MarkCpuWrite(_loadX, _loadY, _loadW, _loadH);
+            Assets.Textures.VramTracker.NoteUpload(_loadX, _loadY, _loadW, _loadH);
             HleLoadFlush();
             Hle.GpuTrace.Sink?.Executed();
         }

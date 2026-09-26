@@ -650,3 +650,11 @@ useful than the question was.
    retained triangle, cached on `VramTracker.Clock`), and `EvenFog`/`EvenLight`'s
    blends. If it holds up, the planar walk (`PlanarWalk`) and the screen march are
    comparisons only and can leave the settings window.
+21. **Look at a replaced texture.** `packs/phase4-test` (generated test patterns,
+   not committed; delete the folder to take it out) replaces area 1's two tile
+   sheets at 4x. The mechanism is measured (see "Phase 4, the first slice" in
+   [REMASTER.md](REMASTER.md)): both keys replaced, 97.4% of the pinned view
+   changed, the filter set, no GL error. Nothing about the picture has been judged:
+   whether the pattern lies on the floor the right way up and at the right scale,
+   and how it holds under the *Texture filtering* slider at a distance and while
+   turning.

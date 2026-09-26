@@ -130,6 +130,7 @@ public sealed partial class GlCore : IGpuBackend
     int _vboCursor;
     bool _lightAttribs;
     float _drawMinX, _drawMinY, _drawMaxX, _drawMaxY;
+    bool _drawEmpty = true;
 
     HleDrawEnv _env;
 
@@ -806,10 +807,29 @@ public sealed partial class GlCore : IGpuBackend
         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
         _gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)tex.Width, (uint)tex.Height, 0,
             PixelFormat.Rgba, PixelType.UnsignedByte, tex.Rgba);
+        // 0073. A mip chain always; whether it is read is RepFilter's.
+        _gl.GenerateMipmap(TextureTarget.Texture2D);
         _gl.ActiveTexture(TextureUnit.Texture0);
 
         _repTextures[tex] = handle;
         return handle;
+    }
+
+    readonly Dictionary<uint, int> _repFilterKey = [];
+
+    /// <summary>0073. A replacement texture is filtered by the Texture filtering
+    /// slider: trilinear with anisotropy to its level while mipmaps are on, bilinear
+    /// off. Set on the bound texture when the slider has moved since.</summary>
+    void RepFilter(uint tex)
+    {
+        bool mips = GteDepth.Mipmaps;
+        int key = mips ? Math.Clamp(GteDepth.Anisotropy, 1, 16) : 0;
+        if (_repFilterKey.TryGetValue(tex, out int had) && had == key) return;
+        _repFilterKey[tex] = key;
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
+            (int)(mips ? GLEnum.LinearMipmapLinear : GLEnum.Linear));
+        _gl.TexParameter(TextureTarget.Texture2D, (TextureParameterName)0x84FE, (float)Math.Max(1, key));
+        GteDepth.RepFilterSets++;
     }
 
     unsafe uint EnsureRepClut(Assets.ReplacementClut clut)
@@ -861,8 +881,14 @@ public sealed partial class GlCore : IGpuBackend
         if (dither && _pendingRepTex == 0) tpage |= 0x400;
         if (_pendingRepTex != 0) tpage |= 0x2000;
         else if (_pendingRepClut != 0) tpage |= 0x1000;
-        if (_count == 0)
+        // 0073. Every caller writes `_verts[_count++] = V(...)`, which increments _count
+        // before V runs, so `_count == 0` never held here and the bounds grew from
+        // boot: an untargeted batch marked VRAM GPU-dirty up to 748x481, and the
+        // replacement resolver refused every texture under it. See "Phase 4, the
+        // first slice" in docs/REMASTER.md.
+        if (_drawEmpty)
         {
+            _drawEmpty = false;
             _drawMinX = _drawMaxX = v.X;
             _drawMinY = _drawMaxY = v.Y;
         }
@@ -889,9 +915,16 @@ public sealed partial class GlCore : IGpuBackend
     public void DrawTri(in HleVertex a, in HleVertex b, in HleVertex c, in PrimFlags f)
     {
         if (PlanarReflections.Capturing && PlanarDrop()) return;
-        ResolveReplacement(f,
-            (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
-            (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
+        // 0073. A replacement is keyed on the face's texture rectangle (0060), not the
+        // triangle's: a clipped fan's triangles each cover part of the face, and
+        // a key per part is a key the pack never names.
+        if (a.HasTexRect && Assets.Textures.TextureResolver.KeyOnFaceRect)
+            ResolveReplacement(f, (int)(a.TexRect & 0xFF), (int)((a.TexRect >> 8) & 0xFF),
+                (int)((a.TexRect >> 16) & 0xFF), (int)(a.TexRect >> 24));
+        else
+            ResolveReplacement(f,
+                (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
+                (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
         // 0 = painter's (2D, or a vertex missed). 1 = opaque 3D, test and write.
         // 2 = semi-transparent 3D, test but leave Z so overlapping additives still
         // blend in table order. 3 = the occlusion pass's mask: an opaque primitive
@@ -1595,6 +1628,7 @@ public sealed partial class GlCore : IGpuBackend
         {
             _gl.ActiveTexture(TextureUnit.Texture3);
             _gl.BindTexture(TextureTarget.Texture2D, _kRepTex);
+            RepFilter(_kRepTex);
             _gl.Uniform4(_uRepRect, _kRepX, _kRepY, _kRepW, _kRepH);
         }
         if (_kRepClut != 0)
@@ -1842,6 +1876,7 @@ public sealed partial class GlCore : IGpuBackend
             }
         }
         _count = 0;
+        _drawEmpty = true;
         _litFilled = 0;
         _texFilled = 0;
     }

@@ -15,6 +15,43 @@ public static class VramTracker
     /// generations while nothing has been written.</summary>
     public static int Clock => _clock;
 
+    /// <summary>0073. Every image a LoadImage finished writing: x, y, w, h. The port's
+    /// texture census counts what the game uploads at a time.</summary>
+    public static Action<int, int, int, int>? Uploaded;
+
+    // 0073. Which LoadImage last wrote each VRAM word, by id into a ring of rectangles.
+    // A texture's key is normalised to the image the game uploaded it as, so that
+    // one piece of art has one key whatever UVs a face reads it through.
+    private static readonly ushort[] _uploadAt = new ushort[1024 * 512];
+    private static readonly (short X, short Y, short W, short H)[] _uploads = new (short, short, short, short)[65536];
+    private static int _uploadNext;
+
+    public static void NoteUpload(int x, int y, int w, int h)
+    {
+        if (w <= 0 || h <= 0) return;
+        _uploadNext = _uploadNext % 65535 + 1;
+        var id = (ushort)_uploadNext;
+        _uploads[id] = ((short)x, (short)y, (short)w, (short)h);
+        for (var r = 0; r < h; r++)
+        {
+            var row = ((y + r) & 511) * 1024;
+            if (x + w <= 1024) _uploadAt.AsSpan(row + x, w).Fill(id);
+            else
+                for (var c = 0; c < w; c++)
+                    _uploadAt[row + ((x + c) & 1023)] = id;
+        }
+
+        Uploaded?.Invoke(x, y, w, h);
+    }
+
+    /// <summary>The rectangle of the LoadImage that last wrote VRAM word (x, y).</summary>
+    public static bool UploadAt(int x, int y, out int ux, out int uy, out int uw, out int uh)
+    {
+        var id = _uploadAt[(y & 511) * 1024 + (x & 1023)];
+        (ux, uy, uw, uh) = id == 0 ? default : _uploads[id];
+        return id != 0 && x >= ux && y >= uy && x < ux + uw && y < uy + uh;
+    }
+
     public static void Reset()
     {
         Array.Clear(_gen);

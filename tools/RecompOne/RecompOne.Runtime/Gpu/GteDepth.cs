@@ -625,6 +625,9 @@ public static class GteDepth
     /// <summary>True once the GL backend has built the atlas and found <c>uMipOn</c>.</summary>
     public static bool MipmapsLive;
 
+    /// <summary>0073. How often a replacement texture's filter was set.</summary>
+    public static long RepFilterSets;
+
     /// <summary>Atlas entries live, decoded (first or again), evicted, and polygons
     /// that asked and found no room. Never reset.</summary>
     public static long MipEntries, MipDecodes, MipEvictions, MipFull;
