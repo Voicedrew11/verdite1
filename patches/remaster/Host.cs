@@ -28,6 +28,7 @@ public interface IRemasterFeature
 ///     KF2_REMASTER_PACK=dir  the working pack (packs/working)
 ///     KF2_REMASTER_PROBE=1   a line every two seconds: the area, its fingerprint, what applied
 ///     KF2_REMASTER_LIGHTS=0  leave the pack's lights out
+///     KF2_REMASTER_ATMOS=0   leave the pack's light-record overrides out
 ///
 /// Shift+E opens the editor, which pauses the world. See docs/REMASTER.md.
 /// </summary>
@@ -43,11 +44,12 @@ public static class Host
 
     public static bool Enabled { get; private set; }
 
-    public static readonly IRemasterFeature[] Features = [new Surfaces(), new Lights()];
+    public static readonly IRemasterFeature[] Features = [new Surfaces(), new Lights(), new Atmosphere()];
 
-    public static void Configure(string? on, string? pack, string? probe, string? lights)
+    public static void Configure(string? on, string? pack, string? probe, string? lights, string? atmos = null)
     {
         Lights.Configure(lights);
+        Atmosphere.Configure(atmos);
         if (!string.IsNullOrWhiteSpace(on)) _forced = on.Trim() != "0";
         Pack.Configure(pack);
         _probe = probe?.Trim() is not (null or "" or "0");
@@ -72,6 +74,7 @@ public static class Host
         Identity.Install();
         Event.AddListener<VSyncEvent>(_ => Frame());
         Lights.Install();
+        Atmosphere.Install();
         Editor.Install();
     }
 

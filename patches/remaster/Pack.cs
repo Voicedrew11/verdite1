@@ -33,6 +33,7 @@ public static class Pack
     static string TexturesPath => Path.Combine(RemasterDir, "textures.json");
     static string SurfacesPath(int area) => Path.Combine(RemasterDir, "areas", area.ToString(), "surfaces.json");
     static string LightsPath(int area) => Path.Combine(RemasterDir, "areas", area.ToString(), "lights.json");
+    static string AtmospherePath(int area) => Path.Combine(RemasterDir, "areas", area.ToString(), "atmosphere.json");
 
     static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
@@ -51,6 +52,7 @@ public static class Pack
         public JsonObject Textures = null!;
         public readonly Dictionary<int, JsonObject> Surfaces = new();
         public readonly Dictionary<int, JsonObject> Lights = new();
+        public readonly Dictionary<int, JsonObject> Atmosphere = new();
 
         public static Set Empty() => new() { Materials = NewMaterials(), Textures = NewTextures() };
     }
@@ -94,6 +96,8 @@ public static class Pack
                 if (File.Exists(path)) s.Surfaces[area] = Migrate(ParseObject(path), "tiles");
                 path = Path.Combine(dir, "lights.json");
                 if (File.Exists(path)) s.Lights[area] = Migrate(ParseObject(path), "lights");
+                path = Path.Combine(dir, "atmosphere.json");
+                if (File.Exists(path)) s.Atmosphere[area] = Migrate(ParseObject(path), "records");
             }
         return s;
     }
@@ -115,6 +119,7 @@ public static class Pack
         if (collection == "tiles" && doc["tiles"] is not JsonArray) doc["tiles"] = new JsonArray();
         if (collection == "lights" && doc["lights"] is not JsonArray) doc["lights"] = new JsonArray();
         if (collection == "textures" && doc["textures"] is not JsonArray) doc["textures"] = new JsonArray();
+        if (collection == "records" && doc["records"] is not JsonArray) doc["records"] = new JsonArray();
         return doc;
     }
 
@@ -142,6 +147,12 @@ public static class Pack
                 doc["formatVersion"] = FormatVersion;
                 Directory.CreateDirectory(Path.GetDirectoryName(LightsPath(area))!);
                 Write(LightsPath(area), doc);
+            }
+            foreach (var (area, doc) in _set.Atmosphere)
+            {
+                doc["formatVersion"] = FormatVersion;
+                Directory.CreateDirectory(Path.GetDirectoryName(AtmospherePath(area))!);
+                Write(AtmospherePath(area), doc);
             }
             Dirty = false;
             LastError = null;
@@ -407,13 +418,14 @@ public static class Pack
     }
 
     /// <summary>The areas the pack holds documents for.</summary>
-    public static IEnumerable<int> Areas() => _set.Surfaces.Keys.Union(_set.Lights.Keys).Order();
+    public static IEnumerable<int> Areas() => _set.Surfaces.Keys.Union(_set.Lights.Keys).Union(_set.Atmosphere.Keys).Order();
 
     /// <summary>The fingerprint an area's documents were authored against, or null. Each
     /// document carries its own; the first that names one answers.</summary>
     public static string? AreaFingerprint(int area)
         => (_set.Surfaces.TryGetValue(area, out var d) ? Str(d["fingerprint"]) : null)
-        ?? (_set.Lights.TryGetValue(area, out var l) ? Str(l["fingerprint"]) : null);
+        ?? (_set.Lights.TryGetValue(area, out var l) ? Str(l["fingerprint"]) : null)
+        ?? (_set.Atmosphere.TryGetValue(area, out var a) ? Str(a["fingerprint"]) : null);
 
     public static IEnumerable<(TileKey Key, string Material)> Tiles(int area)
     {
@@ -892,6 +904,156 @@ public static class Pack
     {
         if (amount <= 0f) { o.Remove("flicker"); return; }
         o["flicker"] = new JsonObject { ["amount"] = Math.Round(Math.Clamp(amount, 0f, 1f), 3), ["hz"] = Math.Round(Math.Max(hz, 0f), 2) };
+    }
+
+    // ---- atmosphere ----------------------------------------------------------
+
+    /// <summary>
+    /// An override of one of the area's light records (<c>0x801930F0 + 0x68 * Record</c>),
+    /// as the document holds it; every part is optional and a missing one leaves the
+    /// game's. <c>Back</c> is the back colour's three bytes; light <c>j</c> is row
+    /// <c>j</c> of the light matrix (the way a face it lights fully faces) and column
+    /// <c>j</c> of the colour matrix, both in the GTE's 4.12 units as floats (1.0 is
+    /// 4096); <c>Fog</c> is the record's fog word: the fog starts at <c>(fog &amp;
+    /// 0x7FFF) / 2</c> view units, bit <c>0x8000</c> picks the linear curve, and 32000
+    /// or more draws no fog. <c>Hash</c> is the record's own bytes where the area
+    /// keeps them, as authored; a record the game has since changed is refused.
+    /// </summary>
+    public readonly record struct RecordOverride(
+        int Record, string? Hash, int[]? Back, Vector3?[] Direction, Vector3?[] Colour, int? Fog);
+
+    static JsonObject? AtmosDoc(int area) => _set.Atmosphere.TryGetValue(area, out var d) ? d : null;
+
+    static JsonObject? FindRecord(int area, int record)
+    {
+        if (AtmosDoc(area)?["records"] is not JsonArray list) return null;
+        foreach (var n in list)
+            if (n is JsonObject o && Int(o["record"]) == record) return o;
+        return null;
+    }
+
+    static RecordOverride ParseRecord(JsonObject o, int record)
+    {
+        int[]? back = null;
+        if (o["back"] is JsonArray b && b.Count >= 3)
+            back = [.. Enumerable.Range(0, 3).Select(i => Math.Clamp(Int(b[i]) ?? (int)NumOr(b[i], 0f), 0, 255))];
+        var dir = new Vector3?[3];
+        var col = new Vector3?[3];
+        if (o["lights"] is JsonArray ls)
+            for (int j = 0; j < 3 && j < ls.Count; j++)
+                if (ls[j] is JsonObject l)
+                {
+                    if (l["direction"] is JsonArray) dir[j] = Vec(l["direction"], Vector3.Zero);
+                    if (l["colour"] is JsonArray) col[j] = Vec(l["colour"], Vector3.Zero);
+                }
+        return new RecordOverride(record, Str(o["recordHash"]), back, dir, col, Int(o["fog"]));
+    }
+
+    /// <summary>The area's record overrides, in document order.</summary>
+    public static IEnumerable<RecordOverride> Records(int area)
+    {
+        if (AtmosDoc(area)?["records"] is not JsonArray list) yield break;
+        foreach (var n in list)
+            if (n is JsonObject o && Int(o["record"]) is int r)
+                yield return ParseRecord(o, r);
+    }
+
+    public static RecordOverride? GetRecord(int area, int record)
+        => FindRecord(area, record) is { } o ? ParseRecord(o, record) : null;
+
+    public static JsonObject? RecordSnapshot(int area, int record) => FindRecord(area, record)?.DeepClone() as JsonObject;
+
+    /// <summary>A change to one record's override as one undo entry, the override made
+    /// on first write with the record's hash; an override left with nothing in it is
+    /// removed.</summary>
+    public static void SetRecord(int area, int record, string hash, string fingerprint, string label,
+                                 Action<JsonObject> change)
+    {
+        var from = RecordSnapshot(area, record);
+        Edit($"record {record}: {label}", () =>
+            {
+                var o = FindRecord(area, record);
+                if (o == null)
+                {
+                    o = new JsonObject { ["record"] = record, ["recordHash"] = hash };
+                    ((JsonArray)AreaDoc(_set.Atmosphere, "records", area, fingerprint)["records"]!).Add(o);
+                }
+                change(o);
+                if (o.Count <= 2) PutRecord(area, record, null, fingerprint);
+            },
+            () => PutRecord(area, record, from, fingerprint));
+    }
+
+    /// <summary>A live change with no undo entry of its own; <see cref="CommitRecord"/> makes one.</summary>
+    public static void PreviewRecord(int area, int record, string hash, string fingerprint, Action<JsonObject> change)
+    {
+        var o = FindRecord(area, record);
+        if (o == null)
+        {
+            o = new JsonObject { ["record"] = record, ["recordHash"] = hash };
+            ((JsonArray)AreaDoc(_set.Atmosphere, "records", area, fingerprint)["records"]!).Add(o);
+        }
+        change(o);
+        Dirty = true;
+        Version++;
+    }
+
+    public static void CommitRecord(int area, int record, string fingerprint, string label, JsonObject? before)
+    {
+        var after = RecordSnapshot(area, record);
+        if (after is { Count: <= 2 }) after = null;
+        Edit($"record {record}: {label}", () => PutRecord(area, record, after, fingerprint),
+            () => PutRecord(area, record, before, fingerprint));
+    }
+
+    public static void RemoveRecord(int area, int record)
+    {
+        if (FindRecord(area, record) == null) return;
+        var before = RecordSnapshot(area, record);
+        string fp = AreaFingerprint(area) ?? "";
+        Edit($"record {record}: reset", () => PutRecord(area, record, null, fp), () => PutRecord(area, record, before, fp));
+    }
+
+    /// <summary>Replace a record's override with a snapshot, or remove it (null),
+    /// keeping its place in the list.</summary>
+    static void PutRecord(int area, int record, JsonObject? snapshot, string fingerprint)
+    {
+        var list = (JsonArray)AreaDoc(_set.Atmosphere, "records", area, fingerprint)["records"]!;
+        for (int i = 0; i < list.Count; i++)
+            if (list[i] is JsonObject o && Int(o["record"]) == record)
+            {
+                if (snapshot == null) list.RemoveAt(i);
+                else list[i] = snapshot.DeepClone();
+                return;
+            }
+        if (snapshot != null) list.Add(snapshot.DeepClone());
+    }
+
+    public static void SetBack(JsonObject o, int[]? rgb)
+    {
+        if (rgb == null) { o.Remove("back"); return; }
+        o["back"] = new JsonArray(Math.Clamp(rgb[0], 0, 255), Math.Clamp(rgb[1], 0, 255), Math.Clamp(rgb[2], 0, 255));
+    }
+
+    /// <summary>Light <paramref name="j"/>'s direction or colour; null leaves the game's.</summary>
+    public static void SetRecordLight(JsonObject o, int j, string field, Vector3? v)
+    {
+        if (o["lights"] is not JsonArray ls) o["lights"] = ls = new JsonArray();
+        while (ls.Count < 3) ls.Add(null);
+        if (ls[j] is not JsonObject l) ls[j] = l = new JsonObject();
+        if (v is { } x)
+            l[field] = new JsonArray(Math.Round(Math.Clamp(x.X, -7.999f, 7.999f), 4),
+                                     Math.Round(Math.Clamp(x.Y, -7.999f, 7.999f), 4),
+                                     Math.Round(Math.Clamp(x.Z, -7.999f, 7.999f), 4));
+        else l.Remove(field);
+        if (l.Count == 0) ls[j] = null;
+        if (ls.All(n => n == null)) o.Remove("lights");
+    }
+
+    public static void SetFog(JsonObject o, int? word)
+    {
+        if (word is int w) o["fog"] = Math.Clamp(w, 0, 0xFFFF);
+        else o.Remove("fog");
     }
 
     // ---- undo --------------------------------------------------------------

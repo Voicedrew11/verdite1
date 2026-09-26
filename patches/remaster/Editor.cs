@@ -264,6 +264,8 @@ public static class Editor
             DrawMaterials();
             ImGui.Separator();
             DrawLights();
+            ImGui.Separator();
+            DrawAtmosphere();
             bool hovered = ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows);
             ImGui.End();
 
@@ -421,6 +423,145 @@ public static class Editor
             }
             if (ImGui.IsItemDeactivatedAfterEdit() && _lightBefore != null) Pack.CommitLight(area, name, label, _lightBefore);
             if (ImGui.IsItemDeactivated()) _lightBefore = null;
+        }
+
+        // ---- atmosphere: the area's own light records -------------------------
+
+        int _record = -1;
+        bool _followRecord = true;
+        JsonObject? _recBefore;
+        bool _recHeld;
+        int[] _usage = [];
+        int _usageSettle = -1;
+
+        void DrawAtmosphere()
+        {
+            ImGui.Text("Atmosphere");
+            var m = Runtime.Mem;
+            if (m == null || Identity.Area < 0 || !Identity.Settled) { ImGui.TextDisabled("No settled area."); return; }
+            int area = Identity.Area;
+            if (Atmosphere.Refused is { } why) ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), why);
+            if (_usageSettle != Identity.Settles) { _usage = Atmosphere.Usage(m); _usageSettle = Identity.Settles; }
+
+            int under = Atmosphere.UnderPlayer(m);
+            ImGui.Checkbox("Follow the player", ref _followRecord);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Edit the light record of the tile you stand on. Every tile names one of 80 records: its light, back colour and fog.");
+            if (_followRecord && under >= 0) _record = under;
+            if (_record < 0) _record = under >= 0 ? under : 0;
+
+            string Label(int r) => $"record {r}  ({(r < _usage.Length ? _usage[r] : 0)} halves)" +
+                                   (r == under ? ", under you" : "") + (Pack.GetRecord(area, r) != null ? ", edited" : "");
+            ImGui.SetNextItemWidth(260);
+            if (ImGui.BeginCombo("##record", Label(_record)))
+            {
+                for (int r = 0; r < Atmosphere.Records; r++)
+                {
+                    bool show = (r < _usage.Length && _usage[r] > 0) || r == under || Pack.GetRecord(area, r) != null;
+                    if (show && ImGui.Selectable(Label(r), r == _record)) { _record = r; _followRecord = false; }
+                }
+                ImGui.EndCombo();
+            }
+
+            int rec = _record;
+            string hash = Atmosphere.SourceHash(m, rec), fp = Identity.FingerprintText;
+            var o = Pack.GetRecord(area, rec);
+            var g = Atmosphere.Game(m, rec);
+            var e = Atmosphere.Effective(m, rec, o);
+            if (o is { Hash: { } h } && h != hash)
+                ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "The game's record has changed since this was authored; it is not applied.");
+            if (!Host.Enabled) ImGui.TextDisabled("The remaster is off; edits apply when it is on.");
+
+            ImGui.PushID("record:" + rec);
+            // Back colour, the light nothing faces away from.
+            bool backOn = o?.Back != null;
+            if (ImGui.Checkbox("##back", ref backOn))
+                Pack.SetRecord(area, rec, hash, fp, backOn ? "back" : "back = game", x => Pack.SetBack(x, backOn ? g.Back : null));
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!backOn);
+            var back = new Vector3(e.Back[0], e.Back[1], e.Back[2]) / 255f;
+            ImGui.SetNextItemWidth(220);
+            RecEdited(area, rec, hash, "back", ImGui.ColorEdit3("Back colour", ref back),
+                x => Pack.SetBack(x, [(int)MathF.Round(back.X * 255f), (int)MathF.Round(back.Y * 255f), (int)MathF.Round(back.Z * 255f)]));
+            ImGui.EndDisabled();
+
+            for (int j = 0; j < 3; j++)
+            {
+                int jj = j;
+                ImGui.PushID(j);
+                bool dirOn = o?.Direction[j] != null, colOn = o?.Colour[j] != null;
+                if (ImGui.Checkbox("##dir", ref dirOn))
+                    Pack.SetRecord(area, rec, hash, fp, $"light {j} direction{(dirOn ? "" : " = game")}",
+                        x => Pack.SetRecordLight(x, jj, "direction", dirOn ? g.Direction[jj] : null));
+                ImGui.SameLine();
+                ImGui.BeginDisabled(!dirOn);
+                var dir = e.Direction[j];
+                ImGui.SetNextItemWidth(220);
+                RecEdited(area, rec, hash, $"light {j} direction",
+                    ImGui.DragFloat3($"Light {j + 1} faces", ref dir, 0.01f, -1f, 1f, "%.2f"),
+                    x => Pack.SetRecordLight(x, jj, "direction", dir));
+                ImGui.EndDisabled();
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("A face turned this way takes the light's whole colour; its length scales it.");
+                if (ImGui.Checkbox("##col", ref colOn))
+                    Pack.SetRecord(area, rec, hash, fp, $"light {j} colour{(colOn ? "" : " = game")}",
+                        x => Pack.SetRecordLight(x, jj, "colour", colOn ? g.Colour[jj] : null));
+                ImGui.SameLine();
+                ImGui.BeginDisabled(!colOn);
+                var col = e.Colour[j];
+                ImGui.SetNextItemWidth(220);
+                RecEdited(area, rec, hash, $"light {j} colour",
+                    ImGui.ColorEdit3($"Light {j + 1} colour", ref col, ImGuiColorEditFlags.Float | ImGuiColorEditFlags.HDR),
+                    x => Pack.SetRecordLight(x, jj, "colour", col));
+                ImGui.EndDisabled();
+                ImGui.PopID();
+            }
+
+            bool fogOn = o?.Fog != null;
+            if (ImGui.Checkbox("##fog", ref fogOn))
+                Pack.SetRecord(area, rec, hash, fp, fogOn ? "fog" : "fog = game", x => Pack.SetFog(x, fogOn ? g.Fog : null));
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!fogOn);
+            int word = e.Fog;
+            bool linear = (word & 0x8000) != 0, none = !linear && (word & 0x7FFF) >= 32000;
+            int start = none ? 16000 : (word & 0x7FFF) >> 1;
+            ImGui.BeginDisabled(none);
+            ImGui.SetNextItemWidth(220);
+            RecEdited(area, rec, hash, "fog", ImGui.SliderInt("Fog starts at", ref start, 0, 15999),
+                x => Pack.SetFog(x, (linear ? 0x8000 : 0) | (start << 1)));
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("View units: a tile is 2048. The game's own is " + Atmosphere.DescribeFog(g.Fog) + ".");
+            ImGui.Indent(ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X);
+            if (ImGui.Checkbox("Linear", ref linear))
+                Pack.SetRecord(area, rec, hash, fp, linear ? "fog linear" : "fog knee",
+                    x => Pack.SetFog(x, (linear ? 0x8000 : 0) | ((none ? 16000 : start) << 1)));
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("The game's two fog curves: a knee that turns black quickly (most areas), or a straight ramp.");
+            ImGui.SameLine();
+            if (ImGui.Checkbox("No fog", ref none))
+                Pack.SetRecord(area, rec, hash, fp, none ? "no fog" : "fog",
+                    x => Pack.SetFog(x, none ? 32000 : start << 1));
+            ImGui.Unindent(ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X);
+            ImGui.EndDisabled();
+
+            ImGui.BeginDisabled(o == null);
+            if (ImGui.Button("Reset record")) Pack.RemoveRecord(area, rec);
+            ImGui.EndDisabled();
+            ImGui.SameLine();
+            ImGui.TextDisabled($"{Atmosphere.Applied} override(s) written" + (Atmosphere.Stale > 0 ? $", {Atmosphere.Stale} refused" : ""));
+            ImGui.PopID();
+        }
+
+        /// <summary>As <see cref="Edited"/>, for a record: live while held, one undo entry on release.</summary>
+        void RecEdited(int area, int rec, string hash, string label, bool changed, Action<JsonObject> apply)
+        {
+            string fp = Identity.FingerprintText;
+            if (ImGui.IsItemActivated()) { _recBefore = Pack.RecordSnapshot(area, rec); _recHeld = true; }
+            if (changed)
+            {
+                if (ImGui.IsItemActive() && _recHeld) Pack.PreviewRecord(area, rec, hash, fp, apply);
+                else Pack.SetRecord(area, rec, hash, fp, label, apply);
+            }
+            if (ImGui.IsItemDeactivatedAfterEdit() && _recHeld) Pack.CommitRecord(area, rec, fp, label, _recBefore);
+            if (ImGui.IsItemDeactivated()) { _recBefore = null; _recHeld = false; }
         }
 
         /// <summary>The light whose marker is under a window position.</summary>

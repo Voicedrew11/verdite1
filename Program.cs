@@ -734,13 +734,17 @@ Kf2.RetainedMap.Install();
 Kf2.Remaster.Host.Configure(Environment.GetEnvironmentVariable("KF2_REMASTER"),
                             Environment.GetEnvironmentVariable("KF2_REMASTER_PACK"),
                             Environment.GetEnvironmentVariable("KF2_REMASTER_PROBE"),
-                            Environment.GetEnvironmentVariable("KF2_REMASTER_LIGHTS"));
+                            Environment.GetEnvironmentVariable("KF2_REMASTER_LIGHTS"),
+                            Environment.GetEnvironmentVariable("KF2_REMASTER_ATMOS"));
 Kf2.Remaster.Host.Install();
 // Phase 4's texture-key census: which replacement keys an area draws, and which a
 // pack covers. KF2_TEXKEY=triangle keys each triangle on its own UVs, as upstream does.
 Kf2.Remaster.TextureCensus.Configure(Environment.GetEnvironmentVariable("KF2_TEXCENSUS"),
                                      Environment.GetEnvironmentVariable("KF2_TEXKEY"));
 Kf2.Remaster.TextureCensus.Install();
+// Phase 5's read census: which code reads and writes the area's light records.
+Kf2.Remaster.LightCensus.Configure(Environment.GetEnvironmentVariable("KF2_LIGHTCENSUS"));
+Kf2.Remaster.LightCensus.Install();
 
 // PGXP -- upstream RecompOne's own vertex tracking, backported as
 // patches/recompone/0034-0036, and the second mechanism the port has for the one

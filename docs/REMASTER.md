@@ -6,7 +6,9 @@ second slice" under the roadmap), with materials since keyed by face ("Faces, pi
 from the frame"); Phase 2 has its first slice ("Phase 2, the first slice"), and so
 does Phase 3 ("Phase 3, the first slice"); Phase 4 is in, rescoped to materials
 by texture ("Phase 4, the second slice"), and metalness made a tinted mirror
-("Metal is a tinted mirror"); Phase 5 on is still design. The
+("Metal is a tinted mirror"); Phase 5 has its first slice, overrides of the game's
+own light records ("Phase 5, the first slice"), after a census showed only the
+renderer reads them; the rest of Phase 5 and Phase 6 on are still design. The
 stretch goal is a full visual remaster the user authors themselves: placing lights,
 assigning materials, tuning reflections, editing levels. **An effect is worth
 nothing to that goal until it can be placed, tuned, saved and shared**, so this
@@ -1559,8 +1561,10 @@ retained scene, and normal and roughness maps (`0075`) are Phase 8.
 
 **Not judged.** All of it: a replaced sheet under trilinear and anisotropic
 filtering at a distance and in motion, and whether the test pattern lies on the
-floor the right way up and at the right scale. `packs/phase4-test` is the pack to
-look with (delete the folder to take it out).
+floor the right way up and at the right scale. The pack is kept in
+`scratch/phase4-test`; copy it into `packs/` to look with it. **It was first left in
+`packs/`, where every pack is enabled by default**, so every boot drew area 1 in the
+test pattern until it was moved out.
 
 **Not done**, parked with the rescope (see "Phase 4: materials by texture"): a
 replaced water texture scrolled through `0053`; replacements in the retained
@@ -1698,12 +1702,159 @@ push on this game's near-grey stone.
     painted over;
   - `atmosphere.json`.
 - **Depends on:** the read census confirming that only rendering reads the light
-  records.
+  records. Done: see "The light records are read only by the renderer".
 - **Mechanism measured by:** `KF2_PERPIXEL_PROBE=2`, the formula against the GTE's
   colour, still exact with an override on; the SSR fog-curve readback moving
   with the new curve; `snap` for the no-override case.
 - **You look at:** the whole area's mood; the sky against the void past the draw
   distance.
+
+### The light records are read only by the renderer
+
+**Confirmed, statically and at run time**, which is what Phase 5's overrides were
+waiting on.
+
+**Statically** (`scripts/callgraph.py`'s `Graph.touching`, after the parser was
+brought up to the current codegen; see "The static model read nothing" in
+`DEVELOPMENT.md`): every function in any overlay that forms an address inside the
+destination records (`0x801930EC`-`0x80195170`) or the source
+(`0x800679A0`-`0x80068760`). The destination's are stage 1 (`func_8002C944`, the
+copy), stage 10 (`func_8002CA74`, which turns each light matrix through its three
+quarter-turns with `func_80014B88`), `func_8002CBD4` (the same, inside the NPC
+conversation loop `func_80043388`), the tile half `func_80031950`, the HUD
+`func_80031D5C`, the arm `func_80032400`, the model submitter `func_80032588` and
+`func_80032AC4`, which loads a record's colour matrix and back colour to draw a
+model. All of it is lighting. The source's are the area setup `func_80015DD4` and,
+in `fdat14` and `fdat20`, the area modules, which write records 63-64 and the load
+flag. A table reached through an index the dataflow cannot follow would not show,
+so the run-time census is the one that settles it.
+
+**At run time** (`KF2_LIGHTCENSUS=1`, `patches/remaster/LightCensus.cs`): the
+runtime's RAM logger stamps each byte a read or write touches, and a pre and post on
+each of 24 owners (the thirteen stages, the NPC loop, the two derivations, the area
+setup and stage 13's own callees) credits the bytes stamped since the last event to
+the innermost owner running. Area 1 from save slot 2, walking, attacking, the menu
+opened and closed, then `warp 6` into `fdat20`, 99 s:
+
+| owner | destination | source |
+|---|---|---|
+| stage 1 | writes all 80 | reads all 80 |
+| stage 10 | reads each record's first matrix (+0x00-0x11), writes the other three; reads the load flag | -- |
+| tile walk `func_80031C94` | reads the drawn halves' records, +0x00-0x67 | -- |
+| model walk `func_800331B4` | reads 0, 15-16, 20, 62, 67, 69, 71 | -- |
+| HUD `func_80031D5C` | reads 64, 65, 72 | -- |
+| stage 6, in `fdat20` | writes record 63's first matrix, now and then (400 bytes over the run) | -- |
+| stage 7, the area loader | -- | writes 62-63 |
+| area setup `func_80015DD4` | -- | writes 0-63 |
+
+No other stage, and nothing outside a stage, read either block. **So nothing but
+rendering reads a record, and an override cannot change what the game does.**
+
+Two things the census had to get past, both worth knowing before reading the RAM
+logger for anything else:
+- **The RAM logger masks every address to 2 MB**, and `PrimBuffer` put the
+  primitive buffers above 2 MB, so a primitive written at `0x802679A0` is stamped as
+  `0x800679A0`. The first run showed the tile walk rewriting the whole source block
+  once a tick; it was the packets. The census is run with `KF2_PRIMBUF=1`.
+- **The host clears `TrackReads` at every present** from whether its RAM panels are
+  open, so the census sets it again at every event.
+
+Stage 6's write into the destination lasts until the next stage 1 copies the
+source back over it: a tick at the original rate, one frame at 144. It is listed
+in `TODO.md`; nothing has been seen on screen.
+
+### Phase 5, the first slice
+
+**What is in.** Overrides of the area's own light records, written through the
+game:
+
+- `patches/remaster/Atmosphere.cs`: a post on stage 1 writes the pack's
+  `areas/<n>/atmosphere.json` over the 80 records stage 1 has just copied in. Stage
+  10 then turns each light matrix through its quarter-turns, and the tile half, the
+  model walk, the HUD and the arm load the result with the game's own
+  `SetLightMatrix`, `SetColorMatrix`, `SetBackColor` and `SetFogNear`. So an
+  override reaches the GTE, `0048`'s per-pixel records, `EvenFog`'s blend and the
+  retained scene without any of them knowing, and is exact whether per-pixel
+  lighting is on or off. Turning it off needs no restore: the next stage 1 copies
+  the game's records back.
+- **An override names the record's own bytes.** Each carries `recordHash`, FNV-1a
+  64 over the record's 0x2C source bytes when it was authored; while the game's
+  record hashes differently the override is refused and counted. That is the same
+  shape as a face list's `meshHash`. Records are per area in the pack, but the data
+  is shared: records 15 and 16 hash the same in area 0 and area 1.
+- Every part is optional and a missing one is the game's:
+
+  ```json
+  // areas/1/atmosphere.json
+  { "formatVersion": 1, "area": 1, "fingerprint": "be64c93e02071c09",
+    "records": [
+      { "record": 15, "recordHash": "486b851794a9bd96",
+        "back": [200, 60, 40],
+        "lights": [ { "direction": [0, 1, 0] }, null, { "colour": [1.2, 0.7, 0.4] } ],
+        "fog": 4000 } ] }
+  ```
+
+  `back` is the back colour's three bytes. Light `j` is row `j` of the light matrix
+  (the way a face it lights fully faces) and column `j` of the colour matrix, both
+  in the GTE's 4.12 units as floats. `fog` is the record's fog word: the fog starts
+  at `(fog & 0x7FFF) / 2` view units, bit `0x8000` picks the linear curve, and 32000
+  or more draws none (see "Fog changes at a tile edge" in `RENDERING.md`).
+- The editor gains an Atmosphere section: the record under the player, or any
+  record the area's halves use, with how many halves use it; a checkbox per part
+  (back colour, each light's direction and colour, fog) that starts it from the
+  game's value; fog as a start distance, *Linear* and *No fog*; *Reset record*. A
+  held control is one undo entry.
+- Shell: `atmos list` (halves per record, the record under the player, the
+  overrides and whether each is current); `atmos show N` (the game's values, the
+  override, what is drawn); `atmos set N back R G B | light J direction X Y Z |
+  light J colour R G B | fog WORD`; `atmos reset N [back | light J | fog]`.
+  `KF2_REMASTER_ATMOS=0` leaves the overrides out, and the probe line gains
+  `N of M record override(s) written`.
+
+**Measured** (`KF2_AUTOSTART=2`, area 1 at the spawn, a scratch pack, 144 fps, the
+editor open and the world paused, 2140x1200):
+
+- **Nothing authored is the picture it was**: `3c64ce3b3e2bdd2e`, the hash the
+  previous build gave for the same view under "Metal is a tinted mirror".
+- **Record 15 decodes as the GTE was measured**: back 120 (`BK 1920`), light
+  columns 0.6499, 0.6499, 0.8125 (`2662, 2662, 3328`), fog word 16000.
+- **An override moves the picture and a reset returns it**: back `200 60 40` on
+  record 15 (3,813 of the area's halves) changed 97.6% of the pixels, largest step
+  80; `atmos reset 15` gave `3c64ce3b3e2bdd2e` again. Fog 4000 changed 97.6%,
+  largest step 150. **Fog 24000 changed nothing**, which is itself a measurement:
+  every surface in this view is nearer than the game's own 8,000, where its fog
+  starts.
+- **The lighting formula still holds**: `KF2_PERPIXEL_PROBE=2` with back colour,
+  one light's direction, another's colour and the fog word all overridden, 60,480
+  corners, **0 off by 2 or more**.
+- **A record changed under its override is refused**: with the saved file's
+  `recordHash` edited, the watcher reloaded it, `atmos list` read record 15
+  `current: false`, the probe `1 of 2 ... 1 refused`, and the view went back to
+  `3c64ce3b3e2bdd2e`.
+- Under `KF2_TILEWALK=verify KF2_POLYASM=verify KF2_MODELWALK=verify` with two
+  overrides written in area 0: 706 reports over 251,497 calls, **0 RAM, register and
+  GTE mismatches**.
+- 144.0 fps drawn at 19.9-20.8 ticks/s with the world running and two overrides
+  written, `[present] wide 288`. The post costs one hash of 44 bytes and at most
+  twenty stores per override per frame; not timed on its own.
+
+**A limit, measured.** The editor's pause holds a modal loop by redrawing stage 13
+without stage 1, so an edit made while the world is paused inside one (the area's
+fade-in, a conversation) is not written until the loop exits: opened during the
+fade-in, the probe read 92 stage 1 passes and `0 of 2 written` until the editor
+closed. In the main loop, stage 1 runs through the pause and an edit shows at once.
+An override already written stays through a modal loop, since nothing there copies
+the records back.
+
+**Judged**, from play through the editor: the area's own lights turned to black and
+one authored point light added (Phase 2) "looks fantastic". It is the first remaster
+look the user has signed off: a dark cave lit only where a light is, the pillar's
+far face black and the floor falling off round the light. The picture also shows
+what that look asks for next: **nothing casts a shadow** (the pillar leaves none on
+the floor behind it), and blacking out an area means editing each record it uses.
+
+**Not judged.** The light directions against their tooltip, fog at other starts
+and curves, and the look in any area but the one in the picture.
 
 ### Phase 6: level edits
 

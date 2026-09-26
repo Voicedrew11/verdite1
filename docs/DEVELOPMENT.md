@@ -908,7 +908,7 @@ Four verdicts, and the fourth is the one that matters:
 inside stage 3, which *is* gated, and every counter in it still stepped per
 rendered frame — because `FramePacing` decides whether the loop is *entered* and
 cannot cut one in half. A modal loop is computed, not listed: a function with a
-backward branch whose subtree reaches a drawing entry point. There are 53.
+backward branch whose subtree reaches a drawing entry point. There are 54.
 
 **The fourth verdict is no longer a defect on its own**, and that changes how to
 read a report: `patches/LoopPacing.cs` paces the *frames* a modal loop produces —
@@ -929,9 +929,10 @@ The question to ask of a render-rate row in a drawing function is therefore not
 flames run at the render rate" in
 [PATCHES_AND_MODS.md](PATCHES_AND_MODS.md).
 
-`--audit` classifies every global on the per-frame path. As of writing: **594
-globals, 73 held to the tick rate, 157 inside a modal loop, 364 under a stage that
-presents.** A writer is any function that stores to the address — an initialiser
+`--audit` classifies every global on the per-frame path. As of writing: **547
+globals, 146 held to the tick rate, 219 inside a modal loop, 182 under a stage that
+presents** (read after the parser was fixed; see "The static model read nothing"
+below, and the earlier count was taken against an older codegen). A writer is any function that stores to the address — an initialiser
 and a reset count too — so a render-rate row is where to look, not a verdict.
 
 Addresses are recovered from `lui`/`addiu` pairs, which is how PSY-Q reaches
@@ -997,3 +998,37 @@ lists **four ungated stages that could be gated and are not** — `func_8002C944
 `func_800140AC`, `func_80016FC8` and `func_80014534` all submit nothing and write
 between 1 and 14 globals each. Nobody has looked at whether those globals are
 per-tick state; the tool only says they are reachable and unheld.
+
+### The static model read nothing
+
+**For some time every tool on `scripts/callgraph.py` was answering from an empty
+graph, and saying so in a way that read as a clean bill.** Measured: 709 functions
+in `game`, **0 call edges and 0 global writes**. `check_gate.py` printed `0
+violation(s)` because no gated stage reached anything; `find_writers.py` answered
+`no function writes this through a literal address` for `0x801930EC`, which stage 1
+writes every frame. Three changes to the emitted C# had each broken one regex:
+
+- `0035` wraps every statement in a block and appends its PGXP hook, so an `addiu`
+  is `{ var _v = c.A0; c.A0 = c.A0 + 0x2E18u; if (...Pgxp...) ... }` and an access
+  goes through a local, `{ var _a = (c.S0 + 0x66u); ... mem.ReadU16(_a) ... }`;
+- the per-overlay classes made a call `KingsField2_game.func_...(c, m)`, where the
+  call regex wanted `KingsField2.func_`;
+- `merge_sdk_names.py` named 997 functions after PSY-Q, which the function regex
+  (`func_` only) skipped, calls into them included.
+
+The parser now cuts the PGXP tail off each line before reading it, tracks `_a`,
+matches any overlay class and any name (a PSY-Q name's address comes from its
+funcmap), and records **reads** and every address a `lui`/`addiu` pair forms as
+well as writes: `Graph.readers(addr)` and `Graph.touching(lo, hi)`, the second
+catching a table's base that the dataflow cannot follow into an index. After: 807
+functions in `game`, 1,910 call edges, 1,265 writes, 1,896 reads; `check_gate.py` now prints those
+counts first and fails outright on a graph with no edges or no writes.
+
+**The first honest `check_gate.py` run failed**, on stage 5: `func_80046A60 ->
+func_80043388 -> func_8001D544 -> func_800226A8 -> DrawOTag`. `func_80043388` is a
+modal loop (a backward branch; it opens the shops, the message box and stage 13
+itself, an NPC's conversation), and with every modal loop blocked stage 5 reaches
+nothing that draws, so it is the same exception as stages 2 and 3 and is recorded
+in `KNOWN` as such. It passes again, now on a graph that has edges in it. **A tool
+whose clean answer and whose broken answer print the same line needs a count of
+what it read**; the counts above are the thing to check after a codegen change.

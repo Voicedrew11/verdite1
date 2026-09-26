@@ -73,6 +73,14 @@ KNOWN = {
         "still runs stage 13 afterwards -- so skipping stage 3 costs a redundant "
         "draw rather than a frame's picture."
     ),
+    0x80046A60: (
+        "stage 5 reaches a submit only through func_80043388, a modal loop with "
+        "a backward branch that opens the shops (func_8001D544 and three more), "
+        "the message box (func_80035B48) and stage 13 itself -- an NPC's "
+        "conversation. With every modal loop blocked it reaches nothing that "
+        "draws, so skipping stage 5 delays entering one by up to a tick, as "
+        "stage 2's exception does."
+    ),
 }
 
 
@@ -134,6 +142,15 @@ def main() -> int:
         print("\nA stage that draws cannot be gated whole; its per-frame counters have")
         print("to be found and held one at a time. See scripts/find_writers.py --stage.")
         return 0
+
+    edges = sum(len(f.calls) for f in g.funcs.values())
+    writes = sum(len(f.writes) for f in g.funcs.values())
+    print(f"graph: {len(g.funcs)} functions, {edges} call edges, {writes} global writes")
+    if edges == 0 or writes == 0:
+        # An empty graph reaches nothing and so passes every rule; that was the
+        # state for as long as the parser lagged the codegen.
+        print("FAIL  the call graph is empty: scripts/callgraph.py no longer reads generated/*.cs")
+        return 1
 
     failures = 0
     print(f"{len(gate)} gated addresses from patches/FramePacing.cs DefaultGate")
