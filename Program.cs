@@ -710,6 +710,14 @@ Kf2.Murk.Configure(Environment.GetEnvironmentVariable("KF2_MURK"),
                    Environment.GetEnvironmentVariable("KF2_MURK_DISTANCE"));
 Kf2.Murk.Install();
 
+// Water waves: a slow swell moves the water's own vertices (the tile walk points each
+// water mesh at a moved copy), and ripples push and shade its texture per pixel
+// (patches/recompone/0078), on the world's clock. Off by default: measured, not
+// judged. See "Water waves" in docs/RENDERING.md.
+Kf2.Waves.Configure(Environment.GetEnvironmentVariable("KF2_WAVES"),
+                    Environment.GetEnvironmentVariable("KF2_WAVES_PROBE"));
+Kf2.Waves.Install();
+
 // Planar reflections (patches/recompone/0068): the tile walk and the object walk's
 // submits run a second time from the camera mirrored in the water, into an ordering
 // table of the port's own, drawn into a texture the reflection pass reads first.

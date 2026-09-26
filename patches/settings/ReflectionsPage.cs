@@ -5,8 +5,8 @@ using RecompOne.Runtime.Host.Window;
 namespace Kf2.Settings;
 
 /// <summary>
-/// The water switches, under Video ▸ Experimental after the Z-buffer: the murk and
-/// the three reflection sources, each on its own. Their tuning is on the console
+/// The water switches, under Video ▸ Experimental after the Z-buffer: the murk, the
+/// waves and the three reflection sources, each on its own. Their tuning is on the console
 /// (<c>KF2_MURK_*</c>, <c>KF2_SSR_*</c>, <c>KF2_PLANAR_*</c>, <c>KF2_RETAINED_*</c>),
 /// as the occlusion pass's is.
 /// </summary>
@@ -53,6 +53,81 @@ public sealed class ReflectionsPage : IPatchPage
           "en": "Reset murk",
           "pt-BR": "Restaurar turvação",
           "es-419": "Restablecer turbidez"
+        },
+        "kf2.waves.label": {
+          "en": "Water waves",
+          "pt-BR": "Ondas na água",
+          "es-419": "Olas en el agua"
+        },
+        "kf2.waves.tooltip": {
+          "en": "Water moves: a slow swell lifts and lowers the surface, and ripples push and shade its texture, so the pattern no longer repeats tile by tile. The edges of the water stay where they are. Experimental.",
+          "pt-BR": "A água se move: uma ondulação lenta sobe e desce a superfície, e marolas deslocam e sombreiam sua textura, para que o padrão não se repita ladrilho a ladrilho. As bordas da água ficam onde estão. Experimental.",
+          "es-419": "El agua se mueve: un oleaje lento sube y baja la superficie, y ondas desplazan y sombrean su textura, para que el patrón no se repita baldosa a baldosa. Los bordes del agua se quedan donde están. Experimental."
+        },
+        "kf2.waves.swell": {
+          "en": "Swell height",
+          "pt-BR": "Altura da ondulação",
+          "es-419": "Altura del oleaje"
+        },
+        "kf2.waves.swell.tooltip": {
+          "en": "How far the surface rises and falls, in world units (a floor tile is 2048). Only open water moves; 0 turns the swell off.",
+          "pt-BR": "Quanto a superfície sobe e desce, em unidades do mundo (um ladrilho do piso tem 2048). Só a água aberta se move; 0 desliga a ondulação.",
+          "es-419": "Cuánto sube y baja la superficie, en unidades del mundo (una baldosa del piso mide 2048). Solo se mueve el agua abierta; 0 apaga el oleaje."
+        },
+        "kf2.waves.swellsize": {
+          "en": "Swell length",
+          "pt-BR": "Comprimento da ondulação",
+          "es-419": "Longitud del oleaje"
+        },
+        "kf2.waves.swellsize.tooltip": {
+          "en": "The distance between crests of the longest swell, in world units. The water bends only at tile corners, so short swells look faceted.",
+          "pt-BR": "A distância entre as cristas da ondulação mais longa, em unidades do mundo. A água só se dobra nos cantos dos ladrilhos, então ondulações curtas parecem facetadas.",
+          "es-419": "La distancia entre crestas del oleaje más largo, en unidades del mundo. El agua solo se dobla en las esquinas de las baldosas, así que un oleaje corto se ve facetado."
+        },
+        "kf2.waves.ripple": {
+          "en": "Ripple strength",
+          "pt-BR": "Intensidade das marolas",
+          "es-419": "Intensidad de las ondas"
+        },
+        "kf2.waves.ripple.tooltip": {
+          "en": "How far the ripples push the water's texture, in world units (one of its pixels is 32). 0 leaves the texture still.",
+          "pt-BR": "Quanto as marolas deslocam a textura da água, em unidades do mundo (um pixel dela tem 32). 0 deixa a textura parada.",
+          "es-419": "Cuánto desplazan las ondas la textura del agua, en unidades del mundo (uno de sus píxeles mide 32). 0 deja la textura quieta."
+        },
+        "kf2.waves.ripplesize": {
+          "en": "Ripple size",
+          "pt-BR": "Tamanho das marolas",
+          "es-419": "Tamaño de las ondas"
+        },
+        "kf2.waves.ripplesize.tooltip": {
+          "en": "The length of the longest ripple, in world units; three shorter ones ride on it. They fade out in the distance before they can shimmer.",
+          "pt-BR": "O comprimento da marola mais longa, em unidades do mundo; três mais curtas vão sobre ela. Elas somem à distância antes de poderem cintilar.",
+          "es-419": "La longitud de la onda más larga, en unidades del mundo; tres más cortas van sobre ella. Se desvanecen a lo lejos antes de poder titilar."
+        },
+        "kf2.waves.shade": {
+          "en": "Ripple shading",
+          "pt-BR": "Sombreamento das marolas",
+          "es-419": "Sombreado de las ondas"
+        },
+        "kf2.waves.shade.tooltip": {
+          "en": "How much the ripples lighten the water on one slope and darken it on the other.",
+          "pt-BR": "Quanto as marolas clareiam a água de um lado e a escurecem do outro.",
+          "es-419": "Cuánto aclaran las ondas el agua de un lado y la oscurecen del otro."
+        },
+        "kf2.waves.speed": {
+          "en": "Wave speed",
+          "pt-BR": "Velocidade das ondas",
+          "es-419": "Velocidad de las olas"
+        },
+        "kf2.waves.speed.tooltip": {
+          "en": "How fast the swell and the ripples move. They stop when the world stops.",
+          "pt-BR": "Quão rápido a ondulação e as marolas se movem. Param quando o mundo para.",
+          "es-419": "Qué tan rápido se mueven el oleaje y las ondas. Se detienen cuando el mundo se detiene."
+        },
+        "kf2.waves.reset": {
+          "en": "Reset waves",
+          "pt-BR": "Restaurar ondas",
+          "es-419": "Restablecer olas"
         },
         "kf2.ssr.label": {
           "en": "Screen-space reflections",
@@ -101,6 +176,15 @@ public sealed class ReflectionsPage : IPatchPage
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf2.murk.tooltip"));
         DrawMurk(murk);
 
+        bool waves = Waves.Enabled;
+        if (ImGui.Checkbox(Localization.T("kf2.waves.label"), ref waves))
+        {
+            Waves.SetEnabled(waves);
+            PatchSettings.Set(Waves.OnKey, waves);
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf2.waves.tooltip"));
+        DrawWaves(waves);
+
         bool retained = RetainedMap.Enabled;
         if (ImGui.Checkbox(Localization.T("kf2.ssr.retained.label"), ref retained))
         {
@@ -128,6 +212,51 @@ public sealed class ReflectionsPage : IPatchPage
             PatchSettings.Set(Reflections.OnKey, on);
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf2.ssr.tooltip"));
+    }
+
+    static void DrawWaves(bool on)
+    {
+        ImGui.BeginDisabled(!on);
+        ImGui.Indent();
+
+        Slider("kf2.waves.swell", Waves.SwellKey, ref Waves.Swell, 0f, 512f, "%.0f", false);
+        Slider("kf2.waves.swellsize", Waves.SwellSizeKey, ref Waves.SwellSize, 2048f, 65536f, "%.0f", true);
+        Slider("kf2.waves.ripple", Waves.RippleKey, ref WaterWaves.Distort, 0f, 200f, "%.0f", false);
+        Slider("kf2.waves.ripplesize", Waves.RippleSizeKey, ref WaterWaves.Scale, 100f, 4096f, "%.0f", true);
+        Slider("kf2.waves.shade", Waves.ShadeKey, ref WaterWaves.Shade, 0f, 1f, "%.2f", false);
+        Slider("kf2.waves.speed", Waves.SpeedKey, ref Waves.Speed, 0f, 4f, "%.2f", false);
+
+        if (ImGui.Button(Localization.T("kf2.waves.reset")))
+        {
+            Waves.Swell = Waves.DefaultSwell;
+            Waves.SwellSize = Waves.DefaultSwellSize;
+            WaterWaves.Distort = Waves.DefaultRipple;
+            WaterWaves.Scale = Waves.DefaultRippleSize;
+            WaterWaves.Shade = Waves.DefaultShade;
+            Waves.Speed = Waves.DefaultSpeed;
+            PatchSettings.Set(Waves.SwellKey, Waves.DefaultSwell);
+            PatchSettings.Set(Waves.SwellSizeKey, Waves.DefaultSwellSize);
+            PatchSettings.Set(Waves.RippleKey, Waves.DefaultRipple);
+            PatchSettings.Set(Waves.RippleSizeKey, Waves.DefaultRippleSize);
+            PatchSettings.Set(Waves.ShadeKey, Waves.DefaultShade);
+            PatchSettings.Set(Waves.SpeedKey, Waves.DefaultSpeed);
+            Waves.Changed();
+        }
+
+        ImGui.Unindent();
+        ImGui.EndDisabled();
+    }
+
+    static void Slider(string label, string key, ref float value, float min, float max, string format, bool log)
+    {
+        var flags = ImGuiSliderFlags.AlwaysClamp | (log ? ImGuiSliderFlags.Logarithmic : ImGuiSliderFlags.None);
+        if (ImGui.SliderFloat(Localization.T(label), ref value, min, max, format, flags))
+        {
+            PatchSettings.Set(key, value);
+            Waves.Changed();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(Localization.T(label + ".tooltip"));
     }
 
     static void DrawMurk(bool on)

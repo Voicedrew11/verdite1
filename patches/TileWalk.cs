@@ -207,7 +207,7 @@ public static class TileWalk
         mem.WriteU32(sp + 0x10u, c.S0);
 
         if (Remaster.Faces.Recording) Remaster.Faces.FrameStart();
-        if (!PlanarWalk.Mirroring) RetainedMap.AtWalk(c, mem);
+        if (!PlanarWalk.Mirroring) { RetainedMap.AtWalk(c, mem); Waves.AtWalk(c, mem); }
         c.A0 = 0u;
         c.RA = 0x80031CBCu;
         KingsField2.func_8002E190(c, mem);
@@ -407,43 +407,49 @@ public static class TileWalk
         c.RA = 0x80031A84u;
         KingsField2.func_8002E1F0(c, mem);
         Remaster.Faces.NoteTable(mem.ReadU32(ModelTable));
+        // The water's moved copy, for every reader of the mesh below; put back after.
+        WaterSwell.Enter(mem, rec, model);
 
         // A subdivided mesh leaves the subdivider's corners in the vertex cache.
         bool whole = true;
-        if ((flags & 0x80u) == 0u)
+        try
         {
-            _unclipped++;
-            c.A0 = model;
-            c.RA = 0x80031B00u;
-            KingsField2.func_8002FECC(c, mem);
-        }
-        else if ((flags & 0x40u) == 0u) Plain(c, mem, model);
-        else
-        {
-            c.A0 = model;
-            c.RA = 0x80031AA0u;
-            KingsField2.func_8002E1BC(c, mem);
-            if (mem.ReadU32(c.V0 + 0x14u) < 0x10u)
+            if ((flags & 0x80u) == 0u)
             {
-                _subdivided++;
-                whole = false;
-                uint srcVerts = mem.ReadU32(0x8018EAA0u);
-                c.A0 = mem.ReadU32(ModelTable);
-                c.A1 = model;
-                c.A2 = sp + 0x38u;
-                c.RA = 0x80031AC8u;
-                KingsField2.func_80030C94(c, mem);
-                if (Remaster.Faces.Wanted) Remaster.Faces.Subdivided(mem, model, sp + 0x38u);
-                if (Remaster.FaceProbe.On) Remaster.FaceProbe.Subdivided(mem, model, sp + 0x38u, srcVerts);
+                _unclipped++;
                 c.A0 = model;
-                c.A1 = 0xF0u;
-                c.A2 = sp + 0x38u;
-                c.RA = 0x80031AD8u;
-                KingsField2.func_80030540(c, mem);
-                if (Remaster.Faces.Wanted) Remaster.Faces.SubdividedDone();
+                c.RA = 0x80031B00u;
+                KingsField2.func_8002FECC(c, mem);
             }
-            else Plain(c, mem, model);
+            else if ((flags & 0x40u) == 0u) Plain(c, mem, model);
+            else
+            {
+                c.A0 = model;
+                c.RA = 0x80031AA0u;
+                KingsField2.func_8002E1BC(c, mem);
+                if (mem.ReadU32(c.V0 + 0x14u) < 0x10u)
+                {
+                    _subdivided++;
+                    whole = false;
+                    uint srcVerts = mem.ReadU32(0x8018EAA0u);
+                    c.A0 = mem.ReadU32(ModelTable);
+                    c.A1 = model;
+                    c.A2 = sp + 0x38u;
+                    c.RA = 0x80031AC8u;
+                    KingsField2.func_80030C94(c, mem);
+                    if (Remaster.Faces.Wanted) Remaster.Faces.Subdivided(mem, model, sp + 0x38u);
+                    if (Remaster.FaceProbe.On) Remaster.FaceProbe.Subdivided(mem, model, sp + 0x38u, srcVerts);
+                    c.A0 = model;
+                    c.A1 = 0xF0u;
+                    c.A2 = sp + 0x38u;
+                    c.RA = 0x80031AD8u;
+                    KingsField2.func_80030540(c, mem);
+                    if (Remaster.Faces.Wanted) Remaster.Faces.SubdividedDone();
+                }
+                else Plain(c, mem, model);
+            }
         }
+        finally { WaterSwell.Leave(mem); }
 
         if (RetainedMap.Checking && !PlanarWalk.Mirroring && whole) RetainedMap.CheckHalf(mem, rec, model);
         Epilogue(c, mem, sp);

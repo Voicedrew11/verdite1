@@ -166,6 +166,8 @@ KF2_AO_WORLD_PROBE=1                   # the transform, the grid, and whether ei
 KF2_AO_PROBE=1                         # coverage, the projection read off the GTE, passes run
 KF2_AO_PROBE=2                         # also read the occlusion back: how dark, how much, and where
 KF2_MURK=1 KF2_MURK_DISTANCE=700       # murky water: a dark murk by the distance the view ray runs through water, surface to floor, 63% at the distance (off by default; independent of any reflection; GL core only; depth and colour are also sliders under Video ▸ Experimental ▸ Murky water)
+KF2_WAVES=1                            # water waves: a swell moves the water's vertices, ripples push and shade its texture (off by default; GL core only for the ripples; the settings are sliders under Video ▸ Experimental ▸ Water waves, and the `waves` shell verb)
+KF2_WAVES_PROBE=1                      # a line every 2 s: rects, the clock, rippled batches, water positions free/rim/shared, halves and vertices moved
 KF2_SSR=1                              # screen-space reflections on water (off by default; independent of the murk, planar and retained reflections; GL core only)
 KF2_SSR_STRENGTH=0.6 KF2_SSR_F0=0.12   # how much water reflects at a grazing angle, and looking straight down
 KF2_SSR_DISTANCE=16384 KF2_SSR_STEPS=32 KF2_SSR_THICKNESS=256   # the march: how far (unset: to where the game's fog turns black), how many steps, how far behind a depth still hits

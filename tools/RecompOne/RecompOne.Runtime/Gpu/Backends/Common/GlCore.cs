@@ -96,6 +96,10 @@ public sealed partial class GlCore : IGpuBackend
     int _clipOnSent = -1;
     // 0071. Authored lights.
     int _uLightN, _uLightPos, _uLightCol, _uLightDir, _uLightCentre, _uLightH;
+    // 0078. Ripples on water.
+    int _uWaveOn, _uWaveN, _uWaveRect, _uWaveR, _uWaveCam, _uWaveT, _uWaveCentre, _uWaveH, _uWaveTime, _uWaveParams;
+    int _waveOnSent, _waveSentGen = -1;
+    (float, float, float) _waveCentreSent;
     // 0071. Emissive materials, and 0067's table they are read from.
     int _uEmitOn, _emitOnSent;
     int _lightNSent = -1, _lightsSentGen = -1, _kRemasterGen;
@@ -244,6 +248,19 @@ public sealed partial class GlCore : IGpuBackend
         _uLightH = _gl.GetUniformLocation(_progPrim, "uLightH");
         _lightNSent = _lightsSentGen = -1;
         RemasterUniforms.Supported = !_legacy && _uLightN >= 0 && _uLightPos >= 0;
+        _uWaveOn = _gl.GetUniformLocation(_progPrim, "uWaveOn");
+        _uWaveN = _gl.GetUniformLocation(_progPrim, "uWaveN");
+        _uWaveRect = _gl.GetUniformLocation(_progPrim, "uWaveRect");
+        _uWaveR = _gl.GetUniformLocation(_progPrim, "uWaveR");
+        _uWaveCam = _gl.GetUniformLocation(_progPrim, "uWaveCam");
+        _uWaveT = _gl.GetUniformLocation(_progPrim, "uWaveT");
+        _uWaveCentre = _gl.GetUniformLocation(_progPrim, "uWaveCentre");
+        _uWaveH = _gl.GetUniformLocation(_progPrim, "uWaveH");
+        _uWaveTime = _gl.GetUniformLocation(_progPrim, "uWaveTime");
+        _uWaveParams = _gl.GetUniformLocation(_progPrim, "uWaveParams");
+        _waveOnSent = _waveSentGen = -1;
+        _waveCentreSent = default;
+        WaterWaves.Supported = !_legacy && _uWaveOn >= 0 && _uWaveRect >= 0;
         _uEmitOn = _gl.GetUniformLocation(_progPrim, "uEmitOn");
         _emitOnSent = -1;
         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
@@ -1691,6 +1708,37 @@ public sealed partial class GlCore : IGpuBackend
                 _gl.Uniform1(_uLightH, Math.Max(1f, GteDepth.ProjH));
                 SendShadows(lightN);
                 RemasterUniforms.LitBatches++;
+            }
+        }
+        // 0078. Water's blend, drawn into the frame (not a planar reflection, whose
+        // camera is the mirrored one): the ripples, with this frame's camera and clock.
+        int waveOn = WaterWaves.Active && rt is { IsPlanar: false } && _kTransparent
+                     && (_kBlend == 0 || _kBlend == 3) ? 1 : 0;
+        if (_uWaveOn >= 0 && (waveOn != 0 || _waveOnSent != 0))
+        {
+            if (waveOn != _waveOnSent) _gl.Uniform1(_uWaveOn, waveOn);
+            _waveOnSent = waveOn;
+            if (waveOn != 0)
+            {
+                if (_waveSentGen != WaterWaves.Generation)
+                {
+                    _gl.Uniform1(_uWaveN, WaterWaves.RectN);
+                    _gl.Uniform4(_uWaveRect, (uint)WaterWaves.RectN, new ReadOnlySpan<float>(WaterWaves.Rects, 0, WaterWaves.RectN * 4));
+                    _gl.UniformMatrix3(_uWaveR, 1, true, WaterWaves.R);
+                    _gl.Uniform3(_uWaveCam, WaterWaves.CamX, WaterWaves.CamY, WaterWaves.CamZ);
+                    _gl.Uniform3(_uWaveT, WaterWaves.Tx, WaterWaves.Ty, WaterWaves.Tz);
+                    _gl.Uniform1(_uWaveTime, WaterWaves.Time);
+                    _gl.Uniform4(_uWaveParams, WaterWaves.Distort, Math.Max(16f, WaterWaves.Scale), WaterWaves.Shade, 0f);
+                    _waveSentGen = WaterWaves.Generation;
+                }
+                var centre = (GteDepth.ProjCx + rt!.Margin, GteDepth.ProjCy, Math.Max(1f, GteDepth.ProjH));
+                if (centre != _waveCentreSent)
+                {
+                    _gl.Uniform2(_uWaveCentre, centre.Item1, centre.Item2);
+                    _gl.Uniform1(_uWaveH, centre.Item3);
+                    _waveCentreSent = centre;
+                }
+                WaterWaves.Batches++;
             }
         }
         // 0071. A batch with light records glows where its material says so.

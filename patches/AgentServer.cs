@@ -110,6 +110,7 @@ public static class AgentServer
         "map [on|off|toggle] - the full-screen map, which pauses the world unless KF2_MAP_PAUSE=0",
         "goto <x> <y> <z> [yaw [pitch]] - put the player at a position in this area, and face yaw (0x1000 a turn) and pitch",
         "view [<x> <y> <z> <pitch> <yaw> <roll> | off] - the camera the last frame was drawn from, a digest of its cull grid and the cells it draws; with a camera, draw every frame from it until 'view off'",
+        "waves [on|off | swell|swellsize|ripple|ripplesize|shade|speed <value>] - the water waves: their state, the switch, or one setting (not saved)",
     ];
 
     // HookManager attributes hooks to a mod so they can be removed again. This is
@@ -307,6 +308,7 @@ public static class AgentServer
         bool whole = parts[0].Equals("goto", StringComparison.OrdinalIgnoreCase)
                      || parts[0].Equals("view", StringComparison.OrdinalIgnoreCase)
                      || parts[0].Equals("snap", StringComparison.OrdinalIgnoreCase)
+                     || parts[0].Equals("waves", StringComparison.OrdinalIgnoreCase)
                      || Remaster.Shell.Verbs.Contains(parts[0].ToLowerInvariant());
         var cmd = new Cmd(parts[0].ToLowerInvariant(),
                           parts.Length > 1 ? (whole ? string.Join(' ', parts[1..]) : parts[1]) : "",
@@ -331,6 +333,7 @@ public static class AgentServer
             case "atmos":
             case "snap":
             case "view":
+            case "waves":
                 Enqueue(_fast, cmd);
                 break;
             case "load":
@@ -404,6 +407,7 @@ public static class AgentServer
         "map" => DoMap(cmd.Arg1),
         "goto" => DoGoto(cmd.Arg1),
         "view" => DoView(cmd.Arg1),
+        "waves" => Waves.Shell(cmd.Arg1),
         "edit" or "select" or "set" or "pack" or "remaster" or "light" or "textures" or "atmos" => Remaster.Shell.Run(cmd.Name, cmd.Arg1),
         _ => Err($"unknown command '{cmd.Name}'; try help"),
     };

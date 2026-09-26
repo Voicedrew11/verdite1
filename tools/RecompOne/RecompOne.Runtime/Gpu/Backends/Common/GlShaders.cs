@@ -1289,6 +1289,20 @@ internal static class GlShaders
         uniform vec4  uFluidRect[8];
         uniform float uFluidOff[8];
         uniform float uFluidN;
+        // 0078. Ripples on water (WaterWaves): water's VRAM rects; the camera the frame
+        // was drawn with (view = R (world - cam) + T) and the projection, to take a
+        // fragment to the world; the field's clock; the push in world units, the
+        // longest wavelength and the shading.
+        uniform int   uWaveOn;
+        uniform int   uWaveN;
+        uniform vec4  uWaveRect[8];
+        uniform mat3  uWaveR;
+        uniform vec3  uWaveCam;
+        uniform vec3  uWaveT;
+        uniform vec2  uWaveCentre;
+        uniform float uWaveH;
+        uniform float uWaveTime;
+        uniform vec4  uWaveParams;
         // 0068. Drawing a planar reflection: the water's plane in the mirrored
         // camera's view space, kept where dot(xyz, p) + w >= 0, and the projection
         // to take a fragment back to that space with (the GTE's centre, in the
@@ -1415,6 +1429,47 @@ internal static class GlShaders
                 return vec4(mix(c0.rgb, c1.rgb, fy), c0.a);
             }
             return a;
+        }
+
+        // 0078. The water rect this fragment lies in, in the page's texels: origin and
+        // size; a size of 0 is not water. A pushed texel wraps inside it, as the upload
+        // itself wraps.
+        ivec4 gWave = ivec4(0);
+
+        void waveRectOf(vec2 uv) {
+            float div = texMode == 0 ? 4.0 : texMode == 1 ? 2.0 : 1.0;
+            float vx = float(pageBase.x) + floor(uv.x) / div;
+            float vy = float(pageBase.y) + floor(uv.y);
+            for (int i = 0; i < 8; ++i) {
+                if (i >= uWaveN) break;
+                vec4 r = uWaveRect[i];
+                if (vx < r.x || vx >= r.x + r.z || vy < r.y || vy >= r.y + r.w) continue;
+                gWave = ivec4(int((r.x - float(pageBase.x)) * div + 0.5), int(r.y - float(pageBase.y) + 0.5),
+                              int(r.z * div + 0.5), int(r.w + 0.5));
+                return;
+            }
+        }
+
+        ivec2 waveWrap(ivec2 r) {
+            if (gWave.z <= 0 || gWave.w <= 0) return r;
+            ivec2 d = r - gWave.xy;
+            return gWave.xy + d - gWave.zw * ivec2(floor(vec2(d) / vec2(gWave.zw)));
+        }
+
+        // One directional wave's slope. Deep water: a wave's period goes as the root
+        // of its length.
+        vec2 waveTerm(vec2 p, vec2 dir, float len, float amp) {
+            float w = 6.2831853 / (2.4 * sqrt(len / 700.0));
+            return dir * (amp * cos(6.2831853 / len * dot(dir, p) - w * uWaveTime));
+        }
+
+        // Four waves at unrelated lengths and headings, so the sum does not repeat on
+        // the tile grid; the slopes' amplitudes add to 1.
+        vec2 waveSlope(vec2 p, float len) {
+            return waveTerm(p, vec2(0.80, 0.60), len, 0.40)
+                 + waveTerm(p, vec2(-0.39, 0.92), len * 0.61, 0.28)
+                 + waveTerm(p, vec2(0.97, -0.26), len * 0.37, 0.20)
+                 + waveTerm(p, vec2(-0.70, -0.71), len * 0.23, 0.12);
         }
 
         // The console's truncation: towards the texel the gradient enters from.
@@ -1654,8 +1709,37 @@ internal static class GlShaders
             // pair as the shape of the area this pixel actually covers.
             vec2 dUVdx = dFdx(vUV);
             vec2 dUVdy = dFdy(vUV);
-            int rawU = dUVdx.x < 0.0 ? int(ceil(vUV.x - 0.0001)) : int(floor(vUV.x + 0.0001));
-            int rawV = dUVdy.y < 0.0 ? int(ceil(vUV.y - 0.0001)) : int(floor(vUV.y + 0.0001));
+
+            // 0078. Water: the texel is read from where the wave field's slope pushes
+            // it, a push in the world taken into texture space through the polygon's
+            // own mapping, so it agrees across tiles however each is turned; and the
+            // slope lightens or darkens it. Faded out where a pixel spans too much of
+            // the shortest wave to show it. uWaveOn is uniform, so the derivatives
+            // are taken in uniform control flow.
+            vec2 uv = vUV;
+            float waveLight = 1.0;
+            if (uWaveOn != 0 && texMode <= 2) {
+                float z = vDepth * 65536.0;
+                vec3 vp = vec3((gl_FragCoord.xy / float(uScale) - uWaveCentre) * (z / uWaveH), z);
+                vec3 wp = transpose(uWaveR) * (vp - uWaveT) + uWaveCam;
+                vec2 wx = dFdx(wp.xz), wy = dFdy(wp.xz);
+                float det = wx.x * wy.y - wx.y * wy.x;
+                waveRectOf(vUV);
+                if (vDepth > 0.0 && gWave.z > 0 && abs(det) > 1e-6) {
+                    float len = uWaveParams.y;
+                    float fw = max(length(wx), length(wy));
+                    float fade = 1.0 - smoothstep(len * 0.03, len * 0.09, fw);
+                    vec2 sl = waveSlope(wp.xz, len) * fade;
+                    // The inverse of [wx wy], then the UV's own derivatives.
+                    vec2 push = sl * uWaveParams.x;
+                    vec2 sp = vec2(wy.y * push.x - wy.x * push.y, -wx.y * push.x + wx.x * push.y) / det;
+                    uv += dUVdx * sp.x + dUVdy * sp.y;
+                    waveLight = max(1.0 + uWaveParams.z * dot(sl, vec2(0.6, 0.8)), 0.05);
+                } else gWave = ivec4(0);
+            }
+
+            int rawU = dUVdx.x < 0.0 ? int(ceil(uv.x - 0.0001)) : int(floor(uv.x + 0.0001));
+            int rawV = dUVdy.y < 0.0 ? int(ceil(uv.y - 0.0001)) : int(floor(uv.y + 0.0001));
 
             if (texMode == 6) {
                 vec2 win = vec2(uTexWindow.xy) + 1.0;
@@ -1674,7 +1758,7 @@ internal static class GlShaders
                 return;
             }
 
-            vec4 texel = decodeFluid(ivec2(rawU, rawV));
+            vec4 texel = decodeFluid(waveWrap(ivec2(rawU, rawV)));
 
             // Anisotropic filtering and mipmaps. See "Anisotropic filtering" in
             // docs/RENDERING.md. The centre tap above is the console's texel and
@@ -1688,6 +1772,8 @@ internal static class GlShaders
                 bool hasRect = (vTex.y & 0x80000000u) != 0u;
                 ivec2 rMin = hasRect ? ivec2(int(vTex.x & 255u), int((vTex.x >> 8) & 255u)) : ivec2(0);
                 ivec2 rMax = hasRect ? ivec2(int((vTex.x >> 16) & 255u), int(vTex.x >> 24)) : ivec2(255);
+                // 0078. A pushed tap wraps in the water's rect instead.
+                if (gWave.z > 0) { rMin = ivec2(-4096); rMax = ivec2(4096); }
                 float lx = length(dUVdx), ly = length(dUVdy);
                 vec2 axis = lx >= ly ? dUVdx : dUVdy;
                 float major = max(lx, ly), minor = min(lx, ly);
@@ -1715,8 +1801,8 @@ internal static class GlShaders
                         float solid = 0.0;
                         for (int i = 0; i < 16; ++i) {
                             if (i >= taps) break;
-                            vec2 t = vUV + stride * (float(i) + 0.5 - 0.5 * float(taps));
-                            vec4 c = decodeFluid(clamp(truncUV(t, dUVdx.x < 0.0, dUVdy.y < 0.0), rMin, rMax));
+                            vec2 t = uv + stride * (float(i) + 0.5 - 0.5 * float(taps));
+                            vec4 c = decodeFluid(waveWrap(clamp(truncUV(t, dUVdx.x < 0.0, dUVdy.y < 0.0), rMin, rMax)));
                             // A transparent texel is black: weigh it out.
                             float w = (c.rgb == vec3(0.0) && c.a < 0.5) ? 0.0 : 1.0;
                             sum += c.rgb * w;
@@ -1726,6 +1812,10 @@ internal static class GlShaders
                     }
                 }
             }
+
+            // 0078. A transparent texel is black, and stays so.
+            if (waveLight != 1.0 && !(texel.rgb == vec3(0.0) && texel.a < 0.5))
+                texel.rgb = clamp(texel.rgb * waveLight, vec3(1.0 / 255.0), vec3(1.0));
 
             if (vRepClut != 0 && texMode != 2) {
                 if (texel.a < 0.5) discard;

@@ -13,7 +13,7 @@ amendment's diff appended to its `.patch` file, and the source comments keep its
 number. `0016` and `0057` predate this and keep their numbers, since the source
 refers to them.
 
-Sixty-five of the seventy-three are load-bearing; `0002`, `0003`, `0015`, `0045`,
+Sixty-six of the seventy-four are load-bearing; `0002`, `0003`, `0015`, `0045`,
 `0046`, `0065` and `0069` are diagnostics and `0013` is a settings-placement hook. `0063` is retired:
 it was folded into `0054` as an amendment, and the number is not reused. `0074`-`0076`
 are held by the remaster's plan for work not yet made (`docs/REMASTER.md`), so the
@@ -1161,6 +1161,21 @@ Four files in the directory have no entry below:
   switch; `ShadowModelRenders`, `ShadowModelTriangles` and `ShadowCasters` count it.
   The amendment is the second diff in the patch file. See "Shadows, the second
   slice" in `docs/REMASTER.md`.
+
+- `0078-water-waves.patch` — ripples on water, per pixel. `Gpu/WaterWaves.cs` holds
+  what the port publishes: the water's VRAM rects, the camera the frame was drawn
+  with (`view = R (world - cam) + T`), a clock, and three settings (the push in world
+  units, the longest ripple's length, the shading). `PrimFs` gains `uWave*`: a
+  fragment whose texel lies in a rect is taken to world space from its depth, a
+  four-wave field's slope becomes a push in the world, taken into texture space
+  through the polygon's own mapping (the world position's and the UV's screen
+  derivatives), and the pushed texel wraps inside the rect (`waveWrap`), the aniso
+  taps with it; the slope also scales the texel. Faded out where a pixel spans too
+  much of the field. `GlCore` sets `uWaveOn` for a batch in water's blend
+  (semi-transparent, 0 or 3) and not into a planar texture, and sends the rest when
+  `WaterWaves.Generation` moves. With `uWaveOn` 0 the texture path is the old one.
+  The swell is the port's alone (`patches/WaterSwell.cs`). GL core only. **No
+  recompile.** See "Water waves" in `docs/RENDERING.md`.
 
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a

@@ -3665,3 +3665,70 @@ forced off): murk 36.3% of the picture reflective, 0% marched, mean weight 0.945
 SSR 53.5% of that hit a surface and 46.3% the sky, as before; planar 55.6% planar
 and 0% marched; retained 55.5% planar and 0.2% from the cubemap; none of them, no
 pass. 144.0 fps drawn at 19.9-20.0 ticks/s and `[present] wide 288` in each.
+
+### Water waves
+
+**Mechanism measured; the picture has not been judged. Off by default**
+(`KF2_WAVES=1`, or Video ▸ Experimental ▸ *Water waves*). Runtime `WaterWaves`
+(`0078`), port `patches/Waves.cs` and `patches/WaterSwell.cs`.
+
+**The water is coarse, and that decides what a vertex can do.** A census of
+`fdat02`'s bank: open water is model 18, one quad a tile, used by 3,022 halves;
+a pool's edge is two to eight triangles a tile; every water face maps the same
+64x64 image once per tile, so the picture is that image on a 2048-unit grid. A
+vertex is at best a tile corner, so moving vertices can only make a long swell.
+Breaking up the grid is the texture's job, per pixel. The feature is both.
+
+**The swell** lifts and lowers the water's own vertices. A half's mesh is read in
+three places -- the vertex transforms and the clipper through `VertexBase`, the
+subdivider `func_80030C94` straight from the bank's header -- so for the length of
+a half with water `WaterSwell` copies its vertices to `PrimBuffer.WaveScratch`
+(past the mirrored walk's scratch), moves the copy's Y, and points the bank
+header's vertex offset and `VertexBase` at it, then puts the header back. Every
+consumer, and everything after them (depth records, sub-pixel, Z, the surface
+buffer, the planar walk), sees one surface; a subdivided half's midpoints are made
+from moved corners, so near and far tiles agree along each edge. Three waves at
+unrelated headings, lengths L, 0.71L and 0.53L, periods as the root of the length.
+**A vertex moves only if it is interior to the water**: not on an edge only one
+water face has (the rim), and not where any non-water face of the area has a
+vertex. Worked out per area from the map, the bank and the water's rects, hashed
+once a walk. In `fdat02`: 3,714 of 5,174 water positions free, 1,460 on a rim, 363
+shared; built in 9.7 ms; about 97 halves moved a frame. The map bank is
+`0x8018E18C`; `0x8018E19C` holds it only while the tile walk runs (it is the
+object bank at the walk's start, which is what the first build read: no water).
+Skipped under `KF2_TILEWALK=verify`, `KF2_TILEWALK=0` and `KF2_PRIMBUF=1`.
+`KF2_POLYASM=verify` with the swell on: 0 RAM, register and GTE mismatches in all
+nine routines.
+
+**The ripples** are `PrimFs`: a fragment of water's blend (semi-transparent, blend
+0 or 3; `GlCore` sets `uWaveOn` per batch, never into a planar texture) whose texel
+lies in a water rect is taken to world space -- view position from its depth, H
+and the centre, then `view = R (world - cam) + T` inverted, with the camera the
+port reads at the walk's start (the carried one, so the ripples do not swim with
+the smoothing). Four directional waves give a slope; the slope times *Ripple
+strength* is a push **in the world**, taken into texture space through the
+polygon's own mapping (the inverse of the world position's screen derivatives,
+then the UV's), so it agrees across tiles however each is turned; the pushed texel
+wraps inside the rect, as the upload does, and the aniso taps with it. The slope
+also lightens one side and darkens the other (*Ripple shading*). Faded out where a
+pixel spans more than 3-9% of the longest ripple, before it can shimmer.
+
+**One clock**, the world's: ticks plus `LogicPhase`, so both stop when the world
+does (the map, the editor) and are smooth at any rate; *Wave speed* scales its
+steps, not its value, so moving the slider does not jump the water.
+
+Measured in `fdat02` at the New Game's view, 144 fps, 2140x1200, the world paused
+by the editor (`waves` is a shell verb): off `5e48ed0a1016d4b4`, on
+`0651d4f7072b8a47`, and **off again `5e48ed0a1016d4b4`**; on changes 21.5% of the
+pixels, all in rows 694 and below (the water), largest step 61. Ripples alone
+20.4%, the swell alone 21.5%. Two snaps paused are identical; unpaused, 22% of the
+picture moves between two a second apart. 144.0 fps drawn at 20.0 ticks/s, about
+340 rippled batches a frame. Off is compared inside one run, not against a build
+without `0078`: with `uWaveOn` 0 the shader's texture path is the old one by
+construction (`uv` is `vUV`, the wrap returns its argument, no multiply).
+
+**What still needs an eye**: whether the swell reads as water or as the floor
+moving (at tile-corner resolution a short swell is faceted, which is why the
+default length is 12000); whether the rims, held still, look pinned; the ripples'
+strength and shading defaults; and that no crack opens anywhere a water tile meets
+something else.
