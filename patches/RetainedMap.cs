@@ -108,8 +108,10 @@ public static class RetainedMap
             _builds++;
             _lastWhy = _why;
         }
-        if (!ReflectionsReady) return;
+        // 0077. The models are captured for the lights' shadows too.
+        if (!ReflectionsReady && !RetainedScene.ShadowModelsWanted) return;
         RetainedScene.BeginFrame(ReadView(mem));
+        if (!ReflectionsReady) return;
         RetainedPlanes.Choose(mem);
         if (_probe) Report();
     }
@@ -456,8 +458,8 @@ public static class RetainedMap
                           $"{RetainedScene.PlanarDraws} planar draw(s) at {RetainedScene.PlanarGpuNs / 1e6:F3} ms GPU, " +
                           $"{RetainedScene.CubeDraws} cubemap(s) at {RetainedScene.CubeGpuNs / 1e6:F3} ms GPU, " +
                           $"{RetainedScene.Triangles} triangle(s) submitted, chunks {RetainedScene.ChunksDrawn}/{RetainedScene.ChunksTested} drawn; " +
-                          $"{RetainedModels.Models} model(s) and {RetainedModels.Faces} face(s) captured");
-        RetainedModels.Models = RetainedModels.Faces = 0;
+                          $"{RetainedModels.Models} model(s) ({RetainedModels.Placed} placed from their record) and {RetainedModels.Faces} face(s) captured");
+        RetainedModels.Models = RetainedModels.Faces = RetainedModels.Placed = 0;
         _checked = _within = _worst = 0;
         _sumErr = 0;
         RetainedScene.ResetCounters();

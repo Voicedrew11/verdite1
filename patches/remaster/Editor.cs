@@ -411,7 +411,7 @@ public static class Editor
             ImGui.EndDisabled();
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 ImGui.SetTooltip(Lights.ShadowsOn
-                    ? $"The area's walls and floors cast shadows from this light; creatures and objects do not yet. The nearest {RemasterUniforms.MaxShadows} shadowed lights in view get one."
+                    ? $"The area's walls and floors{(RetainedScene.ShadowModels ? ", its creatures and its objects" : "")} cast shadows from this light. The nearest {RemasterUniforms.MaxShadows} shadowed lights in view get one."
                     : "Shadows are off (KF2_REMASTER_SHADOWS=0).");
             ImGui.SameLine();
             if (ImGui.Button("Move to eye")) Pack.SetLight(area, name, "move to eye", o => Pack.SetPosition(o, PlayerLightPosition(m)));

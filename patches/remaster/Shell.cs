@@ -21,7 +21,7 @@ namespace Kf2.Remaster;
 ///     set texture|texture:INDEX[:CLUT] material NAME|none   the picked art, or a key, in every area
 ///     set remaster on|off
 ///     pack save|reload|undo|redo|list|add NAME
-///     light list|shadows on|off|shadows tune BIAS OFFSET SOFT [SIZE]|add NAME [here|pick GX GY|X Y Z]|remove NAME|select NAME|set NAME FIELD V...
+///     light list|shadows on|off|shadows models on|off|shadows tune BIAS OFFSET SOFT [SIZE]|add NAME [here|pick GX GY|X Y Z]|remove NAME|select NAME|set NAME FIELD V...
 ///     atmos [list|darkness [V]|show N|set N FIELD V...|reset N [FIELD]]   the area's light records, their overrides, and its darkness
 ///     remaster                                      the status, as the probe line has it
 /// </summary>
@@ -37,7 +37,7 @@ public static class Shell
         "set selected|tile:...|model:... material NAME|none [tile|mesh]; set texture|texture:INDEX[:CLUT] material NAME|none (the picked art, or a key; every area); " +
             "set material:NAME reflectivity|f0|roughness|metalness|specular|occlusion|emissiveStrength|light|glowRadius|pulseAmount|pulseHz V; set material:NAME emissive R G B; set material:NAME glowMode additive|lit|glowFog on|off|pulseStyle breathe|flicker; set remaster on|off",
         "pack save|reload|undo|redo|list|add NAME - the working pack",
-        "light list | shadows on|off | shadows tune BIAS OFFSET SOFT [SIZE] | add NAME [here | pick GX GY | X Y Z] | remove NAME | select NAME | " +
+        "light list | shadows on|off | shadows models on|off | shadows tune BIAS OFFSET SOFT [SIZE] | add NAME [here | pick GX GY | X Y Z] | remove NAME | select NAME | " +
             "set NAME position X Y Z|colour R G B|intensity V|radius V|type point|spot|direction X Y Z|cone IN OUT|flicker AMOUNT HZ|enabled on|off - " +
             "the area's authored lights; pick places one short of the surface under game pixel GX GY",
         "atmos [list | darkness [0..1] | show N | set N back R G B | set N light J direction X Y Z | set N light J colour R G B | set N fog WORD | " +
@@ -319,6 +319,7 @@ public static class Shell
                     RemasterUniforms.ShadowSoft = Math.Max(0f, F(4));
                     if (a.Length >= 6) RemasterUniforms.ShadowSize = Math.Clamp((int)F(5), 64, 4096);
                 }
+                else if (a.Length >= 3 && a[1] == "models") RetainedScene.ShadowModels = a[2] is "on" or "1";
                 else if (a.Length >= 2) Lights.SetShadows(a[1] is "on" or "1");
                 return Ok("light", LightList(area));
             case "add":
@@ -426,6 +427,9 @@ public static class Shell
             {
                 ["on"] = Lights.ShadowsOn, ["ready"] = RemasterUniforms.ShadowsReady, ["drawn"] = RemasterUniforms.ShadowRenders,
                 ["triangles"] = RemasterUniforms.ShadowTriangles, ["size"] = RemasterUniforms.ShadowSize,
+                ["models"] = RetainedScene.ShadowModels, ["casters"] = RemasterUniforms.ShadowCasters,
+                ["captured"] = (RetainedScene.Find(RemasterUniforms.ShadowFrame)?.DynamicCount ?? 0) / 3,
+                ["modelDrawn"] = RemasterUniforms.ShadowModelRenders, ["modelTriangles"] = RemasterUniforms.ShadowModelTriangles,
                 ["bias"] = RemasterUniforms.ShadowBias, ["offset"] = RemasterUniforms.ShadowOffset, ["soft"] = RemasterUniforms.ShadowSoft,
             },
         };

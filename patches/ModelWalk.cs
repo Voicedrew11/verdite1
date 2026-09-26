@@ -181,6 +181,14 @@ public static class ModelWalk
     /// <summary>Inside the C# object walk, between its first table and its last.</summary>
     public static bool InWalk => _walkOwns;
 
+    /// <summary>The model being submitted, when it is placed in the world through the
+    /// view matrix: its own rotation (times its scale, at 4096) and its world position,
+    /// so the retained scene can place its corners without going back through the
+    /// camera, whose rotation is only good to 1/4096 of the distance.</summary>
+    public static bool Placed { get; private set; }
+    public static readonly short[] PlacedRot = new short[9];
+    public static int PlacedX, PlacedY, PlacedZ;
+
     /// <summary>Every model the last completed walk submitted. Valid until the next
     /// walk starts, so a consumer reads it from a post on `func_800331B4` or from
     /// anywhere inside stage 13 after it.</summary>
@@ -844,6 +852,14 @@ public static class ModelWalk
         c.RA = 0x80032964u;
         KingsField2.SetLightMatrix(c, mem);
 
+        Placed = matrix == ViewMatrix;
+        if (Placed)
+        {
+            for (uint i = 0; i < 9; i++) PlacedRot[i] = (short)mem.ReadU16(sp + 0x30u + i * 2u);
+            PlacedX = (int)mem.ReadU32(pos + 0u);
+            PlacedY = (int)mem.ReadU32(pos + 4u);
+            PlacedZ = (int)mem.ReadU32(pos + 8u);
+        }
         if (matrix != 0u)
         {
             c.A0 = matrix;
@@ -950,6 +966,7 @@ public static class ModelWalk
         }
         PolyAssembler.TileMaterial = 0;
         _model = -1;
+        Placed = false;
 
         c.RA = mem.ReadU32(sp + 0xD4u);
         c.FP = mem.ReadU32(sp + 0xD0u);

@@ -1124,6 +1124,17 @@ Four files in the directory have no entry below:
   `DrawRange` returns the static vertices it drew and takes no frame for a shadow.
   GL core only. **No recompile.** See "Shadows, the first slice" in
   `docs/REMASTER.md`.
+  Since amended: models cast. A slot whose light has a model in reach samples a
+  second cubemap, the map's blitted face by face and the frame's casters drawn over
+  it, from the frame the port names in `RemasterUniforms.ShadowFrame`; it is drawn
+  again when a hash of the casters in reach changes, and the map's cubemap still only
+  when the light or the map does. Casters are the frame's opaque model triangles and
+  those flagged `RetainedScene.FlagSolid` (a door), with every texel, then the other
+  blended ones with `uOpaqueDepth = 1`, which keeps the texels the GPU draws opaque;
+  `FlagNoShadow` (an effect) casts nothing. `RetainedScene.ShadowModels` is the
+  switch; `ShadowModelRenders`, `ShadowModelTriangles` and `ShadowCasters` count it.
+  The amendment is the second diff in the patch file. See "Shadows, the second
+  slice" in `docs/REMASTER.md`.
 
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a

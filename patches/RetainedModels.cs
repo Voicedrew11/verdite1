@@ -19,6 +19,11 @@ namespace Kf2;
 ///
 /// Not captured: the billboards and effects drawn by other assemblers, and anything
 /// drawn outside the object walk (the arm, the HUD).
+///
+/// Also captured for the authored lights' shadows (runtime <c>0077</c>), with
+/// reflections off; then nothing is lit, since a shadow wants only the corners. A
+/// door's blended model is marked solid (<see cref="RetainedScene.FlagSolid"/>), so it
+/// casts as the wall it stands for, and an effect is marked to cast nothing.
 /// </summary>
 static class RetainedModels
 {
@@ -30,7 +35,8 @@ static class RetainedModels
     static RetainedScene.Vertex[] _tris = new RetainedScene.Vertex[1024];
 
     /// <summary>Whether the lit assembler should hand its faces over.</summary>
-    public static bool Capturing => RetainedMap.ReflectionsReady && ModelWalk.InWalk && !PolyAssembler.Verifying;
+    public static bool Capturing => (RetainedMap.ReflectionsReady || RetainedScene.ShadowModelsWanted)
+                                    && ModelWalk.InWalk && !PolyAssembler.Verifying;
 
     public static long Models, Faces;
 
@@ -42,19 +48,17 @@ static class RetainedModels
         var frame = RetainedScene.Find(RetainedScene.Serial);
         if (frame == null || count > 4096) return;
         var v = frame.View;
-
-        // The model's view transform, as the GTE holds it.
-        uint r0 = Gte.ReadControl(0), r1 = Gte.ReadControl(1), r2 = Gte.ReadControl(2), r3 = Gte.ReadControl(3);
-        double m00 = (short)r0 / 4096.0, m01 = (short)(r0 >> 16) / 4096.0, m02 = (short)r1 / 4096.0;
-        double m10 = (short)(r1 >> 16) / 4096.0, m11 = (short)r2 / 4096.0, m12 = (short)(r2 >> 16) / 4096.0;
-        double m20 = (short)r3 / 4096.0, m21 = (short)(r3 >> 16) / 4096.0, m22 = (short)Gte.ReadControl(4) / 4096.0;
-        double tx = (int)Gte.ReadControl(5), ty = (int)Gte.ReadControl(6), tz = (int)Gte.ReadControl(7);
+        var xf = Transform.Read(v);
         float dqa = (short)Gte.ReadControl(27), dqb = (int)Gte.ReadControl(28);
         int mode = (int)mem.ReadU32(FogMode);
         float curve = mode >= 32000 ? 0f : (mode & 0x8000) != 0 ? 1f : 2f;
         uint rgbc = mem.ReadU32(LightColour);
         uint verts = mem.ReadU32(VertexBase);
         byte mat = PolyAssembler.TileMaterial;
+        bool lit = RetainedMap.ReflectionsReady;
+        uint solid = ModelWalk.SubmitKind == ModelKind.Effect ? RetainedScene.FlagNoShadow
+                   : abr != uint.MaxValue && ModelWalk.SubmitKind == ModelKind.Object
+                     && ModelWalk.SolidKind(ModelWalk.ObjectKind(mem, ModelWalk.SubmitRecord)) ? RetainedScene.FlagSolid : 0u;
 
         int n = 0;
         Span<uint> idx = stackalloc uint[4], nrm = stackalloc uint[4], uv = stackalloc uint[4];
@@ -81,16 +85,11 @@ static class RetainedModels
             for (int k = 0; k < corners; k++)
             {
                 uint p = verts + mem.ReadU16(f + idx[k]);
-                double x = (short)mem.ReadU16(p), y = (short)mem.ReadU16(p + 2u), z = (short)mem.ReadU16(p + 4u);
-                double vx = m00 * x + m01 * y + m02 * z + tx - v.Tx;
-                double vy = m10 * x + m11 * y + m12 * z + ty - v.Ty;
-                double vz = m20 * x + m21 * y + m22 * z + tz - v.Tz;
-                // The frame's R is a rotation: its transpose takes view back to world.
-                wx[k] = (float)(v.R00 * vx + v.R10 * vy + v.R20 * vz + v.CamX);
-                wy[k] = (float)(v.R01 * vx + v.R11 * vy + v.R21 * vz + v.CamY);
-                wz[k] = (float)(v.R02 * vx + v.R12 * vy + v.R22 * vz + v.CamZ);
+                xf.World(v, (short)mem.ReadU16(p), (short)mem.ReadU16(p + 2u), (short)mem.ReadU16(p + 4u),
+                         out wx[k], out wy[k], out wz[k]);
                 if (RetainedMap.Checking) RetainedMap.CheckCorner(v, wx[k], wy[k], wz[k], mem.ReadU32(VertexCache + mem.ReadU16(f + idx[k])));
-                if (gouraud || k == 0) col[k] = Light(mem, normals + mem.ReadU16(f + nrm[gouraud ? k : 0]), rgbc);
+                if (!lit) col[k] = 0u;
+                else if (gouraud || k == 0) col[k] = Light(mem, normals + mem.ReadU16(f + nrm[gouraud ? k : 0]), rgbc);
                 else col[k] = col[0];
             }
             uv[0] = mem.ReadU16(f);
@@ -112,7 +111,7 @@ static class RetainedModels
             {
                 Clut = clut & 0x7FFF, Texpage = tpage, Dqa = dqa, Dqb = dqb, Curve = curve,
                 Rect = (uint)u0 | (uint)v0 << 8 | (uint)u1 << 16 | (uint)v1 << 24,
-                Flags = RetainedScene.FlagRect | mat | (semi ? RetainedScene.FlagSemi | ((tpage >> 5) & 3u) << 8 : 0u),
+                Flags = RetainedScene.FlagRect | mat | solid | (semi ? RetainedScene.FlagSemi | ((tpage >> 5) & 3u) << 8 : 0u),
             };
             if (n + 6 > _tris.Length) Array.Resize(ref _tris, _tris.Length * 2);
             Put(ref n, t, wx, wy, wz, uv, col, 0); Put(ref n, t, wx, wy, wz, uv, col, 1); Put(ref n, t, wx, wy, wz, uv, col, 2);
@@ -132,14 +131,11 @@ static class RetainedModels
         var frame = RetainedScene.Find(RetainedScene.Serial);
         if (frame == null || count > 4096) return;
         var v = frame.View;
-        uint r0 = Gte.ReadControl(0), r1 = Gte.ReadControl(1), r2 = Gte.ReadControl(2), r3 = Gte.ReadControl(3);
-        double m00 = (short)r0 / 4096.0, m01 = (short)(r0 >> 16) / 4096.0, m02 = (short)r1 / 4096.0;
-        double m10 = (short)(r1 >> 16) / 4096.0, m11 = (short)r2 / 4096.0, m12 = (short)(r2 >> 16) / 4096.0;
-        double m20 = (short)r3 / 4096.0, m21 = (short)(r3 >> 16) / 4096.0, m22 = (short)Gte.ReadControl(4) / 4096.0;
-        double tx = (int)Gte.ReadControl(5), ty = (int)Gte.ReadControl(6), tz = (int)Gte.ReadControl(7);
+        var xf = Transform.Read(v);
         float dqa = (short)Gte.ReadControl(27), dqb = (int)Gte.ReadControl(28);
         int mode = (int)mem.ReadU32(FogMode);
         float curve = mode >= 32000 ? 0f : twoCurves ? 2f : (mode & 0x8000) != 0 ? 1f : 2f;
+        uint noShadow = ModelWalk.SubmitKind == ModelKind.Effect ? RetainedScene.FlagNoShadow : 0u;
         uint rgbc = mem.ReadU32(LightColour);
         uint verts = mem.ReadU32(VertexBase);
         byte mat = PolyAssembler.TileMaterial;
@@ -161,16 +157,11 @@ static class RetainedModels
             {
                 uint off = mem.ReadU16(idx + (uint)k * 2u);
                 uint p = verts + off;
-                double x = (short)mem.ReadU16(p), y = (short)mem.ReadU16(p + 2u), z = (short)mem.ReadU16(p + 4u);
-                double vx = m00 * x + m01 * y + m02 * z + tx - v.Tx;
-                double vy = m10 * x + m11 * y + m12 * z + ty - v.Ty;
-                double vz = m20 * x + m21 * y + m22 * z + tz - v.Tz;
-                wx[k] = (float)(v.R00 * vx + v.R10 * vy + v.R20 * vz + v.CamX);
-                wy[k] = (float)(v.R01 * vx + v.R11 * vy + v.R21 * vz + v.CamY);
-                wz[k] = (float)(v.R02 * vx + v.R12 * vy + v.R22 * vz + v.CamZ);
+                xf.World(v, (short)mem.ReadU16(p), (short)mem.ReadU16(p + 2u), (short)mem.ReadU16(p + 4u),
+                         out wx[k], out wy[k], out wz[k]);
                 if (RetainedMap.Checking) RetainedMap.CheckCorner(v, wx[k], wy[k], wz[k], mem.ReadU32(VertexCache + off));
             }
-            uint lit = Light(mem, normals + mem.ReadU16(f + (corners == 4 ? 0x10u : 0x0Cu)), rgbc);
+            uint lit = RetainedMap.ReflectionsReady ? Light(mem, normals + mem.ReadU16(f + (corners == 4 ? 0x10u : 0x0Cu)), rgbc) : 0u;
             for (int k = 0; k < corners; k++) col[k] = lit;
             uv[0] = mem.ReadU16(f);
             uv[1] = mem.ReadU16(f + 4u);
@@ -188,7 +179,7 @@ static class RetainedModels
             {
                 Clut = clut & 0x7FFF, Texpage = tpage, Dqa = dqa, Dqb = dqb, Curve = curve,
                 Rect = (uint)u0 | (uint)v0 << 8 | (uint)u1 << 16 | (uint)v1 << 24,
-                Flags = RetainedScene.FlagRect | mat | (semi ? RetainedScene.FlagSemi | ((tpage >> 5) & 3u) << 8 : 0u),
+                Flags = RetainedScene.FlagRect | mat | noShadow | (semi ? RetainedScene.FlagSemi | ((tpage >> 5) & 3u) << 8 : 0u),
             };
             if (n + 6 > _tris.Length) Array.Resize(ref _tris, _tris.Length * 2);
             Put(ref n, t, wx, wy, wz, uv, col, 0); Put(ref n, t, wx, wy, wz, uv, col, 1); Put(ref n, t, wx, wy, wz, uv, col, 2);
@@ -198,6 +189,58 @@ static class RetainedModels
         RetainedScene.AddDynamic(_tris.AsSpan(0, n));
         Models++;
     }
+
+    /// <summary>A model corner to world space. A model the walk placed in the world
+    /// is its own rotation about its record's position, which does not move when the
+    /// camera does; anything else goes back through the camera, whose 1/4096 rotation
+    /// moves the result by up to a unit or two as it turns.</summary>
+    readonly struct Transform
+    {
+        readonly bool _placed;
+        readonly double _m00, _m01, _m02, _m10, _m11, _m12, _m20, _m21, _m22, _tx, _ty, _tz;
+
+        Transform(bool placed, double m00, double m01, double m02, double m10, double m11, double m12,
+                  double m20, double m21, double m22, double tx, double ty, double tz)
+        {
+            _placed = placed;
+            _m00 = m00; _m01 = m01; _m02 = m02; _m10 = m10; _m11 = m11; _m12 = m12;
+            _m20 = m20; _m21 = m21; _m22 = m22; _tx = tx; _ty = ty; _tz = tz;
+        }
+
+        public static Transform Read(in RetainedScene.View v)
+        {
+            if (ModelWalk.Placed)
+            {
+                var r = ModelWalk.PlacedRot;
+                Placed++;
+                return new Transform(true, r[0] / 4096.0, r[1] / 4096.0, r[2] / 4096.0, r[3] / 4096.0, r[4] / 4096.0,
+                                     r[5] / 4096.0, r[6] / 4096.0, r[7] / 4096.0, r[8] / 4096.0,
+                                     ModelWalk.PlacedX, ModelWalk.PlacedY, ModelWalk.PlacedZ);
+            }
+            // The model's view transform, as the GTE holds it.
+            uint r0 = Gte.ReadControl(0), r1 = Gte.ReadControl(1), r2 = Gte.ReadControl(2), r3 = Gte.ReadControl(3);
+            return new Transform(false, (short)r0 / 4096.0, (short)(r0 >> 16) / 4096.0, (short)r1 / 4096.0,
+                                 (short)(r1 >> 16) / 4096.0, (short)r2 / 4096.0, (short)(r2 >> 16) / 4096.0,
+                                 (short)r3 / 4096.0, (short)(r3 >> 16) / 4096.0, (short)Gte.ReadControl(4) / 4096.0,
+                                 (int)Gte.ReadControl(5), (int)Gte.ReadControl(6), (int)Gte.ReadControl(7));
+        }
+
+        public void World(in RetainedScene.View v, double x, double y, double z, out float wx, out float wy, out float wz)
+        {
+            double px = _m00 * x + _m01 * y + _m02 * z + _tx;
+            double py = _m10 * x + _m11 * y + _m12 * z + _ty;
+            double pz = _m20 * x + _m21 * y + _m22 * z + _tz;
+            if (_placed) { wx = (float)px; wy = (float)py; wz = (float)pz; return; }
+            px -= v.Tx; py -= v.Ty; pz -= v.Tz;
+            // The frame's R is a rotation: its transpose takes view back to world.
+            wx = (float)(v.R00 * px + v.R10 * py + v.R20 * pz + v.CamX);
+            wy = (float)(v.R01 * px + v.R11 * py + v.R21 * pz + v.CamY);
+            wz = (float)(v.R02 * px + v.R12 * py + v.R22 * pz + v.CamZ);
+        }
+    }
+
+    /// <summary>Models placed from their record, of <see cref="Models"/>.</summary>
+    public static long Placed;
 
     static void Put(ref int n, in RetainedScene.Vertex t, Span<float> x, Span<float> y, Span<float> z,
                     Span<uint> uv, Span<uint> col, int k)

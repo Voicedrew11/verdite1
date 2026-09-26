@@ -605,7 +605,9 @@ finished picture: a specular highlight along the SSR path, light shafts, bloom.
   maps after all: a depth cubemap per light, drawn on the GPU from the retained map
   with no walk, and drawn again only when the light or the map changes. Exact to
   the mesh, where a grid march would have been whole tiles. See "Shadows, the first
-  slice".
+  slice". Creatures and objects cast too, from the models the retained scene
+  captures each frame, drawn over a copy of the map's cubemap only while one in
+  reach moves; see "Shadows, the second slice".
 
 ### The game's own light and fog, authored through the game
 
@@ -1967,7 +1969,8 @@ pixels the light adds at least 8 levels a channel to:
 
 **Limits, by construction.**
 - **Only the map casts.** Creatures, objects, doors drawn as models and the player
-  cast nothing; they receive. See Phase 8.
+  cast nothing; they receive. *Since:* creatures and objects cast; see "Shadows,
+  the second slice".
 - **A light inside geometry** is fully shadowed outside it, which is correct but
   easy to do by accident with *Place on the picture* near a thin wall.
 - **Spot lights** use the whole cubemap.
@@ -1977,6 +1980,82 @@ edge (soft over about two and a half texels, so wider further from the light); t
 contact where a wall meets the floor (the offset and bias could lift a shadow off
 it); bars and grates; and the pillar in area 1 that cast nothing in the Phase 5
 picture.
+
+### Shadows, the second slice
+
+**What is in.** Creatures and objects cast too (`0077`, amended):
+
+- **The frame's models, from the retained scene.** `RetainedModels` already captured
+  every model the object walk submits, in world space, for reflections; it now
+  captures them whenever a light casts, reflections on or off, and without
+  colouring them when only shadows ask. The lights publish which frame's models cast
+  (`RemasterUniforms.ShadowFrame`) once the walk has submitted all of them, before
+  `DrawOTag`.
+- **A second cubemap per light**, used only while a model is in the light's reach:
+  the map's cubemap copied face by face (a depth blit), then the casters drawn over
+  it through the world program. The map's own cubemap is still drawn only when the
+  light or the map changes, so a model costs a copy and a few hundred triangles,
+  never the map again. A light with no model in reach samples the map's cubemap as
+  before.
+- **Drawn again only when the models in reach move**: a hash of the corners of every
+  caster triangle whose bounds reach the light's sphere, once a frame. A creature
+  idling redraws every frame; a chest, a pillar or a closed door never does.
+- **Which models cast.** Opaque faces with every texel. A blended face with the
+  texels the GPU draws opaque, those without the semi-transparency bit, through the
+  prim shader's existing `uOpaqueDepth = 1`: area 1's creature 129 has every face
+  blended and every texel translucent, so it casts nothing, which is what it looks
+  like. A door's blended model (`ModelWalk.SolidKind`, the same test the occlusion
+  pass takes) casts with every texel (`RetainedScene.FlagSolid`). Effects (sparks,
+  flames, `ModelKind.Effect`) cast nothing (`FlagNoShadow`). Billboards and the arm
+  were never captured and cast nothing.
+- **Placed from the record, not the camera.** The first version's corners moved by a
+  unit or two as the camera turned (the camera's rotation is only good to 1/4096),
+  so turning in place redrew a cubemap on 357 of about 475 frames with nothing
+  moving. The submitter now publishes each model's own rotation and world position,
+  and turning redraws nothing. See "Models, every frame" in `docs/RENDERING.md`.
+- `KF2_REMASTER_SHADOW_MODELS=0` and `light shadows models off` leave the models out
+  (the map still casts); `light list` reports the caster triangles in reach, the
+  model redraws and the triangles drawn into them, as does the remaster probe line.
+
+**Measured**, in area 1 with the area's lights black (darkness 1), one light at
+intensity 4 and radius 6000, the share each pixel loses as in the first slice
+(`(off - on) / (off - no light)` between models casting and not, over the pixels
+the light adds at least 8 levels a channel to), each shot twice and a pixel left out
+where the two shots differ:
+
+| caster | fully shadowed by it | of those, all four neighbours too | brighter with models on |
+|---|---|---|---|
+| object 445, the world running | 90,279 | | 0 |
+| creature 144, the world paused | 188,141 | 95.7% | 0 |
+
+- Standing still with only objects in reach: 0 redraws in 4-5 s. Turning in place
+  (60 turns in 3.4 s): 0. Creature 144 in reach: a redraw every frame it moves (434
+  in 3 s at 144 fps), 0 while the world is paused.
+- Model corners against the GTE's own screen words (`KF2_RETAINED_PROBE=1`, creatures
+  in view): 100.00% within 1 px, worst 2 px.
+- The same with reflections and the retained scene off (`KF2_RETAINED=0
+  KF2_SSR=0`): the models are captured for the shadows alone, 516 caster triangles
+  in reach, and the light redraws as it did with reflections on.
+- 144.0 fps drawn at 20.0 ticks/s with the creature redrawn every frame, and
+  uncapped (`KF2_FPS=2000`, reflections off, the same view) 275-285 fps with models
+  casting, 270-284 without and 267-279 with shadows off: nothing measurable, the
+  port being CPU-bound and a redraw being a copy and a few hundred triangles six
+  times.
+- `KF2_GLDEBUG=1` reported nothing.
+
+**Limits, by construction.**
+- **A model the walk does not submit casts nothing**: behind the camera, past the
+  draw window, or outside the grid the walk sweeps. A creature standing behind the
+  player, lit from in front, throws no shadow into view.
+- **The player casts nothing**; there is no player model.
+- **A model's shadow is its frame's pose**, drawn with the frame; nothing is
+  carried between frames, so it moves exactly as the model does.
+
+**Judged by eye (2026-09-26): good.** The creatures' moving shadows, and a light
+behind a door as the door opens, both approved. Not specifically looked at yet:
+whether a creature darkens itself where its own limbs face away from the light
+(the offset and bias were set against the map's surfaces), and creature 129, which
+casts nothing because every texel of it is translucent.
 
 ### Phase 6: level edits
 
@@ -2009,9 +2088,6 @@ picture.
 
 ### Phase 8: later
 
-- shadows cast by creatures and objects: the retained models (`RetainedModels`)
-  drawn into a light's cubemap, which then has to be drawn every frame a model
-  inside its reach moves;
 - port-drawn props;
 - opt-in object and creature placement;
 - a GPU id buffer (`0076`), if picking is ever too slow;

@@ -736,12 +736,14 @@ Kf2.Remaster.Host.Configure(Environment.GetEnvironmentVariable("KF2_REMASTER"),
                             Environment.GetEnvironmentVariable("KF2_REMASTER_PROBE"),
                             Environment.GetEnvironmentVariable("KF2_REMASTER_LIGHTS"),
                             Environment.GetEnvironmentVariable("KF2_REMASTER_ATMOS"));
-// Shadows for the authored lights (0077): a depth cubemap per light from the retained map.
+// Shadows for the authored lights (0077): a depth cubemap per light from the retained map
+// and the frame's models.
 Kf2.Remaster.Lights.ConfigureShadows(Environment.GetEnvironmentVariable("KF2_REMASTER_SHADOWS"),
                                      Environment.GetEnvironmentVariable("KF2_REMASTER_SHADOW_SIZE"),
                                      Environment.GetEnvironmentVariable("KF2_REMASTER_SHADOW_BIAS"),
                                      Environment.GetEnvironmentVariable("KF2_REMASTER_SHADOW_OFFSET"),
-                                     Environment.GetEnvironmentVariable("KF2_REMASTER_SHADOW_SOFT"));
+                                     Environment.GetEnvironmentVariable("KF2_REMASTER_SHADOW_SOFT"),
+                                     Environment.GetEnvironmentVariable("KF2_REMASTER_SHADOW_MODELS"));
 Kf2.Remaster.Host.Install();
 // Phase 4's texture-key census: which replacement keys an area draws, and which a
 // pack covers. KF2_TEXKEY=triangle keys each triangle on its own UVs, as upstream does.

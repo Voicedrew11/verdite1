@@ -43,12 +43,26 @@ public static class RetainedScene
 
     public const uint FlagRect = 0x80000000u, FlagSemi = 0x400u;
 
+    /// <summary>0077. A blended model that stands for something solid (a door): it casts
+    /// a shadow with every texel. Any other blended face casts with the texels the GPU
+    /// draws opaque, those without the semi-transparency bit.</summary>
+    public const uint FlagSolid = 0x800u;
+
+    /// <summary>0077. An effect (a spark, a flame): drawn, but it casts no shadow.</summary>
+    public const uint FlagNoShadow = 0x1000u;
+
     /// <summary>The port's switch: draw reflections from this scene.</summary>
     public static bool Enabled;
 
     /// <summary>0077. The port's authored lights want the static map for their shadows,
     /// whether or not reflections are drawn from it.</summary>
     public static bool ShadowsWanted;
+
+    /// <summary>0077. The frame's models cast into the lights' cubemaps too; the port
+    /// captures them while this and <see cref="ShadowsWanted"/> hold.</summary>
+    public static bool ShadowModels = true;
+
+    public static bool ShadowModelsWanted => ShadowsWanted && ShadowModels;
 
     /// <summary>Set by the GL core backend once its world program built.</summary>
     public static bool Supported;

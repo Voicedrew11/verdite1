@@ -82,6 +82,16 @@ public static class RemasterUniforms
     /// <summary>Cubemaps drawn, and triangles drawn into them; never reset.</summary>
     public static long ShadowRenders, ShadowTriangles;
 
+    /// <summary>The retained frame (<see cref="RetainedScene.Serial"/>) whose models
+    /// cast, published with the lights, once the frame's walk has submitted them all.</summary>
+    public static int ShadowFrame;
+
+    /// <summary>Cubemaps drawn again for their models, the model triangles drawn into
+    /// them, and the triangles in some light's reach on the last frame; never reset but
+    /// the last.</summary>
+    public static long ShadowModelRenders, ShadowModelTriangles;
+    public static int ShadowCasters;
+
     /// <summary>Slots whose cubemap is drawn for the light it holds now.</summary>
     public static int ShadowsReady;
 }

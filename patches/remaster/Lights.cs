@@ -12,6 +12,7 @@ namespace Kf2.Remaster;
 ///
 ///     KF2_REMASTER_LIGHTS=0   leave the pack's lights out (they apply with the remaster by default)
 ///     KF2_REMASTER_SHADOWS=0  no shadows from them (on by default)
+///     KF2_REMASTER_SHADOW_MODELS=0  only the map casts (creatures and objects cast too by default)
 ///     KF2_REMASTER_SHADOW_SIZE=1024 KF2_REMASTER_SHADOW_BIAS=6 KF2_REMASTER_SHADOW_OFFSET=1.5 KF2_REMASTER_SHADOW_SOFT=1.25
 ///
 /// The pack's <c>areas/&lt;n&gt;/lights.json</c>, behind the area's fingerprint. Before
@@ -30,9 +31,11 @@ namespace Kf2.Remaster;
 ///
 /// The nearest <see cref="RemasterUniforms.MaxShadows"/> authored lights sent that
 /// cast shadows each keep a slot while they stay in the list, so the backend draws a
-/// light's cubemap (runtime <c>0077</c>) once and again only when it moves. Only the
-/// map casts: the retained static mesh, which this asks for while any light wants
-/// it. See "Shadows, the first slice" in docs/REMASTER.md.
+/// light's cubemap (runtime <c>0077</c>) once and again only when it moves. The map
+/// casts, from the retained static mesh this asks for while any light wants it, and
+/// so do the frame's models, captured by <see cref="Kf2.RetainedModels"/>: a light
+/// with a model in reach is drawn again whenever those models move. See "Shadows, the
+/// first slice" and "Shadows, the second slice" in docs/REMASTER.md.
 /// </summary>
 public sealed class Lights : IRemasterFeature
 {
@@ -94,9 +97,10 @@ public sealed class Lights : IRemasterFeature
     /// <summary>Whether authored lights cast shadows at all.</summary>
     public static bool ShadowsOn => _shadows;
 
-    public static void ConfigureShadows(string? on, string? size, string? bias, string? offset, string? soft)
+    public static void ConfigureShadows(string? on, string? size, string? bias, string? offset, string? soft, string? models)
     {
         if (!string.IsNullOrWhiteSpace(on)) _shadows = on.Trim() != "0";
+        if (!string.IsNullOrWhiteSpace(models)) RetainedScene.ShadowModels = models.Trim() != "0";
         static bool F(string? s, out float v)
             => float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v);
         if (int.TryParse(size, out int n) && n >= 64) RemasterUniforms.ShadowSize = Math.Clamp(n, 64, 4096);
@@ -488,6 +492,8 @@ public sealed class Lights : IRemasterFeature
         var r = v.R;
         ReadOnlySpan<float> rows = [r.M11, r.M12, r.M13, r.M21, r.M22, r.M23, r.M31, r.M32, r.M33];
         rows.CopyTo(RemasterUniforms.ToWorld);
+        // The walk has submitted every model by now: these are the ones that cast.
+        RemasterUniforms.ShadowFrame = RetainedScene.Serial;
     }
 
     /// <summary>The frame's candidates into <see cref="_frame"/>: the authored lights,
@@ -553,7 +559,9 @@ public sealed class Lights : IRemasterFeature
          : $"lights {Authored} authored, {Derived} from tile glow, {ModelLights} from model glow, {Sent} sent, {Culled} culled; " +
            $"{RemasterUniforms.Uploads} upload(s), {RemasterUniforms.LitBatches} lit batch(es)" +
            $"; {RemasterUniforms.ShadowsReady} shadow cubemap(s) ready, {RemasterUniforms.ShadowRenders} drawn, " +
-           $"{RemasterUniforms.ShadowTriangles} triangle(s) into them" +
+           $"{RemasterUniforms.ShadowTriangles} triangle(s) into them; models {(RetainedScene.ShadowModels ? "cast" : "do not cast")}, " +
+           $"{RemasterUniforms.ShadowCasters} triangle(s) in reach, {RemasterUniforms.ShadowModelRenders} redrawn for them, " +
+           $"{RemasterUniforms.ShadowModelTriangles} model triangle(s) into them" +
            (RemasterUniforms.Supported ? "" : " (the backend has no light term)") +
            (Authored > 0 && !PerPixelLighting.Enabled ? " (per-pixel lighting is off, so nothing is lit)" : "");
 }

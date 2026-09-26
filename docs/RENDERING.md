@@ -2239,11 +2239,25 @@ is culled — a reflection sees the side the camera does not — from the lit as
 (`func_8002F214`, `func_8002EAEC`) and from the tile assemblers when the object walk
 calls them (`func_80030540`, `func_8002FECC`; area 1's objects are all drawn that
 way). Corners come from the vertex base the transform just read, so an animated
-pose is the pose drawn; the GTE still holds the model's view transform, and the
-frame's camera takes it back to the world. The colour is `NormalColorCol` again,
+pose is the pose drawn. The colour is `NormalColorCol` again,
 without the cue. Checked the same way: 553,800 corners in `fdat02` and 84,672 in
 area 1, **100.00% within 1 px**. Cost: 0.16 ms a frame of `ReplaceLit`'s time at the
 `fdat02` spawn (0.194 to 0.351 ms).
+
+**A model is placed from its record, not back through the camera.** The first
+version took the GTE's view transform back to the world with the frame's camera,
+whose rotation is only good to 1/4096: a static object's corners moved by a unit or
+two whenever the camera turned. Nothing a reflection shows, but the lights' shadows
+(`0077`) redraw a cubemap when a caster moves, and turning in place redrew one on
+357 of about 475 frames. The submitter (`ModelWalk`) now publishes the model's own
+rotation times its scale (the matrix before it is multiplied by the view) and its
+record's world position whenever it places the model through the view matrix, and
+a corner is that rotation about that position; only a model placed any other way
+still goes through the camera. Measured in area 1: every model in view placed from
+its record (864 of 864 in two seconds at the spawn), creatures included; corners
+**100.00% within 1 px** of the GTE's (347,697, worst 2 px); and 0 redraws over 60
+turns in 3.4 s. With reflections off and only shadows asking, a model is captured
+without its colour, since a shadow wants only the corners.
 
 ### Drawing it: the game's own fragment shader
 
