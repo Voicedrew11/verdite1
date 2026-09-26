@@ -4,7 +4,9 @@
 Phase 1 is in, in two slices (see "Phase 1, the first slice" and "Phase 1, the
 second slice" under the roadmap), with materials since keyed by face ("Faces, picked
 from the frame"); Phase 2 has its first slice ("Phase 2, the first slice"), and so
-does Phase 3 ("Phase 3, the first slice"); everything else is still design. The
+does Phase 3 ("Phase 3, the first slice"); Phase 4 is in, rescoped to materials
+by texture ("Phase 4, the second slice"), and metalness made a tinted mirror
+("Metal is a tinted mirror"); Phase 5 on is still design. The
 stretch goal is a full visual remaster the user authors themselves: placing lights,
 assigning materials, tuning reflections, editing levels. **An effect is worth
 nothing to that goal until it can be placed, tuned, saved and shared**, so this
@@ -1464,7 +1466,7 @@ colour. **Next** (proposed, not started): metalness pulls F0 up to the reflectiv
 darkens the surface's own colour, and saturates the tint a little; whether it also
 brings some reflectivity of its own when that is 0 is the user's call. **Decided (2026-09-26): it does** -- a metal is a mirror tinted
 by its colour, so the reflectivity a metal gets is at least its metalness, as in
-PBR. Not built yet; Phase 4 was taken first.
+PBR. Built after Phase 4; see "Metal is a tinted mirror".
 
 ### Phase 4: materials by texture
 
@@ -1637,7 +1639,55 @@ been looked at.
 
 **Not done.** A texture rule on a model gives no glow light of its own (the model
 lights come from model rules); the retained scene's models take only their model
-rule. The metalness change is still waiting.
+rule.
+
+### Metal is a tinted mirror
+
+**What is in** (`patches/remaster/Surfaces.cs`, `0067` amended), the change decided
+under "Looked at: metalness is hard to see":
+
+- **A metal reflects at least its metalness**, and as strongly looking straight at
+  it as at a grazing angle: the table gets `max(reflectivity, metalness)` and F0
+  pulled that far towards it (`F0 + (R - F0) * metalness`). The pack keeps what the
+  author wrote; only the table the passes read changes, so the retained scene ranks
+  a metal floor as a plane as it would a reflective one.
+- **Its own colour is darker**: half of it comes off at metalness 1, hit or miss,
+  and the reflection's weight comes off what is left (`emit()` in `SsrFs`, alpha
+  `1 - (1 - dark)(1 - w)`). With no metal the alpha is `w`, as it was.
+- **The tint is a little more saturated**: the surface's hue, pushed from its grey
+  by half the metalness and put back at full value.
+- The highlight's tint is unchanged. All of it needs reflections on: without them a
+  metal is the colour it was.
+
+**Measured** (`KF2_AUTOSTART=2`, area 1 at the spawn, `KF2_SSR=1`, a scratch pack,
+144 fps, the editor open, a 2140x1200 window; `tile:1:37:36:upper` given
+reflectivity 0.5, F0 0.1; the view's hashes are this window's, not
+`210d55698c875fb8`'s):
+
+- **Off is the picture it was.** The previous build and this one give the same
+  hashes with nothing authored (`3c64ce3b3e2bdd2e`) and with the floor at
+  metalness 0 (`b9b825b766d81be5`). Metalness 1 and back to 0 returns that hash.
+- **Metalness is visible now.** Over the 922,162 pixels it changed, against
+  metalness 0:
+
+  | | mean luma | mean saturation | largest change |
+  |---|---|---|---|
+  | metalness 0 | 100.2 | 0.479 | -- |
+  | 1, the previous build | 98.2 | 0.514 | 19 |
+  | 0.5 | 70.9 | 0.469 | 94 |
+  | 1 | 41.4 | 0.684 | 229 |
+
+  At metalness 1, 902,941 of them got darker and 19,221 brighter: the floor is
+  mostly the reflection of a dark room now.
+- **The retained scene**: a floor at reflectivity 0 and metalness 1 is ranked as a
+  plane (`2 authored face(s)`, a plane at Y -14848); no GL error under
+  `KF2_GLDEBUG=1`, 144.0 fps drawn at 20.0 ticks/s.
+- **Cost**: a shader-only change, a few ALU ops on reflective pixels; 144.0 fps
+  drawn at 20.0 ticks/s with the metal floor in view.
+
+**Not judged.** Whether metalness 1 reads as metal or just as a darker floor;
+whether half is the right darkening where the reflection misses; the saturation's
+push on this game's near-grey stone.
 
 ### Phase 5: atmosphere
 

@@ -249,8 +249,9 @@ public static class Pack
     /// <c>GlowRadius</c> across, whether or not the surface itself glows; with no
     /// <c>"light"</c> it is <c>"glowLight"</c> (0.5) times the glow's strength, as it
     /// was first written. <c>Pulse*</c> vary the glow and its light on the world
-    /// tick. <c>Metalness</c> tints the reflection and highlight with the surface's
-    /// colour, <c>Specular</c> is the highlight authored lights leave, and
+    /// tick. <c>Metalness</c> makes it a mirror tinted by its colour: the reflection
+    /// and highlight take that colour, the reflectivity is at least the metalness, F0
+    /// rises to it, and the surface's own colour is darkened, <c>Specular</c> is the highlight authored lights leave, and
     /// <c>Occlusion</c> how much the occlusion pass darkens it (1, or 0 on a glow,
     /// unless set).</summary>
     public readonly record struct Material(string Name, float Reflectivity, float F0, float Roughness,

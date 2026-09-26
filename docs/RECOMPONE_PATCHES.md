@@ -930,6 +930,13 @@ Four files in the directory have no entry below:
   shader reads from the surface buffer's id (`uAoMatOn`, only while an id is
   occluded other than fully). The seventh diff in the patch file, carrying `0071`'s
   amendment too. See "Phase 3, the second slice" in `docs/REMASTER.md`.
+  Since amended: a metal is a tinted mirror. `SsrFs`'s outputs go through `emit()`,
+  which takes half of the surface's own colour off at metalness 1, hit or miss, and
+  the reflection's weight off what is left; `metalTint` pushes the hue a little
+  from grey. With no metal the output is the one before, to the bit (the same
+  hashes from the previous build). The reflectivity and F0 a metal gets are the
+  port's (`patches/remaster/Surfaces.cs`). The eighth diff in the patch file. See
+  "Metal is a tinted mirror" in `docs/REMASTER.md`.
   `GlCore.RenderNormals` became `RenderSurfaces` and runs once for both passes,
   timed with the occlusion pass when that runs. New profiler sections (`Surfaces`,
   `Ssr`) and `GpuWork.Reflections`; the probe attaches a second target to the pass

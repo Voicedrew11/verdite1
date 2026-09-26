@@ -198,8 +198,13 @@ public sealed class Surfaces : IRemasterFeature
             if (next >= SurfaceMaterial.Count) { over++; continue; }
             ids[m.Name] = (byte)next;
             IdNames[next] = m.Name;
-            SurfaceMaterial.Reflectivity[next] = Math.Clamp(m.Reflectivity, 0f, 1f);
-            SurfaceMaterial.F0[next] = Math.Clamp(m.F0, 0f, 1f);
+            // A metal is a mirror tinted by its colour: it reflects at least its
+            // metalness, and as much looking straight at it as at a grazing angle.
+            float metal = Math.Clamp(m.Metalness, 0f, 1f);
+            float refl = Math.Max(Math.Clamp(m.Reflectivity, 0f, 1f), metal);
+            float f0 = Math.Clamp(m.F0, 0f, 1f);
+            SurfaceMaterial.Reflectivity[next] = refl;
+            SurfaceMaterial.F0[next] = f0 + (Math.Max(refl, f0) - f0) * metal;
             SurfaceMaterial.Roughness[next] = Math.Clamp(m.Roughness, 0f, 1f);
             var colour = Vector3.Clamp(m.Emissive, Vector3.Zero, Vector3.One);
             var e = colour * Math.Clamp(m.EmissiveStrength, 0f, 4f);
@@ -209,7 +214,7 @@ public sealed class Surfaces : IRemasterFeature
             SurfaceMaterial.Emissive[next * 3 + 2] = e.Z;
             SurfaceMaterial.EmissiveAdditive[next] = m.GlowAdditive;
             SurfaceMaterial.EmissiveUnfogged[next] = m.GlowAdditive && m.GlowUnfogged;
-            SurfaceMaterial.Metalness[next] = Math.Clamp(m.Metalness, 0f, 1f);
+            SurfaceMaterial.Metalness[next] = metal;
             SurfaceMaterial.Specular[next] = Math.Clamp(m.Specular, 0f, 1f);
             SurfaceMaterial.Occlusion[next] = Math.Clamp(m.Occlusion, 0f, 1f);
             // The light is its own: a material may give light with no glow at all.

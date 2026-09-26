@@ -657,11 +657,25 @@ internal static class GlShaders
         }
 
         // A metal's reflection takes its colour: the surface's hue at full value,
-        // so a dark bronze tints without darkening what it reflects.
+        // pushed a little away from grey, so a dark bronze tints without darkening
+        // what it reflects and near-grey stone still reads as coloured.
         vec3 metalTint(float metal) {
             if (metal <= 0.0) return vec3(1.0);
             vec3 sc = texture(uColor, tc(vUv)).rgb;
-            return mix(vec3(1.0), sc / max(max(sc.r, max(sc.g, sc.b)), 1e-3), metal);
+            vec3 hue = sc / max(max(sc.r, max(sc.g, sc.b)), 1e-3);
+            hue = max(mix(vec3(luma(hue)), hue, 1.0 + 0.5 * metal), 0.0);
+            hue /= max(max(hue.r, max(hue.g, hue.b)), 1e-3);
+            return mix(vec3(1.0), hue, metal);
+        }
+
+        // A metal's own colour is darker: half of it is taken off at metalness 1,
+        // hit or miss, and the reflection's weight comes off what is left. With no
+        // metal the weight is the reflection's alone, to the bit.
+        float gMetalDark = 0.0;
+        void emit(vec3 c, float w) {
+            w = clamp(w, 0.0, 1.0);
+            float a = gMetalDark > 0.0 ? 1.0 - (1.0 - gMetalDark) * (1.0 - w) : w;
+            oColor = vec4(c * w, a);
         }
 
         // 0068. The planar reflection at this pixel, when the surface lies on the
@@ -824,6 +838,7 @@ internal static class GlShaders
             // Squared, so the slider's lower half is the useful range.
             float rough = mat.b * mat.b;
             vec3 tint = metalTint(mat.a);
+            gMetalDark = 0.5 * mat.a;
             // Schlick, running from F0 looking straight down to the material's
             // reflectivity at a grazing angle.
             float w = f0 + (max(refl, f0) - f0) * pow(1.0 - cosv, 5.0);
@@ -832,8 +847,7 @@ internal static class GlShaders
             bool planarHit = planarAt(p, rough, pc) || retPlanarAt(p, rough, pc);
             if (planarHit && uCompare == 0) {
                 oInfo.a += 4.0 / 255.0;
-                w = clamp(w, 0.0, 1.0);
-                oColor = vec4(pc * tint * w, w);
+                emit(pc * tint, w);
                 return;
             }
 
@@ -854,18 +868,16 @@ internal static class GlShaders
                         oInfo.g = abs(luma(texture(uPlanar, tc(vec2(vUv.x, 2.0 * uCentre.y - vUv.y))).rgb) - luma(sc));
                         oInfo.a += 16.0 / 255.0;
                     }
-                    w = clamp(w, 0.0, 1.0);
-                    oColor = vec4(pc * tint * w, w);
+                    emit(pc * tint, w);
                     return;
                 }
-                if (!cubeHit) return;
+                if (!cubeHit) { emit(vec3(0.0), 0.0); return; }
                 float zImage = p.z * (length(p) + ct) / length(p);
                 float keep = fogKeep(zImage);
                 w *= 1.0 - smoothstep(0.7, 1.0, ct / uMaxDist);
-                w = clamp(w, 0.0, 1.0);
                 oInfo.a += 1.0 / 255.0;
                 oInfo.b = keep;
-                oColor = vec4(cc * keep * tint * w, w);
+                emit(cc * keep * tint, w);
                 return;
             }
 
@@ -931,15 +943,14 @@ internal static class GlShaders
                     oInfo.g = abs(luma(texture(uPlanar, tc(vUv)).rgb) - luma(sc));
                     oInfo.a += 16.0 / 255.0;
                 }
-                w = clamp(w, 0.0, 1.0);
-                oColor = vec4(pc * tint * w, w);
+                emit(pc * tint, w);
                 return;
             }
             if (passed) oInfo.a += 8.0 / 255.0;
 
             vec3 c;
             // A surface under the HUD is hidden by it: its colour there is the HUD's.
-            if (hit && overlayAt(huv)) { oInfo.a += 3.0 / 255.0; return; }
+            if (hit && overlayAt(huv)) { oInfo.a += 3.0 / 255.0; emit(vec3(0.0), 0.0); return; }
             if (hit) {
                 w *= edgeFade(huv) * (1.0 - smoothstep(0.7, 1.0, ht / uMaxDist));
                 // The cone's width where it lands, `rough * ht` across, as a share of
@@ -964,10 +975,10 @@ internal static class GlShaders
                 c = texture(uColor, tc(bgUv)).rgb;
                 oInfo.a += 2.0 / 255.0;
             } else {
+                emit(vec3(0.0), 0.0);
                 return;
             }
-            w = clamp(w, 0.0, 1.0);
-            oColor = vec4(c * tint * w, w);
+            emit(c * tint, w);
         }
         """;
 

@@ -674,7 +674,9 @@ public static class Editor
                 Slider(mat.Name, "roughness", "Roughness", mat.Roughness);
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Blurs the reflection, more the further what it shows is, and widens the highlight.");
                 Slider(mat.Name, "metalness", "Metalness", mat.Metalness);
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip("How much the reflection and the highlight take the surface's own colour: 0 stone, 1 metal.");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("0 stone, 1 metal: a mirror tinted by its own colour, reflecting at least this much, " +
+                                     "as strongly looking straight at it, and its own colour darker. Needs reflections.");
                 Slider(mat.Name, "specular", "Specular", mat.Specular);
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("The highlight authored lights (and glows) leave on it. Its size is the roughness.");
                 Slider(mat.Name, "occlusion", "Occlusion", mat.Occlusion);
