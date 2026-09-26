@@ -14,7 +14,7 @@ namespace Kf2;
 /// the water, into an ordering table of the port's own, drawn into a texture the
 /// reflection pass reads wherever a surface lies on the water's plane.
 ///
-///     KF2_PLANAR=1            on (off by default: the picture has not been judged); needs KF2_SSR
+///     KF2_PLANAR=1            on (off by default: the picture has not been judged)
 ///     KF2_PLANAR_TOLERANCE=48 how far off the plane a surface may be and still take it, world units
 ///     KF2_PLANAR_RIPPLE=4     how far the water's own texture bends the reflection; 0 a flat mirror
 ///     KF2_PLANAR_BIAS=8       how far above the plane geometry has to be to be reflected
@@ -221,7 +221,7 @@ public static class PlanarWalk
     static readonly float[] _clip = new float[4], _view = new float[4];
 
     static bool Ready =>
-        PlanarReflections.Enabled && PlanarReflections.Supported && ScreenReflections.Enabled
+        PlanarReflections.Enabled && PlanarReflections.Supported
         && PrimBuffer.Relocated && !TileWalk.Verifying && !ModelWalk.Verifying && !RetainedMap.ReflectionsReady
         && RecompOne.Runtime.Hle.GpuTrace.Sink == null;
 

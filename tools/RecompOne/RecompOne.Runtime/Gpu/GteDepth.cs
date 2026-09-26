@@ -242,9 +242,10 @@ public static class GteDepth
     /// not.</summary>
     public static bool DepthWanted => _zbuffer || _ao || _ssr;
 
-    /// <summary>0067. Screen-space reflections, the second reader of the finished
-    /// frame's depth and the first reader of its surface buffer. See
-    /// <see cref="ScreenReflections"/>.</summary>
+    /// <summary>0067. The reflection pass, the second reader of the finished frame's
+    /// depth and the first reader of its surface buffer: on while anything it
+    /// composites is (<see cref="ScreenReflections.Refresh"/>), the screen march,
+    /// the murk, the planar walk or the retained scene.</summary>
     public static bool Reflections
     {
         get => _ssr;

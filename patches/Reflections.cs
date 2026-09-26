@@ -30,7 +30,9 @@ namespace Kf2;
 /// its normal, depth and material, and a pass at present that marches each
 /// reflective pixel's reflected ray through the depth buffer. This patch is the
 /// switch, the material table and the one fact the runtime cannot know: **which VRAM
-/// rectangles hold water.**
+/// rectangles hold water.** The rectangles are published whenever the pass runs,
+/// which is for any of its terms: this march, <see cref="Murk"/>, <see cref="PlanarWalk"/>
+/// or <see cref="RetainedMap"/>, each on its own switch.
 ///
 /// The game keeps its scrolling textures in eight slots at <c>0x80192D58</c>
 /// (<see cref="FluidSmoothing"/>), each re-uploaded every tick into a fixed dest
@@ -69,6 +71,10 @@ public static class Reflections
     };
 
     public static bool Enabled => ScreenReflections.Enabled;
+
+    /// <summary>Whether anything reflects: the march or either planar source. The
+    /// murk alone runs the pass and reflects nothing.</summary>
+    public static bool AnySource => ScreenReflections.Enabled || PlanarReflections.Enabled || RetainedScene.Enabled;
 
     /// <summary>Whether this patch prints the readback's map itself.</summary>
     public static bool Probing => _probe;
@@ -123,7 +129,7 @@ public static class Reflections
     public static void SetEnabled(bool on)
     {
         ScreenReflections.Enabled = on;
-        if (!on) SurfaceMaterial.RectN = 0;
+        if (!GteDepth.Reflections) SurfaceMaterial.RectN = 0;
     }
 
     static bool Attach()
@@ -147,7 +153,7 @@ public static class Reflections
     /// <summary>The water's dest rects, before the walk that draws with them.</summary>
     public static void BeforeDrawOTag(CpuContext c, IMemory m)
     {
-        if (!ScreenReflections.Enabled) return;
+        if (!GteDepth.Reflections) return;
 
         int n = 0;
         for (int i = 0; i < Count && n < SurfaceMaterial.RectSlots; i++)

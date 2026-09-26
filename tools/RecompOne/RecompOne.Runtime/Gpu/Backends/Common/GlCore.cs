@@ -80,7 +80,7 @@ public sealed partial class GlCore : IGpuBackend
     int _ssrW, _ssrH;
     bool _ssrInfo;
     int _uSsrOrigin, _uSsrSize, _uSsrTexSize, _uSsrProjH, _uSsrCentre;
-    int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps;
+    int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps, _uSsrMarchOn, _uSsrMurkDist, _uSsrMurkColor;
     int _uSsrDqa, _uSsrDqb, _uSsrFogCurve;
     int _uPresentSsrOn;
     int _uPresentAoMatOn;
@@ -372,6 +372,9 @@ public sealed partial class GlCore : IGpuBackend
                 _uSsrMaxDist = _gl.GetUniformLocation(_progSsr, "uMaxDist");
                 _uSsrThickness = _gl.GetUniformLocation(_progSsr, "uThickness");
                 _uSsrSky = _gl.GetUniformLocation(_progSsr, "uSky");
+                _uSsrMarchOn = _gl.GetUniformLocation(_progSsr, "uMarchOn");
+                _uSsrMurkDist = _gl.GetUniformLocation(_progSsr, "uMurkDist");
+                _uSsrMurkColor = _gl.GetUniformLocation(_progSsr, "uMurkColor");
                 _uSsrSteps = _gl.GetUniformLocation(_progSsr, "uSteps");
                 _uSsrDqa = _gl.GetUniformLocation(_progSsr, "uDqa");
                 _uSsrDqb = _gl.GetUniformLocation(_progSsr, "uDqb");
@@ -2645,6 +2648,10 @@ public sealed partial class GlCore : IGpuBackend
         if (_uSsrMaxDist >= 0) _gl.Uniform1(_uSsrMaxDist, Math.Max(64f, ScreenReflections.March()));
         if (_uSsrThickness >= 0) _gl.Uniform1(_uSsrThickness, Math.Max(1f, ScreenReflections.Thickness));
         if (_uSsrSky >= 0) _gl.Uniform1(_uSsrSky, Math.Clamp(ScreenReflections.Sky, 0f, 1f));
+        // Each term on its own switch: the pass runs for any of them.
+        if (_uSsrMarchOn >= 0) _gl.Uniform1(_uSsrMarchOn, ScreenReflections.Enabled ? 1 : 0);
+        if (_uSsrMurkDist >= 0) _gl.Uniform1(_uSsrMurkDist, WaterMurk.Enabled ? Math.Max(1f, WaterMurk.Distance) : 0f);
+        if (_uSsrMurkColor >= 0) _gl.Uniform3(_uSsrMurkColor, WaterMurk.R, WaterMurk.G, WaterMurk.B);
         if (_uSsrSteps >= 0) _gl.Uniform1(_uSsrSteps, Math.Clamp(ScreenReflections.Steps, 1, 128));
         if (_uSsrDqa >= 0) _gl.Uniform1(_uSsrDqa, (float)GteDepth.ProjDqa);
         if (_uSsrDqb >= 0) _gl.Uniform1(_uSsrDqb, (float)GteDepth.ProjDqb);
@@ -2656,7 +2663,10 @@ public sealed partial class GlCore : IGpuBackend
         bool planarOn = PlanarReflections.Enabled && planar is { Tex: not 0 } && src.PlanarFrame == src.LastDrawFrame;
         if (_uSsrPlanarOn >= 0) _gl.Uniform1(_uSsrPlanarOn, planarOn ? 1 : 0);
         bool retCompare = _retPlanar != null && _retPlaneN > 0 && _retCube;
-        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, (planarOn || retCompare) && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
+        // The planar walk is checked against the screen march, the retained planes
+        // against the cubemap.
+        bool compare = (planarOn && ScreenReflections.Enabled) || retCompare;
+        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, compare && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
         if (planarOn)
         {
             var pp = src.PlanarPlane;

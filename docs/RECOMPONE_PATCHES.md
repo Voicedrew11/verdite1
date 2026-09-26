@@ -939,6 +939,18 @@ Four files in the directory have no entry below:
   hashes from the previous build). The reflectivity and F0 a metal gets are the
   port's (`patches/remaster/Surfaces.cs`). The eighth diff in the patch file. See
   "Metal is a tinted mirror" in `docs/REMASTER.md`.
+  Since amended: the pass runs for each of its terms on its own. It was switched by
+  the screen march, so `0068`'s planar texture and `0072`'s planes and cubemap were
+  read only with SSR on. `ScreenReflections.Enabled` is the march alone now, and
+  `GteDepth.Reflections` (the pass, the surface buffer, the materials) is on while
+  the march, `PlanarReflections.Enabled`, `RetainedScene.Enabled` or the new
+  `WaterMurk.Enabled` is (`ScreenReflections.Refresh`, called from each setter).
+  `SsrFs` gains `uMarchOn`, which leaves a pixel no planar lookup answers
+  unreflected, and the murk: a dark colour over water by the view ray's run from the
+  surface to the depth buffer's floor under it, laid under the reflection in
+  `emit()`. With the march on and no murk the output is the one before. The ninth
+  diff in the patch file. See "The reflection pass runs for each term on its own"
+  and "Murky water" in `docs/RENDERING.md`.
   `GlCore.RenderNormals` became `RenderSurfaces` and runs once for both passes,
   timed with the occlusion pass when that runs. New profiler sections (`Surfaces`,
   `Ssr`) and `GpuWork.Reflections`; the probe attaches a second target to the pass

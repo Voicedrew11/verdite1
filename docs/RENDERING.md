@@ -1824,8 +1824,10 @@ fetches. The integrated GPU itself has not been measured.
 ## Screen-space reflections: the water is the one surface the depth buffer does not have
 
 **Mechanism measured; the picture has not been judged. Off by default**
-(`KF2_SSR=1`, or Video ▸ Experimental ▸ *Water reflections*). The runtime half is
-`0067`; the port half is `patches/Reflections.cs`.
+(`KF2_SSR=1`, or Video ▸ Experimental ▸ *Screen-space reflections*). The runtime
+half is `0067`; the port half is `patches/Reflections.cs`. The pass described here
+also composites the planar and retained reflections and the murk, and runs for any
+of them with the march off; see "The reflection pass runs for each term on its own".
 
 The pass is the occlusion pass's shape: at present, between the finished target and
 the blit, reading the target's depth attachment with the GTE's own H and centre, and
@@ -2029,8 +2031,8 @@ reflected, and the reflection fades as its source nears the edge.
 ## Planar reflections: the world walked twice, from under the water
 
 **Mechanism measured; the picture has not been judged. Off by default**
-(`KF2_PLANAR=1` with `KF2_SSR=1`, or Video ▸ Experimental ▸ *Water reflections* ▸
-*Planar reflections*). The runtime half is `0068`; the port half is
+(`KF2_PLANAR=1`, or Video ▸ Experimental ▸ *Planar reflections*; the screen march
+need not be on). The runtime half is `0068`; the port half is
 `patches/PlanarWalk.cs`, with an arena from `patches/PrimBuffer.cs`.
 
 The screen-space pass can reflect only what is on screen and in front of everything
@@ -2187,8 +2189,8 @@ billboards in the reflection; and all of it while the camera moves.
 ## The retained scene: the world kept on the GPU, so a reflection can draw it again
 
 **Mechanism measured; the picture has not been judged. Off by default**
-(`KF2_RETAINED=1` with `KF2_SSR=1`, or Video ▸ Experimental ▸ *Water reflections*
-▸ *World reflections*). The runtime half is `0072` (`Gpu/RetainedScene.cs`,
+(`KF2_RETAINED=1`, or Video ▸ Experimental ▸ *World reflections*; the screen march
+need not be on). The runtime half is `0072` (`Gpu/RetainedScene.cs`,
 `Gpu/Backends/Common/GlRetained.cs`); the port half is `patches/RetainedMap.cs`,
 `patches/RetainedPlanes.cs` and `patches/RetainedModels.cs`.
 
@@ -3625,3 +3627,41 @@ And **Debug ▸ VRAM viewer** answers layer (2) on its own, by eye, in one look.
 
 Never checked: any of this on Nvidia hardware. Nothing here owns an Nvidia GPU,
 so the vendor half of the question is a report rather than a measurement.
+
+### Murky water
+
+**Mechanism measured; the picture has not been judged. Off by default**
+(`KF2_MURK=1`, or Video ▸ Experimental ▸ *Murky water*). Runtime `WaterMurk`
+(amending `0067`), port `patches/Murk.cs`.
+
+Water was clear to the bottom. The reflection pass now lays a murk under the
+reflection on water (material 2): the depth buffer holds the opaque floor under a
+translucent surface and the surface buffer the water itself, so the view ray's run
+between the two is the water it crosses, `1 - exp(-run / KF2_MURK_DISTANCE)` of a
+dark teal (`WaterMurk.R/G/B`, fogged at the water's depth), sky behind the water
+counting as all water. It is per pixel and independent of world height, so a pond
+above the player does not darken anything else. Default 700 units (a tile is 2048).
+Under the checkbox, *Murk depth* (100-8000, logarithmic; `kf2.murk.distance`,
+which `KF2_MURK_DISTANCE` overrides) and *Murk colour* (`kf2.murk.r/g/b`) set both
+live, with a reset back to 700 and `0.03,0.05,0.06`.
+
+### The reflection pass runs for each term on its own
+
+The pass at present used to be switched by the screen-space reflections, and the
+murk, the planar walk and the retained scene all rode on it: planar and retained
+reflections did nothing without `KF2_SSR=1`, and the murk nothing without a
+reflection. Each is its own switch now (`ScreenReflections.Enabled`,
+`WaterMurk.Enabled`, `PlanarReflections.Enabled`, `RetainedScene.Enabled`), and
+`GteDepth.Reflections` -- the pass, the surface buffer, the materials and the water
+rectangles -- is on while any of them is (`ScreenReflections.Refresh`). With the
+march off (`uMarchOn` 0) a water pixel takes a planar lookup where one answers and
+reflects nothing elsewhere; the retained cubemap still marches, being world space.
+This is the seam for taking the screen march out: what it still lends the rest is
+`ScreenReflections.March()`/`FogBlackDepth()` (the cubemap's reach), the fog curve,
+the pass's resolution and the probe's readback.
+
+Measured on `fdat02`'s water (`KF2_AUTOSTART=new`, 144 fps, each alone, the others
+forced off): murk 36.3% of the picture reflective, 0% marched, mean weight 0.945;
+SSR 53.5% of that hit a surface and 46.3% the sky, as before; planar 55.6% planar
+and 0% marched; retained 55.5% planar and 0.2% from the cubemap; none of them, no
+pass. 144.0 fps drawn at 19.9-20.0 ticks/s and `[present] wide 288` in each.

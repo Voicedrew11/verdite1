@@ -11,7 +11,7 @@ namespace Kf2;
 /// The area's map as a world-space mesh on the GPU (<see cref="RetainedScene"/>), so a
 /// reflection draws the world again without the game's walks running twice.
 ///
-///     KF2_RETAINED=1          reflections from the retained scene (off: not judged); needs KF2_SSR
+///     KF2_RETAINED=1          reflections from the retained scene (off: not judged)
 ///     KF2_RETAINED_PLANAR=0   no planar reflections from it
 ///     KF2_RETAINED_CUBE=0     no camera cubemap
 ///     KF2_RETAINED_CUBESIZE=256  a cubemap face's size
@@ -83,10 +83,10 @@ public static class RetainedMap
         _hash = 0;
     }
 
-    /// <summary>Whether reflections are drawn from it: the setting, and the reflection
-    /// pass that reads what is drawn. The backend draws only once its program built
+    /// <summary>Whether reflections are drawn from it; the reflection pass runs for
+    /// it on its own. The backend draws only once its program built
     /// (<see cref="RetainedScene.Supported"/>).</summary>
-    public static bool ReflectionsReady => RetainedScene.Enabled && ScreenReflections.Enabled;
+    public static bool ReflectionsReady => RetainedScene.Enabled;
 
     /// <summary>Whether to build the static map: for reflections, or for the authored
     /// lights' shadows (0077), which need nothing else of it.</summary>

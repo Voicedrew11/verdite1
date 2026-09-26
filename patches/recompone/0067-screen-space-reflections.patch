@@ -2718,3 +2718,249 @@ index 50b1329..f6902b6 100644
          }
          """;
  
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 6b45495..9e80790 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -80,7 +80,7 @@ public sealed partial class GlCore : IGpuBackend
+     int _ssrW, _ssrH;
+     bool _ssrInfo;
+     int _uSsrOrigin, _uSsrSize, _uSsrTexSize, _uSsrProjH, _uSsrCentre;
+-    int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps;
++    int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps, _uSsrMarchOn, _uSsrMurkDist, _uSsrMurkColor;
+     int _uSsrDqa, _uSsrDqb, _uSsrFogCurve;
+     int _uPresentSsrOn;
+     int _uPresentAoMatOn;
+@@ -372,6 +372,9 @@ public sealed partial class GlCore : IGpuBackend
+                 _uSsrMaxDist = _gl.GetUniformLocation(_progSsr, "uMaxDist");
+                 _uSsrThickness = _gl.GetUniformLocation(_progSsr, "uThickness");
+                 _uSsrSky = _gl.GetUniformLocation(_progSsr, "uSky");
++                _uSsrMarchOn = _gl.GetUniformLocation(_progSsr, "uMarchOn");
++                _uSsrMurkDist = _gl.GetUniformLocation(_progSsr, "uMurkDist");
++                _uSsrMurkColor = _gl.GetUniformLocation(_progSsr, "uMurkColor");
+                 _uSsrSteps = _gl.GetUniformLocation(_progSsr, "uSteps");
+                 _uSsrDqa = _gl.GetUniformLocation(_progSsr, "uDqa");
+                 _uSsrDqb = _gl.GetUniformLocation(_progSsr, "uDqb");
+@@ -2645,6 +2648,10 @@ public sealed partial class GlCore : IGpuBackend
+         if (_uSsrMaxDist >= 0) _gl.Uniform1(_uSsrMaxDist, Math.Max(64f, ScreenReflections.March()));
+         if (_uSsrThickness >= 0) _gl.Uniform1(_uSsrThickness, Math.Max(1f, ScreenReflections.Thickness));
+         if (_uSsrSky >= 0) _gl.Uniform1(_uSsrSky, Math.Clamp(ScreenReflections.Sky, 0f, 1f));
++        // Each term on its own switch: the pass runs for any of them.
++        if (_uSsrMarchOn >= 0) _gl.Uniform1(_uSsrMarchOn, ScreenReflections.Enabled ? 1 : 0);
++        if (_uSsrMurkDist >= 0) _gl.Uniform1(_uSsrMurkDist, WaterMurk.Enabled ? Math.Max(1f, WaterMurk.Distance) : 0f);
++        if (_uSsrMurkColor >= 0) _gl.Uniform3(_uSsrMurkColor, WaterMurk.R, WaterMurk.G, WaterMurk.B);
+         if (_uSsrSteps >= 0) _gl.Uniform1(_uSsrSteps, Math.Clamp(ScreenReflections.Steps, 1, 128));
+         if (_uSsrDqa >= 0) _gl.Uniform1(_uSsrDqa, (float)GteDepth.ProjDqa);
+         if (_uSsrDqb >= 0) _gl.Uniform1(_uSsrDqb, (float)GteDepth.ProjDqb);
+@@ -2656,7 +2663,10 @@ public sealed partial class GlCore : IGpuBackend
+         bool planarOn = PlanarReflections.Enabled && planar is { Tex: not 0 } && src.PlanarFrame == src.LastDrawFrame;
+         if (_uSsrPlanarOn >= 0) _gl.Uniform1(_uSsrPlanarOn, planarOn ? 1 : 0);
+         bool retCompare = _retPlanar != null && _retPlaneN > 0 && _retCube;
+-        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, (planarOn || retCompare) && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
++        // The planar walk is checked against the screen march, the retained planes
++        // against the cubemap.
++        bool compare = (planarOn && ScreenReflections.Enabled) || retCompare;
++        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, compare && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
+         if (planarOn)
+         {
+             var pp = src.PlanarPlane;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 5c5a158..13962ee 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -558,6 +558,13 @@ internal static class GlShaders
+         uniform float uThickness;
+         uniform float uSky;
+         uniform int   uSteps;
++        // The screen march; 0 leaves the pass the planar lookups, the cubemap and
++        // the murk.
++        uniform int   uMarchOn;
++        // Murk: water thickens towards its colour with the distance the view ray
++        // runs through it, surface to the opaque floor behind. 0 is off.
++        uniform float uMurkDist;
++        uniform vec3  uMurkColor;
+         // SurfaceMaterial's table, by id: row 0 is reflectivity, F0 and roughness.
+         uniform sampler2D uMatTable;
+         // The game's depth cue, off the GTE: IR0 = (DQA * H/SZ + DQB) / 4096, and
+@@ -672,10 +679,18 @@ internal static class GlShaders
+         // hit or miss, and the reflection's weight comes off what is left. With no
+         // metal the weight is the reflection's alone, to the bit.
+         float gMetalDark = 0.0;
++        // The murk's share and its (fogged) colour, laid under the reflection.
++        float gMurk = 0.0;
++        vec3 gMurkCol = vec3(0.0);
+         void emit(vec3 c, float w) {
+             w = clamp(w, 0.0, 1.0);
+             float a = gMetalDark > 0.0 ? 1.0 - (1.0 - gMetalDark) * (1.0 - w) : w;
+-            oColor = vec4(c * w, a);
++            vec3 rgb = c * w;
++            if (gMurk > 0.0) {
++                rgb += gMurkCol * gMurk * (1.0 - a);
++                a = 1.0 - (1.0 - a) * (1.0 - gMurk);
++            }
++            oColor = vec4(rgb, a);
+         }
+ 
+         // 0068. The planar reflection at this pixel, when the surface lies on the
+@@ -822,8 +837,9 @@ internal static class GlShaders
+             if (m <= 0 || m >= 256) return;
+             vec4 mat = texelFetch(uMatTable, ivec2(m, 0), 0);
+             float refl = mat.r;
+-            if (refl <= 0.0) return;
+-            oInfo.a = 1.0 / 255.0;
++            bool murky = uMurkDist > 0.0 && m == 2;
++            if (refl <= 0.0 && !murky) return;
++            if (refl > 0.0) oInfo.a = 1.0 / 255.0;
+ 
+             float zs = s.b * FAR;
+             if (zs <= 1.0) return;
+@@ -834,6 +850,15 @@ internal static class GlShaders
+             if (d > 0.0 && d < 1.0 && d * FAR < zs * 0.99 - 8.0) return;
+ 
+             vec3 p = viewAt(vUv, zs);
++            // A translucent surface writes no depth, so the depth buffer holds the
++            // floor under it: the ray's run between the two is how much water it
++            // crosses. An opaque surface has none; the sky behind is all water.
++            if (murky) {
++                float run = (d <= 0.0 || d >= 1.0) ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
++                gMurk = 1.0 - exp(-run / uMurkDist);
++                gMurkCol = uMurkColor * fogKeep(zs);
++            }
++            if (refl <= 0.0) { emit(vec3(0.0), 0.0); return; }
+             vec3 n = octDecode(s.rg);
+             vec3 v = normalize(p);
+             vec3 r = reflect(v, n);
+@@ -886,6 +911,14 @@ internal static class GlShaders
+                 return;
+             }
+ 
++            // No screen march: a planar pixel the check kept this far takes its
++            // lookup, and anything else reflects nothing.
++            if (uMarchOn == 0) {
++                if (planarHit) { oInfo.a += 4.0 / 255.0; emit(pc * tint, w); }
++                else emit(vec3(0.0), 0.0);
++                return;
++            }
++
+             // The same 4x4 interleaved pattern the occlusion pass uses, as a start
+             // offset along the ray, so step banding becomes a fine grain.
+             ivec2 px = ivec2(gl_FragCoord.xy) & 3;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index d9a275d..84bc786 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -242,9 +242,10 @@ public static class GteDepth
+     /// not.</summary>
+     public static bool DepthWanted => _zbuffer || _ao || _ssr;
+ 
+-    /// <summary>0067. Screen-space reflections, the second reader of the finished
+-    /// frame's depth and the first reader of its surface buffer. See
+-    /// <see cref="ScreenReflections"/>.</summary>
++    /// <summary>0067. The reflection pass, the second reader of the finished frame's
++    /// depth and the first reader of its surface buffer: on while anything it
++    /// composites is (<see cref="ScreenReflections.Refresh"/>), the screen march,
++    /// the murk, the planar walk or the retained scene.</summary>
+     public static bool Reflections
+     {
+         get => _ssr;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+index 24a4624..9cd845e 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+@@ -31,9 +31,14 @@ namespace RecompOne.Runtime;
+ /// </summary>
+ public static class PlanarReflections
+ {
+-    /// <summary>The port's switch. Needs <see cref="ScreenReflections.Enabled"/>:
+-    /// the pass that reads the planar texture is the reflection pass.</summary>
+-    public static bool Enabled;
++    /// <summary>The port's switch. The reflection pass reads the planar texture,
++    /// and runs for it whether or not the screen march is on.</summary>
++    public static bool Enabled
++    {
++        get => _on;
++        set { _on = value; ScreenReflections.Refresh(); }
++    }
++    static bool _on;
+ 
+     /// <summary>Set by the GL core backend when its prim program has the clip plane;
+     /// nothing else can draw into a planar texture, so the port walks nothing
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+index ed64ea9..87ecbef 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -65,8 +65,14 @@ public static class RetainedScene
+     /// the map is reflected, including those its visibility flood leaves out.</summary>
+     public static bool HalfGate = true;
+ 
+-    /// <summary>The port's switch: draw reflections from this scene.</summary>
+-    public static bool Enabled;
++    /// <summary>The port's switch: draw reflections from this scene. The reflection
++    /// pass runs for it whether or not the screen march is on.</summary>
++    public static bool Enabled
++    {
++        get => _on;
++        set { _on = value; ScreenReflections.Refresh(); }
++    }
++    static bool _on;
+ 
+     /// <summary>0077. The port's authored lights want the static map for their shadows,
+     /// whether or not reflections are drawn from it.</summary>
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs
+index 75856cf..643647c 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs
+@@ -20,12 +20,21 @@ namespace RecompOne.Runtime;
+ /// </summary>
+ public static class ScreenReflections
+ {
++    static bool _march;
++
++    /// <summary>The screen-space march. The pass itself also runs for the murk and
++    /// the planar and retained reflections, each on its own switch.</summary>
+     public static bool Enabled
+     {
+-        get => GteDepth.Reflections;
+-        set => GteDepth.Reflections = value;
++        get => _march;
++        set { _march = value; Refresh(); }
+     }
+ 
++    /// <summary>The pass runs, and the frame keeps its surfaces, while any of its
++    /// terms is on.</summary>
++    public static void Refresh() =>
++        GteDepth.Reflections = _march || WaterMurk.Enabled || PlanarReflections.Enabled || RetainedScene.Enabled;
++
+     /// <summary>How far a ray is marched, in the game's world units (a floor tile is
+     /// 2048); 0 marches to where the game's fog turns a colour black, so whatever
+     /// lies past the march's end would have reflected black anyway.</summary>
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/WaterMurk.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/WaterMurk.cs
+new file mode 100644
+index 0000000..dd9a7b8
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/WaterMurk.cs
+@@ -0,0 +1,24 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// Water murk: the reflection pass lays a dark colour over water in proportion to
++/// how much of it the view ray crosses. A translucent surface writes no depth, so
++/// the depth buffer holds the floor under the water and the surface buffer the
++/// water itself; the run between the two is the water crossed. Its own switch: it
++/// needs the pass, not the screen march or either planar reflection.
++/// </summary>
++public static class WaterMurk
++{
++    static bool _on;
++
++    public static bool Enabled
++    {
++        get => _on;
++        set { _on = value; ScreenReflections.Refresh(); }
++    }
++
++    /// <summary>The distance through water, in world units, over which the floor
++    /// under it fades to 63% of <see cref="R"/>/G/B.</summary>
++    public static float Distance = 700f;
++    public static float R = 0.03f, G = 0.05f, B = 0.06f;
++}

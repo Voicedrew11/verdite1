@@ -703,11 +703,18 @@ Kf2.Reflections.Configure(Environment.GetEnvironmentVariable("KF2_SSR"),
                           Environment.GetEnvironmentVariable("KF2_SSR_FOGCURVE"));
 Kf2.Reflections.Install();
 
+// Murky water: the same pass lays a dark colour over water by how much of it the
+// view ray crosses, on its own switch -- no reflection needs to be on. Off by
+// default: measured, not judged. See "Murky water" in docs/RENDERING.md.
+Kf2.Murk.Configure(Environment.GetEnvironmentVariable("KF2_MURK"),
+                   Environment.GetEnvironmentVariable("KF2_MURK_DISTANCE"));
+Kf2.Murk.Install();
+
 // Planar reflections (patches/recompone/0068): the tile walk and the object walk's
 // submits run a second time from the camera mirrored in the water, into an ordering
 // table of the port's own, drawn into a texture the reflection pass reads first.
-// Needs KF2_SSR. Off by default: measured, not judged. See "Planar reflections" in
-// docs/RENDERING.md.
+// Independent of KF2_SSR. Off by default: measured, not judged. See "Planar
+// reflections" in docs/RENDERING.md.
 Kf2.PlanarWalk.Configure(Environment.GetEnvironmentVariable("KF2_PLANAR"),
                          Environment.GetEnvironmentVariable("KF2_PLANAR_TOLERANCE"),
                          Environment.GetEnvironmentVariable("KF2_PLANAR_RIPPLE"),
@@ -718,8 +725,8 @@ Kf2.PlanarWalk.Install();
 // The retained scene (patches/recompone/0072): the map kept on the GPU in world
 // space, built from the map data, so the reflections draw the world again without
 // the game's walks: every water or authored plane, and a cubemap from the camera
-// in place of the screen-space march. Needs KF2_SSR. Off by default: measured, not
-// judged. See "The retained scene" in docs/RENDERING.md.
+// in place of the screen-space march. Independent of KF2_SSR. Off by default:
+// measured, not judged. See "The retained scene" in docs/RENDERING.md.
 Kf2.RetainedMap.Configure(Environment.GetEnvironmentVariable("KF2_RETAINED"),
                           Environment.GetEnvironmentVariable("KF2_RETAINED_PLANAR"),
                           Environment.GetEnvironmentVariable("KF2_RETAINED_CUBE"),

@@ -678,9 +678,9 @@ public static class Editor
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Apply the working pack. Off, nothing it holds reaches the picture.");
 
-            if (!Reflections.Enabled)
+            if (!Reflections.AnySource)
                 ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
-                    "Water reflections are off, so only a material's glow is drawn.");
+                    "No reflections are on, so only a material's glow is drawn.");
 
             if (Identity.Area < 0) ImGui.TextDisabled("No area loaded.");
             else

@@ -65,8 +65,14 @@ public static class RetainedScene
     /// the map is reflected, including those its visibility flood leaves out.</summary>
     public static bool HalfGate = true;
 
-    /// <summary>The port's switch: draw reflections from this scene.</summary>
-    public static bool Enabled;
+    /// <summary>The port's switch: draw reflections from this scene. The reflection
+    /// pass runs for it whether or not the screen march is on.</summary>
+    public static bool Enabled
+    {
+        get => _on;
+        set { _on = value; ScreenReflections.Refresh(); }
+    }
+    static bool _on;
 
     /// <summary>0077. The port's authored lights want the static map for their shadows,
     /// whether or not reflections are drawn from it.</summary>

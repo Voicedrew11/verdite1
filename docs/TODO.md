@@ -603,7 +603,7 @@ useful than the question was.
    one *Even fog and lighting* checkbox (`KF2_EVENLIGHT=0` drops the light part).
    See "The light colour changes at the same edge" in [RENDERING.md](RENDERING.md).
 18. **Look at the water reflections, then decide what comes next on the surface
-   buffer.** `KF2_SSR=1` (or Video ▸ Experimental ▸ *Water reflections*) with
+   buffer.** `KF2_SSR=1` (or Video ▸ Experimental ▸ *Screen-space reflections*) with
    `KF2_AUTOSTART=new`, facing the water in `fdat02`. The mechanism is measured and
    the picture has been seen once, and the two things reported (the HUD reflected,
    pop-in past the fog) are fixed by mechanism and not yet looked at again. Still to
@@ -621,8 +621,9 @@ useful than the question was.
    light in it; per-pixel lighting (`0048`) records what that light was made of
    per packet, which is where to start. See "Screen-space reflections" in
    [RENDERING.md](RENDERING.md).
-19. **Look at the planar reflections.** `KF2_SSR=1 KF2_PLANAR=1` (or *Planar
-   reflections* under *Water reflections*), `KF2_AUTOSTART=new`, facing the pool.
+19. **Look at the planar reflections.** `KF2_PLANAR=1` (or Video ▸ Experimental ▸
+   *Planar reflections*), `KF2_AUTOSTART=new`, facing the pool; add `KF2_SSR=1` for
+   the march off the plane.
    The mechanism is measured, and the mirror is sampled in the right place (3.5
    against 24.2 unmirrored); the picture has never been looked at. To judge: the
    ripple (`KF2_PLANAR_RIPPLE`), the seam where an empty mirrored texel falls back
@@ -636,8 +637,8 @@ useful than the question was.
    discarded per fragment. A tile half whose whole model lies below the plane
    could be skipped in the mirrored walk. See "Planar reflections" in
    [RENDERING.md](RENDERING.md).
-20. **Look at the world reflections.** `KF2_SSR=1 KF2_RETAINED=1` (or *World
-   reflections* under Video ▸ Experimental ▸ *Water reflections*). The mechanism is
+20. **Look at the world reflections.** `KF2_RETAINED=1` (or Video ▸ Experimental ▸
+   *World reflections*). The mechanism is
    measured (see "The retained scene" in [RENDERING.md](RENDERING.md)): the map and
    the object walk's models land within 1 px of the GTE's own vertices, the planes
    and the cubemap agree to 3-4 brightness levels where both find a surface, and it

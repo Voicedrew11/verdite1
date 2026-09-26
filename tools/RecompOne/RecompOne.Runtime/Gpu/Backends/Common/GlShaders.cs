@@ -558,6 +558,13 @@ internal static class GlShaders
         uniform float uThickness;
         uniform float uSky;
         uniform int   uSteps;
+        // The screen march; 0 leaves the pass the planar lookups, the cubemap and
+        // the murk.
+        uniform int   uMarchOn;
+        // Murk: water thickens towards its colour with the distance the view ray
+        // runs through it, surface to the opaque floor behind. 0 is off.
+        uniform float uMurkDist;
+        uniform vec3  uMurkColor;
         // SurfaceMaterial's table, by id: row 0 is reflectivity, F0 and roughness.
         uniform sampler2D uMatTable;
         // The game's depth cue, off the GTE: IR0 = (DQA * H/SZ + DQB) / 4096, and
@@ -672,10 +679,18 @@ internal static class GlShaders
         // hit or miss, and the reflection's weight comes off what is left. With no
         // metal the weight is the reflection's alone, to the bit.
         float gMetalDark = 0.0;
+        // The murk's share and its (fogged) colour, laid under the reflection.
+        float gMurk = 0.0;
+        vec3 gMurkCol = vec3(0.0);
         void emit(vec3 c, float w) {
             w = clamp(w, 0.0, 1.0);
             float a = gMetalDark > 0.0 ? 1.0 - (1.0 - gMetalDark) * (1.0 - w) : w;
-            oColor = vec4(c * w, a);
+            vec3 rgb = c * w;
+            if (gMurk > 0.0) {
+                rgb += gMurkCol * gMurk * (1.0 - a);
+                a = 1.0 - (1.0 - a) * (1.0 - gMurk);
+            }
+            oColor = vec4(rgb, a);
         }
 
         // 0068. The planar reflection at this pixel, when the surface lies on the
@@ -822,8 +837,9 @@ internal static class GlShaders
             if (m <= 0 || m >= 256) return;
             vec4 mat = texelFetch(uMatTable, ivec2(m, 0), 0);
             float refl = mat.r;
-            if (refl <= 0.0) return;
-            oInfo.a = 1.0 / 255.0;
+            bool murky = uMurkDist > 0.0 && m == 2;
+            if (refl <= 0.0 && !murky) return;
+            if (refl > 0.0) oInfo.a = 1.0 / 255.0;
 
             float zs = s.b * FAR;
             if (zs <= 1.0) return;
@@ -834,6 +850,15 @@ internal static class GlShaders
             if (d > 0.0 && d < 1.0 && d * FAR < zs * 0.99 - 8.0) return;
 
             vec3 p = viewAt(vUv, zs);
+            // A translucent surface writes no depth, so the depth buffer holds the
+            // floor under it: the ray's run between the two is how much water it
+            // crosses. An opaque surface has none; the sky behind is all water.
+            if (murky) {
+                float run = (d <= 0.0 || d >= 1.0) ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
+                gMurk = 1.0 - exp(-run / uMurkDist);
+                gMurkCol = uMurkColor * fogKeep(zs);
+            }
+            if (refl <= 0.0) { emit(vec3(0.0), 0.0); return; }
             vec3 n = octDecode(s.rg);
             vec3 v = normalize(p);
             vec3 r = reflect(v, n);
@@ -883,6 +908,14 @@ internal static class GlShaders
                 oInfo.a += 1.0 / 255.0;
                 oInfo.b = keep;
                 emit(cc * keep * tint, w);
+                return;
+            }
+
+            // No screen march: a planar pixel the check kept this far takes its
+            // lookup, and anything else reflects nothing.
+            if (uMarchOn == 0) {
+                if (planarHit) { oInfo.a += 4.0 / 255.0; emit(pc * tint, w); }
+                else emit(vec3(0.0), 0.0);
                 return;
             }
 

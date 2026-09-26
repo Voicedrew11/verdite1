@@ -31,9 +31,14 @@ namespace RecompOne.Runtime;
 /// </summary>
 public static class PlanarReflections
 {
-    /// <summary>The port's switch. Needs <see cref="ScreenReflections.Enabled"/>:
-    /// the pass that reads the planar texture is the reflection pass.</summary>
-    public static bool Enabled;
+    /// <summary>The port's switch. The reflection pass reads the planar texture,
+    /// and runs for it whether or not the screen march is on.</summary>
+    public static bool Enabled
+    {
+        get => _on;
+        set { _on = value; ScreenReflections.Refresh(); }
+    }
+    static bool _on;
 
     /// <summary>Set by the GL core backend when its prim program has the clip plane;
     /// nothing else can draw into a planar texture, so the port walks nothing

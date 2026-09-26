@@ -1,13 +1,14 @@
 using ImGuiNET;
+using RecompOne.Runtime;
 using RecompOne.Runtime.Host.Window;
 
 namespace Kf2.Settings;
 
 /// <summary>
-/// The reflections switch, under Video ▸ Experimental after the Z-buffer, with the
-/// two sources of the world it can reflect under it. Their tuning is on the console
-/// (<c>KF2_SSR_*</c>, <c>KF2_PLANAR_*</c>, <c>KF2_RETAINED_*</c>), as the occlusion
-/// pass's is.
+/// The water switches, under Video ▸ Experimental after the Z-buffer: the murk and
+/// the three reflection sources, each on its own. Their tuning is on the console
+/// (<c>KF2_MURK_*</c>, <c>KF2_SSR_*</c>, <c>KF2_PLANAR_*</c>, <c>KF2_RETAINED_*</c>),
+/// as the occlusion pass's is.
 /// </summary>
 public sealed class ReflectionsPage : IPatchPage
 {
@@ -18,15 +19,50 @@ public sealed class ReflectionsPage : IPatchPage
     const string Strings = """
     {
       "strings": {
+        "kf2.murk.label": {
+          "en": "Murky water",
+          "pt-BR": "Água turva",
+          "es-419": "Agua turbia"
+        },
+        "kf2.murk.tooltip": {
+          "en": "Water darkens with depth: the further the view runs through it to the bottom, the murkier it gets. Needs no reflections. Experimental.",
+          "pt-BR": "A água escurece com a profundidade: quanto mais a vista a atravessa até o fundo, mais turva fica. Não precisa de reflexos. Experimental.",
+          "es-419": "El agua se oscurece con la profundidad: cuanto más la atraviesa la vista hasta el fondo, más turbia se ve. No necesita reflejos. Experimental."
+        },
+        "kf2.murk.distance": {
+          "en": "Murk depth",
+          "pt-BR": "Profundidade da turvação",
+          "es-419": "Profundidad de la turbidez"
+        },
+        "kf2.murk.distance.tooltip": {
+          "en": "How much water the view crosses before it is mostly murk, in world units (a floor tile is 2048). Lower is murkier.",
+          "pt-BR": "Quanta água a vista atravessa antes de ficar quase toda turva, em unidades do mundo (um ladrilho do piso tem 2048). Menor é mais turvo.",
+          "es-419": "Cuánta agua atraviesa la vista antes de ser casi toda turbia, en unidades del mundo (una baldosa del piso mide 2048). Menor es más turbio."
+        },
+        "kf2.murk.colour": {
+          "en": "Murk colour",
+          "pt-BR": "Cor da turvação",
+          "es-419": "Color de la turbidez"
+        },
+        "kf2.murk.colour.tooltip": {
+          "en": "The colour deep water fades to. It is fogged with the water, as the game's own colours are.",
+          "pt-BR": "A cor para a qual a água funda se desvanece. É afetada pela névoa junto com a água, como as cores do próprio jogo.",
+          "es-419": "El color al que se desvanece el agua profunda. La niebla lo afecta junto con el agua, como a los colores del propio juego."
+        },
+        "kf2.murk.reset": {
+          "en": "Reset murk",
+          "pt-BR": "Restaurar turvação",
+          "es-419": "Restablecer turbidez"
+        },
         "kf2.ssr.label": {
-          "en": "Water reflections",
-          "pt-BR": "Reflexos na água",
-          "es-419": "Reflejos en el agua"
+          "en": "Screen-space reflections",
+          "pt-BR": "Reflexos em espaço de tela",
+          "es-419": "Reflejos en espacio de pantalla"
         },
         "kf2.ssr.tooltip": {
-          "en": "Water reflects what is on screen above it. Experimental.",
-          "pt-BR": "A água reflete o que está na tela acima dela. Experimental.",
-          "es-419": "El agua refleja lo que está en pantalla por encima de ella. Experimental."
+          "en": "Water reflects what is on screen above it, where no planar or world reflection answers. Experimental.",
+          "pt-BR": "A água reflete o que está na tela acima dela, onde nenhum reflexo planar ou do mundo responde. Experimental.",
+          "es-419": "El agua refleja lo que está en pantalla por encima de ella, donde ningún reflejo planar o del mundo responde. Experimental."
         },
         "kf2.ssr.planar.label": {
           "en": "Planar reflections",
@@ -56,29 +92,25 @@ public sealed class ReflectionsPage : IPatchPage
 
     public void Draw()
     {
-        bool on = Reflections.Enabled;
-        if (ImGui.Checkbox(Localization.T("kf2.ssr.label"), ref on))
+        bool murk = Murk.Enabled;
+        if (ImGui.Checkbox(Localization.T("kf2.murk.label"), ref murk))
         {
-            Reflections.SetEnabled(on);
-            PatchSettings.Set(Reflections.OnKey, on);
+            Murk.SetEnabled(murk);
+            PatchSettings.Set(Murk.OnKey, murk);
         }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf2.ssr.tooltip"));
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf2.murk.tooltip"));
+        DrawMurk(murk);
 
-        // Read by the reflection pass, so it means nothing with that off.
-        ImGui.Indent();
-        ImGui.BeginDisabled(!on);
         bool retained = RetainedMap.Enabled;
         if (ImGui.Checkbox(Localization.T("kf2.ssr.retained.label"), ref retained))
         {
             RetainedMap.SetEnabled(retained);
             PatchSettings.Set(RetainedMap.OnKey, retained);
         }
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(Localization.T("kf2.ssr.retained.tooltip"));
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf2.ssr.retained.tooltip"));
 
         // The world reflections draw the planes themselves.
-        ImGui.BeginDisabled(!on || retained);
+        ImGui.BeginDisabled(retained);
         bool planar = PlanarWalk.Enabled;
         if (ImGui.Checkbox(Localization.T("kf2.ssr.planar.label"), ref planar))
         {
@@ -88,6 +120,55 @@ public sealed class ReflectionsPage : IPatchPage
         ImGui.EndDisabled();
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(Localization.T("kf2.ssr.planar.tooltip"));
+
+        bool on = Reflections.Enabled;
+        if (ImGui.Checkbox(Localization.T("kf2.ssr.label"), ref on))
+        {
+            Reflections.SetEnabled(on);
+            PatchSettings.Set(Reflections.OnKey, on);
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf2.ssr.tooltip"));
+    }
+
+    static void DrawMurk(bool on)
+    {
+        ImGui.BeginDisabled(!on);
+        ImGui.Indent();
+
+        float dist = WaterMurk.Distance;
+        if (ImGui.SliderFloat(Localization.T("kf2.murk.distance"), ref dist, 100f, 8000f, "%.0f",
+                              ImGuiSliderFlags.AlwaysClamp | ImGuiSliderFlags.Logarithmic))
+        {
+            WaterMurk.Distance = dist;
+            PatchSettings.Set(Murk.DistanceKey, dist);
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(Localization.T("kf2.murk.distance.tooltip"));
+
+        var col = new System.Numerics.Vector3(WaterMurk.R, WaterMurk.G, WaterMurk.B);
+        if (ImGui.ColorEdit3(Localization.T("kf2.murk.colour"), ref col, ImGuiColorEditFlags.Float))
+        {
+            WaterMurk.R = Math.Clamp(col.X, 0f, 1f);
+            WaterMurk.G = Math.Clamp(col.Y, 0f, 1f);
+            WaterMurk.B = Math.Clamp(col.Z, 0f, 1f);
+            PatchSettings.Set(Murk.RKey, WaterMurk.R);
+            PatchSettings.Set(Murk.GKey, WaterMurk.G);
+            PatchSettings.Set(Murk.BKey, WaterMurk.B);
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(Localization.T("kf2.murk.colour.tooltip"));
+
+        if (ImGui.Button(Localization.T("kf2.murk.reset")))
+        {
+            WaterMurk.Distance = Murk.DefaultDistance;
+            WaterMurk.R = Murk.DefaultR; WaterMurk.G = Murk.DefaultG; WaterMurk.B = Murk.DefaultB;
+            PatchSettings.Set(Murk.DistanceKey, Murk.DefaultDistance);
+            PatchSettings.Set(Murk.RKey, Murk.DefaultR);
+            PatchSettings.Set(Murk.GKey, Murk.DefaultG);
+            PatchSettings.Set(Murk.BKey, Murk.DefaultB);
+        }
+
         ImGui.Unindent();
+        ImGui.EndDisabled();
     }
 }

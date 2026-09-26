@@ -165,18 +165,19 @@ KF2_AO_WORLD_STRENGTH=0.6 KF2_AO_WORLD_RADIUS=3072   # how dark that term goes, 
 KF2_AO_WORLD_PROBE=1                   # the transform, the grid, and whether either is missing; =2 the camera's own tile
 KF2_AO_PROBE=1                         # coverage, the projection read off the GTE, passes run
 KF2_AO_PROBE=2                         # also read the occlusion back: how dark, how much, and where
-KF2_SSR=1                              # screen-space reflections on water (off by default; GL core only)
+KF2_MURK=1 KF2_MURK_DISTANCE=700       # murky water: a dark murk by the distance the view ray runs through water, surface to floor, 63% at the distance (off by default; independent of any reflection; GL core only; depth and colour are also sliders under Video ▸ Experimental ▸ Murky water)
+KF2_SSR=1                              # screen-space reflections on water (off by default; independent of the murk, planar and retained reflections; GL core only)
 KF2_SSR_STRENGTH=0.6 KF2_SSR_F0=0.12   # how much water reflects at a grazing angle, and looking straight down
 KF2_SSR_DISTANCE=16384 KF2_SSR_STEPS=32 KF2_SSR_THICKNESS=256   # the march: how far (unset: to where the game's fog turns black), how many steps, how far behind a depth still hits
 KF2_SSR_SKY=1                          # a miss takes the last background pixel it crossed, not under the HUD, at this weight; 0 none
 KF2_SSR_FOGCURVE=2                     # the depth-cue curve a reflection's longer path is fogged on: 0 none, 1 offset, 2 knee (default), 3 half, 4 linear
 KF2_SSR_RESOLUTION=2                   # the pass at this multiple of the game's pixels; 0 the render scale
 KF2_SSR_PROBE=1                        # passes, water rects and triangles, 2D overlays, refusals by blend, the fog curve, a readback of what each reflective pixel found, and a material map
-KF2_PLANAR=1                           # planar reflections: the world walked again from a camera mirrored in the water (off by default; needs KF2_SSR; GL core only)
+KF2_PLANAR=1                           # planar reflections: the world walked again from a camera mirrored in the water (off by default; GL core only)
 KF2_PLANAR_TOLERANCE=48 KF2_PLANAR_BIAS=8   # how far off the plane a surface may be and take it; how far above it geometry must be to be reflected
 KF2_PLANAR_RIPPLE=4                    # how far the water's own texture bends the reflection, game pixels per unit of brightness change; 0 a flat mirror
 KF2_PLANAR_PROBE=1                     # the plane, the mirrored walk and its arena, captures, binned water, and the readback with its check on the mirror
-KF2_RETAINED=1                         # reflections drawn from the retained scene: the map and models kept on the GPU in world space (off by default; needs KF2_SSR; GL core only; stands the planar walk down)
+KF2_RETAINED=1                         # reflections drawn from the retained scene: the map and models kept on the GPU in world space (off by default; GL core only; stands the planar walk down)
 KF2_RETAINED_PLANAR=0 KF2_RETAINED_CUBE=0   # leave out its planes, or its camera cubemap (which otherwise replaces the screen march)
 KF2_RETAINED_CUBESIZE=256              # a cubemap face's size in pixels
 KF2_RETAINED_CULL=0                    # draw the faces a mirror or a cube face sees from behind (culled by default, as the game culls them)
@@ -192,7 +193,7 @@ KF2_REMASTER_SHADOW_MODELS=0           # only the map casts: creatures and objec
 KF2_REMASTER_SHADOW_SIZE=1024          # a shadow cubemap face's size in texels (64-4096)
 KF2_REMASTER_SHADOW_BIAS=6 KF2_REMASTER_SHADOW_OFFSET=1.5 KF2_REMASTER_SHADOW_SOFT=1.25   # compare bias in world units; normal offset and filter spread in texels (the `light shadows tune` verb sets them live)
 KF2_LIGHTCENSUS=1                      # who reads and writes the area's light records, by stage, every 5 s (slow: every RAM access takes the slow path; run with KF2_PRIMBUF=1)
-KF2_FACE_PROBE=1                       # every tile face given one of the ids 4-7 by its key; checks the subdivider's face order and a pick from the frame's triangles against the GPU's ids (needs KF2_SSR=1 KF2_SSR_PROBE=1; overrides any authored material)
+KF2_FACE_PROBE=1                       # every tile face given one of the ids 4-7 by its key; checks the subdivider's face order and a pick from the frame's triangles against the GPU's ids (needs a reflection or the murk on, and KF2_SSR_PROBE=1; overrides any authored material)
 KF2_TEXCENSUS=1                        # the texture-key census: keys, art, overlapping rects, dynamic places, what a pack covers, uploads, every 5 s; the `textures` shell verb saves it (0073)
 KF2_TEXKEY=face                        # key a replacement on the face's texture rectangle, not the image the game uploaded it as; =triangle each triangle's own UVs, as upstream does
 KF2_ANALOG=0                             # twin-stick control off (it is on by default)

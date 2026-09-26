@@ -20,11 +20,20 @@ namespace RecompOne.Runtime;
 /// </summary>
 public static class ScreenReflections
 {
+    static bool _march;
+
+    /// <summary>The screen-space march. The pass itself also runs for the murk and
+    /// the planar and retained reflections, each on its own switch.</summary>
     public static bool Enabled
     {
-        get => GteDepth.Reflections;
-        set => GteDepth.Reflections = value;
+        get => _march;
+        set { _march = value; Refresh(); }
     }
+
+    /// <summary>The pass runs, and the frame keeps its surfaces, while any of its
+    /// terms is on.</summary>
+    public static void Refresh() =>
+        GteDepth.Reflections = _march || WaterMurk.Enabled || PlanarReflections.Enabled || RetainedScene.Enabled;
 
     /// <summary>How far a ray is marched, in the game's world units (a floor tile is
     /// 2048); 0 marches to where the game's fog turns a colour black, so whatever
