@@ -68,6 +68,7 @@ public static class TextureCensus
         if (on == On) return;
         On = on;
         TextureResolver.Observer = on ? Lookup : null;
+        TextureKeys.Census = on ? new Dictionary<TexKey, long>() : null;
         VramTracker.Uploaded = on ? Upload : null;
         TextureResolver.Invalidate();
     }
@@ -187,12 +188,18 @@ public static class TextureCensus
         string sub = a.Length > 0 ? a[0] : "";
         if (sub == "on") SetOn(true);
         else if (sub == "off") SetOn(false);
-        else if (sub == "reset") { _areas.Clear(); _lookupsAt = 0; TextureResolver.Invalidate(); }
+        else if (sub == "reset") { _areas.Clear(); _lookupsAt = 0; TextureResolver.Invalidate(); TextureKeys.Census?.Clear(); }
         int area = Identity.Settled ? Identity.Area : -1;
         var body = new JsonObject
         {
             ["on"] = On, ["area"] = area, ["keying"] = Keying,
         };
+        if (TextureKeys.Census is { } cells)
+        {
+            body["cellKeys"] = cells.Count;
+            body["noUpload"] = TextureKeys.NoUpload;
+            body["fluidLookups"] = TextureKeys.FluidLookups;
+        }
         if (_areas.TryGetValue(area, out var c))
         {
             foreach (var (k, v) in Summary(c)) body[k] = v?.DeepClone();
@@ -228,6 +235,10 @@ public static class TextureCensus
             ["fingerprint"] = area >= 0 && Identity.Settled ? Identity.FingerprintText : null,
             ["keying"] = Keying,
             ["summary"] = Summary(c), ["keys"] = keys,
+            // The material keys (TextureKeys) the editor or a texture rule looked up since
+            // the last reset: the art each face draws, cut to its cell.
+            ["cells"] = new JsonArray((TextureKeys.Census ?? new()).OrderByDescending(p => p.Value)
+                .Select(p => (JsonNode)new JsonObject { ["key"] = p.Key.ToString(), ["lookups"] = p.Value }).ToArray()),
         };
         var path = Path.Combine(dir, $"area-{area}.json");
         File.WriteAllText(path, doc.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));

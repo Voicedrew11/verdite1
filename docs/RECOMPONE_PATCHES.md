@@ -1067,7 +1067,7 @@ Four files in the directory have no entry below:
   bounds per batch; the dest-copy rectangle reads the same bounds and shrinks with
   it. **One piece of art had several keys**, because the key is the UV bounding box
   and this game's faces read a texel past their texture (`[191,63,65,64]` beside
-  `[191,63,64,64]` for one tile); a clipped fan's triangles were keyed on their own
+  `[191,63,64,64]` for one texture); a clipped fan's triangles were keyed on their own
   UVs too. `VramTracker.NoteUpload` keeps which LoadImage last wrote each VRAM word,
   and `TextureResolver` keys a rectangle on that upload's when it lies inside it to
   within two texels (`KeyOnUpload`); `DrawTri` looks up by the face's `0060`
@@ -1082,6 +1082,15 @@ Four files in the directory have no entry below:
   while an observer is set a lookup runs with no pack. With no pack the pinned
   area-1 view is `210d55698c875fb8`, as before. GL core only for the filter.
   **No recompile.** See "Phase 4, the first slice" in `docs/REMASTER.md`.
+  Since amended: an image the game loads in pieces straight down, at one x and
+  width (a 128x128 texture as 100 rows and 28), was two uploads, so a face on the
+  second piece fell outside its upload and kept its own rectangle.
+  `VramTracker.NoteUpload` extends the previous load when the next continues it;
+  area 1's replacement keys went 21 to 17 and its overlapping rectangles 6 pairs
+  to none. `TextureResolver.ToUpload` is public and returns whether it widened, so
+  the port's texture materials key on the same rectangle. The amendment is the
+  second diff in the patch file. See "Phase 4, the second slice" in
+  `docs/REMASTER.md`.
 
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a

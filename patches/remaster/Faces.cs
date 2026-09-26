@@ -89,6 +89,7 @@ public static class Faces
         public uint Rec;     // 0 for a model's triangle
         public int Mesh, Face;
         public byte Label;   // the material it was sealed with
+        public TexKey Tex;   // the art it draws, or default
         public int Model;    // a model's id, or -1 (a tile, or a model the C# walk did not submit)
         public ModelKind Kind;
     }
@@ -125,14 +126,15 @@ public static class Faces
         uint rec = tile ? TileWalk.CurrentRecord : 0u;
         int mesh = tile ? mem.ReadU8(rec) : -1;
         int face = tile ? Current : -1;
-        byte label = PolyAssembler.TileMaterial;
+        byte label = r.Material;
+        TextureKeys.OfPacket(mem, pkt, r.Cmd, out var tex);
         int model = PolyAssembler.InModel ? ModelWalk.SubmitModel : -1;
         var kind = ModelWalk.SubmitKind;
         _cur.Add(new Tri { X0 = x[0], Y0 = y[0], Z0 = r.Z0, X1 = x[1], Y1 = y[1], Z1 = r.Z1, X2 = x[2], Y2 = y[2], Z2 = r.Z2,
-                           Rec = rec, Mesh = mesh, Face = face, Label = label, Model = model, Kind = kind });
+                           Rec = rec, Mesh = mesh, Face = face, Label = label, Model = model, Kind = kind, Tex = tex });
         if (n == 4)
             _cur.Add(new Tri { X0 = x[1], Y0 = y[1], Z0 = r.Z1, X1 = x[3], Y1 = y[3], Z1 = r.Z3, X2 = x[2], Y2 = y[2], Z2 = r.Z2,
-                               Rec = rec, Mesh = mesh, Face = face, Label = label, Model = model, Kind = kind });
+                               Rec = rec, Mesh = mesh, Face = face, Label = label, Model = model, Kind = kind, Tex = tex });
     }
 
     /// <summary>The view depth of a triangle at a point, or +inf when it does not cover it.</summary>
@@ -173,13 +175,19 @@ public static class Faces
     /// triangle, a model the C# walk did not submit, or a face the subdivider could not
     /// map.
     /// </summary>
-    public static List<FaceRef>? PickAt(Vector2 p, out ModelKey? model, out string? why)
+    public static List<FaceRef>? PickAt(Vector2 p, out ModelKey? model, out string? why) => PickAt(p, out model, out why, out _);
+
+    /// <summary><see cref="PickAt(Vector2, out ModelKey?, out string?)"/>, and the art the
+    /// nearest triangle draws, if it is textured.</summary>
+    public static List<FaceRef>? PickAt(Vector2 p, out ModelKey? model, out string? why, out TexKey? texture)
     {
         why = null;
         model = null;
+        texture = null;
         if (_last.Count == 0) { why = "no triangles recorded (is the editor open?)"; return null; }
         int n = Nearest(p, out float z);
         if (n < 0) { why = "nothing drawn there"; return null; }
+        if (_last[n].Tex.Index != 0) texture = _last[n].Tex;
         if (_last[n].Rec == 0)
         {
             if (_last[n].Model >= 0) model = new ModelKey(Identity.Area, _last[n].Kind, _last[n].Model);
@@ -202,7 +210,7 @@ public static class Faces
     // ---- the meshes -------------------------------------------------------------
 
     /// <summary>One face of a mesh as the model table holds it.</summary>
-    public readonly record struct MeshFace(uint Cmd, ushort Clut, ushort Tpage, int[] Verts);
+    public readonly record struct MeshFace(uint Cmd, ushort Clut, ushort Tpage, int[] Verts, uint Rect = 0);
 
     /// <summary>The tile meshes' table. The pointer at <c>ModelTable</c> names it only
     /// while the tile walk runs -- the object walk points it at the models' -- so the
@@ -256,8 +264,22 @@ public static class Faces
             uint at = f + 4u + (corners == 4 ? 0x12u : 0x0Eu);
             var v = new int[corners];
             for (int k = 0; k < corners; k++) v[k] = m.ReadU16(at + 2u * (uint)k);
+            // The face's UV rectangle, u0 | v0 << 8 | u1 << 16 | v1 << 24, from the UV
+            // halfwords at +4, +8, +0xC and +0x10.
+            uint rect = 0;
+            if (corners != 0)
+            {
+                int u0 = 255, v0 = 255, u1 = 0, v1 = 0;
+                for (int k = 0; k < corners; k++)
+                {
+                    uint uv = m.ReadU16(f + 4u + 4u * (uint)k);
+                    int u = (int)(uv & 0xFF), vv = (int)(uv >> 8);
+                    u0 = Math.Min(u0, u); v0 = Math.Min(v0, vv); u1 = Math.Max(u1, u); v1 = Math.Max(v1, vv);
+                }
+                rect = (uint)u0 | (uint)v0 << 8 | (uint)u1 << 16 | (uint)v1 << 24;
+            }
             faces[i] = corners == 0 ? new MeshFace(cmd, 0, 0, v)
-                                    : new MeshFace(cmd, m.ReadU16(f + 6u), m.ReadU16(f + 10u), v);
+                                    : new MeshFace(cmd, m.ReadU16(f + 6u), m.ReadU16(f + 10u), v, rect);
         }
         _meshes[model] = faces;
         return faces;

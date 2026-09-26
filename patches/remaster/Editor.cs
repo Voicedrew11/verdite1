@@ -43,6 +43,34 @@ public static class Editor
         SelectedModel = k;
         Selected = null;
         SelectedFaces.Clear();
+        SelectedTexture = null;
+    }
+
+    /// <summary>The art the last pick drew there, or the first selected face's: what
+    /// a texture assignment names, in every area.</summary>
+    public static TexKey? SelectedTexture { get; private set; }
+
+    public static void SelectTexture(TexKey? k) => SelectedTexture = k;
+
+    /// <summary>A texture assignment names the art under any palette.</summary>
+    public static bool AnyPalette = true;
+
+    /// <summary>The art a tile face draws, read from its mesh.</summary>
+    public static TexKey? TextureOf(RecompOne.Runtime.Memory.IMemory m, FaceRef f)
+    {
+        var faces = Faces.Mesh(m, f.Mesh);
+        if (faces == null || (uint)f.Face >= (uint)faces.Length || faces[f.Face].Verts.Length == 0) return null;
+        var mf = faces[f.Face];
+        return TextureKeys.Of(mf.Tpage, mf.Clut, (int)(mf.Rect & 0xFF), (int)((mf.Rect >> 8) & 0xFF),
+                              (int)((mf.Rect >> 16) & 0xFF), (int)(mf.Rect >> 24), out var k) ? k : null;
+    }
+
+    /// <summary>Give the selected art a material in every area, or clear it.</summary>
+    public static string? AssignTexture(string? material)
+    {
+        if (SelectedTexture is not { } k) return "no texture selected (pick a face or a model)";
+        Pack.SetTextureMaterial(AnyPalette ? k.AnyClut : k, material);
+        return null;
     }
 
     /// <summary>Assignments go to the mesh wherever the area uses it, not to the half.</summary>
@@ -82,6 +110,7 @@ public static class Editor
         Selected = key;
         SelectedModel = null;
         SelectedFaces.Clear();
+        SelectedTexture = null;
     }
 
     /// <summary>Faces; with <paramref name="toggle"/>, each is added or, if already
@@ -93,6 +122,7 @@ public static class Editor
         foreach (var f in faces)
             if (!toggle || !SelectedFaces.Remove(f)) SelectedFaces.Add(f);
         Selected = SelectedFaces.Count > 0 ? SelectedFaces[0].Tile : toggle ? Selected : null;
+        SelectedTexture = SelectedFaces.Count > 0 && RecompOne.Runtime.Runtime.Mem is { } m ? TextureOf(m, SelectedFaces[0]) : null;
     }
 
     /// <summary>The mesh a half draws now, or -1 when it draws none.</summary>
@@ -257,9 +287,10 @@ public static class Editor
                 else if (Picking)
                 {
                     bool toggle = ImGui.GetIO().KeyShift;
-                    var hit = Faces.PickAt(px, out var model, out _pickWhy);
+                    var hit = Faces.PickAt(px, out var model, out _pickWhy, out var tex);
                     if (hit != null) SelectFaces(hit, toggle);
                     else if (model != null) SelectModel(model);
+                    if (hit != null || model != null) SelectTexture(tex);
                 }
             }
             Drag(m, mouse);
@@ -537,6 +568,7 @@ public static class Editor
             {
                 ImGui.Text($"{mk} (every draw of it in the area)");
                 MaterialCombo(m, Blocked(mk.Area));
+                TextureCombo();
                 return;
             }
             if (Selected is not { } k || m == null) { ImGui.TextDisabled("Nothing selected."); return; }
@@ -572,6 +604,32 @@ public static class Editor
                 ImGui.SetTooltip("Assign to the mesh wherever this area uses it. A half's own assignment still wins on that half.");
 
             MaterialCombo(m, Blocked(k));
+            TextureCombo();
+        }
+
+        /// <summary>The picked art's material, in every area.</summary>
+        static void TextureCombo()
+        {
+            if (SelectedTexture is not { } tk) return;
+            ImGui.Separator();
+            var key = AnyPalette ? tk.AnyClut : tk;
+            ImGui.Text("Texture");
+            ImGui.SameLine();
+            ImGui.TextDisabled(key.ToString());
+            ImGui.Checkbox("Any palette", ref AnyPalette);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("On: this art wherever it is drawn, whatever its colours. Off: only in this palette.");
+            string current = Pack.TextureMaterial(key) ?? "(none)";
+            ImGui.SetNextItemWidth(220);
+            if (ImGui.BeginCombo("Everywhere", current))
+            {
+                if (ImGui.Selectable("(none)", current == "(none)")) AssignTexture(null);
+                foreach (var mat in Pack.Materials())
+                    if (ImGui.Selectable(mat.Name, mat.Name == current)) AssignTexture(mat.Name);
+                ImGui.EndCombo();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Every face drawing this art, in every area. A tile, face, mesh or model assignment wins over it.");
         }
 
         static void MaterialCombo(RecompOne.Runtime.Memory.IMemory m, string? blocked)

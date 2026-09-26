@@ -658,3 +658,11 @@ useful than the question was.
    whether the pattern lies on the floor the right way up and at the right scale,
    and how it holds under the *Texture filtering* slider at a distance and while
    turning.
+22. **Look at a material set on a texture.** Open the editor (Shift+E), pick a
+   wall or floor, and under *Texture* give it a material *Everywhere*; it should
+   reach every face drawing that art, in every area, and the water in `fdat02`
+   while it scrolls. The mechanism is measured (see "Phase 4, the second slice" in
+   [REMASTER.md](REMASTER.md)); the editor's *Everywhere* combo and *Any palette*
+   have been driven only through the shell, and no picture has been judged. A
+   glowing texture gives a light per tile half: set *Light* to 0 on a material
+   meant only to glow.

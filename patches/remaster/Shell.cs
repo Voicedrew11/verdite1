@@ -18,6 +18,7 @@ namespace Kf2.Remaster;
 ///     set material:NAME emissiveStrength|light|glowRadius|pulseAmount|pulseHz VALUE
 ///     set material:NAME emissive R G B
 ///     set material:NAME glowMode additive|lit, glowFog on|off, pulseStyle breathe|flicker
+///     set texture|texture:INDEX[:CLUT] material NAME|none   the picked art, or a key, in every area
 ///     set remaster on|off
 ///     pack save|reload|undo|redo|list|add NAME
 ///     light list|add NAME [here|pick GX GY|X Y Z]|remove NAME|select NAME|set NAME FIELD V...
@@ -32,7 +33,7 @@ public static class Shell
         "edit [on|off|toggle] - the remaster editor, which pauses the world",
         "select [here | tile:A:X:Z:lower|upper | model:A:KIND:ID | pick GX GY [add] | faces F,F,... | grow connected|texture|mesh] - " +
             "a half, faces or a model; pick takes the faces or the model under game pixel GX GY (the editor must be open)",
-        "set selected|tile:...|model:... material NAME|none [tile|mesh]; " +
+        "set selected|tile:...|model:... material NAME|none [tile|mesh]; set texture|texture:INDEX[:CLUT] material NAME|none (the picked art, or a key; every area); " +
             "set material:NAME reflectivity|f0|roughness|metalness|specular|occlusion|emissiveStrength|light|glowRadius|pulseAmount|pulseHz V; set material:NAME emissive R G B; set material:NAME glowMode additive|lit|glowFog on|off|pulseStyle breathe|flicker; set remaster on|off",
         "pack save|reload|undo|redo|list|add NAME - the working pack",
         "light list | add NAME [here | pick GX GY | X Y Z] | remove NAME | select NAME | " +
@@ -93,15 +94,17 @@ public static class Shell
                 || !float.TryParse(a[2], CultureInfo.InvariantCulture, out float gy))
                 return Err("select", "select pick GX GY [add]");
             if (!Faces.Recording) return Err("select", "the editor is closed (edit on), so no triangles are recorded");
-            var hit = Faces.PickAt(new Vector2(gx, gy), out var model, out var why);
+            var hit = Faces.PickAt(new Vector2(gx, gy), out var model, out var why, out var tex);
             if (model is { } mk)
             {
                 Editor.SelectModel(mk);
-                return Ok("select", DescribeModel(mk));
+                Editor.SelectTexture(tex);
+                return Ok("select", WithTexture(DescribeModel(mk)));
             }
             if (hit == null) return Err("select", $"nothing picked: {why}");
             Editor.SelectFaces(hit, a.Length > 3 && a[3] == "add");
-            return Ok("select", Describe(Editor.Selected));
+            Editor.SelectTexture(tex);
+            return Ok("select", WithTexture(Describe(Editor.Selected)));
         }
         if (a[0] == "faces")
         {
@@ -138,8 +141,33 @@ public static class Shell
         return Ok("select", Describe(k));
     }
 
+    /// <summary>A selection's description with the art it names, and that art's material.</summary>
+    static JsonObject WithTexture(JsonObject o)
+    {
+        if (Editor.SelectedTexture is { } t)
+        {
+            o["texture"] = t.ToString();
+            o["textureMaterial"] = Pack.TextureMaterial(t) ?? Pack.TextureMaterial(t.AnyClut);
+        }
+        return o;
+    }
+
     static string Set(string[] a)
     {
+        if (a.Length >= 3 && a[1] == "material" && (a[0] == "texture" || a[0].StartsWith("texture:")))
+        {
+            if (a[0] != "texture")
+            {
+                if (!TexKey.TryParse(a[0], out var tk)) return Err("set", $"cannot read '{a[0]}'");
+                Editor.SelectTexture(tk);
+                Editor.AnyPalette = tk.Clut == 0;
+            }
+            string? tname = a[2] == "none" ? null : a[2];
+            if (tname != null && !Pack.HasMaterial(tname)) return Err("set", $"no material '{tname}'");
+            if (Editor.AssignTexture(tname) is { } twhy) return Err("set", twhy);
+            var key = Editor.AnyPalette ? Editor.SelectedTexture!.Value.AnyClut : Editor.SelectedTexture!.Value;
+            return Ok("set", new JsonObject { ["texture"] = key.ToString(), ["material"] = Pack.TextureMaterial(key) });
+        }
         if (a.Length >= 2 && a[0] == "remaster")
         {
             Host.SetEnabled(a[1] is "on" or "1");

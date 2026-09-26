@@ -225,6 +225,7 @@ public sealed class Lights : IRemasterFeature
             {
                 if (faces[i].Verts.Length == 0) continue;
                 byte id = Surfaces.FaceOf(x, z, half, model, i);
+                if (id == 0) id = Surfaces.MeshFaceMaterial(faces[i]);
                 if (!Surfaces.GivesLight(id)) continue;
                 var v = faces[i].Verts;
                 Span<Vector3> w = stackalloc Vector3[4];

@@ -120,8 +120,10 @@ public static partial class PolyAssembler
         r.Cmd = Peek32(mem, pkt + 4u);
         r.Xy0 = Peek32(mem, pkt + 8u);
         r.XyLast = Peek32(mem, pkt + last);
-        r.Material = TileMaterial;
-        if (TileMaterial != 0) Remaster.Surfaces.Packets++;
+        // Nothing more specific named it: the art it draws may have a material.
+        r.Material = TileMaterial != 0 || !Remaster.Surfaces.ByTexture ? TileMaterial
+                   : Remaster.Surfaces.PacketMaterial(mem, pkt, r.Cmd);
+        if (r.Material != 0) Remaster.Surfaces.Packets++;
         if (Remaster.Faces.Recording) Remaster.Faces.Seal(mem, pkt, last, r);
         // Bit 25 of the command word: semi-transparent.
         r.Solid = false;

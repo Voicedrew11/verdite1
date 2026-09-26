@@ -290,6 +290,9 @@ public static class RetainedMap
                 }
                 uint rect = (uint)u0 | (uint)v0 << 8 | (uint)u1 << 16 | (uint)v1 << 24;
                 byte mat = Remaster.Surfaces.FaceOf(tx, tz, half, (int)model, f);
+                if (mat == 0 && Remaster.Surfaces.ByTexture
+                    && Remaster.TextureKeys.Of((int)tpage, (int)clut, u0, v0, u1, v1, out var tex))
+                    mat = Remaster.Surfaces.TextureId(tex);
                 uint flags = RetainedScene.FlagRect | mat
                            | (semi ? RetainedScene.FlagSemi | ((tpage >> 5) & 3u) << 8 : 0u);
 

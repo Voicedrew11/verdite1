@@ -30,6 +30,7 @@ public static class Pack
     public static string Root { get; private set; } = Path.GetFullPath(Path.Combine("packs", "working"));
     static string RemasterDir => Path.Combine(Root, "remaster");
     static string MaterialsPath => Path.Combine(RemasterDir, "materials.json");
+    static string TexturesPath => Path.Combine(RemasterDir, "textures.json");
     static string SurfacesPath(int area) => Path.Combine(RemasterDir, "areas", area.ToString(), "surfaces.json");
     static string LightsPath(int area) => Path.Combine(RemasterDir, "areas", area.ToString(), "lights.json");
 
@@ -47,10 +48,11 @@ public static class Pack
     sealed class Set
     {
         public JsonObject Materials = null!;
+        public JsonObject Textures = null!;
         public readonly Dictionary<int, JsonObject> Surfaces = new();
         public readonly Dictionary<int, JsonObject> Lights = new();
 
-        public static Set Empty() => new() { Materials = NewMaterials() };
+        public static Set Empty() => new() { Materials = NewMaterials(), Textures = NewTextures() };
     }
 
     public static void Configure(string? root)
@@ -82,6 +84,7 @@ public static class Pack
     {
         var s = Set.Empty();
         if (File.Exists(MaterialsPath)) s.Materials = Migrate(ParseObject(MaterialsPath), "materials");
+        if (File.Exists(TexturesPath)) s.Textures = Migrate(ParseObject(TexturesPath), "textures");
         var areas = Path.Combine(RemasterDir, "areas");
         if (Directory.Exists(areas))
             foreach (var dir in Directory.EnumerateDirectories(areas))
@@ -111,6 +114,7 @@ public static class Pack
         if (collection == "materials" && doc["materials"] is not JsonObject) doc["materials"] = new JsonObject();
         if (collection == "tiles" && doc["tiles"] is not JsonArray) doc["tiles"] = new JsonArray();
         if (collection == "lights" && doc["lights"] is not JsonArray) doc["lights"] = new JsonArray();
+        if (collection == "textures" && doc["textures"] is not JsonArray) doc["textures"] = new JsonArray();
         return doc;
     }
 
@@ -122,6 +126,11 @@ public static class Pack
             WriteManifest();
             _set.Materials["formatVersion"] = FormatVersion;
             Write(MaterialsPath, _set.Materials);
+            if (TexturesArr.Count > 0 || File.Exists(TexturesPath))
+            {
+                _set.Textures["formatVersion"] = FormatVersion;
+                Write(TexturesPath, _set.Textures);
+            }
             foreach (var (area, doc) in _set.Surfaces)
             {
                 doc["formatVersion"] = FormatVersion;
@@ -604,6 +613,60 @@ public static class Pack
             else e["material"] = material;
             Prune(list, e);
         });
+    }
+
+    // ---- textures ----------------------------------------------------------
+
+    /// <summary>A material for every face that draws a piece of art, in every area:
+    /// <c>remaster/textures.json</c>. A key with no CLUT hash matches the art under any
+    /// palette. Keyed on content, so it needs no area fingerprint.</summary>
+    public readonly record struct TextureRule(TexKey Key, string Material, string? Note);
+
+    static JsonObject NewTextures() => new() { ["formatVersion"] = FormatVersion, ["textures"] = new JsonArray() };
+
+    static JsonArray TexturesArr => (JsonArray)_set.Textures["textures"]!;
+
+    static TexKey? KeyOf(JsonObject o)
+    {
+        if (Str(o["index"]) is not { } i) return null;
+        return TexKey.TryParse(Str(o["clut"]) is { } c ? $"texture:{i}:{c}" : $"texture:{i}", out var k) ? k : null;
+    }
+
+    static JsonObject? FindTexture(TexKey k)
+    {
+        foreach (var n in TexturesArr)
+            if (n is JsonObject o && KeyOf(o) == k) return o;
+        return null;
+    }
+
+    public static IEnumerable<TextureRule> TextureRules()
+    {
+        foreach (var n in TexturesArr)
+            if (n is JsonObject o && KeyOf(o) is { } k && Str(o["material"]) is { } m)
+                yield return new TextureRule(k, m, Str(o["note"]));
+    }
+
+    public static string? TextureMaterial(TexKey k) => FindTexture(k) is { } e ? Str(e["material"]) : null;
+
+    /// <summary>Give a piece of art a material everywhere, or clear it.</summary>
+    public static void SetTextureMaterial(TexKey k, string? material, string? note = null)
+    {
+        if (TextureMaterial(k) == material) return;
+        var before = (JsonObject)_set.Textures.DeepClone();
+        Edit($"{k} = {material ?? "none"}", () =>
+        {
+            var e = FindTexture(k);
+            if (e == null)
+            {
+                if (material == null) return;
+                var o = new JsonObject { ["index"] = k.Index.ToString("x16") };
+                if (k.Clut != 0) o["clut"] = k.Clut.ToString("x16");
+                if (note != null) o["note"] = note;
+                TexturesArr.Add(e = o);
+            }
+            if (material == null) TexturesArr.Remove(e);
+            else e["material"] = material;
+        }, () => _set.Textures = (JsonObject)before.DeepClone());
     }
 
     // ---- models ------------------------------------------------------------

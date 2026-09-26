@@ -121,20 +121,25 @@ public static class TextureResolver
 
     public const int UploadSlop = 2;
 
-    private static void ToUpload(int tpage, ref int u0, ref int v0, ref int w, ref int h)
+    /// <summary>The rectangle (<paramref name="u0"/>, <paramref name="v0"/>, <paramref name="w"/>,
+    /// <paramref name="h"/>, in the page's texels) widened to the upload under its centre,
+    /// when it lies inside it to within <see cref="UploadSlop"/>; false leaves it alone.
+    /// The port keys its texture materials on the same rectangle.</summary>
+    public static bool ToUpload(int tpage, ref int u0, ref int v0, ref int w, ref int h)
     {
         var depth = (tpage >> 7) & 3;
         var per = depth switch { 0 => 4, 1 => 2, _ => 1 };
         int pageX = (tpage & 0xF) * 64, pageY = ((tpage >> 4) & 1) * 256;
         if (!VramTracker.UploadAt(pageX + (u0 + w / 2) / per, pageY + v0 + h / 2,
                 out var ux, out var uy, out var uw, out var uh))
-            return;
+            return false;
         int nu0 = Math.Max(0, (ux - pageX) * per), nv0 = Math.Max(0, uy - pageY);
         int nu1 = Math.Min(256, (ux + uw - pageX) * per), nv1 = Math.Min(256, uy + uh - pageY);
-        if (nu1 <= nu0 || nv1 <= nv0) return;
+        if (nu1 <= nu0 || nv1 <= nv0) return false;
         if (u0 < nu0 - UploadSlop || v0 < nv0 - UploadSlop
-            || u0 + w > nu1 + UploadSlop || v0 + h > nv1 + UploadSlop) return;
+            || u0 + w > nu1 + UploadSlop || v0 + h > nv1 + UploadSlop) return false;
         u0 = nu0; v0 = nv0; w = nu1 - nu0; h = nv1 - nv0;
+        return true;
     }
 
     public static void ResetStats()

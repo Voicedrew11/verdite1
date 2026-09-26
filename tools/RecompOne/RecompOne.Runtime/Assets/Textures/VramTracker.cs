@@ -29,9 +29,22 @@ public static class VramTracker
     public static void NoteUpload(int x, int y, int w, int h)
     {
         if (w <= 0 || h <= 0) return;
-        _uploadNext = _uploadNext % 65535 + 1;
-        var id = (ushort)_uploadNext;
-        _uploads[id] = ((short)x, (short)y, (short)w, (short)h);
+        // One image loaded in pieces -- this game splits a 128x128 sheet into 100 rows
+        // and 28 -- is one image: a load that continues the previous one straight down,
+        // at the same x and width, extends it.
+        ushort id;
+        var prev = _uploads[_uploadNext];
+        if (_uploadNext != 0 && prev.X == x && prev.W == w && prev.Y + prev.H == y && prev.H + h <= 512)
+        {
+            id = (ushort)_uploadNext;
+            _uploads[id] = (prev.X, prev.Y, prev.W, (short)(prev.H + h));
+        }
+        else
+        {
+            _uploadNext = _uploadNext % 65535 + 1;
+            id = (ushort)_uploadNext;
+            _uploads[id] = ((short)x, (short)y, (short)w, (short)h);
+        }
         for (var r = 0; r < h; r++)
         {
             var row = ((y + r) & 511) * 1024;
