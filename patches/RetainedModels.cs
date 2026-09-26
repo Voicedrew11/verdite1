@@ -30,7 +30,7 @@ static class RetainedModels
     static RetainedScene.Vertex[] _tris = new RetainedScene.Vertex[1024];
 
     /// <summary>Whether the lit assembler should hand its faces over.</summary>
-    public static bool Capturing => RetainedMap.Ready && ModelWalk.InWalk && !PolyAssembler.Verifying;
+    public static bool Capturing => RetainedMap.ReflectionsReady && ModelWalk.InWalk && !PolyAssembler.Verifying;
 
     public static long Models, Faces;
 

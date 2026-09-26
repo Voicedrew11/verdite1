@@ -1254,6 +1254,20 @@ internal static class GlShaders
         uniform vec4  uLightDir[16];
         uniform vec2  uLightCentre;
         uniform float uLightH;
+        // 0077. A light's shadow: the slot of the depth cubemap drawn from it (-1
+        // none), each face holding the nearest surface's distance along its axis
+        // over 65536; the frame's view-to-world rotation to look it up with; the face
+        // size, the normal offset and the spread of the taps in texels, and the bias.
+        uniform int   uLightShadow[16];
+        uniform mat3  uShadowToWorld;
+        uniform float uShadowSize;
+        uniform float uShadowOffset;
+        uniform float uShadowBias;
+        uniform float uShadowSoft;
+        uniform samplerCubeShadow uShadow0;
+        uniform samplerCubeShadow uShadow1;
+        uniform samplerCubeShadow uShadow2;
+        uniform samplerCubeShadow uShadow3;
         // 0071. Emissive materials: row 1 of SurfaceMaterial's table is the light an
         // id gives off, in the same units as a light's colour, and in alpha its flags:
         // 1 added after the texture rather than to the lit colour before it, 2 not
@@ -1389,6 +1403,43 @@ internal static class GlShaders
         // from the recovered depth as NormalFs rebuilds it, and the normal is that
         // position's plane, so a light is placed and faced exactly where the GTE
         // put the polygon. The derivatives are taken before any per-fragment test.
+        // 0077. One compare against slot s: sampler arrays may not be indexed by a
+        // loop variable in GLSL 3.30, so the four are named.
+        float shadowTap(int s, vec4 c) {
+            if (s == 0) return texture(uShadow0, c);
+            if (s == 1) return texture(uShadow1, c);
+            if (s == 2) return texture(uShadow2, c);
+            return texture(uShadow3, c);
+        }
+
+        // 0077. One compare at q (view space, from the light): its distance along
+        // the cubemap face's axis against the nearest surface's.
+        float shadowCmp(int s, vec3 q) {
+            vec3 d = uShadowToWorld * q;
+            vec3 a = abs(d);
+            return shadowTap(s, vec4(d, (max(a.x, max(a.y, a.z)) - uShadowBias) / 65536.0));
+        }
+
+        // 0077. How much of a light reaches the point rel (view space, from the light)
+        // on a surface facing n, dist from it: moved off the surface by a texel and a
+        // half at that distance, then five compares (the hardware's own 2x2 each) at
+        // fixed offsets along the surface itself, so a flat receiver never shadows
+        // itself however it slopes. The same pattern at every pixel: nothing to weave
+        // a grid into the picture.
+        float shadowAt(int s, vec3 rel, vec3 n, float dist) {
+            float texel = 2.0 * dist / uShadowSize;
+            vec3 q = rel + n * (uShadowOffset * texel);
+            vec3 t = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+            vec3 b = cross(n, t);
+            float k = uShadowSoft * texel;
+            float v = shadowCmp(s, q);
+            v += shadowCmp(s, q + t * k);
+            v += shadowCmp(s, q - t * k);
+            v += shadowCmp(s, q + b * k);
+            v += shadowCmp(s, q - b * k);
+            return v * 0.2;
+        }
+
         vec3 authored(float spec, float rough, out vec3 hi) {
             hi = vec3(0.0);
             float z = vDepth * 65536.0;
@@ -1418,6 +1469,7 @@ internal static class GlShaders
                 float q = 1.0 - d2 / r2;
                 float spot = smoothstep(uLightDir[i].w, uLightCol[i].w, dot(-dir, uLightDir[i].xyz));
                 float ndl = max(dot(n, dir), 0.0);
+                if (ndl > 0.0 && uLightShadow[i] >= 0) ndl *= shadowAt(uLightShadow[i], -l, n, sqrt(d2));
                 sum += uLightCol[i].rgb * (ndl * q * q * spot);
                 if (spec > 0.0 && ndl > 0.0)
                     hi += uLightCol[i].rgb * (spec * norm * pow(max(dot(n, normalize(dir + eye)), 0.0), shin) * ndl * q * q * spot);

@@ -38,6 +38,15 @@
 // that names a material in its outer cosine (-2 - id), which must leave that
 // material unlit by it; and an additive glow flagged unfogged. See "Phase 3, the
 // second slice" in docs/REMASTER.md.
+//
+// 0077. Shadows: the shadow samplers are put on their own units and every light
+// unshadowed, as GlCore does (a cube sampler left on unit 0 beside uVram fails every
+// draw). Then pass 2's wall with light 0 sampling a depth cubemap: one holding the
+// far plane everywhere (the wall exactly as unshadowed), and one whose +Z face has
+// an occluder 250 in front of the light over its left half, so the wall left of
+// centre is lit as if light 0 were gone and right of centre as if nothing were
+// there. The bands where the filter crosses the occluder's edge and the face's are
+// not checked. See "Shadows, the first slice" in docs/REMASTER.md.
 #define GL_GLES_PROTOTYPES 0
 #include <EGL/egl.h>
 #include <GL/gl.h>
@@ -75,6 +84,7 @@ F(void,glGenFramebuffers,(GLsizei,GLuint*)) F(void,glBindFramebuffer,(GLenum,GLu
 F(void,glFramebufferTexture2D,(GLenum,GLenum,GLenum,GLuint,GLint))
 F(GLenum,glCheckFramebufferStatus,(GLenum)) F(void,glBindAttribLocation,(GLuint,GLuint,const char*))
 F(void,glActiveTexture,(GLenum)) F(void,glUniform4i,(GLint,GLint,GLint,GLint,GLint))
+F(void,glUniform1iv,(GLint,GLsizei,const GLint*)) F(void,glUniformMatrix3fv,(GLint,GLsizei,GLboolean,const GLfloat*))
 
 static void load(void){
 #define L(n) n##_=(P_##n)eglGetProcAddress(#n); if(!n##_){printf("missing %s\n",#n);exit(2);}
@@ -84,6 +94,7 @@ static void load(void){
  L(glGenBuffers)L(glBindBuffer)L(glBufferData)L(glGenVertexArrays)L(glBindVertexArray)
  L(glEnableVertexAttribArray)L(glVertexAttribPointer)L(glGenFramebuffers)L(glBindFramebuffer)
  L(glFramebufferTexture2D)L(glCheckFramebufferStatus)L(glBindAttribLocation)L(glActiveTexture)L(glUniform4i)
+ L(glUniform1iv)L(glUniformMatrix3fv)
 }
 
 static char *slurp(const char*p){FILE*f=fopen(p,"rb");if(!f){perror(p);exit(2);}
@@ -135,6 +146,8 @@ static void authored2(int n,int x,int y,float out[3],float spec,float rough,floa
      float nh=(nn[0]*h[0]+nn[1]*h[1]+nn[2]*h[2])/hl; if(nh<0)nh=0; float k=spec*norm*powf(nh,shin)*ndl*q*q*spot;
      for(int c=0;c<3;c++) hi[c]+=LCOL[i*4+c]*k; } } }
 static void authored(int n,int x,int y,float out[3]){ float hi[3]; authored2(n,x,y,out,0,0,hi,0); }
+// The same with light 0 gone.
+static void authoredNo0(int n,int x,int y,float out[3]){ float r=LPOS[3]; LPOS[3]=0; authored(n,x,y,out); LPOS[3]=r; }
 
 static const float BK[3]={1920,1920,1920};
 static const float LCM[9]={2662,2662,3328, 2662,2662,3328, 2662,2662,3328};
@@ -185,6 +198,11 @@ int main(int argc,char**argv){
  if((l=glGetUniformLocation_(p,"uSetMask"))>=0) glUniform1f_(l,0.f);
  if((l=glGetUniformLocation_(p,"uCheckMask"))>=0) glUniform1i_(l,0);
  if((l=glGetUniformLocation_(p,"uOpaqueDepth"))>=0) glUniform1i_(l,0);
+ // 0077. As GlCore sets them up.
+ for(int i=0;i<4;i++){ char nm[16]; snprintf(nm,sizeof nm,"uShadow%d",i); if((l=glGetUniformLocation_(p,nm))>=0) glUniform1i_(l,12+i); else {printf("no %s\n",nm);return 2;} }
+ GLint uLS=glGetUniformLocation_(p,"uLightShadow"); if(uLS<0){printf("no uLightShadow\n");return 2;}
+ static const GLint NOSH[16]={-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+ glUniform1iv_(uLS,16,NOSH);
  glUniform3f_(glGetUniformLocation_(p,"uLightBk"),BK[0],BK[1],BK[2]);
  glUniform3f_(glGetUniformLocation_(p,"uLcmR"),LCM[0],LCM[1],LCM[2]);
  glUniform3f_(glGetUniformLocation_(p,"uLcmG"),LCM[3],LCM[4],LCM[5]);
@@ -274,10 +292,35 @@ int main(int argc,char**argv){
  const char*names[]={"no lights","lights, no depth","lights on a wall at depth 2000",
    "emissive on, material 0","emissive on, material 5 glowing","emissive off, material 5",
    "textured, no glow","textured, lit glow","textured, additive glow","untextured, additive glow",
-   "highlight, untextured","highlight, textured metal","own light skipped","unfogged glow"};
- for(int pass=0;pass<14;pass++){
- int tex=(pass>=6&&pass<=8)||pass==11, add=pass==8||pass==9, lit=pass==2||(pass>=10&&pass<=12);
- int mat=add?MATADD:pass==10?MATSPEC:pass==11?MATMETAL:pass==12?MATSKIP:pass==13?MATNOFOG:pass>=4?MAT:0;
+   "highlight, untextured","highlight, textured metal","own light skipped","unfogged glow",
+   "light 0 shadowed, nothing in the cubemap","light 0 shadowed, left half occluded"};
+ // 0077. A depth cubemap on unit 12 for light 0: identity view-to-world, and the
+ // backend's tuning.
+ #define SN 64
+ static float face[SN*SN];
+ GLuint cube; glGenTextures(1,&cube); glActiveTexture_(0x84C0+12); glBindTexture(0x8513,cube);
+ glTexParameteri(0x8513,GL_TEXTURE_MIN_FILTER,GL_LINEAR); glTexParameteri(0x8513,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+ glTexParameteri(0x8513,0x884C,0x884E); glTexParameteri(0x8513,0x884D,GL_LEQUAL);
+ glTexParameteri(0x8513,GL_TEXTURE_WRAP_S,0x812F); glTexParameteri(0x8513,GL_TEXTURE_WRAP_T,0x812F); glTexParameteri(0x8513,0x8072,0x812F);
+ glEnable(0x884F);
+ glActiveTexture_(0x84C0);
+ static const float ID3[9]={1,0,0,0,1,0,0,0,1};
+ glUniformMatrix3fv_(glGetUniformLocation_(p,"uShadowToWorld"),1,GL_FALSE,ID3);
+ glUniform1f_(glGetUniformLocation_(p,"uShadowSize"),SN);
+ glUniform1f_(glGetUniformLocation_(p,"uShadowOffset"),1.5f);
+ glUniform1f_(glGetUniformLocation_(p,"uShadowBias"),6.f);
+ glUniform1f_(glGetUniformLocation_(p,"uShadowSoft"),1.25f);
+ for(int pass=0;pass<16;pass++){
+ if(pass>=14){
+   glActiveTexture_(0x84C0+12);
+   for(int fc=0;fc<6;fc++){
+     for(int t=0;t<SN;t++) for(int s2=0;s2<SN;s2++) face[t*SN+s2]=(pass==15&&fc==4&&s2<SN/2)?250.f/65536.f:1.f;
+     glTexImage2D(0x8515+fc,0,0x81A6,SN,SN,0,GL_DEPTH_COMPONENT,GL_FLOAT,face); }
+   glActiveTexture_(0x84C0);
+   GLint sh[16]; for(int i=0;i<16;i++) sh[i]=i==0?0:-1; glUniform1iv_(uLS,16,sh);
+ }
+ int tex=(pass>=6&&pass<=8)||pass==11, add=pass==8||pass==9, lit=pass==2||(pass>=10&&pass<=12)||pass>=14;
+ int mat=add?MATADD:pass==10?MATSPEC:pass==11?MATMETAL:pass==12?MATSKIP:pass==13?MATNOFOG:pass>=14?0:pass>=4?MAT:0;
  // Light 0 names material 10 only in pass 12.
  LDIR[3]=pass==12?-2.f-MATSKIP:-2.f;
  glUniform4fv_(glGetUniformLocation_(p,"uLightDir"),NL,LDIR);
@@ -300,7 +343,11 @@ int main(int argc,char**argv){
      float t=(x+0.5f)/VW; float lit[3]; for(int i=0;i<3;i++) lit[i]=cases[k].l0[i]+(cases[k].l1[i]-cases[k].l0[i])*t;
      float fog=cases[k].f0+(cases[k].f1-cases[k].f0)*t;
      float ex[3]={0,0,0}, hi[3]={0,0,0};
-     if(pass==2) authored(NL,x,y,ex);
+     if(pass==2||pass==14) authored(NL,x,y,ex);
+     // Left of centre the occluder hides light 0; right of it nothing does; the
+     // filter's band across the edge is left out.
+     if(pass==15){ float px_=((x+0.5f)-CX)*(DEPTH/H); if(px_>-400.f&&px_<-50.f) authoredNo0(NL,x,y,ex);
+       else if(px_>50.f&&px_<400.f) authored(NL,x,y,ex); else continue; }
      if(pass>=10&&pass<=12) authored2(NL,x,y,ex,pass==12?0.f:SPEC,ROUGH,hi,mat);
      if(pass==4||pass==7) for(int c=0;c<3;c++) ex[c]=EMIT[c];
      if(ex[0]+ex[1]+ex[2]>0.01f) lit_px++;
@@ -323,4 +370,5 @@ int main(int argc,char**argv){
    if(worst>1) fails++;
  }
  }
+ glUniform1iv_(uLS,16,NOSH);
  return fails;}

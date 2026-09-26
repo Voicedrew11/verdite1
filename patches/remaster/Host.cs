@@ -29,6 +29,7 @@ public interface IRemasterFeature
 ///     KF2_REMASTER_PROBE=1   a line every two seconds: the area, its fingerprint, what applied
 ///     KF2_REMASTER_LIGHTS=0  leave the pack's lights out
 ///     KF2_REMASTER_ATMOS=0   leave the pack's light-record overrides out
+///     KF2_REMASTER_SHADOWS=0 no shadows from the authored lights
 ///
 /// Shift+E opens the editor, which pauses the world. See docs/REMASTER.md.
 /// </summary>

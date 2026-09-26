@@ -21,8 +21,8 @@ namespace Kf2.Remaster;
 ///     set texture|texture:INDEX[:CLUT] material NAME|none   the picked art, or a key, in every area
 ///     set remaster on|off
 ///     pack save|reload|undo|redo|list|add NAME
-///     light list|add NAME [here|pick GX GY|X Y Z]|remove NAME|select NAME|set NAME FIELD V...
-///     atmos [list|show N|set N FIELD V...|reset N [FIELD]]   the area's light records and their overrides
+///     light list|shadows on|off|shadows tune BIAS OFFSET SOFT [SIZE]|add NAME [here|pick GX GY|X Y Z]|remove NAME|select NAME|set NAME FIELD V...
+///     atmos [list|darkness [V]|show N|set N FIELD V...|reset N [FIELD]]   the area's light records, their overrides, and its darkness
 ///     remaster                                      the status, as the probe line has it
 /// </summary>
 public static class Shell
@@ -37,10 +37,10 @@ public static class Shell
         "set selected|tile:...|model:... material NAME|none [tile|mesh]; set texture|texture:INDEX[:CLUT] material NAME|none (the picked art, or a key; every area); " +
             "set material:NAME reflectivity|f0|roughness|metalness|specular|occlusion|emissiveStrength|light|glowRadius|pulseAmount|pulseHz V; set material:NAME emissive R G B; set material:NAME glowMode additive|lit|glowFog on|off|pulseStyle breathe|flicker; set remaster on|off",
         "pack save|reload|undo|redo|list|add NAME - the working pack",
-        "light list | add NAME [here | pick GX GY | X Y Z] | remove NAME | select NAME | " +
+        "light list | shadows on|off | shadows tune BIAS OFFSET SOFT [SIZE] | add NAME [here | pick GX GY | X Y Z] | remove NAME | select NAME | " +
             "set NAME position X Y Z|colour R G B|intensity V|radius V|type point|spot|direction X Y Z|cone IN OUT|flicker AMOUNT HZ|enabled on|off - " +
             "the area's authored lights; pick places one short of the surface under game pixel GX GY",
-        "atmos [list | show N | set N back R G B | set N light J direction X Y Z | set N light J colour R G B | set N fog WORD | " +
+        "atmos [list | darkness [0..1] | show N | set N back R G B | set N light J direction X Y Z | set N light J colour R G B | set N fog WORD | " +
             "reset N [back|light J|fog]] - the area's light records (N 0..79): which halves use each, the game's values and the pack's overrides",
         "remaster - area, fingerprint, what is applied",
         "textures [on|off|reset|save] - the texture-key census of this area: keys, art, overlapping rects, what a pack covers; save writes dump/GAME/census/area-N.json",
@@ -311,6 +311,16 @@ public static class Shell
         {
             case "list":
                 return Ok("light", LightList(area));
+            case "shadows":
+                if (a.Length >= 5 && a[1] == "tune")
+                {
+                    RemasterUniforms.ShadowBias = F(2);
+                    RemasterUniforms.ShadowOffset = F(3);
+                    RemasterUniforms.ShadowSoft = Math.Max(0f, F(4));
+                    if (a.Length >= 6) RemasterUniforms.ShadowSize = Math.Clamp((int)F(5), 64, 4096);
+                }
+                else if (a.Length >= 2) Lights.SetShadows(a[1] is "on" or "1");
+                return Ok("light", LightList(area));
             case "add":
             {
                 if (a.Length < 2) return Err("light", "light add NAME [here|pick GX GY|X Y Z]");
@@ -353,6 +363,7 @@ public static class Shell
                     "cone" when a.Length >= 5 => o => Pack.SetCone(o, F(3), F(4)),
                     "flicker" when a.Length >= 5 => o => Pack.SetFlicker(o, F(3), F(4)),
                     "enabled" => o => { if (a[3] is "on" or "1") o.Remove("enabled"); else o["enabled"] = false; },
+                    "shadows" => o => { if (a[3] is "on" or "1") o.Remove("shadows"); else o["shadows"] = false; },
                     _ => null,
                 };
                 if (change == null) return Err("light", $"cannot set '{field}' from that");
@@ -360,7 +371,7 @@ public static class Shell
                 return Ok("light", LightList(area));
             }
         }
-        return Err("light", "light list|add|remove|select|set");
+        return Err("light", "light list|shadows on|off|tune|add|remove|select|set");
     }
 
     static JsonObject LightList(int area)
@@ -375,7 +386,7 @@ public static class Shell
                 ["name"] = l.Name, ["type"] = l.Spot ? "spot" : "point",
                 ["position"] = new JsonArray(l.Position.X, l.Position.Y, l.Position.Z),
                 ["colour"] = new JsonArray(l.Colour.X, l.Colour.Y, l.Colour.Z),
-                ["intensity"] = l.Intensity, ["radius"] = l.Radius,
+                ["intensity"] = l.Intensity, ["radius"] = l.Radius, ["shadows"] = l.Shadows,
             };
             if (l.Spot)
             {
@@ -411,6 +422,12 @@ public static class Shell
             ["culled"] = Lights.Culled, ["uploads"] = RemasterUniforms.Uploads,
             ["litBatches"] = RemasterUniforms.LitBatches, ["supported"] = RemasterUniforms.Supported,
             ["perPixel"] = PerPixelLighting.Enabled, ["ticks"] = Lights.Ticks,
+            ["shadows"] = new JsonObject
+            {
+                ["on"] = Lights.ShadowsOn, ["ready"] = RemasterUniforms.ShadowsReady, ["drawn"] = RemasterUniforms.ShadowRenders,
+                ["triangles"] = RemasterUniforms.ShadowTriangles, ["size"] = RemasterUniforms.ShadowSize,
+                ["bias"] = RemasterUniforms.ShadowBias, ["offset"] = RemasterUniforms.ShadowOffset, ["soft"] = RemasterUniforms.ShadowSoft,
+            },
         };
     }
 
@@ -424,9 +441,20 @@ public static class Shell
         float F(int i) => float.Parse(a[i], CultureInfo.InvariantCulture);
         int I(int i) => int.Parse(a[i], CultureInfo.InvariantCulture);
         if (op == "list") return Ok("atmos", AtmosList(m, area));
-        if (a.Length < 2 || !int.TryParse(a[1], out int rec) || (uint)rec >= Atmosphere.Records)
+        string fp = Identity.FingerprintText;
+        if (op == "darkness")
+        {
+            if (a.Length >= 2)
+            {
+                float v = F(1);
+                Pack.SetRecord(area, Pack.AllRecords, "", fp, $"darkness = {v}", o => Pack.SetDarkness(o, v > 1f ? v / 100f : v));
+            }
+            return Ok("atmos", AtmosRecord(m, area, Pack.AllRecords));
+        }
+        int rec = Pack.AllRecords;
+        if (a.Length < 2 || !int.TryParse(a[1], out rec) || (uint)rec >= Atmosphere.Records)
             return Err("atmos", "a record number 0..79");
-        string fp = Identity.FingerprintText, hash = Atmosphere.SourceHash(m, rec);
+        string hash = Atmosphere.SourceHash(m, rec);
         switch (op)
         {
             case "show":
@@ -466,7 +494,7 @@ public static class Shell
                 return Ok("atmos", AtmosRecord(m, area, rec));
             }
         }
-        return Err("atmos", "atmos list|show N|set N ...|reset N [FIELD]");
+        return Err("atmos", "atmos list|darkness [V]|show N|set N ...|reset N [FIELD]");
     }
 
     static JsonObject AtmosList(RecompOne.Runtime.Memory.IMemory m, int area)
@@ -486,12 +514,18 @@ public static class Shell
         {
             ["area"] = area, ["underPlayer"] = Atmosphere.UnderPlayer(m), ["halvesByRecord"] = used,
             ["overrides"] = overrides, ["applied"] = Atmosphere.Applied, ["stale"] = Atmosphere.Stale,
+            ["darkness"] = Atmosphere.Darkness,
             ["refused"] = Atmosphere.Refused,
         };
     }
 
     static JsonObject AtmosRecord(RecompOne.Runtime.Memory.IMemory m, int area, int rec)
     {
+        if (rec == Pack.AllRecords)
+            return new JsonObject
+            {
+                ["darkness"] = Pack.GetRecord(area, rec)?.Darkness ?? 0f, ["records"] = $"0-{Atmosphere.Darkened - 1}",
+            };
         var o = Pack.GetRecord(area, rec);
         var game = Atmosphere.Json(Atmosphere.Game(m, rec));
         return new JsonObject
@@ -499,7 +533,7 @@ public static class Shell
             ["record"] = rec, ["hash"] = Atmosphere.SourceHash(m, rec), ["halves"] = Atmosphere.Usage(m)[rec],
             ["game"] = game,
             ["override"] = Pack.RecordSnapshot(area, rec),
-            ["drawn"] = o == null ? null : Atmosphere.Json(Atmosphere.Effective(m, rec, o)),
+            ["drawn"] = Atmosphere.Json(Atmosphere.Effective(m, rec, o)),
             ["current"] = o == null ? null : o.Value.Hash == null || o.Value.Hash == Atmosphere.SourceHash(m, rec),
         };
     }

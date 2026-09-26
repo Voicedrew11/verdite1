@@ -46,6 +46,10 @@ public static class RetainedScene
     /// <summary>The port's switch: draw reflections from this scene.</summary>
     public static bool Enabled;
 
+    /// <summary>0077. The port's authored lights want the static map for their shadows,
+    /// whether or not reflections are drawn from it.</summary>
+    public static bool ShadowsWanted;
+
     /// <summary>Set by the GL core backend once its world program built.</summary>
     public static bool Supported;
 

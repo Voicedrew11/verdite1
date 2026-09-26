@@ -404,6 +404,16 @@ public static class Editor
             if (ImGui.Checkbox("On", ref on))
                 Pack.SetLight(area, name, on ? "on" : "off", o => { if (on) o.Remove("enabled"); else o["enabled"] = false; });
             ImGui.SameLine();
+            bool shadows = sel.Shadows;
+            ImGui.BeginDisabled(!Lights.ShadowsOn);
+            if (ImGui.Checkbox("Shadows", ref shadows))
+                Pack.SetLight(area, name, shadows ? "shadows" : "no shadows", o => { if (shadows) o.Remove("shadows"); else o["shadows"] = false; });
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(Lights.ShadowsOn
+                    ? $"The area's walls and floors cast shadows from this light; creatures and objects do not yet. The nearest {RemasterUniforms.MaxShadows} shadowed lights in view get one."
+                    : "Shadows are off (KF2_REMASTER_SHADOWS=0).");
+            ImGui.SameLine();
             if (ImGui.Button("Move to eye")) Pack.SetLight(area, name, "move to eye", o => Pack.SetPosition(o, PlayerLightPosition(m)));
             ImGui.SameLine();
             if (ImGui.Button("Delete")) { Pack.RemoveLight(area, name); SelectLight(null); }
@@ -443,6 +453,15 @@ public static class Editor
             if (Atmosphere.Refused is { } why) ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), why);
             if (_usageSettle != Identity.Settles) { _usage = Atmosphere.Usage(m); _usageSettle = Identity.Settles; }
 
+            // The area's darkness: a scale on the game's own light, not an edit of it.
+            float pct = (Pack.GetRecord(area, Pack.AllRecords)?.Darkness ?? 0f) * 100f;
+            ImGui.SetNextItemWidth(220);
+            RecEdited(area, Pack.AllRecords, "", "darkness", ImGui.SliderFloat("Darkness", ref pct, 0f, 100f, "%.0f%%"),
+                x => Pack.SetDarkness(x, pct / 100f));
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("How much of the game's own light the area loses: 0% is the game's, 100% leaves only authored lights and glows. " +
+                                 "Scales every tile record's back colour and light colours after the record's own edits; the HUD keeps its light. Ctrl+click to type.");
+
             int under = Atmosphere.UnderPlayer(m);
             ImGui.Checkbox("Follow the player", ref _followRecord);
             if (ImGui.IsItemHovered())
@@ -467,7 +486,9 @@ public static class Editor
             string hash = Atmosphere.SourceHash(m, rec), fp = Identity.FingerprintText;
             var o = Pack.GetRecord(area, rec);
             var g = Atmosphere.Game(m, rec);
-            var e = Atmosphere.Effective(m, rec, o);
+            var e = Atmosphere.Effective(m, rec, o, dark: false);
+            if (Atmosphere.Darkness > 0f && rec < Atmosphere.Darkened)
+                ImGui.TextDisabled($"The area's darkness scales this record's light by {100f * (1f - Atmosphere.Darkness):0}% after these edits.");
             if (o is { Hash: { } h } && h != hash)
                 ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "The game's record has changed since this was authored; it is not applied.");
             if (!Host.Enabled) ImGui.TextDisabled("The remaster is off; edits apply when it is on.");

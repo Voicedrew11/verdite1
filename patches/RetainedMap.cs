@@ -78,10 +78,14 @@ public static class RetainedMap
         _hash = 0;
     }
 
-    /// <summary>Whether to build and publish: the setting, and the reflection pass
-    /// that reads what is drawn from it. The backend draws only once its program
-    /// built (<see cref="RetainedScene.Supported"/>).</summary>
-    public static bool Ready => RetainedScene.Enabled && ScreenReflections.Enabled;
+    /// <summary>Whether reflections are drawn from it: the setting, and the reflection
+    /// pass that reads what is drawn. The backend draws only once its program built
+    /// (<see cref="RetainedScene.Supported"/>).</summary>
+    public static bool ReflectionsReady => RetainedScene.Enabled && ScreenReflections.Enabled;
+
+    /// <summary>Whether to build the static map: for reflections, or for the authored
+    /// lights' shadows (0077), which need nothing else of it.</summary>
+    public static bool Ready => ReflectionsReady || RetainedScene.ShadowsWanted;
 
     // ---- once a walk -------------------------------------------------------------
 
@@ -104,6 +108,7 @@ public static class RetainedMap
             _builds++;
             _lastWhy = _why;
         }
+        if (!ReflectionsReady) return;
         RetainedScene.BeginFrame(ReadView(mem));
         RetainedPlanes.Choose(mem);
         if (_probe) Report();

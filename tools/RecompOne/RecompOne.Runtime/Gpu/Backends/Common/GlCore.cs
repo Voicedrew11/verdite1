@@ -259,6 +259,7 @@ public sealed partial class GlCore : IGpuBackend
         if (uMip >= 0) _gl.Uniform1(uMip, 5);
         int uMatPrim = _gl.GetUniformLocation(_progPrim, "uMatTable");
         if (uMatPrim >= 0) _gl.Uniform1(uMatPrim, MatUnit);
+        InitShadowUniforms(_progPrim, true);
         _uPrimScale = _gl.GetUniformLocation(_progPrim, "uScale");
         SetScaleUniform(_progPrim, GlVram.Scale);
         _primScaleSent = GlVram.Scale;
@@ -1478,6 +1479,8 @@ public sealed partial class GlCore : IGpuBackend
 
     private void FlushCore()
     {
+        // 0077. Before anything of this batch is bound: it may draw a light's cubemap.
+        UpdateShadows();
         // 0060. Decode what this batch's polygons asked the atlas for, from VRAM as
         // they saw it: anything that changes VRAM flushes before it does.
         if (_mip != null && _mip.HasPending) _mip.Process(_vram.SampleTexture);
@@ -1683,6 +1686,7 @@ public sealed partial class GlCore : IGpuBackend
                 }
                 _gl.Uniform2(_uLightCentre, GteDepth.ProjCx + rt!.Margin, GteDepth.ProjCy);
                 _gl.Uniform1(_uLightH, Math.Max(1f, GteDepth.ProjH));
+                SendShadows(lightN);
                 RemasterUniforms.LitBatches++;
             }
         }

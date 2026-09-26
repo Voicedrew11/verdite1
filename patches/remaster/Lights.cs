@@ -11,6 +11,8 @@ namespace Kf2.Remaster;
 /// Authored point and spot lights (runtime <c>0071</c>).
 ///
 ///     KF2_REMASTER_LIGHTS=0   leave the pack's lights out (they apply with the remaster by default)
+///     KF2_REMASTER_SHADOWS=0  no shadows from them (on by default)
+///     KF2_REMASTER_SHADOW_SIZE=1024 KF2_REMASTER_SHADOW_BIAS=6 KF2_REMASTER_SHADOW_OFFSET=1.5 KF2_REMASTER_SHADOW_SOFT=1.25
 ///
 /// The pack's <c>areas/&lt;n&gt;/lights.json</c>, behind the area's fingerprint. Before
 /// each <c>DrawOTag</c> -- the camera block then holds the view the table was built
@@ -25,6 +27,12 @@ namespace Kf2.Remaster;
 /// glowing faces' centroid off their lit side, found once when the area applies, and
 /// one per glowing model drawn, each frame. Authored lights take the slots first. See
 /// "The glow is a light source" in docs/REMASTER.md.
+///
+/// The nearest <see cref="RemasterUniforms.MaxShadows"/> authored lights sent that
+/// cast shadows each keep a slot while they stay in the list, so the backend draws a
+/// light's cubemap (runtime <c>0077</c>) once and again only when it moves. Only the
+/// map casts: the retained static mesh, which this asks for while any light wants
+/// it. See "Shadows, the first slice" in docs/REMASTER.md.
 /// </summary>
 public sealed class Lights : IRemasterFeature
 {
@@ -70,7 +78,7 @@ public sealed class Lights : IRemasterFeature
     /// <summary>The world tick the flicker is evaluated at.</summary>
     public static long Ticks => _ticks;
 
-    int _version = -1, _settle = -1, _surfaces = -1;
+    int _version = -1, _settle = -1, _surfaces = -1, _switches = -1;
 
     /// <summary>How far past the eye a light may sit and still reach the draw window:
     /// twelve tiles each way.</summary>
@@ -80,6 +88,34 @@ public sealed class Lights : IRemasterFeature
     {
         if (!string.IsNullOrWhiteSpace(on)) _on = on.Trim() != "0";
     }
+
+    static bool _shadows = true;
+
+    /// <summary>Whether authored lights cast shadows at all.</summary>
+    public static bool ShadowsOn => _shadows;
+
+    public static void ConfigureShadows(string? on, string? size, string? bias, string? offset, string? soft)
+    {
+        if (!string.IsNullOrWhiteSpace(on)) _shadows = on.Trim() != "0";
+        static bool F(string? s, out float v)
+            => float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v);
+        if (int.TryParse(size, out int n) && n >= 64) RemasterUniforms.ShadowSize = Math.Clamp(n, 64, 4096);
+        if (F(bias, out float b)) RemasterUniforms.ShadowBias = b;
+        if (F(offset, out float o)) RemasterUniforms.ShadowOffset = o;
+        if (F(soft, out float k)) RemasterUniforms.ShadowSoft = Math.Max(0f, k);
+    }
+
+    static int _shadowSwitches;
+
+    /// <summary>Shadows on or off for the session, from the shell.</summary>
+    public static void SetShadows(bool on)
+    {
+        _shadows = on;
+        _shadowSwitches++;
+    }
+
+    /// <summary>The light each shadow slot holds, by name.</summary>
+    static readonly string?[] _slotName = new string?[RemasterUniforms.MaxShadows];
 
     public static void Install() => HookAttach.OnOverlayLoad("remaster lights", Attach);
 
@@ -125,7 +161,9 @@ public sealed class Lights : IRemasterFeature
             return;
         }
         // Derived lights follow the surfaces, which follow the tile table.
-        if (_version == Pack.Version && _settle == Identity.Settles && _surfaces == Surfaces.Serial) return;
+        if (_version == Pack.Version && _settle == Identity.Settles && _surfaces == Surfaces.Serial
+            && _switches == _shadowSwitches) return;
+        _switches = _shadowSwitches;
         _version = Pack.Version;
         _settle = Identity.Settles;
         _surfaces = Surfaces.Serial;
@@ -147,6 +185,8 @@ public sealed class Lights : IRemasterFeature
         Refused = null;
         RemasterUniforms.Enabled = false;
         RemasterUniforms.Publish(0);
+        RetainedScene.ShadowsWanted = false;
+        ClearSlots();
         PolyAssembler.KeepForLights = false;
         PolyAssembler.Keep();
         Sent = Culled = 0;
@@ -167,6 +207,8 @@ public sealed class Lights : IRemasterFeature
         _derived = Runtime.Mem is { } mem ? TileGlow(mem, out _derivedSrc) : [];
         bool any = _lights.Length > 0 || _derived.Length > 0 || Surfaces.ModelsGiveLight;
         RemasterUniforms.Enabled = any;
+        RetainedScene.ShadowsWanted = _shadows && _lights.Any(l => l.Shadows);
+        ClearSlots();
         PolyAssembler.KeepForLights = any;
         PolyAssembler.Keep();
         if (!any) { RemasterUniforms.Publish(0); Sent = Culled = ModelLights = 0; }
@@ -185,7 +227,7 @@ public sealed class Lights : IRemasterFeature
         var c = Surfaces.GlowLight[id];
         float s = MathF.Max(c.X, MathF.Max(c.Y, c.Z));
         return new Pack.Light(name, false, at, c / s, s, Surfaces.GlowRadius[id],
-                              normal, 0f, 0f, 0f, 0f, false);
+                              normal, 0f, 0f, 0f, 0f, false, Shadows: false);
     }
 
     /// <summary>
@@ -392,10 +434,60 @@ public sealed class Lights : IRemasterFeature
                 RemasterUniforms.LightDir[o + 3] = -2f - from;
             }
         }
+        AssignShadows(sent, v);
         RemasterUniforms.Publish(sent);
         Sent = sent;
         Culled = culled;
         Frames++;
+    }
+
+    static void ClearSlots()
+    {
+        Array.Fill(_slotName, null);
+        Array.Clear(RemasterUniforms.ShadowLight);
+        Array.Fill(RemasterUniforms.LightShadow, -1);
+    }
+
+    /// <summary>A slot for each of the nearest shadowed authored lights sent, a light
+    /// keeping the slot it had; the rest of the list unshadowed.</summary>
+    static void AssignShadows(int sent, in View v)
+    {
+        Array.Fill(RemasterUniforms.LightShadow, -1);
+        const int N = RemasterUniforms.MaxShadows;
+        Span<bool> held = stackalloc bool[N];
+        Span<int> pending = stackalloc int[N];
+        int np = 0;
+        for (int k = 0; k < sent && RetainedScene.ShadowsWanted; k++)
+        {
+            int i = _order[k].Index;
+            if (i >= _lights.Length || !_frame[i].Shadows) continue;
+            int s = Array.IndexOf(_slotName, _frame[i].Name);
+            if (s >= 0) { held[s] = true; RemasterUniforms.LightShadow[k] = s; }
+            else if (np < N) pending[np++] = k;
+        }
+        for (int p = 0; p < np; p++)
+        {
+            int s = held.IndexOf(false);
+            if (s < 0) break;
+            held[s] = true;
+            _slotName[s] = _frame[_order[pending[p]].Index].Name;
+            RemasterUniforms.LightShadow[pending[p]] = s;
+        }
+        for (int s = 0; s < N; s++)
+            if (!held[s]) { _slotName[s] = null; RemasterUniforms.ShadowLight[s * 4 + 3] = 0f; }
+        for (int k = 0; k < sent; k++)
+        {
+            int s = RemasterUniforms.LightShadow[k];
+            if (s < 0) continue;
+            ref readonly var l = ref _frame[_order[k].Index];
+            RemasterUniforms.ShadowLight[s * 4] = l.Position.X;
+            RemasterUniforms.ShadowLight[s * 4 + 1] = l.Position.Y;
+            RemasterUniforms.ShadowLight[s * 4 + 2] = l.Position.Z;
+            RemasterUniforms.ShadowLight[s * 4 + 3] = l.Radius;
+        }
+        var r = v.R;
+        ReadOnlySpan<float> rows = [r.M11, r.M12, r.M13, r.M21, r.M22, r.M23, r.M31, r.M32, r.M33];
+        rows.CopyTo(RemasterUniforms.ToWorld);
     }
 
     /// <summary>The frame's candidates into <see cref="_frame"/>: the authored lights,
@@ -460,6 +552,8 @@ public sealed class Lights : IRemasterFeature
         => Refused != null ? $"lights refused: {Refused}"
          : $"lights {Authored} authored, {Derived} from tile glow, {ModelLights} from model glow, {Sent} sent, {Culled} culled; " +
            $"{RemasterUniforms.Uploads} upload(s), {RemasterUniforms.LitBatches} lit batch(es)" +
+           $"; {RemasterUniforms.ShadowsReady} shadow cubemap(s) ready, {RemasterUniforms.ShadowRenders} drawn, " +
+           $"{RemasterUniforms.ShadowTriangles} triangle(s) into them" +
            (RemasterUniforms.Supported ? "" : " (the backend has no light term)") +
            (Authored > 0 && !PerPixelLighting.Enabled ? " (per-pixel lighting is off, so nothing is lit)" : "");
 }

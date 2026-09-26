@@ -20,6 +20,12 @@ namespace Kf2.Remaster;
 /// the game's own code. Nothing else reads the records (<see cref="LightCensus"/>).
 /// An override is taken only while the record's source bytes hash as they did when
 /// it was authored. See "Phase 5, the first slice" in docs/REMASTER.md.
+///
+/// The area's darkness (<c>"record": "all"</c>, <c>"darkness"</c> 0..1) scales the back
+/// colour and the three light colours of records 0-63 -- every record a tile half can
+/// name, and none of the HUD's -- after each record's own override. It is taken from
+/// the game's source record every pass, so it never compounds and at 0 is gone. See
+/// "The area's darkness" in docs/REMASTER.md.
 /// </summary>
 public sealed class Atmosphere : IRemasterFeature
 {
@@ -37,6 +43,17 @@ public sealed class Atmosphere : IRemasterFeature
 
     static bool _on = true;
     static Pack.RecordOverride[] _active = [];
+    static float _darkness;
+
+    /// <summary>Per record, the index of its own override written this pass, or -1.</summary>
+    static readonly int[] _own = new int[Records];
+
+    /// <summary>The records the darkness scales: every one a tile half's <c>+4 &amp; 0x3F</c>
+    /// can name. The HUD's (64, 65, 72) lie above them.</summary>
+    public const int Darkened = 64;
+
+    /// <summary>The area's darkness as applied, 0 the game's light and 1 black.</summary>
+    public static float Darkness => _darkness;
     int _version = -1, _settle = -1;
 
     /// <summary>Why the area's overrides are not applied, or null.</summary>
@@ -49,7 +66,7 @@ public sealed class Atmosphere : IRemasterFeature
     /// <summary>Stage 1 passes an override was written on, and passes at all; never reset.</summary>
     public static long Passes, Calls;
 
-    public static bool Active => _active.Length > 0;
+    public static bool Active => _active.Length > 0 || _darkness > 0f;
 
     static readonly ModInfo _self = new()
     {
@@ -104,6 +121,7 @@ public sealed class Atmosphere : IRemasterFeature
         }
         Refused = null;
         _active = Pack.Records(area).Where(r => (uint)r.Record < Records).ToArray();
+        _darkness = Math.Clamp(Pack.GetRecord(area, Pack.AllRecords)?.Darkness ?? 0f, 0f, 1f);
     }
 
     public void Detach()
@@ -116,30 +134,56 @@ public sealed class Atmosphere : IRemasterFeature
     static void Clear()
     {
         _active = [];
+        _darkness = 0f;
         Refused = null;
         Applied = Stale = 0;
     }
 
     public string Probe()
         => Refused != null ? $"atmosphere refused ({Refused})"
-         : $"{Applied} of {_active.Length} record override(s) written{(Stale > 0 ? $", {Stale} refused (record changed)" : "")} ({Calls} stage 1 passes)";
+         : $"{Applied} of {_active.Length} record override(s) written{(Stale > 0 ? $", {Stale} refused (record changed)" : "")}" +
+           (_darkness > 0f ? $", darkness {_darkness:0.00}" : "") + $" ({Calls} stage 1 passes)";
 
     /// <summary>Post on stage 1: the copy is done; write the overrides over it.</summary>
     public static void AfterCopy(CpuContext c, IMemory m)
     {
         Calls++;
         var list = _active;
-        if (list.Length == 0) return;
+        float dark = _darkness;
+        if (list.Length == 0 && dark <= 0f) { Applied = Stale = 0; return; }
         int applied = 0, stale = 0;
-        foreach (var r in list)
+        Array.Fill(_own, -1);
+        for (int i = 0; i < list.Length; i++)
         {
+            var r = list[i];
             if (r.Hash != null && r.Hash != SourceHash(m, r.Record)) { stale++; continue; }
             Write(m, r);
+            _own[r.Record] = i;
             applied++;
         }
+        if (dark > 0f)
+            for (int rec = 0; rec < Darkened; rec++)
+                Dim(m, rec, _own[rec] >= 0 ? list[_own[rec]] : null, 1f - dark);
         Applied = applied;
         Stale = stale;
-        if (applied > 0) Passes++;
+        if (applied > 0 || dark > 0f) Passes++;
+    }
+
+    /// <summary>The record's back colour and light colours as its own override leaves
+    /// them over the game's source, times <paramref name="s"/>: from the source every
+    /// pass, so a pass that finds the destination already dimmed does not dim it again.</summary>
+    static void Dim(IMemory m, int record, Pack.RecordOverride? o, float s)
+    {
+        var e = Effective(m, record, o, dark: false);
+        uint d = Dst + (uint)record * DstStride;
+        for (uint i = 0; i < 3; i++) m.WriteU8(d + DstBack + i, (byte)Math.Clamp((int)MathF.Round(e.Back[i] * s), 0, 255));
+        for (int j = 0; j < 3; j++)
+        {
+            var col = e.Colour[j] * s;
+            m.WriteU16(d + DstColour + (uint)(2 * j), Fixed(col.X));
+            m.WriteU16(d + DstColour + (uint)(6 + 2 * j), Fixed(col.Y));
+            m.WriteU16(d + DstColour + (uint)(12 + 2 * j), Fixed(col.Z));
+        }
     }
 
     static void Write(IMemory m, Pack.RecordOverride r)
@@ -202,19 +246,32 @@ public sealed class Atmosphere : IRemasterFeature
         return new Record(dir, col, back, m.ReadU16(s + SrcFog));
     }
 
-    /// <summary>What the record is drawn with once the override is over it.</summary>
-    public static Record Effective(IMemory m, int record, Pack.RecordOverride? o)
+    /// <summary>What the record is drawn with once its override is over it, and the
+    /// area's darkness unless left out.</summary>
+    public static Record Effective(IMemory m, int record, Pack.RecordOverride? o, bool dark = true)
     {
         var g = Game(m, record);
-        if (o is not { } r) return g;
         var dir = (Vector3[])g.Direction.Clone();
         var col = (Vector3[])g.Colour.Clone();
-        for (int j = 0; j < 3; j++)
+        var back = g.Back;
+        int fog = g.Fog;
+        if (o is { } r)
         {
-            if (r.Direction[j] is { } d) dir[j] = d;
-            if (r.Colour[j] is { } c) col[j] = c;
+            for (int j = 0; j < 3; j++)
+            {
+                if (r.Direction[j] is { } d) dir[j] = d;
+                if (r.Colour[j] is { } c) col[j] = c;
+            }
+            back = r.Back ?? back;
+            fog = r.Fog ?? fog;
         }
-        return new Record(dir, col, r.Back ?? g.Back, r.Fog ?? g.Fog);
+        if (dark && _darkness > 0f && record < Darkened)
+        {
+            float s = 1f - _darkness;
+            for (int j = 0; j < 3; j++) col[j] *= s;
+            back = [.. back.Select(b => (int)MathF.Round(b * s))];
+        }
+        return new Record(dir, col, back, fog);
     }
 
     /// <summary>Drawn tile halves per record in the live tile block, by the half's

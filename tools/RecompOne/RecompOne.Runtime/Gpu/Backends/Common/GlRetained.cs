@@ -63,6 +63,7 @@ public sealed partial class GlCore
         F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
         I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
         I("uMaskOn", 0);
+        InitShadowUniforms(_progWorld, false);
         if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
         int pb = L("uPosBias");
         if (pb >= 0) _gl.Uniform2(pb, 0f, 0f);
@@ -157,15 +158,20 @@ public sealed partial class GlCore
         _gl.ActiveTexture(TextureUnit.Texture0);
     }
 
+    /// <summary>The static map, when it was rebuilt since the last upload.</summary>
+    void UploadStatic()
+    {
+        if (_worldGen == RetainedScene.StaticGeneration) return;
+        var s = RetainedScene.Static;
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldVbo);
+        _gl.BufferData<RetainedScene.Vertex>(BufferTargetARB.ArrayBuffer, s, BufferUsageARB.StaticDraw);
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
+        _worldGen = RetainedScene.StaticGeneration;
+    }
+
     unsafe void UploadWorld(RetainedScene.Frame f)
     {
-        if (_worldGen != RetainedScene.StaticGeneration)
-        {
-            var s = RetainedScene.Static;
-            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldVbo);
-            _gl.BufferData<RetainedScene.Vertex>(BufferTargetARB.ArrayBuffer, s, BufferUsageARB.StaticDraw);
-            _worldGen = RetainedScene.StaticGeneration;
-        }
+        UploadStatic();
         var d = f.SortedDynamic();
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldDynVbo);
         if (d.Length > _worldDynCap)
@@ -217,7 +223,7 @@ public sealed partial class GlCore
         _gl.DepthFunc(DepthFunction.Lequal);
         _gl.DepthMask(true);
         _gl.Disable(EnableCap.Blend);
-        DrawRange(0, f);
+        RetainedScene.Triangles += DrawRange(0, f) / 3;
 
         _gl.DepthMask(false);
         _gl.Enable(EnableCap.Blend);
@@ -228,13 +234,16 @@ public sealed partial class GlCore
             if (mode == 2) continue;
             float src = mode switch { 0 => 0.5f, 3 => 0.25f, _ => 1f }, dst = mode == 0 ? 0.5f : 1f;
             if (_uwBlend >= 0) _gl.Uniform4(_uwBlend, src, src, src, dst);
-            DrawRange(1 + mode, f);
+            RetainedScene.Triangles += DrawRange(1 + mode, f) / 3;
         }
         _gl.Disable(EnableCap.Blend);
     }
 
-    void DrawRange(int r, RetainedScene.Frame f)
+    /// <summary>Range <paramref name="r"/> of the visible static chunks, and of the
+    /// frame's models when there is a frame; the static vertices drawn.</summary>
+    int DrawRange(int r, RetainedScene.Frame? f)
     {
+        int drawn = 0;
         if (RetainedScene.StaticCount[r] > 0)
         {
             _gl.BindVertexArray(_worldVao);
@@ -248,19 +257,20 @@ public sealed partial class GlCore
                 if (first >= 0 && count > 0)
                 {
                     _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
-                    RetainedScene.Triangles += count / 3;
+                    drawn += count;
                 }
                 first = take ? RetainedScene.ChunkStart[k] : -1;
                 count = take ? RetainedScene.ChunkCount[k] : 0;
             }
         }
-        int dn = f.DynCount[r];
+        int dn = f?.DynCount[r] ?? 0;
         if (dn > 0)
         {
             _gl.BindVertexArray(_worldDynVao);
-            _gl.DrawArrays(PrimitiveType.Triangles, f.DynStart[r], (uint)dn);
+            _gl.DrawArrays(PrimitiveType.Triangles, f!.DynStart[r], (uint)dn);
             RetainedScene.Triangles += dn / 3;
         }
+        return drawn;
     }
 
     // ---- which chunks a view can see --------------------------------------------

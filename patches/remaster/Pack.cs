@@ -748,10 +748,11 @@ public static class Pack
     /// <summary>One authored light, as the document holds it. Position is world units,
     /// up at -Y; colour is linear 0..1 per channel; cone is inner and outer half-angles
     /// in degrees; flicker scales the intensity by up to <c>FlickerAmount</c>, varying
-    /// at about <c>FlickerHz</c>.</summary>
+    /// at about <c>FlickerHz</c>. A light casts shadows unless <c>"shadows": false</c>.</summary>
     public readonly record struct Light(
         string Name, bool Spot, Vector3 Position, Vector3 Colour, float Intensity, float Radius,
-        Vector3 Direction, float ConeInner, float ConeOuter, float FlickerAmount, float FlickerHz, bool Off);
+        Vector3 Direction, float ConeInner, float ConeOuter, float FlickerAmount, float FlickerHz, bool Off,
+        bool Shadows = true);
 
     static Vector3 Vec(JsonNode? n, Vector3 fallback)
     {
@@ -789,7 +790,8 @@ public static class Pack
             NumOr(cone?.Count > 1 ? cone[1] : null, 35f),
             NumOr(flicker?["amount"], 0f),
             NumOr(flicker?["hz"], 0f),
-            o["enabled"] is JsonValue ev && ev.TryGetValue(out bool en) && !en);
+            o["enabled"] is JsonValue ev && ev.TryGetValue(out bool en) && !en,
+            !(o["shadows"] is JsonValue sv && sv.TryGetValue(out bool sh) && !sh));
     }
 
     /// <summary>The area's lights, in document order.</summary>
@@ -920,15 +922,31 @@ public static class Pack
     /// keeps them, as authored; a record the game has since changed is refused.
     /// </summary>
     public readonly record struct RecordOverride(
-        int Record, string? Hash, int[]? Back, Vector3?[] Direction, Vector3?[] Colour, int? Fog);
+        int Record, string? Hash, int[]? Back, Vector3?[] Direction, Vector3?[] Colour, int? Fog,
+        float? Darkness = null);
+
+    /// <summary>The area's own entry, <c>"record": "all"</c>, which holds only its
+    /// <c>darkness</c>: 0 the game's light, 1 black, scaling every tile record's back
+    /// colour and light colours after its own override. It carries no record hash; the
+    /// area's fingerprint is its gate.</summary>
+    public const int AllRecords = -1;
 
     static JsonObject? AtmosDoc(int area) => _set.Atmosphere.TryGetValue(area, out var d) ? d : null;
+
+    static bool Matches(JsonObject o, int record)
+        => record == AllRecords ? Str(o["record"]) == "all" : Int(o["record"]) == record;
+
+    static JsonObject NewRecord(int record, string hash)
+        => record == AllRecords ? new JsonObject { ["record"] = "all" } : new JsonObject { ["record"] = record, ["recordHash"] = hash };
+
+    /// <summary>Nothing overridden: only the record's name and hash.</summary>
+    static bool Empty(JsonObject o) => o.All(kv => kv.Key is "record" or "recordHash");
 
     static JsonObject? FindRecord(int area, int record)
     {
         if (AtmosDoc(area)?["records"] is not JsonArray list) return null;
         foreach (var n in list)
-            if (n is JsonObject o && Int(o["record"]) == record) return o;
+            if (n is JsonObject o && Matches(o, record)) return o;
         return null;
     }
 
@@ -946,10 +964,13 @@ public static class Pack
                     if (l["direction"] is JsonArray) dir[j] = Vec(l["direction"], Vector3.Zero);
                     if (l["colour"] is JsonArray) col[j] = Vec(l["colour"], Vector3.Zero);
                 }
+        if (record == AllRecords)
+            return new RecordOverride(record, null, null, new Vector3?[3], new Vector3?[3], null,
+                o["darkness"] is JsonValue dv && dv.TryGetValue(out double dd) ? Math.Clamp((float)dd, 0f, 1f) : null);
         return new RecordOverride(record, Str(o["recordHash"]), back, dir, col, Int(o["fog"]));
     }
 
-    /// <summary>The area's record overrides, in document order.</summary>
+    /// <summary>The area's record overrides, in document order; not the whole-area one.</summary>
     public static IEnumerable<RecordOverride> Records(int area)
     {
         if (AtmosDoc(area)?["records"] is not JsonArray list) yield break;
@@ -970,16 +991,16 @@ public static class Pack
                                  Action<JsonObject> change)
     {
         var from = RecordSnapshot(area, record);
-        Edit($"record {record}: {label}", () =>
+        Edit($"{RecordName(record)}: {label}", () =>
             {
                 var o = FindRecord(area, record);
                 if (o == null)
                 {
-                    o = new JsonObject { ["record"] = record, ["recordHash"] = hash };
+                    o = NewRecord(record, hash);
                     ((JsonArray)AreaDoc(_set.Atmosphere, "records", area, fingerprint)["records"]!).Add(o);
                 }
                 change(o);
-                if (o.Count <= 2) PutRecord(area, record, null, fingerprint);
+                if (Empty(o)) PutRecord(area, record, null, fingerprint);
             },
             () => PutRecord(area, record, from, fingerprint));
     }
@@ -990,7 +1011,7 @@ public static class Pack
         var o = FindRecord(area, record);
         if (o == null)
         {
-            o = new JsonObject { ["record"] = record, ["recordHash"] = hash };
+            o = NewRecord(record, hash);
             ((JsonArray)AreaDoc(_set.Atmosphere, "records", area, fingerprint)["records"]!).Add(o);
         }
         change(o);
@@ -1001,8 +1022,8 @@ public static class Pack
     public static void CommitRecord(int area, int record, string fingerprint, string label, JsonObject? before)
     {
         var after = RecordSnapshot(area, record);
-        if (after is { Count: <= 2 }) after = null;
-        Edit($"record {record}: {label}", () => PutRecord(area, record, after, fingerprint),
+        if (after != null && Empty(after)) after = null;
+        Edit($"{RecordName(record)}: {label}", () => PutRecord(area, record, after, fingerprint),
             () => PutRecord(area, record, before, fingerprint));
     }
 
@@ -1011,7 +1032,7 @@ public static class Pack
         if (FindRecord(area, record) == null) return;
         var before = RecordSnapshot(area, record);
         string fp = AreaFingerprint(area) ?? "";
-        Edit($"record {record}: reset", () => PutRecord(area, record, null, fp), () => PutRecord(area, record, before, fp));
+        Edit($"{RecordName(record)}: reset", () => PutRecord(area, record, null, fp), () => PutRecord(area, record, before, fp));
     }
 
     /// <summary>Replace a record's override with a snapshot, or remove it (null),
@@ -1020,13 +1041,22 @@ public static class Pack
     {
         var list = (JsonArray)AreaDoc(_set.Atmosphere, "records", area, fingerprint)["records"]!;
         for (int i = 0; i < list.Count; i++)
-            if (list[i] is JsonObject o && Int(o["record"]) == record)
+            if (list[i] is JsonObject o && Matches(o, record))
             {
                 if (snapshot == null) list.RemoveAt(i);
                 else list[i] = snapshot.DeepClone();
                 return;
             }
         if (snapshot != null) list.Add(snapshot.DeepClone());
+    }
+
+    public static string RecordName(int record) => record == AllRecords ? "area" : $"record {record}";
+
+    /// <summary>The area's darkness; 0 or null removes it, leaving the game's light.</summary>
+    public static void SetDarkness(JsonObject o, float? v)
+    {
+        if (v is { } x && x > 0.0005f) o["darkness"] = Math.Round(Math.Clamp(x, 0f, 1f), 3);
+        else o.Remove("darkness");
     }
 
     public static void SetBack(JsonObject o, int[]? rgb)
