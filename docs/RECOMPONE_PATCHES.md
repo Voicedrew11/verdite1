@@ -13,7 +13,7 @@ amendment's diff appended to its `.patch` file, and the source comments keep its
 number. `0016` and `0057` predate this and keep their numbers, since the source
 refers to them.
 
-Fifty-two of the fifty-nine are load-bearing; `0002`, `0003`, `0015`, `0046`,
+Fifty-three of the sixty are load-bearing; `0002`, `0003`, `0015`, `0046`,
 `0065` and `0069` are diagnostics and `0013` is a settings-placement hook. `0063` is retired:
 it was folded into `0054` as an amendment, and the number is not reused. **Three force a recompile** —
 `0004`, `0035` and `0037`; every other one changes runtime behaviour only. **One
@@ -1027,6 +1027,33 @@ Four files in the directory have no entry below:
   four passes (the highlight flat and on a textured metal, the skip, the unfogged
   glow), all at 0 from the formula, the first ten unchanged. The hunks are in
   `0067`'s seventh diff. See "Phase 3, the second slice" in `docs/REMASTER.md`.
+
+- `0072-retained-scene.patch` — the area's geometry kept on the GPU in world
+  space, so a reflection draws the world again without the game's walks.
+  `Gpu/RetainedScene.cs` holds what the port fills: the static map as world-space
+  corners (lit colour before the cue, CLUT, texpage, UV, the depth cue's DQA, DQB
+  and curve, the texture rectangle and a material), sorted into five ranges
+  (opaque, then each blend mode) and 8x8-tile chunks with their bounds; and a ring
+  of four frames by serial, each the camera it was drawn with, its models and the
+  planes it mirrors in. `GlDisplayRt.RetainedSerial` is the serial a target was
+  drawn under, stamped in `FlushCore`. `GlShaders.WorldVs` gives `PrimFs` exactly
+  what `PrimVs` does, from a world corner through a camera uniform, with W the
+  view depth and a near plane, the corner fogged on its own curve at that camera's
+  depth, or drawn at its mirror image in `Y = uPlaneY` with `gl_ClipDistance`
+  removing what lies below. `PrimFs` gains `uMaskOn`: keep a fragment only where
+  the presented frame's surface buffer lies within the tolerance of a plane; 0 is
+  the shader as it was. `GlRetained.cs` (`GlCore` is now partial) draws at present,
+  before the reflection pass and for the presented target's frame: every plane
+  into the target's planar texture, unmirrored, and six faces of a cubemap with a
+  depth cube, each view culling chunks by its frustum and the fog's reach. `SsrFs`
+  gains `retPlanarAt` (the first plane the surface lies on, read unmirrored) and
+  `cubeMarch` (the reflected ray in world axes against the depth cube, no jitter),
+  which replaces the screen march while the cubemap is on; the probe's compare mode
+  checks one against the other. The blend function is put back after the draws:
+  dual-source factors left set make any draw into two buffers an error with
+  blending off. The port half is `patches/RetainedMap.cs`, `RetainedPlanes.cs` and
+  `RetainedModels.cs`. Off by default. GL core only. **No recompile.** See "The
+  retained scene" in `docs/RENDERING.md`.
 
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a

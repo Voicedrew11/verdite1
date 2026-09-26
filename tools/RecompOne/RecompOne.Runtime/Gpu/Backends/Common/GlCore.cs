@@ -4,7 +4,7 @@ using Silk.NET.OpenGL;
 
 namespace RecompOne.Runtime.Hle;
 
-public sealed class GlCore : IGpuBackend
+public sealed partial class GlCore : IGpuBackend
 {
     [StructLayout(LayoutKind.Sequential)]
     // W is the clip W the vertex shader divides by: the view depth GteDepth
@@ -400,6 +400,8 @@ public sealed class GlCore : IGpuBackend
             // 0068. Only this backend can draw into a planar texture; the port walks
             // nothing mirrored without it.
             PlanarReflections.Supported = _progSsr != 0 && _uClipOn >= 0 && _uSsrPlanarOn >= 0;
+            // 0072.
+            InitRetained(_progSsr);
         }
 
         _uPresent24Origin = _gl.GetUniformLocation(_progPresent24, "uOrigin");
@@ -1819,7 +1821,12 @@ public sealed class GlCore : IGpuBackend
         }
 
         _gl.Disable(EnableCap.ScissorTest);
-        if (rt != null) { rt.Dirty = true; rt.LastDrawFrame = _frame; }
+        if (rt != null)
+        {
+            rt.Dirty = true;
+            rt.LastDrawFrame = _frame;
+            if (!rt.IsPlanar) rt.RetainedSerial = RetainedScene.Serial;
+        }
         else
         {
             int x0 = Math.Max(_kClipX0, (int)Math.Floor(_drawMinX));
@@ -2150,7 +2157,11 @@ public sealed class GlCore : IGpuBackend
             if (!aoOn) surfaces = DrawSurfaces(src!, gScale);
             // A surface buffer that was not drawn this present holds another frame's.
             ssrOn = surfaces && src!.Surface != 0;
-            if (ssrOn) RunSsr(src!, dispX - src!.X, dispY - src.Y, w1x, h1x);
+            if (ssrOn)
+            {
+                DrawRetained(src!);
+                RunSsr(src!, dispX - src!.X, dispY - src.Y, w1x, h1x);
+            }
             EndGpuTimer(ssrQuery, GpuWork.Reflections, ssrStart);
             Diagnostics.Profiler.End(ssrProfile);
         }
@@ -2605,7 +2616,8 @@ public sealed class GlCore : IGpuBackend
         var planar = src.Planar;
         bool planarOn = PlanarReflections.Enabled && planar is { Tex: not 0 } && src.PlanarFrame == src.LastDrawFrame;
         if (_uSsrPlanarOn >= 0) _gl.Uniform1(_uSsrPlanarOn, planarOn ? 1 : 0);
-        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, planarOn && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
+        bool retCompare = _retPlanar != null && _retPlaneN > 0 && _retCube;
+        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, (planarOn || retCompare) && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
         if (planarOn)
         {
             var pp = src.PlanarPlane;
@@ -2618,10 +2630,13 @@ public sealed class GlCore : IGpuBackend
             _gl.BindTexture(TextureTarget.Texture2D, planar.Tex);
             PlanarReflections.Read++;
         }
+        // 0072. The retained scene's planes and cubemap, drawn for this target.
+        BindRetainedForSsr();
+        if (_retPlanar != null && _retPlaneN > 0) planar = _retPlanar;
         // Rough materials read the picture, and the planar texture, from a mip chain.
         bool rough = SurfaceMaterial.AnyRoughness;
         float colorMipH = rough ? BuildMip(src, ref _colorMipTex, ref _colorMipFbo, ref _colorMipW, ref _colorMipH, ColorMipUnit) : 0f;
-        float planarMipH = rough && planarOn
+        float planarMipH = rough && (planarOn || (_retPlanar != null && _retPlaneN > 0))
             ? BuildMip(planar!, ref _planarMipTex, ref _planarMipFbo, ref _planarMipW, ref _planarMipH, PlanarMipUnit) : 0f;
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _ssrFbo);
         _gl.Viewport(0, 0, (uint)w, (uint)h);
@@ -2636,7 +2651,7 @@ public sealed class GlCore : IGpuBackend
         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
         ScreenReflections.Passes++;
-        if (planarOn)
+        if (planarOn || _retPlanar != null)
         {
             // The next capture draws into these; leave nothing bound that a prim
             // batch could read back while writing it.

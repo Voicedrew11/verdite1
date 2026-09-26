@@ -251,9 +251,9 @@ work into layers, and each layer has one owner.
    - widening the material ids and moving their table into the block **amends
      `0067`**;
    - authored lights are `0071`;
-   - fog colour and the sky fill are `0072`;
-   - normal and roughness maps are `0073`;
-   - a GPU id buffer for picking would be `0074`, and only if it turns out to be
+   - fog colour and the sky fill are `0073`;
+   - normal and roughness maps are `0074`;
+   - a GPU id buffer for picking would be `0075`, and only if it turns out to be
      needed.
 
    `snap`'s readback of the presented picture took `0069` and the hook order
@@ -460,7 +460,7 @@ is a command-line converter.
 - **The map panel** doubles as a top-down tile picker: it already reads all ten
   bytes under the cursor.
 - **No GPU id buffer at first.** It would be a render-target attachment and a
-  per-triangle id, which is a new runtime mechanism (`0074`). The CPU paths
+  per-triangle id, which is a new runtime mechanism (`0075`). The CPU paths
   answer everything the first phases need.
 
 ### Gizmos
@@ -1461,7 +1461,7 @@ brings some reflectivity of its own when that is 0 is the user's call.
       and the mip atlas;
     - do the fluid slots scroll a replaced water texture through `0053`;
     - fixes by amendment to those patches;
-  - normal and roughness maps, **only paired with a replacement texture** (`0073`),
+  - normal and roughness maps, **only paired with a replacement texture** (`0074`),
     read in `PrimFs` for the light term and passed to the surface buffer for SSR;
   - a texture-key census that tells a pack author which textures of an area the
     pack covers.
@@ -1475,7 +1475,7 @@ brings some reflectivity of its own when that is 0 is the user's call.
 
 - **Ships:**
   - light-record overrides after stage 1's copy;
-  - fog colour and curve (`0072`);
+  - fog colour and curve (`0073`);
   - a sky fill at the far plane that respects `Overlay`, so the HUD is never
     painted over;
   - `atmosphere.json`.
@@ -1521,7 +1521,7 @@ brings some reflectivity of its own when that is 0 is the user's call.
 - shadows by marching the tile grid;
 - port-drawn props;
 - opt-in object and creature placement;
-- a GPU id buffer (`0074`), if picking is ever too slow.
+- a GPU id buffer (`0075`), if picking is ever too slow.
 
 ### Dependencies, in one list
 

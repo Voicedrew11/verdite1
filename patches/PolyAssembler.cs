@@ -370,6 +370,8 @@ public static partial class PolyAssembler
 
         uint count = mem.ReadU32(header + 0x14u);
         uint total = count;
+        // 0072. A model the object walk submitted, every face, for the retained scene.
+        if (mesh == 0 && RetainedModels.Capturing) RetainedModels.CaptureFlat(mem, header, normals, face, count, true);
 
         var fr = new Frame(mem);
         for (; count != 0; count--)
@@ -824,6 +826,7 @@ public static partial class PolyAssembler
         uint count = mem.ReadU32(header + 0x14u);
         uint face = mem.ReadU32(header + 0x10u) + 0xCu + mem.ReadU32(ModelTable);
         uint total = count;
+        if (RetainedModels.Capturing) RetainedModels.CaptureFlat(mem, header, normals, face, count, false);
 
         var fr = new Frame(mem);
         for (; count != 0; count--)

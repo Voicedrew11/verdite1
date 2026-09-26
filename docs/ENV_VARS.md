@@ -176,6 +176,10 @@ KF2_PLANAR=1                           # planar reflections: the world walked ag
 KF2_PLANAR_TOLERANCE=48 KF2_PLANAR_BIAS=8   # how far off the plane a surface may be and take it; how far above it geometry must be to be reflected
 KF2_PLANAR_RIPPLE=4                    # how far the water's own texture bends the reflection, game pixels per unit of brightness change; 0 a flat mirror
 KF2_PLANAR_PROBE=1                     # the plane, the mirrored walk and its arena, captures, binned water, and the readback with its check on the mirror
+KF2_RETAINED=1                         # reflections drawn from the retained scene: the map and models kept on the GPU in world space (off by default; needs KF2_SSR; GL core only; stands the planar walk down)
+KF2_RETAINED_PLANAR=0 KF2_RETAINED_CUBE=0   # leave out its planes, or its camera cubemap (which otherwise replaces the screen march)
+KF2_RETAINED_CUBESIZE=256              # a cubemap face's size in pixels
+KF2_RETAINED_PROBE=1                   # the mesh and its check against the GTE's own vertices, the planes, GPU time per draw, chunks culled, and (with KF2_SSR_PROBE=1) the planar-vs-cubemap agreement
 KF2_REMASTER=1                         # apply the working pack (off by default; the editor's checkbox saves it); Shift+E opens the editor
 KF2_REMASTER_PACK=dir                  # the working pack (packs/working)
 KF2_REMASTER_PROBE=1                   # a line every 2 s: the area, its fingerprint, what applied; a diff of the tile bytes when an area's fingerprint changes

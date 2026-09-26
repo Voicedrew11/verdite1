@@ -585,6 +585,21 @@ internal static class GlShaders
         uniform sampler2D uPlanarMip;
         uniform float uColorMipH;
         uniform float uPlanarMipH;
+        // 0072. The retained scene. Its planar texture is the one bound as uPlanar,
+        // drawn straight into this target's pixels (no row flip), each pixel holding
+        // the reflection in the plane its own surface lies on; the planes are this
+        // frame's, in this view, as uPlanarPlane is. And a cubemap from the camera,
+        // unfogged, with its depth, marched in place of the screen: uToWorld and
+        // uViewT take a view position back to world axes about the camera.
+        uniform int   uRetPlanarN;
+        uniform vec4  uRetPlane[4];
+        uniform int   uCubeOn;
+        uniform samplerCube uCube;
+        uniform samplerCube uCubeDepth;
+        uniform mat3  uToWorld;
+        uniform vec3  uViewT;
+        uniform int   uCubeSteps;
+        uniform float uCubeSize;
 
         const float FAR = 65536.0;
         const float OVERLAY = 3.0;
@@ -685,6 +700,93 @@ internal static class GlShaders
             return true;
         }
 
+        // 0072. The retained planar reflection at this pixel: the first of the
+        // frame's planes its surface lies on, read unmirrored, bent by the water's
+        // own brightness gradient as the old lookup was.
+        bool retPlanarAt(vec3 p, float rough, out vec3 c) {
+            c = vec3(0.0);
+            if (uRetPlanarN == 0) return false;
+            bool on = false;
+            for (int k = 0; k < 4; k++) {
+                if (k >= uRetPlanarN) break;
+                if (abs(dot(uRetPlane[k].xyz, p) + uRetPlane[k].w) <= uPlanarTol) { on = true; break; }
+            }
+            if (!on) return false;
+            vec2 muv = vUv;
+            if (uRipple > 0.0) {
+                vec2 px = 1.0 / uSize;
+                float l0 = luma(texture(uColor, tc(vUv)).rgb);
+                float lx = luma(texture(uColor, tc(vUv + vec2(px.x, 0.0))).rgb);
+                float ly = luma(texture(uColor, tc(vUv + vec2(0.0, px.y))).rgb);
+                muv += vec2(lx - l0, ly - l0) * uRipple * px;
+            }
+            muv = clamp(muv, vec2(0.0), vec2(1.0));
+            vec3 pc = texture(uPlanar, tc(muv)).rgb;
+            float pd = texture(uPlanarDepth, tc(muv)).r;
+            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) return false;
+            c = pc;
+            if (rough > 0.0) {
+                float zi = pd * FAR;
+                float travel = zi < FAR * 0.999 ? max(zi - p.z, 0.0) * length(p) / p.z : 0.0;
+                c = blurAt(uPlanar, uPlanarMip, uPlanarMipH, muv, rough * travel * uProjH / (max(zi, 1.0) * uSize.y), true);
+            }
+            return true;
+        }
+
+        // 0072. The distance from the camera to the first surface along a world
+        // direction: the face's depth is its own view depth, so divide by the
+        // direction's share along the face's axis. Nothing drawn is past everything.
+        float cubeDist(vec3 d) {
+            float z = texture(uCubeDepth, d).r;
+            if (z >= 1.0) return FAR * 8.0;
+            vec3 a = abs(d);
+            return z * FAR / max(a.x, max(a.y, a.z));
+        }
+
+        // 0072. The reflected ray marched against the cubemap's depth, in world axes
+        // about the camera: a step whose point stands further from the camera than
+        // the surface the camera sees in its direction has gone behind it. Halved
+        // back to the crossing, it is a hit only where the ray is at that surface;
+        // one that passed behind an object from the camera's side marches on. No
+        // per-pixel jitter: the steps are fine enough, and a pattern is worse.
+        bool cubeMarch(vec3 p, vec3 r, float rough, out vec3 c, out float tHit) {
+            c = vec3(0.0);
+            tHit = 0.0;
+            vec3 P = uToWorld * (p - uViewT);
+            vec3 D = normalize(uToWorld * r);
+            float n1 = float(max(uCubeSteps, 1));
+            float tPrev = 0.0;
+            for (int i = 0; i < 256; i++) {
+                if (i >= uCubeSteps) break;
+                float x = (float(i) + 1.0) / n1;
+                float t = uMaxDist * x * x + 8.0;
+                vec3 q = P + D * t;
+                float len = length(q);
+                float sd = cubeDist(q / len);
+                if (len > sd * 1.002 + 2.0) {
+                    float lo = tPrev, hi = t;
+                    for (int k = 0; k < 6; k++) {
+                        float mid = 0.5 * (lo + hi);
+                        vec3 qm = P + D * mid;
+                        float lm = length(qm);
+                        if (lm > cubeDist(qm / lm) * 1.002 + 2.0) hi = mid; else lo = mid;
+                    }
+                    vec3 qh = P + D * hi;
+                    float lh = length(qh);
+                    if (lh - cubeDist(qh / lh) < uThickness + (hi - lo)) {
+                        tHit = hi;
+                        // The cone's width where it lands, as texels of a face seen
+                        // from the camera: a face spans a right angle.
+                        float texels = rough * hi / max(lh, 1.0) * uCubeSize / 1.5708;
+                        c = textureLod(uCube, qh / lh, log2(max(texels, 1.0))).rgb;
+                        return true;
+                    }
+                }
+                tPrev = t;
+            }
+            return false;
+        }
+
         // Fades a reflection out as its source nears the picture's edge, where the
         // march loses the surface it would have hit a few pixels further on.
         float edgeFade(vec2 uv) {
@@ -727,11 +829,43 @@ internal static class GlShaders
             float w = f0 + (max(refl, f0) - f0) * pow(1.0 - cosv, 5.0);
 
             vec3 pc;
-            bool planarHit = planarAt(p, rough, pc);
+            bool planarHit = planarAt(p, rough, pc) || retPlanarAt(p, rough, pc);
             if (planarHit && uCompare == 0) {
                 oInfo.a += 4.0 / 255.0;
                 w = clamp(w, 0.0, 1.0);
                 oColor = vec4(pc * tint * w, w);
+                return;
+            }
+
+            // 0072. The cubemap in place of the screen: nothing it cannot see is
+            // borrowed from the picture, and a miss reflects nothing.
+            if (uCubeOn != 0) {
+                vec3 cc;
+                float ct;
+                bool cubeHit = cubeMarch(p, r, rough, cc, ct);
+                if (planarHit) {
+                    // The probe's check on the two: where both found a surface, how
+                    // far apart they are, against the planar texture read mirrored
+                    // (the wrong way round, for this one) as the control.
+                    oInfo.a += 4.0 / 255.0;
+                    if (cubeHit) {
+                        vec3 sc = cc * fogKeep(p.z * (length(p) + ct) / length(p));
+                        oInfo.b = abs(luma(pc) - luma(sc));
+                        oInfo.g = abs(luma(texture(uPlanar, tc(vec2(vUv.x, 2.0 * uCentre.y - vUv.y))).rgb) - luma(sc));
+                        oInfo.a += 16.0 / 255.0;
+                    }
+                    w = clamp(w, 0.0, 1.0);
+                    oColor = vec4(pc * tint * w, w);
+                    return;
+                }
+                if (!cubeHit) return;
+                float zImage = p.z * (length(p) + ct) / length(p);
+                float keep = fogKeep(zImage);
+                w *= 1.0 - smoothstep(0.7, 1.0, ct / uMaxDist);
+                w = clamp(w, 0.0, 1.0);
+                oInfo.a += 1.0 / 255.0;
+                oInfo.b = keep;
+                oColor = vec4(cc * keep * tint * w, w);
                 return;
             }
 
@@ -834,6 +968,105 @@ internal static class GlShaders
             }
             w = clamp(w, 0.0, 1.0);
             oColor = vec4(c * tint * w, w);
+        }
+        """;
+
+    /// <summary>
+    /// 0072. The retained scene's vertex shader: a world-space corner through a
+    /// camera the backend hands it, to exactly the outputs <c>PrimVs</c> gives
+    /// <c>PrimFs</c>, so a reflected texel is decoded, filtered and blended by the
+    /// same code as a drawn one. The projection is the GTE's -- the centre plus H
+    /// times x/z -- written as a clip-space position with W the view depth, so the
+    /// rasterizer interpolates the texture coordinate perspective-correctly and
+    /// clips against a near plane, which a packet of already-projected corners
+    /// never needed. The depth cue is the one the corner's light record would have
+    /// fogged it with, at this camera's depth: through a mirror that is the length
+    /// of the path, which is the fog the reflection wants. A cubemap face draws
+    /// unfogged, and the reflection pass fogs its hit for the path instead.
+    ///
+    /// With uMirror set the corner is drawn where its image in the plane
+    /// <c>Y = uPlaneY</c> stands, seen from the real camera, so the planar texture
+    /// lines up with the picture pixel for pixel; what lies below the plane is
+    /// clipped away before it is mirrored.
+    /// </summary>
+    public const string WorldVs = """
+        #version 330 core
+        layout(location = 0) in vec3  inWorld;
+        layout(location = 1) in vec3  inColorF;
+        layout(location = 2) in float inClutF;
+        layout(location = 3) in float inTexpageF;
+        layout(location = 4) in vec2  inUV;
+        layout(location = 5) in vec3  inCue;
+        layout(location = 6) in uint  inRect;
+        layout(location = 7) in uint  inFlags;
+
+        invariant gl_Position;
+
+        noperspective out vec4 vColor;
+        out vec2 vUV;
+        out float vDepth;
+        flat out ivec2 clutBase;
+        flat out ivec2 pageBase;
+        flat out int   texMode;
+        flat out int   vDither;
+        flat out int   vRepClut;
+        noperspective out vec3 vLit;
+        noperspective out float vFog;
+        flat out uint vLight;
+        flat out uvec2 vTex;
+        flat out uint vMat;
+
+        uniform mat3  uR;
+        uniform vec3  uCam;
+        uniform vec3  uT;
+        uniform float uH;
+        uniform vec2  uC;
+        uniform vec2  uFb;
+        uniform float uNear;
+        uniform float uCueH;
+        uniform int   uFogOn;
+        uniform int   uMirror;
+        uniform float uPlaneY;
+        uniform float uPlaneBias;
+
+        float cueKeep(float z) {
+            int curve = int(inCue.z + 0.5);
+            if (uFogOn == 0 || curve == 0) return 1.0;
+            float q = min(uCueH * 65536.0 / max(z, 1.0), 131071.0);
+            float ir0 = clamp((inCue.x * q + inCue.y) / 4096.0, 0.0, 4096.0);
+            float w = curve == 1 ? max(ir0 - 800.0, 0.0) * 2.0
+                    : (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0);
+            return clamp(1.0 - w / 4096.0, 0.0, 1.0);
+        }
+
+        void main() {
+            vec3 w = inWorld;
+            gl_ClipDistance[0] = (uPlaneY - uPlaneBias) - w.y;
+            if (uMirror != 0) w.y = 2.0 * uPlaneY - w.y;
+            vec3 v = uR * (w - uCam) + uT;
+            float z = v.z;
+            gl_Position = vec4((uC * z + uH * v.xy) * 2.0 / uFb - z, z - 2.0 * uNear, z);
+            vDepth = z > 0.0 ? z * (1.0 / 65536.0) : 0.0;
+
+            vColor = vec4(inColorF * cueKeep(z), 0.0) / 255.0;
+            vLit = vec3(0.0);
+            vFog = 0.0;
+            vLight = 0u;
+            vTex = uvec2(inRect, inFlags & 0x80000000u);
+            vMat = inFlags & 255u;
+            vDither = 0;
+            vRepClut = 0;
+            vUV = inUV;
+
+            int inTexpage = int(inTexpageF + 0.5);
+            int inClut = int(inClutF + 0.5);
+            if ((inTexpage & 0x8000) != 0) {
+                texMode = 4;
+            } else {
+                texMode = (inTexpage >> 7) & 3;
+                pageBase = ivec2((inTexpage & 0xf) * 64, ((inTexpage >> 4) & 1) * 256);
+                clutBase = ivec2((inClut & 0x3f) * 16, (inClut >> 6) & 0x1ff);
+            }
         }
         """;
 
@@ -990,6 +1223,16 @@ internal static class GlShaders
         uniform vec4  uClipPlane;
         uniform vec2  uClipCentre;
         uniform float uClipH;
+        // 0072. Drawing one plane of a retained planar reflection: kept only where
+        // the presented frame's own surface (its surface buffer, the target's size
+        // in 1x pixels) lies within uMaskTol of the plane, in that frame's view.
+        uniform int   uMaskOn;
+        uniform sampler2D uMaskSurface;
+        uniform vec4  uMaskPlane;
+        uniform float uMaskTol;
+        uniform vec2  uMaskCentre;
+        uniform float uMaskH;
+        uniform vec2  uMaskSize;
         // 0071. Authored lights, published by the port in the GTE's view space
         // (RemasterUniforms): position and radius; colour times intensity and the
         // spot's inner cosine; direction and the outer cosine (-2 for a point, and
@@ -1230,6 +1473,13 @@ internal static class GlShaders
                 float cz = vDepth * 65536.0;
                 vec3 cp = vec3((gl_FragCoord.xy / float(uScale) - uClipCentre) * (cz / uClipH), cz);
                 if (dot(uClipPlane.xyz, cp) + uClipPlane.w < 0.0) discard;
+            }
+            if (uMaskOn != 0) {
+                vec2 mq = gl_FragCoord.xy / float(uScale);
+                float mz = texture(uMaskSurface, mq / uMaskSize).b * 65536.0;
+                if (mz <= 1.0) discard;
+                vec3 mp = vec3((mq - uMaskCentre) * (mz / uMaskH), mz);
+                if (abs(dot(uMaskPlane.xyz, mp) + uMaskPlane.w) > uMaskTol) discard;
             }
             // 0071. Not into a planar reflection: its view is the mirrored camera's.
             vec3 extra = vec3(0.0);

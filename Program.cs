@@ -715,6 +715,18 @@ Kf2.PlanarWalk.Configure(Environment.GetEnvironmentVariable("KF2_PLANAR"),
                          Environment.GetEnvironmentVariable("KF2_PLANAR_PROBE"));
 Kf2.PlanarWalk.Install();
 
+// The retained scene (patches/recompone/0072): the map kept on the GPU in world
+// space, built from the map data, so the reflections draw the world again without
+// the game's walks: every water or authored plane, and a cubemap from the camera
+// in place of the screen-space march. Needs KF2_SSR. Off by default: measured, not
+// judged. See "The retained scene" in docs/RENDERING.md.
+Kf2.RetainedMap.Configure(Environment.GetEnvironmentVariable("KF2_RETAINED"),
+                          Environment.GetEnvironmentVariable("KF2_RETAINED_PLANAR"),
+                          Environment.GetEnvironmentVariable("KF2_RETAINED_CUBE"),
+                          Environment.GetEnvironmentVariable("KF2_RETAINED_CUBESIZE"),
+                          Environment.GetEnvironmentVariable("KF2_RETAINED_PROBE"));
+Kf2.RetainedMap.Install();
+
 // The remaster (docs/REMASTER.md): authored data from a pack, applied over the
 // game: materials on tile faces, read by the reflection pass, and point and spot
 // lights in the prim shader (0071). Off by default and nothing is authored until

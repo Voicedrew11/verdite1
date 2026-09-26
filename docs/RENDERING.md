@@ -2184,6 +2184,172 @@ strength; the seam between the planar reflection and the march's sky where the
 mirrored texel is empty; the rim of the pool at an 8-unit clip bias; creatures and
 billboards in the reflection; and all of it while the camera moves.
 
+## The retained scene: the world kept on the GPU, so a reflection can draw it again
+
+**Mechanism measured; the picture has not been judged. Off by default**
+(`KF2_RETAINED=1` with `KF2_SSR=1`, or Video ▸ Experimental ▸ *Water reflections*
+▸ *World reflections*). The runtime half is `0072` (`Gpu/RetainedScene.cs`,
+`Gpu/Backends/Common/GlRetained.cs`); the port half is `patches/RetainedMap.cs`,
+`patches/RetainedPlanes.cs` and `patches/RetainedModels.cs`.
+
+The reflections above were screen-space (the march can only borrow what is on
+screen) or paid for a second pass of the game's own code on the CPU (the planar
+walk re-ran the tile walk and replayed every model submit, 1.8 ms a frame at the
+`fdat02` spawn). Every way of drawing the world again from another camera — a
+second plane, a cubemap — cost another such pass. **That is what this removes:**
+the area's geometry is kept in world space on the GPU, and any extra view is a
+draw with a different camera matrix. The game's code never runs twice.
+
+### The map is data
+
+80x80 tiles of two halves, each naming a mesh of the map's model bank
+(`0x8018E18C[0]`), a height, a quarter-turn and a light record (see `TileWalk`).
+`RetainedMap.Build` places each mesh's corners as `func_80031950` does — the tile's
+centre `(x*2048+1024, -height*128, z*2048+1024)` plus the corner turned by the
+inverse of what `func_80014B88` does to the view matrix's columns — and lights each
+face once, flat, through the GTE with the record's light matrix (by the turn),
+colour matrix and back colour, exactly as the assembler's `NormalColorCol` does.
+None of that depends on the camera. The depth cue does, so each corner carries the
+record's DQA and DQB (from the game's own `SetFogNear`, as `func_8002DDDC` calls it)
+and its curve, and the vertex shader fogs it at whatever camera draws it.
+
+The table's `+4` is not a model count: it is `TileWalk.Beyond`'s far-model limit,
+and gating on it dropped 5,623 of 6,313 halves in `fdat02`. A mesh is refused only
+when its header points outside RAM.
+
+**It is the game's geometry, measured.** With `KF2_RETAINED_PROBE=1`, after the
+assembler draws a half, every corner of its mesh is projected through the frame's
+camera and compared with the screen word the GTE left in the vertex cache: in
+`fdat02` 423,072 corners every two seconds, **100.00% within 1 px, mean 0.051 px**
+against the GTE's truncation (0.67 px against the unrounded position, which is
+just the truncation). A subdivided half's cache holds the subdivider's corners and
+is left out.
+
+`fdat02` is 48,837 triangles, area 1 67,501. A build takes 5.5-7.5 ms and runs
+only when what it reads changes: the bytes of the map a mesh is built from (model,
+height, the turn's low two bits and the light record's low six — the game writes
+other bits of the map as it runs, and hashing the whole block rebuilt it every
+couple of seconds), the light records, the bank pointer, the remaster's materials
+and the number of water rects.
+
+### Models, every frame
+
+Everything the object walk hands an assembler is captured before a single face
+is culled — a reflection sees the side the camera does not — from the lit assembler
+(`func_8002F214`, `func_8002EAEC`) and from the tile assemblers when the object walk
+calls them (`func_80030540`, `func_8002FECC`; area 1's objects are all drawn that
+way). Corners come from the vertex base the transform just read, so an animated
+pose is the pose drawn; the GTE still holds the model's view transform, and the
+frame's camera takes it back to the world. The colour is `NormalColorCol` again,
+without the cue. Checked the same way: 553,800 corners in `fdat02` and 84,672 in
+area 1, **100.00% within 1 px**. Cost: 0.16 ms a frame of `ReplaceLit`'s time at the
+`fdat02` spawn (0.194 to 0.351 ms).
+
+### Drawing it: the game's own fragment shader
+
+`WorldVs` turns a world corner into exactly the outputs `PrimVs` gives `PrimFs`, and
+`PrimFs` is used unchanged, so a reflected texel is decoded through the CLUT,
+filtered and blended by the same code as a drawn one. The projection is the GTE's
+(centre plus H times x/z) written as a clip-space position with W the view depth, so
+UV is perspective-correct and the rasterizer clips at a near plane, which packets of
+projected corners never needed. Opaque triangles test and write depth; each blend
+mode is drawn tested without writing, with the same dual-source factors
+`FlushCore` uses. Subtractive blending needs a second pass against a copy and is
+left out.
+
+**Everything is drawn at present, for the target being presented, with that
+frame's camera and models.** With two display buffers the presented target was
+drawn a frame ago, so `RetainedScene` keeps the last four frames by serial and a
+target records the serial it was drawn under (`GlDisplayRt.RetainedSerial`). Nothing
+reflects a camera or a model from another frame.
+
+One trap, for anything that draws between the surface pass and the reflection
+pass: **dual-source blend factors left set are an error for any draw into more than
+one buffer, with blending disabled** (`GL_INVALID_OPERATION`, silently skipping the
+draw). The reflection pass draws into two when its probe is on, so the first build
+reflected nothing only while being measured. `DrawRetained` puts the factors back.
+
+### The planes, from the mesh
+
+`RetainedPlanes` keeps every level face that is water (translucent, textured from a
+fluid slot's VRAM rect) or carries an authored material, grouped by height, chunk
+and kind when the map is built (73 groups in `fdat02`). Each frame the groups a
+reflecting material covers are ranked by their area on screen from **that frame's
+camera**, and the best four the camera stands above are drawn. The old finder
+binned the water the backend had drawn, so its plane was the previous frame's.
+
+All the planes share one planar texture, drawn **straight into the picture's
+pixels**: a corner is drawn where its mirror image stands, seen from the real
+camera, with `gl_ClipDistance` removing what lies below the plane first. No row
+flip, no mirrored camera to build. Each plane's draw keeps a fragment only where the
+frame's own surface buffer says the surface at that pixel lies on that plane
+(`uMaskOn` in `PrimFs`; zero, the default, is the shader as it was), so a pixel of
+the texture holds the reflection in the plane its own surface lies on.
+
+### The cubemap, in place of the march
+
+Six 256-pixel faces from the frame's camera, with a depth cube beside the colour,
+drawn unfogged. A reflective pixel not on a plane marches its reflected ray **in
+world axes about the camera** against the depth cube: a step whose point stands
+further from the camera than the surface the camera sees in that direction has gone
+behind it; halved back to the crossing, it is a hit only where the ray is at that
+surface, so a ray passing behind an object marches on. The hit is fogged for the
+whole path, and a rough material reads a mip of the colour cube. There is **no
+per-pixel jitter** — 48 quadratic steps and six halvings, and a miss reflects
+nothing: nothing on screen is borrowed, including the old sky fallback.
+
+The ripple still bends the planar lookup by the water's own brightness gradient,
+which reads the water's texture, not the scene.
+
+### Culling
+
+The static map is kept in 8x8-tile chunks, sorted by range and chunk. Each view —
+each plane, each cube face — draws only the chunks whose box is in front, inside
+its picture and nearer than the fog's black (past which any reflection is black),
+and for a plane, the part above it. At the `fdat02` spawn 5% of chunk tests pass and
+the triangles submitted fall 17-fold (98M to 5.7M every two seconds); the coverage
+the readback measures was identical before and after (61.9% planar, 58.1% cubemap).
+
+### What is measured
+
+Render scale 5, 16:9, 144 fps, this machine (RX 9070 XT), `KF2_RETAINED_PROBE=1`:
+
+- **GPU**, timer queries read a present late: at the `fdat02` spawn the planes
+  0.29 ms and the cubemap 0.55 ms; in area 1 the cubemap 0.65 ms and an authored
+  floor's plane 0.12 ms.
+- **CPU**, frame profiler at the `fdat02` spawn: frame work 3.8-3.9 ms with the
+  screen march alone, 5.6 ms with the planar walk, **4.2 ms with the retained
+  scene**.
+- **Coverage**, the reflection pass's readback: at the `fdat02` spawn 61.9% of the
+  reflective pixels take the planar texture (the walk took 55.5% there), and with
+  planes off the cubemap reaches a surface for 58.1% where the screen march found
+  none.
+- **The two agree.** Where a planar pixel's cubemap march also finds a surface,
+  the probe writes the brightness difference, against the planar texture read the
+  wrong way up as the control: `fdat02` water 93.5% of planar pixels also found,
+  **3.8 apart (control 24.3)**; an authored mirror floor in area 1
+  (`tile:1:37:36:upper` face 3, reflectivity 1) 100% of its pixels planar, 100%
+  found by the cubemap too, **3.0 apart (control 61.7)**.
+- **Off is the picture it was**: the pinned area-1 view hashes to
+  `210d55698c875fb8` with it off, and with it on (nothing reflects there).
+- The acceptance run with it on: slot 2 at hp 46/86 in area 1, 144.0 fps at
+  20.0 ticks/s, `[present] wide 288`, the vertex map at 100.0% hit, no GL errors
+  under `KF2_GLDEBUG=1`.
+
+**Not reflected**: billboards and effects (their assembler is not captured), the
+arm and anything else drawn outside the two walks, subtractive faces; authored
+lights and glows (the world program runs with neither); `EvenFog`'s and
+`EvenLight`'s blends between records (the retained colours are the assembler's own,
+flat per face); mipmaps (the atlas entry is per batch; the anisotropic taps are
+kept). The cubemap sees from the camera: something the reflecting point would see
+and the camera cannot is missing from it, where a plane has it.
+
+**What still has to be judged by eye**: all of it — whether the planar water and a
+mirror floor read right and hold still while turning, whether the cubemap's
+reflections on walls and props read as reflections or as a pasted image, the seam
+where a plane meets the cubemap, what a miss reflecting nothing looks like against
+the old sky fallback, and roughness through the cube's mips.
+
 ## Per-pixel lighting: the corner colours are the end of a chain, and the chain is known
 
 **Mechanism measured; on by default.** One

@@ -207,6 +207,7 @@ public static class TileWalk
         mem.WriteU32(sp + 0x10u, c.S0);
 
         if (Remaster.Faces.Recording) Remaster.Faces.FrameStart();
+        if (!PlanarWalk.Mirroring) RetainedMap.AtWalk(c, mem);
         c.A0 = 0u;
         c.RA = 0x80031CBCu;
         KingsField2.func_8002E190(c, mem);
@@ -401,6 +402,8 @@ public static class TileWalk
         KingsField2.func_8002E1F0(c, mem);
         Remaster.Faces.NoteTable(mem.ReadU32(ModelTable));
 
+        // A subdivided mesh leaves the subdivider's corners in the vertex cache.
+        bool whole = true;
         if ((flags & 0x80u) == 0u)
         {
             _unclipped++;
@@ -417,6 +420,7 @@ public static class TileWalk
             if (mem.ReadU32(c.V0 + 0x14u) < 0x10u)
             {
                 _subdivided++;
+                whole = false;
                 uint srcVerts = mem.ReadU32(0x8018EAA0u);
                 c.A0 = mem.ReadU32(ModelTable);
                 c.A1 = model;
@@ -435,6 +439,7 @@ public static class TileWalk
             else Plain(c, mem, model);
         }
 
+        if (RetainedMap.Checking && !PlanarWalk.Mirroring && whole) RetainedMap.CheckHalf(mem, rec, model);
         Epilogue(c, mem, sp);
     }
 

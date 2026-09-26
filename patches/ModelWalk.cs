@@ -178,6 +178,9 @@ public static class ModelWalk
     /// All five of `func_80032588`'s call sites are inside `func_800331B4`.</summary>
     static bool _walkOwns;
 
+    /// <summary>Inside the C# object walk, between its first table and its last.</summary>
+    public static bool InWalk => _walkOwns;
+
     /// <summary>Every model the last completed walk submitted. Valid until the next
     /// walk starts, so a consumer reads it from a post on `func_800331B4` or from
     /// anywhere inside stage 13 after it.</summary>

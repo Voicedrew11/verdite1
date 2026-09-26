@@ -635,3 +635,18 @@ useful than the question was.
    discarded per fragment. A tile half whose whole model lies below the plane
    could be skipped in the mirrored walk. See "Planar reflections" in
    [RENDERING.md](RENDERING.md).
+20. **Look at the world reflections.** `KF2_SSR=1 KF2_RETAINED=1` (or *World
+   reflections* under Video ▸ Experimental ▸ *Water reflections*). The mechanism is
+   measured (see "The retained scene" in [RENDERING.md](RENDERING.md)): the map and
+   the object walk's models land within 1 px of the GTE's own vertices, the planes
+   and the cubemap agree to 3-4 brightness levels where both find a surface, and it
+   costs 0.3 ms of CPU and under 1 ms of GPU a frame here. Nothing about the
+   picture has been judged: the `fdat02` pool and a mirror floor while turning, the
+   cubemap on walls and props (a floor or a wall set reflective through the editor),
+   the seam between a plane and the cubemap, and what a miss reflecting nothing looks
+   like. Then the gaps it leaves, in the order they would show: billboards and
+   effects (another assembler to capture), authored lights and glows in the
+   reflection (the world program runs with neither), mipmaps (an atlas entry per
+   retained triangle, cached on `VramTracker.Clock`), and `EvenFog`/`EvenLight`'s
+   blends. If it holds up, the planar walk (`PlanarWalk`) and the screen march are
+   comparisons only and can leave the settings window.

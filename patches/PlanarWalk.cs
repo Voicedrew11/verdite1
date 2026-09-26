@@ -222,7 +222,7 @@ public static class PlanarWalk
 
     static bool Ready =>
         PlanarReflections.Enabled && PlanarReflections.Supported && ScreenReflections.Enabled
-        && PrimBuffer.Relocated && !TileWalk.Verifying && !ModelWalk.Verifying
+        && PrimBuffer.Relocated && !TileWalk.Verifying && !ModelWalk.Verifying && !RetainedMap.Ready
         && RecompOne.Runtime.Hle.GpuTrace.Sink == null;
 
     public static void AfterWalk(CpuContext c, IMemory m)

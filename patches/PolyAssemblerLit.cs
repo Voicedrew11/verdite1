@@ -89,6 +89,9 @@ public static partial class PolyAssembler
         uint normals = mem.ReadU32(header + 8u) + 0xCu + table;
         uint face = faces + 0xCu + table;
 
+        // 0072. Every face, before a single one is culled, for the retained scene.
+        if (RetainedModels.Capturing) RetainedModels.Capture(mem, header, normals, face, count, TB.On ? abr : uint.MaxValue);
+
         var fr = new Frame(mem);
         if (fr.Lighting) fr.LightGen = GteLightMap.NoteConstants();
         for (; count != 0; count--)
