@@ -102,6 +102,9 @@ public sealed partial class GlCore : IGpuBackend
     (float, float, float) _waveCentreSent;
     // 0071. Emissive materials, and 0067's table they are read from.
     int _uEmitOn, _emitOnSent;
+    // 0074. The area's fog colour and curve.
+    int _uAtmosOn, _uAtmosColour, _uAtmosShape, _uAtmosSkip, _atmosOnSent, _atmosSkipSent, _atmosSentGen = -1;
+    int _uSsrAtmosOn, _uSsrAtmosColour, _uSsrAtmosShape, _uSsrAtmosSky;
     int _lightNSent = -1, _lightsSentGen = -1, _kRemasterGen;
 
     uint _postProg, _postFbo, _postTex;
@@ -262,6 +265,10 @@ public sealed partial class GlCore : IGpuBackend
         _waveCentreSent = default;
         WaterWaves.Supported = !_legacy && _uWaveOn >= 0 && _uWaveRect >= 0;
         _uEmitOn = _gl.GetUniformLocation(_progPrim, "uEmitOn");
+        _uAtmosOn = _gl.GetUniformLocation(_progPrim, "uAtmosOn");
+        _uAtmosColour = _gl.GetUniformLocation(_progPrim, "uAtmosColour");
+        _uAtmosShape = _gl.GetUniformLocation(_progPrim, "uAtmosShape");
+        _uAtmosSkip = _gl.GetUniformLocation(_progPrim, "uAtmosSkip");
         _emitOnSent = -1;
         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
         _uRepClutCount = _gl.GetUniformLocation(_progPrim, "uRepClutCount");
@@ -396,6 +403,10 @@ public sealed partial class GlCore : IGpuBackend
                 _uSsrDqa = _gl.GetUniformLocation(_progSsr, "uDqa");
                 _uSsrDqb = _gl.GetUniformLocation(_progSsr, "uDqb");
                 _uSsrFogCurve = _gl.GetUniformLocation(_progSsr, "uFogCurve");
+                _uSsrAtmosOn = _gl.GetUniformLocation(_progSsr, "uAtmosOn");
+                _uSsrAtmosColour = _gl.GetUniformLocation(_progSsr, "uAtmosColour");
+                _uSsrAtmosShape = _gl.GetUniformLocation(_progSsr, "uAtmosShape");
+                _uSsrAtmosSky = _gl.GetUniformLocation(_progSsr, "uAtmosSky");
                 _uSsrPlanarOn = _gl.GetUniformLocation(_progSsr, "uPlanarOn");
                 _uSsrPlanarPlane = _gl.GetUniformLocation(_progSsr, "uPlanarPlane");
                 _uSsrPlanarTol = _gl.GetUniformLocation(_progSsr, "uPlanarTol");
@@ -1741,6 +1752,27 @@ public sealed partial class GlCore : IGpuBackend
                 WaterWaves.Batches++;
             }
         }
+        // 0074. A batch with light records fades into the area's fog colour. A
+        // blended texel that adds or subtracts fades out instead.
+        int atmos = RemasterUniforms.FogActive && _litFilled > 0 && _uAtmosOn >= 0 ? 1 : 0;
+        if (_uAtmosOn >= 0 && (atmos != 0 || _atmosOnSent != 0))
+        {
+            if (atmos != _atmosOnSent) _gl.Uniform1(_uAtmosOn, atmos);
+            _atmosOnSent = atmos;
+            if (atmos != 0)
+            {
+                if (_atmosSentGen != RemasterUniforms.FogGeneration)
+                {
+                    var fc = RemasterUniforms.FogColour;
+                    _gl.Uniform3(_uAtmosColour, fc[0], fc[1], fc[2]);
+                    _gl.Uniform2(_uAtmosShape, RemasterUniforms.FogPower, RemasterUniforms.FogMax);
+                    _atmosSentGen = RemasterUniforms.FogGeneration;
+                }
+                int skip = _kTransparent && _kBlend != 0 ? 1 : 0;
+                if (skip != _atmosSkipSent) { _gl.Uniform1(_uAtmosSkip, skip); _atmosSkipSent = skip; }
+                RemasterUniforms.FogBatches++;
+            }
+        }
         // 0071. A batch with light records glows where its material says so.
         // A highlight needs a light to come from.
         int emit = (SurfaceMaterial.AnyEmissive || (SurfaceMaterial.AnySpecular && lightN != 0))
@@ -2704,6 +2736,19 @@ public sealed partial class GlCore : IGpuBackend
         if (_uSsrDqa >= 0) _gl.Uniform1(_uSsrDqa, (float)GteDepth.ProjDqa);
         if (_uSsrDqb >= 0) _gl.Uniform1(_uSsrDqb, (float)GteDepth.ProjDqb);
         if (_uSsrFogCurve >= 0) _gl.Uniform1(_uSsrFogCurve, ScreenReflections.FogCurve);
+        if (_uSsrAtmosOn >= 0)
+        {
+            bool on = RemasterUniforms.FogActive;
+            _gl.Uniform1(_uSsrAtmosOn, on ? 1 : 0);
+            if (on)
+            {
+                var fc = RemasterUniforms.FogColour;
+                var sk = RemasterUniforms.SkyColour;
+                _gl.Uniform3(_uSsrAtmosColour, fc[0] / 255f, fc[1] / 255f, fc[2] / 255f);
+                _gl.Uniform2(_uSsrAtmosShape, RemasterUniforms.FogPower, RemasterUniforms.FogMax);
+                _gl.Uniform3(_uSsrAtmosSky, sk[0] / 255f, sk[1] / 255f, sk[2] / 255f);
+            }
+        }
         BindMaterials();
         // 0068. The planar texture, when this target's picture and its capture are
         // the same frame's; otherwise the march alone, as before.

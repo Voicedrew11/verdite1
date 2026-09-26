@@ -13,11 +13,11 @@ amendment's diff appended to its `.patch` file, and the source comments keep its
 number. `0016` and `0057` predate this and keep their numbers, since the source
 refers to them.
 
-Sixty-six of the seventy-four are load-bearing; `0002`, `0003`, `0015`, `0045`,
+Sixty-seven of the seventy-five are load-bearing; `0002`, `0003`, `0015`, `0045`,
 `0046`, `0065` and `0069` are diagnostics and `0013` is a settings-placement hook. `0063` is retired:
-it was folded into `0054` as an amendment, and the number is not reused. `0074`-`0076`
-are held by the remaster's plan for work not yet made (`docs/REMASTER.md`), so the
-shadows are `0077`. **Three force a recompile** —
+it was folded into `0054` as an amendment, and the number is not reused. `0075` and `0076`
+are held by the remaster's plan for work not yet made (`docs/REMASTER.md`), which is
+why the shadows are `0077`. **Three force a recompile** —
 `0004`, `0035` and `0037`; every other one changes runtime behaviour only. **One
 patch has an asset beside it**: `patches/recompone/assets/` holds the TTF `0033`
 embeds, which is now simply a tracked file in the vendored tree.
@@ -1126,6 +1126,31 @@ Four files in the directory have no entry below:
   the port's texture materials key on the same rectangle. The amendment is the
   second diff in the patch file. See "Phase 4, the second slice" in
   `docs/REMASTER.md`.
+
+- `0074-fog-colour-and-sky.patch` — the area's fog colour and curve, from the
+  remaster. The game's depth cue darkens a colour towards the GTE's far colour,
+  which is 0, so everything fades to black; putting a colour in the far colour
+  itself would tint the *vertex* colour, which then multiplies the texture, and a
+  distant wall would come out texture-times-fog rather than fog. So the colour is
+  added **past the texture**: `shade8` darkens the lit colour by the cue's weight as
+  before and keeps `uAtmosColour` times the same weight in `gFog8`, which every
+  output path adds after the texel is modulated (`fogAdd`), so the result is a mix
+  towards the colour. A blended texel whose batch adds or subtracts skips it
+  (`uAtmosSkip`, set from the batch's blend mode), since fog takes such a texel
+  away rather than to a colour. `uAtmosShape` bends the weight after the game's
+  curve: raised to `x` and capped at `y`, in `cueWeight()`, so the glow and the
+  highlight fog on the same curve. `RemasterUniforms` gains the fog block
+  (`FogOn`, `FogColour`, `FogPower`, `FogMax`, `SkyColour`, `PublishFog`, which
+  also bumps `Generation` so a batch is drawn under the fog it was built with). The
+  world program sends it for the retained planes (`SendWorldAtmos`, the blend
+  ranges setting the skip), and `SsrFs` fogs a reflection towards the colour on the
+  same curve (`fogTo`, `refog`) and reflects the sky on a cubemap miss. Only a
+  packet with a `0048` record takes it; the rest keep the game's black. With the
+  switch off, and with it on at black and the game's curve, the shader's output is
+  `0071`/`0077`'s to the bit (`scripts/light_probe.c`, five new passes, all 0 from
+  the formula). The sky is the port's alone: `patches/remaster/Atmosphere.cs`
+  writes it into the `DRAWENV` the game's background clear reads. GL core only.
+  **No recompile.** See "Phase 5, the second slice" in `docs/REMASTER.md`.
 
 - `0077-light-shadows.patch` — shadows for `0071`'s authored lights, from `0072`'s
   retained map. `RemasterUniforms` gains up to four shadow slots (the light's world

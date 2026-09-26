@@ -47,6 +47,12 @@
 // centre is lit as if light 0 were gone and right of centre as if nothing were
 // there. The bands where the filter crosses the occluder's edge and the face's are
 // not checked. See "Shadows, the first slice" in docs/REMASTER.md.
+//
+// 0074. The area's fog: with the switch on, a black colour and the game's curve
+// must be pass 0 to the bit; a fog colour adds its colour times the cue's weight
+// after the texture (untextured and textured); a curve raises the weight to a power
+// and caps it, darkening and colouring by the same weight; and a batch whose blended
+// texels add skips the colour. See "Phase 5, the second slice" in docs/REMASTER.md.
 #define GL_GLES_PROTOTYPES 0
 #include <EGL/egl.h>
 #include <GL/gl.h>
@@ -149,12 +155,20 @@ static void authored(int n,int x,int y,float out[3]){ float hi[3]; authored2(n,x
 // The same with light 0 gone.
 static void authoredNo0(int n,int x,int y,float out[3]){ float r=LPOS[3]; LPOS[3]=0; authored(n,x,y,out); LPOS[3]=r; }
 
+// 0074. The fog as the passes set it.
+static int FOGON=0, FOGSKIP=0; static float FOGC[3]={0,0,0}, FPOW=1.f, FMAX=1.f;
+static float shapew(float w){ if(!FOGON||(FPOW==1.f&&FMAX==1.f)||w<=0) return w;
+ float x=w/4096.f; if(x>1)x=1; x=powf(x,FPOW); if(x>FMAX)x=FMAX; return 4096.f*x; }
+
 static const float BK[3]={1920,1920,1920};
 static const float LCM[9]={2662,2662,3328, 2662,2662,3328, 2662,2662,3328};
 
 static float cue(unsigned light, float fog){
  unsigned c=(light>>24)&7; float ir0=fog<0?0:fog>4096?4096:fog;
- return c==1 ? (ir0-800>0?(ir0-800)*2:0) : c==2 ? (ir0<2800?ir0:3*ir0-5600) : c==3 ? ir0*0.5f : c==4 ? fog : 0; }
+ return shapew(c==1 ? (ir0-800>0?(ir0-800)*2:0) : c==2 ? (ir0<2800?ir0:3*ir0-5600) : c==3 ? ir0*0.5f : c==4 ? fog : 0); }
+// The fog's colour at a pixel, 8-bit, added past the texture.
+static int fog8(unsigned light, float fog, int ch){
+ if(!FOGON||FOGSKIP) return 0; float w=cue(light,fog)/4096.f; w=w<0?0:w>1?1:w; return (int)floorf(FOGC[ch]*w); }
 
 static int expect(unsigned light, float lit[3], float fog, int ch, float extra){
  unsigned mode=light>>24; float l=lit[ch];
@@ -164,6 +178,7 @@ static int expect(unsigned light, float lit[3], float fog, int ch, float extra){
  l+=((light>>(8*ch))&255)*extra;
  float ir0=fog<0?0:fog>4096?4096:fog; float w; unsigned c=mode&7;
  w = c==1 ? (ir0-800>0?(ir0-800)*2:0) : c==2 ? (ir0<2800?ir0:3*ir0-5600) : c==3 ? ir0*0.5f : c==4 ? fog : 0;
+ w=shapew(w);
  float v=floor(l*(1-w/4096.f)); return v<0?0:v>255?255:(int)v; }
 
 // The additive glow at a pixel, 8-bit, and the texel the textured strip reads (a
@@ -293,7 +308,12 @@ int main(int argc,char**argv){
    "emissive on, material 0","emissive on, material 5 glowing","emissive off, material 5",
    "textured, no glow","textured, lit glow","textured, additive glow","untextured, additive glow",
    "highlight, untextured","highlight, textured metal","own light skipped","unfogged glow",
-   "light 0 shadowed, nothing in the cubemap","light 0 shadowed, left half occluded"};
+   "light 0 shadowed, nothing in the cubemap","light 0 shadowed, left half occluded",
+   "fog on, black, the game's curve","fog colour, untextured","fog colour, textured",
+   "fog colour and curve","fog colour, additive batch"};
+ GLint uAO=glGetUniformLocation_(p,"uAtmosOn"), uAC=glGetUniformLocation_(p,"uAtmosColour");
+ GLint uAS=glGetUniformLocation_(p,"uAtmosShape"), uAK=glGetUniformLocation_(p,"uAtmosSkip");
+ if(uAO<0||uAC<0||uAS<0||uAK<0){printf("no uAtmos*\n");return 2;}
  // 0077. A depth cubemap on unit 12 for light 0: identity view-to-world, and the
  // backend's tuning.
  #define SN 64
@@ -310,8 +330,13 @@ int main(int argc,char**argv){
  glUniform1f_(glGetUniformLocation_(p,"uShadowOffset"),1.5f);
  glUniform1f_(glGetUniformLocation_(p,"uShadowBias"),6.f);
  glUniform1f_(glGetUniformLocation_(p,"uShadowSoft"),1.25f);
- for(int pass=0;pass<16;pass++){
- if(pass>=14){
+ for(int pass=0;pass<21;pass++){
+ // 0074. Passes 16-20.
+ FOGON=pass>=16; FOGSKIP=pass==20;
+ FOGC[0]=pass==16?0:90; FOGC[1]=pass==16?0:140; FOGC[2]=pass==16?0:200;
+ FPOW=pass==19?0.5f:1.f; FMAX=pass==19?0.7f:1.f;
+ glUniform1i_(uAO,FOGON); glUniform3f_(uAC,FOGC[0],FOGC[1],FOGC[2]); glUniform2f_(uAS,FPOW,FMAX); glUniform1i_(uAK,FOGSKIP);
+ if(pass==14||pass==15){
    glActiveTexture_(0x84C0+12);
    for(int fc=0;fc<6;fc++){
      for(int t=0;t<SN;t++) for(int s2=0;s2<SN;s2++) face[t*SN+s2]=(pass==15&&fc==4&&s2<SN/2)?250.f/65536.f:1.f;
@@ -319,14 +344,14 @@ int main(int argc,char**argv){
    glActiveTexture_(0x84C0);
    GLint sh[16]; for(int i=0;i<16;i++) sh[i]=i==0?0:-1; glUniform1iv_(uLS,16,sh);
  }
- int tex=(pass>=6&&pass<=8)||pass==11, add=pass==8||pass==9, lit=pass==2||(pass>=10&&pass<=12)||pass>=14;
+ int tex=(pass>=6&&pass<=8)||pass==11||pass==18, add=pass==8||pass==9, lit=pass==2||(pass>=10&&pass<=12)||pass==14||pass==15;
  int mat=add?MATADD:pass==10?MATSPEC:pass==11?MATMETAL:pass==12?MATSKIP:pass==13?MATNOFOG:pass>=14?0:pass>=4?MAT:0;
  // Light 0 names material 10 only in pass 12.
  LDIR[3]=pass==12?-2.f-MATSKIP:-2.f;
  glUniform4fv_(glGetUniformLocation_(p,"uLightDir"),NL,LDIR);
  glUniform1i_(uN,pass==1||lit?NL:0);
  glUniform1f_(uD,lit?DEPTH/65536.f:0.f);
- glUniform1i_(uEmit,pass==3||pass==4||pass>=7?1:0);
+ glUniform1i_(uEmit,pass==3||pass==4||(pass>=7&&pass<16)?1:0);
  glUniform1ui_(uM,mat);
  glUniform1i_(uT,tex);
  printf("-- %s\n", names[pass]);
@@ -361,6 +386,7 @@ int main(int argc,char**argv){
        if(pass==13){ float v=floorf(rgbc*EMIT[ch]); e+=(int)(v>255?255:v); }
        if(pass==10||pass==11){ float s8=rgbc*hi[ch]*(1-cue(cases[k].light,fog)/4096.f); s8=s8<0?0:s8>255?255:s8;
          float tint=pass==11?TEXEL[ch]/255.f:1.f; e+=(int)floorf(s8*tint); }
+       e+=fog8(cases[k].light,fog,ch);
        if(e>255) e=255;
        int dd=abs(e-g); if(dd>worst)worst=dd; if(dd==1)off1++; }
      int g=q[0]|(q[1]<<8)|(q[2]<<16); if(y==0&&g!=last){distinct++; last=g;}

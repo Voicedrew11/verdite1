@@ -22,7 +22,8 @@ namespace Kf2.Remaster;
 ///     set remaster on|off
 ///     pack save|reload|undo|redo|list|add NAME
 ///     light list|shadows on|off|shadows models on|off|shadows tune BIAS OFFSET SOFT [SIZE]|add NAME [here|pick GX GY|X Y Z]|remove NAME|select NAME|set NAME FIELD V...
-///     atmos [list|darkness [V]|show N|set N FIELD V...|reset N [FIELD]]   the area's light records, their overrides, and its darkness
+///     atmos [list|darkness [V]|fog R G B|off|curve P [MAX]|off|sky R G B|fog|show N|set N FIELD V...|reset N [FIELD]]
+///                                                    the area's light records, their overrides, its darkness and fog
 ///     remaster                                      the status, as the probe line has it
 /// </summary>
 public static class Shell
@@ -40,7 +41,7 @@ public static class Shell
         "light list | shadows on|off | shadows models on|off | shadows tune BIAS OFFSET SOFT [SIZE] | add NAME [here | pick GX GY | X Y Z] | remove NAME | select NAME | " +
             "set NAME position X Y Z|colour R G B|intensity V|radius V|type point|spot|direction X Y Z|cone IN OUT|flicker AMOUNT HZ|enabled on|off - " +
             "the area's authored lights; pick places one short of the surface under game pixel GX GY",
-        "atmos [list | darkness [0..1] | show N | set N back R G B | set N light J direction X Y Z | set N light J colour R G B | set N fog WORD | " +
+        "atmos [list | darkness [0..1] | fog R G B|off | curve POWER [MAX]|off | sky R G B|fog | show N | set N back R G B | set N light J direction X Y Z | set N light J colour R G B | set N fog WORD | " +
             "reset N [back|light J|fog]] - the area's light records (N 0..79): which halves use each, the game's values and the pack's overrides",
         "remaster - area, fingerprint, what is applied",
         "textures [on|off|reset|save] - the texture-key census of this area: keys, art, overlapping rects, what a pack covers; save writes dump/GAME/census/area-N.json",
@@ -455,6 +456,25 @@ public static class Shell
             }
             return Ok("atmos", AtmosRecord(m, area, Pack.AllRecords));
         }
+        if (op is "fog" or "curve" or "sky")
+        {
+            bool off = a.Length >= 2 && a[1] is "off" or "fog" or "game";
+            System.Action<JsonObject>? change = op switch
+            {
+                _ when a.Length < 2 => null,
+                "fog" when off => o => Pack.SetFogColour(o, null),
+                "fog" when a.Length >= 4 => o => Pack.SetFogColour(o, [I(1), I(2), I(3)]),
+                "curve" when off => o => Pack.SetFogCurve(o, null, null),
+                "curve" => o => Pack.SetFogCurve(o, F(1), a.Length >= 3 ? F(2) : Pack.GetRecord(area, Pack.AllRecords)?.FogMax),
+                "sky" when off => o => Pack.SetSky(o, null),
+                "sky" when a.Length >= 4 => o => Pack.SetSky(o, [I(1), I(2), I(3)]),
+                _ => null,
+            };
+            if (change != null)
+                Pack.SetRecord(area, Pack.AllRecords, "", fp, $"{op} = {string.Join(' ', a[1..])}", change);
+            else if (a.Length >= 2) return Err("atmos", "atmos fog R G B|off, curve POWER [MAX]|off, sky R G B|fog");
+            return Ok("atmos", AtmosRecord(m, area, Pack.AllRecords));
+        }
         int rec = Pack.AllRecords;
         if (a.Length < 2 || !int.TryParse(a[1], out rec) || (uint)rec >= Atmosphere.Records)
             return Err("atmos", "a record number 0..79");
@@ -501,6 +521,20 @@ public static class Shell
         return Err("atmos", "atmos list|darkness [V]|show N|set N ...|reset N [FIELD]");
     }
 
+    /// <summary>The area's fog as drawn: what the shader and the clear were given.</summary>
+    static JsonObject FogJson()
+    {
+        static JsonNode? C(int[]? c) => c == null ? null : new JsonArray(c[0], c[1], c[2]);
+        return new JsonObject
+        {
+            ["on"] = RecompOne.Runtime.RemasterUniforms.FogOn,
+            ["drawn"] = RecompOne.Runtime.RemasterUniforms.FogActive,
+            ["colour"] = C(Atmosphere.FogColour), ["power"] = Atmosphere.FogPower, ["max"] = Atmosphere.FogMax,
+            ["sky"] = C(Atmosphere.Sky), ["skyClears"] = Atmosphere.SkyClears, ["drawEnvsWithoutClear"] = Atmosphere.NoClear,
+            ["foggedBatches"] = RecompOne.Runtime.RemasterUniforms.FogBatches,
+        };
+    }
+
     static JsonObject AtmosList(RecompOne.Runtime.Memory.IMemory m, int area)
     {
         var usage = Atmosphere.Usage(m);
@@ -519,6 +553,7 @@ public static class Shell
             ["area"] = area, ["underPlayer"] = Atmosphere.UnderPlayer(m), ["halvesByRecord"] = used,
             ["overrides"] = overrides, ["applied"] = Atmosphere.Applied, ["stale"] = Atmosphere.Stale,
             ["darkness"] = Atmosphere.Darkness,
+            ["fog"] = FogJson(),
             ["refused"] = Atmosphere.Refused,
         };
     }
@@ -529,6 +564,8 @@ public static class Shell
             return new JsonObject
             {
                 ["darkness"] = Pack.GetRecord(area, rec)?.Darkness ?? 0f, ["records"] = $"0-{Atmosphere.Darkened - 1}",
+                ["override"] = Pack.RecordSnapshot(area, rec),
+                ["fog"] = FogJson(),
             };
         var o = Pack.GetRecord(area, rec);
         var game = Atmosphere.Json(Atmosphere.Game(m, rec));

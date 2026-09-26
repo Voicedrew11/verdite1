@@ -572,6 +572,13 @@ internal static class GlShaders
         uniform float uDqa;
         uniform float uDqb;
         uniform int   uFogCurve;
+        // 0074. The area's fog colour and curve, as PrimFs takes them (the colour
+        // 0..1 here), and the sky the frame is cleared to: fog turns a colour towards
+        // the fog's rather than to black, and a cubemap miss reflects the sky.
+        uniform int   uAtmosOn;
+        uniform vec3  uAtmosColour;
+        uniform vec2  uAtmosShape;
+        uniform vec3  uAtmosSky;
         // 0068. The scene drawn from the camera mirrored in the water, at this
         // target's own size, and its depth, which is what says a texel was drawn.
         // The plane is this frame's, in this view: dot(xyz, p) + w is a surface's
@@ -621,7 +628,20 @@ internal static class GlShaders
                     : uFogCurve == 2 ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
                     : uFogCurve == 3 ? ir0 * 0.5
                     : ir0;
+            if (uAtmosOn != 0 && uAtmosShape != vec2(1.0) && w > 0.0)
+                w = 4096.0 * min(pow(min(w / 4096.0, 1.0), uAtmosShape.x), uAtmosShape.y);
             return clamp(1.0 - w / 4096.0, 0.0, 1.0);
+        }
+
+        // A colour kept `keep` of by the fog, the rest the fog's colour.
+        vec3 fogTo(vec3 c, float keep) {
+            return uAtmosOn != 0 ? mix(uAtmosColour, c, keep) : c * keep;
+        }
+
+        // A colour the fog took at one depth, taken at another instead: `ratio` is
+        // the keep there over the keep where it was drawn.
+        vec3 refog(vec3 c, float ratio) {
+            return uAtmosOn != 0 ? uAtmosColour + (c - uAtmosColour) * ratio : c * ratio;
         }
 
         vec2 tc(vec2 uv) { return (uOrigin + uv * uSize) / uTexSize; }
@@ -856,7 +876,7 @@ internal static class GlShaders
             if (murky) {
                 float run = (d <= 0.0 || d >= 1.0) ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
                 gMurk = 1.0 - exp(-run / uMurkDist);
-                gMurkCol = uMurkColor * fogKeep(zs);
+                gMurkCol = fogTo(uMurkColor, fogKeep(zs));
             }
             if (refl <= 0.0) { emit(vec3(0.0), 0.0); return; }
             vec3 n = octDecode(s.rg);
@@ -893,7 +913,7 @@ internal static class GlShaders
                     // (the wrong way round, for this one) as the control.
                     oInfo.a += 4.0 / 255.0;
                     if (cubeHit) {
-                        vec3 sc = cc * fogKeep(p.z * (length(p) + ct) / length(p));
+                        vec3 sc = fogTo(cc, fogKeep(p.z * (length(p) + ct) / length(p)));
                         oInfo.b = abs(luma(pc) - luma(sc));
                         oInfo.g = abs(luma(texture(uPlanar, tc(vec2(vUv.x, 2.0 * uCentre.y - vUv.y))).rgb) - luma(sc));
                         oInfo.a += 16.0 / 255.0;
@@ -901,13 +921,17 @@ internal static class GlShaders
                     emit(pc * tint, w);
                     return;
                 }
-                if (!cubeHit) { emit(vec3(0.0), 0.0); return; }
+                if (!cubeHit) {
+                    if (uAtmosOn != 0) emit(uAtmosSky * tint, w);
+                    else emit(vec3(0.0), 0.0);
+                    return;
+                }
                 float zImage = p.z * (length(p) + ct) / length(p);
                 float keep = fogKeep(zImage);
                 w *= 1.0 - smoothstep(0.7, 1.0, ct / uMaxDist);
                 oInfo.a += 1.0 / 255.0;
                 oInfo.b = keep;
-                emit(cc * keep * tint, w);
+                emit(fogTo(cc, keep) * tint, w);
                 return;
             }
 
@@ -976,7 +1000,7 @@ internal static class GlShaders
                     vec3 sc = texture(uColor, tc(huv)).rgb;
                     float zHit = viewAt(huv, depthAt(huv) * FAR).z;
                     float zImage = p.z * (length(p) + ht) / length(p);
-                    sc *= clamp(fogKeep(zImage) / max(fogKeep(zHit), 1e-3), 0.0, 1.0);
+                    sc = refog(sc, clamp(fogKeep(zImage) / max(fogKeep(zHit), 1e-3), 0.0, 1.0));
                     oInfo.b = abs(luma(pc) - luma(sc));
                     oInfo.g = abs(luma(texture(uPlanar, tc(vUv)).rgb) - luma(sc));
                     oInfo.a += 16.0 / 255.0;
@@ -1005,7 +1029,7 @@ internal static class GlShaders
                 float zHit = viewAt(huv, depthAt(huv) * FAR).z;
                 float zImage = p.z * (length(p) + ht) / length(p);
                 float keep = clamp(fogKeep(zImage) / max(fogKeep(zHit), 1e-3), 0.0, 1.0);
-                c *= keep;
+                c = refog(c, keep);
                 oInfo.b = keep;
                 oInfo.a += 1.0 / 255.0;
             } else if (bgUv.x >= 0.0 && uSky > 0.0) {
@@ -1351,6 +1375,19 @@ internal static class GlShaders
         // fogged. Row 0's alpha is metalness and row 2's red the highlight.
         uniform int   uEmitOn;
         uniform sampler2D uMatTable;
+        // 0074. The area's fog colour in 8-bit units, and its curve: the depth cue's
+        // weight, 0..1, raised to x and capped at y. uAtmosSkip: this batch's blended
+        // texels add or subtract, so fog takes them away rather than to its colour.
+        uniform int   uAtmosOn;
+        uniform vec3  uAtmosColour;
+        uniform vec2  uAtmosShape;
+        uniform int   uAtmosSkip;
+        // The fog's share of the colour, added past the texture: the lit colour was
+        // darkened by the same weight, so the two make a mix towards the fog.
+        vec3 gFog8 = vec3(0.0);
+        ivec3 fogAdd(bool blended) {
+            return blended && uAtmosSkip != 0 ? ivec3(0) : ivec3(floor(gFog8));
+        }
         // An additive glow, fogged, in 8-bit colour; added to the modulated texel.
         ivec3 gGlow8 = ivec3(0);
         // The authored lights' highlight, fogged, in 8-bit colour before the
@@ -1599,11 +1636,15 @@ internal static class GlShaders
         float cueWeight() {
             uint curve = (vLight >> 24) & 7u;
             float ir0 = clamp(vFog, 0.0, 4096.0);
-            return curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
+            float w = curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
                  : curve == 2u ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
                  : curve == 3u ? ir0 * 0.5
                  : curve == 4u ? vFog
                  : 0.0;
+            // 0074. The authored curve over the game's.
+            if (uAtmosOn != 0 && uAtmosShape != vec2(1.0) && w > 0.0)
+                w = 4096.0 * min(pow(min(w / 4096.0, 1.0), uAtmosShape.x), uAtmosShape.y);
+            return w;
         }
 
         ivec3 shade8(vec3 extra) {
@@ -1620,6 +1661,7 @@ internal static class GlShaders
             if (uLightN > 0 || uEmitOn != 0)
                 lit += vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u)) * extra;
             float w = cueWeight();
+            if (uAtmosOn != 0) gFog8 = uAtmosColour * clamp(w / 4096.0, 0.0, 1.0);
             return ivec3(clamp(floor(lit * (1.0 - w / 4096.0)), 0.0, 255.0));
         }
 
@@ -1689,7 +1731,7 @@ internal static class GlShaders
 
             if (texMode == 4) {
                 if (uOpaqueDepth == 1) discard;
-                FragColor = vec4(quant5(c8in + post(vec3(c8in) / 255.0)), uSetMask);
+                FragColor = vec4(quant5(c8in + post(vec3(c8in) / 255.0) + fogAdd(true)), uSetMask);
                 BlendColor = uBlend;
                 return;
             }
@@ -1697,7 +1739,7 @@ internal static class GlShaders
             if (texMode == 5) {
                 vec4 img = texture(uExtTex, vUV);
                 if (img.a < 0.5 || uOpaqueDepth == 1) discard;
-                ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + post(img.rgb);
+                ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + post(img.rgb) + fogAdd(true);
                 FragColor = vec4(quant5(e8), uSetMask);
                 BlendColor = uBlend;
                 return;
@@ -1753,7 +1795,7 @@ internal static class GlShaders
                 ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + post(img.rgb);
                 float stp = img.a < 0.95 ? 1.0 : 0.0;
                 if (uOpaqueDepth == 1 && stp > 0.5) discard;
-                FragColor = vec4(quant5(e8), max(stp, uSetMask));
+                FragColor = vec4(quant5(e8 + fogAdd(stp > 0.5)), max(stp, uSetMask));
                 BlendColor = stp > 0.5 ? uBlend : uBlendOpaque;
                 return;
             }
@@ -1822,7 +1864,7 @@ internal static class GlShaders
                 ivec3 e8 = ((ivec3(texel.rgb * 255.0 + 0.5) * c8in) >> 7) + post(texel.rgb);
                 float stp = texel.a < 0.95 ? 1.0 : 0.0;
                 if (uOpaqueDepth == 1 && stp > 0.5) discard;
-                FragColor = vec4(quant5(e8), max(stp, uSetMask));
+                FragColor = vec4(quant5(e8 + fogAdd(stp > 0.5)), max(stp, uSetMask));
                 BlendColor = stp > 0.5 ? uBlend : uBlendOpaque;
                 return;
             }
@@ -1831,7 +1873,7 @@ internal static class GlShaders
             if (uOpaqueDepth == 1 && texel.a >= 0.5) discard;
             // 248 = 31 << 3: exact for a texel, and keeps a filtered colour's fraction.
             ivec3 t8 = ivec3(texel.rgb * 248.0 + 0.5);
-            ivec3 c8 = ((t8 * c8in) >> 7) + post(texel.rgb);
+            ivec3 c8 = ((t8 * c8in) >> 7) + post(texel.rgb) + fogAdd(texel.a >= 0.5);
             FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
         }

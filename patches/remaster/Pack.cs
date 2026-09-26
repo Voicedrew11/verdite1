@@ -923,12 +923,15 @@ public static class Pack
     /// </summary>
     public readonly record struct RecordOverride(
         int Record, string? Hash, int[]? Back, Vector3?[] Direction, Vector3?[] Colour, int? Fog,
-        float? Darkness = null);
+        float? Darkness = null, int[]? FogColour = null, float? FogPower = null, float? FogMax = null,
+        int[]? Sky = null);
 
-    /// <summary>The area's own entry, <c>"record": "all"</c>, which holds only its
-    /// <c>darkness</c>: 0 the game's light, 1 black, scaling every tile record's back
-    /// colour and light colours after its own override. It carries no record hash; the
-    /// area's fingerprint is its gate.</summary>
+    /// <summary>The area's own entry, <c>"record": "all"</c>: its <c>darkness</c> (0 the
+    /// game's light, 1 black, scaling every tile record's back colour and light colours
+    /// after its own override), and its fog (<c>fogColour</c>, the colour a surface fades
+    /// into instead of black; <c>fogPower</c> and <c>fogMax</c>, the curve over the game's
+    /// depth cue; <c>sky</c>, the colour the frame is cleared to, the fog's if absent). It
+    /// carries no record hash; the area's fingerprint is its gate.</summary>
     public const int AllRecords = -1;
 
     static JsonObject? AtmosDoc(int area) => _set.Atmosphere.TryGetValue(area, out var d) ? d : null;
@@ -966,7 +969,9 @@ public static class Pack
                 }
         if (record == AllRecords)
             return new RecordOverride(record, null, null, new Vector3?[3], new Vector3?[3], null,
-                o["darkness"] is JsonValue dv && dv.TryGetValue(out double dd) ? Math.Clamp((float)dd, 0f, 1f) : null);
+                Num(o["darkness"]) is { } dd ? Math.Clamp(dd, 0f, 1f) : null,
+                Rgb(o["fogColour"]), Num(o["fogPower"]) is { } fp ? Math.Clamp(fp, 0.1f, 10f) : null,
+                Num(o["fogMax"]) is { } fm ? Math.Clamp(fm, 0f, 1f) : null, Rgb(o["sky"]));
         return new RecordOverride(record, Str(o["recordHash"]), back, dir, col, Int(o["fog"]));
     }
 
@@ -1051,6 +1056,39 @@ public static class Pack
     }
 
     public static string RecordName(int record) => record == AllRecords ? "area" : $"record {record}";
+
+    static float? Num(JsonNode? n) => n is JsonValue v && v.TryGetValue(out double d) ? (float)d : null;
+
+    static int[]? Rgb(JsonNode? n)
+        => n is JsonArray a && a.Count >= 3
+            ? [.. Enumerable.Range(0, 3).Select(i => Math.Clamp(Int(a[i]) ?? (int)NumOr(a[i], 0f), 0, 255))]
+            : null;
+
+    static JsonArray RgbNode(int[] c) => new(Math.Clamp(c[0], 0, 255), Math.Clamp(c[1], 0, 255), Math.Clamp(c[2], 0, 255));
+
+    /// <summary>The area's fog colour; null removes it, leaving the game's black.</summary>
+    public static void SetFogColour(JsonObject o, int[]? rgb)
+    {
+        if (rgb == null) o.Remove("fogColour");
+        else o["fogColour"] = RgbNode(rgb);
+    }
+
+    /// <summary>The area's fog curve; 1 and 1 (or null) remove each, leaving the game's.</summary>
+    public static void SetFogCurve(JsonObject o, float? power, float? max)
+    {
+        if (power is { } p && MathF.Abs(p - 1f) > 0.0005f) o["fogPower"] = Math.Round(Math.Clamp(p, 0.1f, 10f), 3);
+        else o.Remove("fogPower");
+        if (max is { } m && m < 0.9995f) o["fogMax"] = Math.Round(Math.Clamp(m, 0f, 1f), 3);
+        else o.Remove("fogMax");
+    }
+
+    /// <summary>The colour the frame is cleared to; null removes it, leaving the fog's
+    /// colour when there is one and the game's black when not.</summary>
+    public static void SetSky(JsonObject o, int[]? rgb)
+    {
+        if (rgb == null) o.Remove("sky");
+        else o["sky"] = RgbNode(rgb);
+    }
 
     /// <summary>The area's darkness; 0 or null removes it, leaving the game's light.</summary>
     public static void SetDarkness(JsonObject o, float? v)

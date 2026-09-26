@@ -380,7 +380,7 @@ Next steps, and an index of what is reported but not diagnosed.
 
 ### [REMASTER.md](docs/REMASTER.md)
 
-The authoring tools (identity, packs, editor) and the engine work for a remaster the user places, tunes, saves and shares. Phase 1 is in: a material per tile half or per face, from the working pack, through the editor (Shift+E) or `KF2_SHELL`; `snap` hashes the presented picture, and the switch is under Video ▸ Enhancements. Phase 2's first slice adds authored point and spot lights (`0071`). Phase 5's first slice overrides the game's own light records (back colour, lights, fog), after a census showed only the renderer reads them.
+The authoring tools (identity, packs, editor) and the engine work for a remaster the user places, tunes, saves and shares. Phase 1 is in: a material per tile half or per face, from the working pack, through the editor (Shift+E) or `KF2_SHELL`; `snap` hashes the presented picture, and the switch is under Video ▸ Enhancements. Phase 2's first slice adds authored point and spot lights (`0071`). Phase 5's first slice overrides the game's own light records (back colour, lights, fog), after a census showed only the renderer reads them. Its second slice gives the area's fog a colour and a curve, and the frame a sky (`0074`).
 
 - What this is, and what it is not
 - What exists, and what each piece gives the remaster
@@ -399,6 +399,7 @@ The authoring tools (identity, packs, editor) and the engine work for a remaster
 - Phase 2, the first slice
 - The light records are read only by the renderer
 - Phase 5, the first slice
+- Phase 5, the second slice
 - Open decisions
 
 ## Where to write a new finding

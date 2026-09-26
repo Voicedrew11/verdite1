@@ -26,6 +26,11 @@ namespace Kf2.Remaster;
 /// name, and none of the HUD's -- after each record's own override. It is taken from
 /// the game's source record every pass, so it never compounds and at 0 is gone. See
 /// "The area's darkness" in docs/REMASTER.md.
+///
+/// The area's fog (<c>fogColour</c>, <c>fogPower</c>, <c>fogMax</c>) goes to the prim
+/// shader (<c>0074</c>), and its <c>sky</c> (the fog's colour if absent) is the colour
+/// the game's own background clear draws: a pre on <c>PutDrawEnv</c> writes it into the
+/// DRAWENV and a post puts the game's back. See "Phase 5, the second slice".
 /// </summary>
 public sealed class Atmosphere : IRemasterFeature
 {
@@ -40,6 +45,8 @@ public sealed class Atmosphere : IRemasterFeature
     const uint DstLight = 0x00, DstColour = 0x50, DstBack = 0x62, DstFog = 0x66;
 
     const uint Stage1 = 0x8002C944;
+    const uint PutDrawEnv = 0x80060870;
+    const uint EnvIsBg = 0x18, EnvBg = 0x19;
 
     static bool _on = true;
     static Pack.RecordOverride[] _active = [];
@@ -68,6 +75,21 @@ public sealed class Atmosphere : IRemasterFeature
 
     public static bool Active => _active.Length > 0 || _darkness > 0f;
 
+    /// <summary>The area's fog as applied: its colour (null the game's black), and the
+    /// curve over the game's weight. The sky the frame is cleared to, or null.</summary>
+    public static int[]? FogColour { get; private set; }
+    public static float FogPower { get; private set; } = 1f;
+    public static float FogMax { get; private set; } = 1f;
+    public static int[]? Sky { get; private set; }
+
+    /// <summary>Background clears given the sky, and draw envs with no clear to give
+    /// it; never reset.</summary>
+    public static long SkyClears, NoClear;
+
+    static uint _heldEnv;
+    static readonly byte[] _heldBg = new byte[3];
+    static bool _held;
+
     static readonly ModInfo _self = new()
     {
         Id = "kf2.remaster.atmosphere",
@@ -88,16 +110,24 @@ public sealed class Atmosphere : IRemasterFeature
         SymbolRegistry.Build();
         var target = SymbolRegistry.Resolve("game", null, Stage1);
         if (target == null) return false;
+        var env = SymbolRegistry.Resolve("game", null, PutDrawEnv);
+        if (env == null) return false;
         if (!_queued)
         {
             var post = typeof(Atmosphere).GetMethod(nameof(AfterCopy), BindingFlags.Public | BindingFlags.Static)!;
             _queued = HookManager.AddPost(_self, target, post);
         }
+        if (!_envQueued)
+        {
+            var pre = typeof(Atmosphere).GetMethod(nameof(BeforeDrawEnv), BindingFlags.Public | BindingFlags.Static)!;
+            var post = typeof(Atmosphere).GetMethod(nameof(AfterDrawEnv), BindingFlags.Public | BindingFlags.Static)!;
+            _envQueued = HookManager.AddPre(_self, env, pre) && HookManager.AddPost(_self, env, post);
+        }
         HookManager.Commit();
-        return HookAttach.Installed(target);
+        return HookAttach.Installed(target) && HookAttach.Installed(env);
     }
 
-    static bool _queued;
+    static bool _queued, _envQueued;
 
     public void OnFrame()
     {
@@ -121,7 +151,58 @@ public sealed class Atmosphere : IRemasterFeature
         }
         Refused = null;
         _active = Pack.Records(area).Where(r => (uint)r.Record < Records).ToArray();
-        _darkness = Math.Clamp(Pack.GetRecord(area, Pack.AllRecords)?.Darkness ?? 0f, 0f, 1f);
+        var all = Pack.GetRecord(area, Pack.AllRecords);
+        _darkness = Math.Clamp(all?.Darkness ?? 0f, 0f, 1f);
+        SetFog(all?.FogColour, all?.FogPower ?? 1f, all?.FogMax ?? 1f, all?.Sky);
+    }
+
+    /// <summary>Publish the area's fog to the shader, and the sky to the clear.</summary>
+    static void SetFog(int[]? colour, float power, float max, int[]? sky)
+    {
+        bool on = colour != null || power != 1f || max < 1f;
+        int[]? skyNow = sky ?? colour;
+        if (on == RemasterUniforms.FogOn && Same(colour, FogColour) && power == FogPower && max == FogMax
+            && Same(skyNow, Sky)) return;
+        FogColour = colour;
+        FogPower = power;
+        FogMax = max;
+        Sky = skyNow;
+        for (int i = 0; i < 3; i++)
+        {
+            RemasterUniforms.FogColour[i] = colour?[i] ?? 0;
+            RemasterUniforms.SkyColour[i] = skyNow?[i] ?? 0;
+        }
+        RemasterUniforms.FogPower = power;
+        RemasterUniforms.FogMax = max;
+        RemasterUniforms.PublishFog(on);
+        PolyAssembler.KeepFogged = on;
+    }
+
+    static bool Same(int[]? a, int[]? b) => a == null ? b == null : b != null && a.AsSpan().SequenceEqual(b);
+
+    /// <summary>Pre on <c>PutDrawEnv</c>: a draw env that clears clears to the sky.</summary>
+    public static void BeforeDrawEnv(CpuContext c, IMemory m)
+    {
+        var sky = Sky;
+        if (sky == null) return;
+        uint env = c.A0;
+        if (m.ReadU8(env + EnvIsBg) == 0) { NoClear++; return; }
+        for (uint i = 0; i < 3; i++)
+        {
+            _heldBg[i] = m.ReadU8(env + EnvBg + i);
+            m.WriteU8(env + EnvBg + i, (byte)sky[i]);
+        }
+        _heldEnv = env;
+        _held = true;
+        SkyClears++;
+    }
+
+    /// <summary>Post on <c>PutDrawEnv</c>: the game's own colour back in its DRAWENV.</summary>
+    public static void AfterDrawEnv(CpuContext c, IMemory m)
+    {
+        if (!_held) return;
+        for (uint i = 0; i < 3; i++) m.WriteU8(_heldEnv + EnvBg + i, _heldBg[i]);
+        _held = false;
     }
 
     public void Detach()
@@ -135,6 +216,7 @@ public sealed class Atmosphere : IRemasterFeature
     {
         _active = [];
         _darkness = 0f;
+        SetFog(null, 1f, 1f, null);
         Refused = null;
         Applied = Stale = 0;
     }
@@ -142,7 +224,17 @@ public sealed class Atmosphere : IRemasterFeature
     public string Probe()
         => Refused != null ? $"atmosphere refused ({Refused})"
          : $"{Applied} of {_active.Length} record override(s) written{(Stale > 0 ? $", {Stale} refused (record changed)" : "")}" +
-           (_darkness > 0f ? $", darkness {_darkness:0.00}" : "") + $" ({Calls} stage 1 passes)";
+           (_darkness > 0f ? $", darkness {_darkness:0.00}" : "") + FogText() + $" ({Calls} stage 1 passes)";
+
+    static string FogText()
+    {
+        if (!RemasterUniforms.FogOn && Sky == null) return "";
+        string t = "";
+        if (FogColour is { } c) t += $", fog colour {c[0]} {c[1]} {c[2]}";
+        if (FogPower != 1f || FogMax < 1f) t += $", fog curve ^{FogPower:0.##} max {FogMax:0.##}";
+        if (Sky is { } s) t += $", sky {s[0]} {s[1]} {s[2]} ({SkyClears} clears, {NoClear} without)";
+        return t + $", {RemasterUniforms.FogBatches} fogged batches";
+    }
 
     /// <summary>Post on stage 1: the copy is done; write the overrides over it.</summary>
     public static void AfterCopy(CpuContext c, IMemory m)

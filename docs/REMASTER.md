@@ -624,8 +624,10 @@ through `0048` unchanged, so it is exact whether per-pixel lighting is on or off
 with `scripts/find_writers.py` and a read census before an override ships.
 
 Fog colour is the GTE's far colour, measured at 0, which is why the fog darkens
-to black rather than fading to a colour. A fog colour becomes one term in
-`shade8`: `mix` towards a colour instead of a multiply towards black.
+to black rather than fading to a colour. A fog colour is one term in `shade8`'s
+output, added past the texture by the depth cue's own weight, so the result is a
+`mix` towards the colour instead of a multiply towards black. See "Phase 5, the
+second slice".
 
 ## Level editing: what can be edited and what can only be decorated
 
@@ -1711,6 +1713,9 @@ push on this game's near-grey stone.
   with the new curve; `snap` for the no-override case.
 - **You look at:** the whole area's mood; the sky against the void past the draw
   distance.
+- **Done:** the overrides in "Phase 5, the first slice"; the fog colour, the curve
+  and the sky in "Phase 5, the second slice". The sky turned out to be the game's
+  own background clear, not a fill at the far plane.
 
 ### The light records are read only by the renderer
 
@@ -2056,6 +2061,92 @@ behind a door as the door opens, both approved. Not specifically looked at yet:
 whether a creature darkens itself where its own limbs face away from the light
 (the offset and bias were set against the map's surfaces), and creature 129, which
 casts nothing because every texel of it is translucent.
+
+### Phase 5, the second slice
+
+**What is in.** The area's fog takes a colour and a curve, and the frame a sky
+(runtime `0074`):
+
+- **The fog's colour is added past the texture.** The game's depth cue darkens the
+  lit colour by a weight (0..4096, from the packet's curve) before the texture
+  modulates it. Putting a colour into the GTE's far colour would tint that lit
+  colour, and a distant wall would come out as its texture times the fog. `shade8`
+  darkens exactly as before, then keeps the colour times the same weight, and every
+  output path adds it after the texel is modulated: the result is
+  `texture × lit × (1 − w) + fog × w`, a mix towards the colour. A texel blended
+  additively or subtractively takes none, since fog takes it away rather than to a
+  colour; an averaged or opaque one does.
+- **The curve bends the game's weight**: raised to a power and capped at a
+  maximum, after the packet's own curve, so the glow and a light's highlight fog on
+  it too. Power 1 and maximum 1 are the game's. Below 1 the fog thickens close by;
+  a maximum below 1 means nothing ever fades out completely.
+- **Only a packet with a `0048` record takes it**, so it needs per-pixel lighting and
+  Fast geometry, as authored lights do. A face fogged all the way to black used to
+  keep no record, since it drew the same either way; while a fog colour or curve is
+  set it keeps one (`PolyAssembler.KeepFogged`), because it is now drawn in the
+  colour or not all the way. Anything else keeps the game's black.
+- **The sky is the game's own background clear.** `PutDrawEnv`'s `isbg` rectangle
+  is what the frame is cleared to; a pre on the game's `PutDrawEnv` writes the sky
+  into the `DRAWENV` and a post puts the game's colour back, so guest memory holds
+  the game's value outside the call. The HUD and everything else draw over the
+  clear, so nothing 2D is painted over by construction. It is the fog's colour
+  unless the area names one, and only while the area is settled, so a loading
+  screen clears to black.
+- The reflection pass fogs a reflection towards the same colour on the same curve,
+  and a cubemap miss reflects the sky; the retained planes are drawn with it.
+- Pack: the area's `"all"` entry gains `fogColour`, `fogPower`, `fogMax` and `sky`:
+
+  ```json
+  { "record": "all", "darkness": 0.6, "fogColour": [90, 140, 200], "fogMax": 0.7 }
+  ```
+
+- Editor: under *Darkness*, *Fog colour* (a checkbox and a colour), *Fog curve*
+  (0.25 to 4, logarithmic), *Fog at most* (0 to 100%) and *Sky* (unticked, the
+  fog's colour). Each is one undo entry. Shell: `atmos fog R G B | off`,
+  `atmos curve POWER [MAX] | off`, `atmos sky R G B | fog`; `atmos list` reports
+  what was drawn, the sky's clears and the fogged batches, as does the probe line.
+
+**Measured** (`KF2_AUTOSTART=2`, area 1 at the spawn, a scratch pack, 144 fps, the
+editor open and the world paused, 2140x1200):
+- **The shader is the formula.** `scripts/light_probe.c`'s five new passes (the
+  switch on at black and the game's curve; a colour untextured and textured; a
+  colour and curve; a colour on an additive batch) are all **0** from the formula
+  in C, and the sixteen earlier passes read as before.
+- **Nothing authored is the picture it was**: `210d55698c875fb8`, Phase 2's pinned
+  hash. A fog colour set at the spawn changes nothing, because nothing there is
+  fogged: every surface is nearer than area 1's own fog start (8,000), which is
+  what the first slice found.
+- So record 15's fog was moved to 4000 first (42.3% of the pixels, as black fog):
+  `b55f9d7c8d4a4938`. On that, **a black fog colour is the same hash to the bit**,
+  with the fully fogged faces now keeping their records. A colour of `90 140 200`
+  changed 42.1% of the pixels (largest step 104); the curve `0.5 0.7` over it
+  changed 42.3% (largest 45). Removing the curve gave the colour's hash back, the
+  colour off gave `b55f9d7c8d4a4938`, and resetting record 15 gave
+  `210d55698c875fb8`.
+- **With the fog on, the lighting formula still holds against the GTE**:
+  `KF2_PERPIXEL_PROBE=2` in area 0 with a colour and a 0.6 cap, 1,905,069 corners
+  exact, 24,424 off by 1, **0 off by 2 or more**.
+- **The sky clear reaches the screen**: drawn from a camera outside the map
+  (`view -200000 -14400 98304 0 yaw 0`, four yaws) with a magenta sky, 94.9% of the
+  frame is the sky and the rest is the HUD.
+- **From inside, no void showed anywhere it was looked for**: 0 sky pixels at area
+  1's spawn facing four ways and in area 0's New Game view, and under 0.01% from
+  the air above area 0; 0 still with the fog capped at 60%, and turning the sky from magenta to
+  the fog's colour there changed nothing measurable. The game draws geometry out to
+  where its own fog is black, so the void past the draw distance is not in these
+  views. What paints the dark blue seen above area 0's sea is geometry, not a sky.
+- 144.0 fps drawn at 19.9-20.9 ticks/s with the fog on and the world running,
+  `[present] wide 289`. Uncapped (`KF2_FPS=2000`, area 0's New Game view): 178-184
+  fps with the fog on, 183-190 with it off and 170-184 on again, which is within the
+  run's own spread. `KF2_GLDEBUG=1` reported nothing.
+
+**Not judged.** Nothing here has been looked at: the fog's colour on any area, the
+curve, how a coloured fog meets the darkness slider's black, and the sky, which no
+normal view was found to show. Two limits by construction: a model or tile drawn
+without a `0048` record (Fast geometry off, or a routine the C# assemblers do not
+cover) keeps the black fog beside the coloured one, and the curve bends only the
+packets' own curves, not a record's fog start, which the first slice's per-record
+fog word already sets.
 
 ### Phase 6: level edits
 

@@ -48,6 +48,11 @@ public static partial class PolyAssembler
 
     public static void Keep() => KeepUnfogged = KeepForLights || KeepForGlow;
 
+    /// <summary>The area's fog has a colour or a curve (0074): a face fogged all the way
+    /// to black keeps its record, since it is drawn in the fog's colour, or not all the
+    /// way.</summary>
+    public static bool KeepFogged;
+
     /// <summary>Set while the HUD builder runs, whose icons go through the lit assembler
     /// too and are left to draw their own colours.</summary>
     public static bool InHud;
@@ -150,6 +155,7 @@ public static partial class PolyAssembler
     /// A face whose every corner is unfogged, or fogged all the way to black, comes out
     /// the same interpolated as per pixel, so it is not recorded: nothing to look up,
     /// and a batch of nothing else never uploads the light buffer or runs the lighting.
+    /// The area's fog keeps the second (<see cref="KeepFogged"/>).
     /// </summary>
     static bool Uniform(ref GteLightMap.Rec r, uint curve, int n)
     {
@@ -163,7 +169,7 @@ public static partial class PolyAssembler
             GteLightMap.CurveWord => 4096f,
             _ => float.PositiveInfinity,
         };
-        return (hi <= 0f && !KeepUnfogged) || lo >= black;
+        return (hi <= 0f && !KeepUnfogged) || (lo >= black && !KeepFogged);
     }
 
     static void Seal(PSMemory mem, ref GteLightMap.Rec r, uint pkt, uint mode, uint rgb)

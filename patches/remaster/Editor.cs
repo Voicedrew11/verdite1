@@ -444,6 +444,10 @@ public static class Editor
         int[] _usage = [];
         int _usageSettle = -1;
 
+        static string fp0() => Identity.FingerprintText;
+
+        static int[] Rgb255(Vector3 c) => [(int)MathF.Round(c.X * 255f), (int)MathF.Round(c.Y * 255f), (int)MathF.Round(c.Z * 255f)];
+
         void DrawAtmosphere()
         {
             ImGui.Text("Atmosphere");
@@ -461,6 +465,45 @@ public static class Editor
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("How much of the game's own light the area loses: 0% is the game's, 100% leaves only authored lights and glows. " +
                                  "Scales every tile record's back colour and light colours after the record's own edits; the HUD keeps its light. Ctrl+click to type.");
+
+            // The area's fog: the colour the depth cue fades into, its curve, and the sky.
+            var all = Pack.GetRecord(area, Pack.AllRecords);
+            bool fogColOn = all?.FogColour != null;
+            if (ImGui.Checkbox("##fogcol", ref fogColOn))
+                Pack.SetRecord(area, Pack.AllRecords, "", fp0(), fogColOn ? "fog colour" : "fog colour = game",
+                    x => Pack.SetFogColour(x, fogColOn ? [0, 0, 0] : null));
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!fogColOn);
+            var fc = all?.FogColour is { } c0 ? new Vector3(c0[0], c0[1], c0[2]) / 255f : Vector3.Zero;
+            ImGui.SetNextItemWidth(220);
+            RecEdited(area, Pack.AllRecords, "", "fog colour", ImGui.ColorEdit3("Fog colour", ref fc),
+                x => Pack.SetFogColour(x, Rgb255(fc)));
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("What the distance fades into; the game's is black. Needs per-pixel lighting and Fast geometry.");
+            float power = all?.FogPower ?? 1f, most = (all?.FogMax ?? 1f) * 100f;
+            ImGui.SetNextItemWidth(220);
+            RecEdited(area, Pack.AllRecords, "", "fog curve", ImGui.SliderFloat("Fog curve", ref power, 0.25f, 4f, "%.2f", ImGuiSliderFlags.Logarithmic),
+                x => Pack.SetFogCurve(x, power, all?.FogMax));
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Bends the game's own fog: below 1 thickens it close by, above 1 holds it off until further out. 1 is the game's.");
+            ImGui.SetNextItemWidth(220);
+            RecEdited(area, Pack.AllRecords, "", "fog at most", ImGui.SliderFloat("Fog at most", ref most, 0f, 100f, "%.0f%%"),
+                x => Pack.SetFogCurve(x, all?.FogPower, most / 100f));
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("The most the fog ever takes: below 100% the far distance never quite disappears. 100% is the game's.");
+            bool skyOn = all?.Sky != null;
+            if (ImGui.Checkbox("##sky", ref skyOn))
+                Pack.SetRecord(area, Pack.AllRecords, "", fp0(), skyOn ? "sky" : "sky = fog",
+                    x => Pack.SetSky(x, skyOn ? (all?.FogColour ?? [0, 0, 0]) : null));
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!skyOn);
+            var sk = all?.Sky is { } s0 ? new Vector3(s0[0], s0[1], s0[2]) / 255f : fc;
+            ImGui.SetNextItemWidth(220);
+            RecEdited(area, Pack.AllRecords, "", "sky", ImGui.ColorEdit3("Sky", ref sk), x => Pack.SetSky(x, Rgb255(sk)));
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("The colour past the draw distance, where nothing is drawn. Unticked it is the fog colour, or the game's black without one.");
 
             int under = Atmosphere.UnderPlayer(m);
             ImGui.Checkbox("Follow the player", ref _followRecord);

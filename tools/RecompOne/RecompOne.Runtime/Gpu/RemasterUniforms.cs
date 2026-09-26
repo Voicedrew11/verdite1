@@ -94,4 +94,40 @@ public static class RemasterUniforms
 
     /// <summary>Slots whose cubemap is drawn for the light it holds now.</summary>
     public static int ShadowsReady;
+
+    // ---- 0074. Fog colour, its curve, and the sky ----------------------------
+
+    /// <summary>0074. The area's fog, published by the port. The game's depth cue
+    /// darkens a colour by its weight; with this on, the same weight adds the fog's
+    /// colour past the texture, so a surface fades into the colour instead of black.
+    /// Only a packet with a <see cref="GteLightMap"/> record is fogged this way; the
+    /// rest keep the game's black fog.</summary>
+    public static bool FogOn { get; private set; }
+
+    /// <summary>The fog's colour, 0-255 a channel.</summary>
+    public static readonly float[] FogColour = new float[3];
+
+    /// <summary>The curve over the game's: its weight (0..1) raised to <see cref="FogPower"/>
+    /// and capped at <see cref="FogMax"/>. 1 and 1 are the game's curve.</summary>
+    public static float FogPower = 1f, FogMax = 1f;
+
+    /// <summary>The colour the port clears the frame to, 0-255 a channel, which a
+    /// reflection that finds nothing takes; meaningful while <see cref="FogOn"/>.</summary>
+    public static readonly float[] SkyColour = new float[3];
+
+    /// <summary>Bumped by <see cref="PublishFog"/>, which also bumps <see cref="Generation"/>
+    /// so a batch is drawn with the fog it was built under.</summary>
+    public static int FogGeneration { get; private set; }
+
+    public static void PublishFog(bool on)
+    {
+        FogOn = on;
+        FogGeneration++;
+        Generation++;
+    }
+
+    public static bool FogActive => FogOn && Supported;
+
+    /// <summary>Batches drawn with the fog's colour; never reset.</summary>
+    public static long FogBatches;
 }

@@ -15,6 +15,7 @@ public sealed partial class GlCore
     int _worldGen = -1, _worldCap, _worldDynCap;
     int _uwR, _uwCam, _uwT, _uwH, _uwC, _uwFb, _uwNear, _uwCueH, _uwFogOn, _uwMirror, _uwPlaneY, _uwPlaneBias;
     int _uwScale, _uwAniso, _uwBlend, _uwBlendOpaque, _uwFluidN;
+    int _uwAtmosOn, _uwAtmosColour, _uwAtmosShape, _uwAtmosSkip;
     int _uwMaskOn, _uwMaskPlane, _uwMaskTol, _uwMaskCentre, _uwMaskH, _uwMaskSize;
     readonly int[] _uwFluidRect = new int[8], _uwFluidOff = new int[8];
 
@@ -55,6 +56,8 @@ public sealed partial class GlCore
         _uwMaskOn = L("uMaskOn"); _uwMaskPlane = L("uMaskPlane"); _uwMaskTol = L("uMaskTol");
         _uwMaskCentre = L("uMaskCentre"); _uwMaskH = L("uMaskH"); _uwMaskSize = L("uMaskSize");
         _uwHalfGate = L("uHalfGate");
+        _uwAtmosOn = L("uAtmosOn"); _uwAtmosColour = L("uAtmosColour"); _uwAtmosShape = L("uAtmosShape");
+        _uwAtmosSkip = L("uAtmosSkip");
 
         _gl.UseProgram(_progWorld);
         void Unit(string n, int u) { int l = L(n); if (l >= 0) _gl.Uniform1(l, u); }
@@ -66,7 +69,7 @@ public sealed partial class GlCore
         if (tw >= 0) _gl.Uniform4(tw, 255, 255, 0, 0);
         F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
         I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
-        I("uMaskOn", 0); I("uHalfGate", 0);
+        I("uMaskOn", 0); I("uHalfGate", 0); I("uAtmosOn", 0); I("uAtmosSkip", 0);
         InitShadowUniforms(_progWorld, false);
         if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
         int pb = L("uPosBias");
@@ -153,6 +156,7 @@ public sealed partial class GlCore
             PixelFormat.RedInteger, PixelType.UnsignedByte, f.Halves);
         _gl.ActiveTexture(TextureUnit.Texture0);
         if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, RetainedScene.HalfGate ? 1 : 0);
+        SendWorldAtmos();
 
         if (RetainedScene.Planar && f.PlaneCount > 0 && src.Surface != 0)
         {
@@ -177,6 +181,19 @@ public sealed partial class GlCore
         _gl.BindVertexArray(0);
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         _gl.ActiveTexture(TextureUnit.Texture0);
+    }
+
+    /// <summary>0074. The area's fog colour and curve, as the frame's batches take them;
+    /// only the fogged draws (the planes) reach it, the cubemap being unfogged.</summary>
+    void SendWorldAtmos()
+    {
+        if (_uwAtmosOn < 0) return;
+        bool on = RemasterUniforms.FogActive;
+        _gl.Uniform1(_uwAtmosOn, on ? 1 : 0);
+        if (!on) return;
+        var fc = RemasterUniforms.FogColour;
+        _gl.Uniform3(_uwAtmosColour, fc[0], fc[1], fc[2]);
+        _gl.Uniform2(_uwAtmosShape, RemasterUniforms.FogPower, RemasterUniforms.FogMax);
     }
 
     /// <summary>The static map, when it was rebuilt since the last upload.</summary>
@@ -263,8 +280,10 @@ public sealed partial class GlCore
             if (mode == 2) continue;
             float src = mode switch { 0 => 0.5f, 3 => 0.25f, _ => 1f }, dst = mode == 0 ? 0.5f : 1f;
             if (_uwBlend >= 0) _gl.Uniform4(_uwBlend, src, src, src, dst);
+            if (_uwAtmosSkip >= 0) _gl.Uniform1(_uwAtmosSkip, mode == 0 ? 0 : 1);
             RetainedScene.Triangles += DrawRange(1 + mode, f) / 3;
         }
+        if (_uwAtmosSkip >= 0) _gl.Uniform1(_uwAtmosSkip, 0);
         _gl.Disable(EnableCap.Blend);
         _gl.Disable(EnableCap.CullFace);
         _gl.FrontFace(FrontFaceDirection.Ccw);
