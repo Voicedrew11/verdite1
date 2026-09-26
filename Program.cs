@@ -724,6 +724,8 @@ Kf2.RetainedMap.Configure(Environment.GetEnvironmentVariable("KF2_RETAINED"),
                           Environment.GetEnvironmentVariable("KF2_RETAINED_PLANAR"),
                           Environment.GetEnvironmentVariable("KF2_RETAINED_CUBE"),
                           Environment.GetEnvironmentVariable("KF2_RETAINED_CUBESIZE"),
+                          Environment.GetEnvironmentVariable("KF2_RETAINED_CULL"),
+                          Environment.GetEnvironmentVariable("KF2_RETAINED_GATE"),
                           Environment.GetEnvironmentVariable("KF2_RETAINED_PROBE"));
 Kf2.RetainedMap.Install();
 

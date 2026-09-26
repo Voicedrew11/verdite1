@@ -179,6 +179,8 @@ KF2_PLANAR_PROBE=1                     # the plane, the mirrored walk and its ar
 KF2_RETAINED=1                         # reflections drawn from the retained scene: the map and models kept on the GPU in world space (off by default; needs KF2_SSR; GL core only; stands the planar walk down)
 KF2_RETAINED_PLANAR=0 KF2_RETAINED_CUBE=0   # leave out its planes, or its camera cubemap (which otherwise replaces the screen march)
 KF2_RETAINED_CUBESIZE=256              # a cubemap face's size in pixels
+KF2_RETAINED_CULL=0                    # draw the faces a mirror or a cube face sees from behind (culled by default, as the game culls them)
+KF2_RETAINED_GATE=0                    # reflect every map half, not only those the frame's own tile walk drew
 KF2_RETAINED_PROBE=1                   # the mesh and its check against the GTE's own vertices, the planes, GPU time per draw, chunks culled, and (with KF2_SSR_PROBE=1) the planar-vs-cubemap agreement
 KF2_REMASTER=1                         # apply the working pack (off by default; the editor's checkbox saves it); Shift+E opens the editor
 KF2_REMASTER_PACK=dir                  # the working pack (packs/working)

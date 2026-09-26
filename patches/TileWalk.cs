@@ -392,6 +392,12 @@ public static class TileWalk
 
         uint model = mem.ReadU8(rec);
         if (Beyond(mem, model)) { _skipped++; Epilogue(c, mem, sp); return; }
+        // What the frame drew is what its reflections may show (RetainedScene.HalfGate).
+        if (RetainedMap.Ready && !PlanarWalk.Mirroring)
+        {
+            uint off = rec - MapBase;
+            RetainedScene.NoteHalf((int)(off % 800u / 10u), (int)(off / 800u), (int)(off % 10u / 5u));
+        }
 
         // The half being assembled, for whatever the assemblers record per packet.
         CurrentRecord = rec;

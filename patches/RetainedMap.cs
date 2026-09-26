@@ -15,6 +15,8 @@ namespace Kf2;
 ///     KF2_RETAINED_PLANAR=0   no planar reflections from it
 ///     KF2_RETAINED_CUBE=0     no camera cubemap
 ///     KF2_RETAINED_CUBESIZE=256  a cubemap face's size
+///     KF2_RETAINED_CULL=0     draw the faces a mirror or a cube face sees from behind
+///     KF2_RETAINED_GATE=0     reflect every map half, not only those the frame's walk drew
 ///     KF2_RETAINED_PROBE=1    the mesh, the check against the game's own vertices, the planes, GPU time
 ///
 /// **The map is data.** 80x80 tiles of two halves; a half names a mesh of the map's
@@ -49,8 +51,11 @@ public static class RetainedMap
 
     public static bool Enabled => RetainedScene.Enabled;
 
-    public static void Configure(string? on, string? planar, string? cube, string? cubeSize, string? probe)
+    public static void Configure(string? on, string? planar, string? cube, string? cubeSize, string? cull, string? gate,
+                                 string? probe)
     {
+        RetainedScene.CullBack = cull?.Trim() != "0";
+        RetainedScene.HalfGate = gate?.Trim() != "0";
         if (!string.IsNullOrWhiteSpace(on)) _forced = on != "0";
         RetainedScene.Planar = planar?.Trim() != "0";
         RetainedScene.Cube = cube?.Trim() != "0";
@@ -300,7 +305,7 @@ public static class RetainedMap
                 if (mat == 0 && Remaster.Surfaces.ByTexture
                     && Remaster.TextureKeys.Of((int)tpage, (int)clut, u0, v0, u1, v1, out var tex))
                     mat = Remaster.Surfaces.TextureId(tex);
-                uint flags = RetainedScene.FlagRect | mat
+                uint flags = RetainedScene.FlagRect | mat | RetainedScene.HalfFlag(tx, tz, half)
                            | (semi ? RetainedScene.FlagSemi | ((tpage >> 5) & 3u) << 8 : 0u);
 
                 var t = new RetainedScene.Vertex
@@ -449,6 +454,15 @@ public static class RetainedMap
                           $"{(_mChecked == 0 ? 0 : 100.0 * _mWithin / _mChecked):F2}% within 1 px, worst {_mWorst} px");
         _mChecked = _mWithin = _mWorst = 0;
         Console.WriteLine($"[KF2] retained: {RetainedPlanes.Describe()}");
+        long facing = RetainedScene.FrontPixels + RetainedScene.BackPixels;
+        Console.WriteLine($"[KF2] retained: faces {(RetainedScene.CullBack ? "culled" : "not culled")}; " +
+                          (RetainedScene.CullBack
+                              ? $"{(facing == 0 ? 0 : 100.0 * RetainedScene.BackPixels / facing):F1}% of the planes' opaque pixels would show a face from behind with culling off"
+                              : "no count") +
+                          (RetainedScene.HalfGate
+                              ? $"; with every half reflected, {(RetainedScene.FrontPixels + RetainedScene.UndrawnPixels == 0 ? 0 : 100.0 * RetainedScene.UndrawnPixels / (RetainedScene.FrontPixels + RetainedScene.UndrawnPixels)):F1}% of them would be a map half the game did not draw"
+                              : "; every half reflected") +
+                          $"; {RetainedScene.OldCullVisible} mirrored chunk draw(s) the old distance cull dropped, keeping up to {RetainedScene.OldCullKeep:F2} of their colour");
         // The reflection pass's readback (KF2_SSR_PROBE=1): what each reflective pixel
         // took, and where the planes and the cubemap both answered, how far apart.
         Console.WriteLine($"[KF2] retained: last readback {PlanarReflections.PlanarPct:F1}% of reflective pixels planar, " +

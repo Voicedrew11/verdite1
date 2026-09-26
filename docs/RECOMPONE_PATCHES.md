@@ -1063,6 +1063,20 @@ Four files in the directory have no entry below:
   blending off. The port half is `patches/RetainedMap.cs`, `RetainedPlanes.cs` and
   `RetainedModels.cs`. Off by default. GL core only. **No recompile.** See "The
   retained scene" in `docs/RENDERING.md`.
+  Since amended: the mirror and the cube faces drew every face both ways, so the
+  top of anything above the water showed under it seen from behind; they cull the
+  faces the game culls now, clockwise being front through a mirror and a cube face
+  (`RetainedScene.CullBack`). The distance cull went by straight-line distance and
+  one fog, and dropped chunks at the picture's sides that kept up to 97% of their
+  colour; it goes by view depth and each chunk's own latest fog now
+  (`ChunkFogQ`). `WorldVs` fogs per pixel through `0048`'s `vFog`/`vLight`, and a
+  surface on a plane whose planar texel is empty reflects nothing rather than
+  marching the cubemap. Only the map halves the frame's own tile walk drew are
+  reflected (`Frame.Halves`, `Flags` bits 13-26, `uHalves` in `WorldVs`; the
+  shadow cubemaps are not gated), since the map holds both levels of every cell
+  and the game's visibility flood draws far fewer. The probe counts the
+  back-facing pixels, the undrawn halves' and the old cull's visible drops. The amendment is the second diff in the patch file. See "What the
+  mirror showed that it should not, and the fog it dropped" in `docs/RENDERING.md`.
 
 - `0073-texture-replacement-on-the-port-path.patch` — upstream's texture packs
   (`Assets/`) made to work in this port, and a way to see what they would key.

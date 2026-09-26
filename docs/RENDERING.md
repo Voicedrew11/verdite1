@@ -2319,10 +2319,96 @@ which reads the water's texture, not the scene.
 
 The static map is kept in 8x8-tile chunks, sorted by range and chunk. Each view —
 each plane, each cube face — draws only the chunks whose box is in front, inside
-its picture and nearer than the fog's black (past which any reflection is black),
-and for a plane, the part above it. At the `fdat02` spawn 5% of chunk tests pass and
+its picture and not wholly past the fog's black (by view depth and the chunk's own
+fog; see the next section), and for a plane, the part above it. At the `fdat02` spawn 5% of chunk tests pass and
 the triangles submitted fall 17-fold (98M to 5.7M every two seconds); the coverage
 the readback measures was identical before and after (61.9% planar, 58.1% cubemap).
+
+### What the mirror showed that it should not, and the fog it dropped
+
+Reported from play at the `fdat02` pier, 2026-09-26: the reflections did not look
+geometrically right, and distant geometry popped into them with no fog on it. Three
+defects, all in how the retained scene was drawn rather than in its geometry (the
+corners were already checked against the GTE's):
+
+- **Faces seen from behind were drawn.** The world program ran with culling off,
+  and every face the game draws is one-sided: the assemblers cull on `NormalClip`.
+  A mirror sees the scene from below, so the top of every floor, ledge and deck
+  above the water is seen from behind, and with no earth under it modelled it
+  showed as a floor lying under the water -- a textured slab in the reflection
+  beside the thing it belonged to. Both a mirror and a cube face (all six
+  rotations have determinant -1) turn the winding over, so the faces the game keeps
+  are clockwise there; `DrawWorldRanges` culls counter-clockwise ones
+  (`RetainedScene.CullBack`, `KF2_RETAINED_CULL=0` is the comparison). The probe
+  counts it on the planar pass: pixels whose nearest opaque face is a front face,
+  and pixels a back face drawn against that depth would still have taken. Over 100
+  views around the spawn (a 5x5 grid of 8192-unit steps, four headings, through
+  `view`), **mean 2.7% and up to 14.7% of the planes' opaque pixels** showed a face
+  from behind; 1.2% at the spawn itself.
+- **The distance cull was on the wrong measure.** A chunk was dropped once its
+  nearest point was further than the frame's fog black plus a tile, in straight-line
+  distance, with the one fog the GTE last held. The game's depth cue goes by view
+  depth, and depth is distance times the cosine of the ray: at the picture's corners
+  about 0.63 of it, so a chunk at the side was dropped while still lit. And each
+  light record has its own fog. Now each chunk carries its latest fog (the quotient
+  at which its last corner goes black, `RetainedScene.ChunkFogQ`), a mirrored chunk
+  is dropped only when its nearest corner's depth is past that, and a cube face,
+  drawn unfogged and fogged at the march for the whole path, drops a chunk past the
+  frame's black depth over the cosine of the picture's widest ray. The probe counts
+  the mirrored chunks the old rule dropped and what they kept: **every frame at the
+  spawn one, keeping up to 34% of its colour; over the sweep up to 97%** -- that is
+  the pop-in. More is drawn now (chunks 4320 to 6360 per two seconds at the spawn).
+- **The fog was per corner.** `WorldVs` darkened each corner's colour and let the
+  rasterizer interpolate it, where the game's faces, under per-pixel lighting, take
+  the curve at every pixel (`0048`). The raw IR0 goes as 1/z, which is affine on
+  screen, so it is now handed to `PrimFs` as `vFog` with the curve in `vLight`,
+  exactly as a recorded packet is, and `shade8` fogs it per pixel. A cube face is
+  unfogged, as before.
+
+**Reflecting halves the game never drew there.** Reported next, with two pictures a
+small camera move apart: a stone slab in the water beside the ledge, reaching well
+past the ledge's end, with nothing above the water to be its source -- and it came
+and went as the camera moved. The retained map is every half on the map, and the
+game draws far fewer: the tile walk draws only what `CullGrid`'s visibility grid
+lights, which is the view cone flooded out from the eye's own tile *on the eye's
+level* (the lower or the upper half of a stacked cell, `func_8002B6B4`), stopped by
+blocked cells and walls, and lights the other level only beside walls. So the mirror
+showed the other level's halves and cells the flood never reaches, and the 8x8-tile
+chunk culling swung them in and out a chunk at a time. The mirror's grid is the
+camera's: the cone depends on pitch only through `rcos(pitch)`, which a mirrored
+(negated) pitch leaves alone, the flood is two-dimensional, and its seed is the same
+tile. So each frame now records the halves its own walk drew (`TileWalk.RunTile`,
+after the far-model gate, into `RetainedScene.Frame.Halves`); every static corner
+carries its half (`Flags` bits 13-26); and `WorldVs` drops any half the frame did
+not draw, from a 160x80 byte texture (`uHalves`, unit 16) uploaded at present.
+Models carry no half and are what the object walk drew anyway. The lights' shadow
+cubemaps are not gated -- a light needs the walls the camera cannot see.
+`RetainedScene.HalfGate`, `KF2_RETAINED_GATE=0` to compare. The probe draws the
+undrawn halves against the gated depth and counts what they would have taken: at
+the spawn **11.9%** of the planar pixels (planar coverage 61.9% to 55.6% of the
+reflective pixels); over the same 100-view sweep, on average **2.2 times** as many
+pixels as everything kept, and in a view out to sea (camera at 63488, 114688,
+heading 3072) **99.0%** of what the mirror drew was halves the game did not draw.
+Everything reflected now is something the game shows from that eye, and appears in
+the reflection in the same frame it appears in the picture. **Judged by eye, 2026-09-26: worse than without the gate**, and kept for now at
+the user's word; `KF2_RETAINED_GATE=0` is the comparison. Why it reads worse is not
+yet known.
+
+And one change of rule: a pixel whose surface lies on a plane but whose planar texel
+is empty (open sky in the mirror) no longer marches the cubemap. The plane's answer
+is exact; the cube's has the camera's parallax, and could only put something there
+that is not. It reflects nothing, as a cube miss does. The probe's compare frame
+still marches it, so the readback's figures do not move.
+
+Measured after, `fdat02`, 144 fps, 16:9: 144.0 fps drawn at 19.9-20.0 ticks/s,
+`[present] wide 288`, no GL errors under `KF2_GLDEBUG=1`; the planes and the
+cubemap still agree (93.4% of planar pixels found by both, 3.7 apart against a
+control of 24.4 at the spawn; 95.1%, 12.6 against 84.6 in the 14.7% view); the
+planar pass 0.29 to 0.58 ms GPU with the probe's two counting draws in it.
+With the gate: 143.9-144.5 fps drawn at 19.9-20.0 ticks/s, planar pass 0.30 ms GPU,
+no GL errors. **Not judged by eye**: whether the pier and the rock now reflect as they should,
+and whether a thin deck, whose underside the game never modelled, now reads as
+missing from its reflection -- the price of drawing what the game would.
 
 ### What is measured
 

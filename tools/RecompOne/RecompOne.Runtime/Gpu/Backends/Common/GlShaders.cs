@@ -716,7 +716,11 @@ internal static class GlShaders
 
         // 0072. The retained planar reflection at this pixel: the first of the
         // frame's planes its surface lies on, read unmirrored, bent by the water's
-        // own brightness gradient as the old lookup was.
+        // own brightness gradient as the old lookup was. gRetEmpty: the surface is
+        // on a plane and the mirror drew nothing there, which is exact -- open sky
+        // -- and not a cue to march the cubemap, whose answer has the camera's
+        // parallax.
+        bool gRetEmpty = false;
         bool retPlanarAt(vec3 p, float rough, out vec3 c) {
             c = vec3(0.0);
             if (uRetPlanarN == 0) return false;
@@ -737,7 +741,7 @@ internal static class GlShaders
             muv = clamp(muv, vec2(0.0), vec2(1.0));
             vec3 pc = texture(uPlanar, tc(muv)).rgb;
             float pd = texture(uPlanarDepth, tc(muv)).r;
-            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) return false;
+            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) { gRetEmpty = true; return false; }
             c = pc;
             if (rough > 0.0) {
                 float zi = pd * FAR;
@@ -845,6 +849,7 @@ internal static class GlShaders
 
             vec3 pc;
             bool planarHit = planarAt(p, rough, pc) || retPlanarAt(p, rough, pc);
+            if (gRetEmpty && uCompare == 0) { emit(vec3(0.0), 0.0); return; }
             if (planarHit && uCompare == 0) {
                 oInfo.a += 4.0 / 255.0;
                 emit(pc * tint, w);
@@ -1039,6 +1044,10 @@ internal static class GlShaders
         uniform int   uMirror;
         uniform float uPlaneY;
         uniform float uPlaneBias;
+        // The map halves the frame's walk drew, one byte each; 1 draws only those,
+        // 2 only the others (the probe's count). Models carry no half.
+        uniform usampler2D uHalves;
+        uniform int uHalfGate;
 
         float cueKeep(float z) {
             int curve = int(inCue.z + 0.5);
@@ -1051,6 +1060,16 @@ internal static class GlShaders
         }
 
         void main() {
+            uint hid = (inFlags >> 13) & 0x3FFFu;
+            if (uHalfGate != 0) {
+                bool drawn = hid == 0u
+                    || texelFetch(uHalves, ivec2(int((hid - 1u) % 160u), int((hid - 1u) / 160u)), 0).r != 0u;
+                if (drawn != (uHalfGate == 1)) {
+                    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+                    gl_ClipDistance[0] = -1.0;
+                    return;
+                }
+            }
             vec3 w = inWorld;
             gl_ClipDistance[0] = (uPlaneY - uPlaneBias) - w.y;
             if (uMirror != 0) w.y = 2.0 * uPlaneY - w.y;
@@ -1060,9 +1079,20 @@ internal static class GlShaders
             vDepth = z > 0.0 ? z * (1.0 / 65536.0) : 0.0;
 
             vColor = vec4(inColorF * cueKeep(z), 0.0) / 255.0;
-            vLit = vec3(0.0);
-            vFog = 0.0;
-            vLight = 0u;
+            // Fogged per pixel as 0048 fogs the game's own faces: the raw IR0 is
+            // affine on screen (it goes as 1/z), so interpolated it is exact, and
+            // shade8 puts it through the curve at every pixel.
+            int curve = int(inCue.z + 0.5);
+            if (uFogOn != 0 && curve != 0) {
+                float q = min(uCueH * 65536.0 / max(z, 1.0), 131071.0);
+                vLit = inColorF;
+                vFog = (inCue.x * q + inCue.y) / 4096.0;
+                vLight = uint(curve) << 24;
+            } else {
+                vLit = vec3(0.0);
+                vFog = 0.0;
+                vLight = 0u;
+            }
             vTex = uvec2(inRect, inFlags & 0x80000000u);
             vMat = inFlags & 255u;
             vDither = 0;

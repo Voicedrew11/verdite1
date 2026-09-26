@@ -51,6 +51,20 @@ public static class RetainedScene
     /// <summary>0077. An effect (a spark, a flame): drawn, but it casts no shadow.</summary>
     public const uint FlagNoShadow = 0x1000u;
 
+    /// <summary>Bits 13-26: the map half a static corner belongs to, plus one
+    /// ((tile Z * 80 + tile X) * 2 + upper), 0 for anything else. A reflection draws
+    /// only the halves the game's own walk drew in that frame
+    /// (<see cref="Frame.Halves"/>).</summary>
+    public const int HalfShift = 13;
+    public const uint HalfBits = 0x3FFFu;
+    public const int HalvesW = 160, HalvesH = 80;
+
+    public static uint HalfFlag(int tx, int tz, int upper) => (uint)((tz * 80 + tx) * 2 + upper + 1) << HalfShift;
+
+    /// <summary>Reflect only the halves the game drew in the frame. Off, every half on
+    /// the map is reflected, including those its visibility flood leaves out.</summary>
+    public static bool HalfGate = true;
+
     /// <summary>The port's switch: draw reflections from this scene.</summary>
     public static bool Enabled;
 
@@ -73,6 +87,11 @@ public static class RetainedScene
     /// <summary>A cubemap face's size, in pixels, and the steps the reflection
     /// pass marches it in.</summary>
     public static int CubeSize = 256, CubeSteps = 48;
+
+    /// <summary>Cull the faces a view sees from behind, as the game's assemblers
+    /// do: a mirror or a cube face shows only what the game would draw from there.
+    /// Off, the underside of every floor above a plane is reflected.</summary>
+    public static bool CullBack = true;
 
     /// <summary>The probe's switch: GPU time per draw, read back with a query.</summary>
     public static bool Probe;
@@ -101,6 +120,12 @@ public static class RetainedScene
     public static readonly float[] ChunkMin = new float[Chunks * 3], ChunkMax = new float[Chunks * 3];
     public static readonly bool[] ChunkUsed = new bool[Chunks];
 
+    /// <summary>Each chunk's latest fog: the depth-cue quotient (H*65536/z) at and
+    /// below which its last corner is black, 0 when a corner never goes black; and
+    /// that corner's DQA, DQB and curve, for the probe.</summary>
+    public static readonly float[] ChunkFogQ = new float[Chunks];
+    public static readonly Vertex[] ChunkFogOf = new Vertex[Chunks];
+
     /// <summary>Draw ranges in <see cref="Static"/> as a whole: opaque first, then
     /// the semi-transparent triangles by blend mode.</summary>
     public static readonly int[] StaticStart = new int[5], StaticCount = new int[5];
@@ -114,6 +139,7 @@ public static class RetainedScene
         Array.Clear(ChunkUsed);
         for (int c = 0; c < Chunks; c++)
         {
+            ChunkFogQ[c] = float.MaxValue;
             ChunkMin[c * 3] = ChunkMin[c * 3 + 1] = ChunkMin[c * 3 + 2] = float.MaxValue;
             ChunkMax[c * 3] = ChunkMax[c * 3 + 1] = ChunkMax[c * 3 + 2] = float.MinValue;
         }
@@ -130,6 +156,8 @@ public static class RetainedScene
                 ChunkMin[c * 3] = Math.Min(ChunkMin[c * 3], v.X); ChunkMax[c * 3] = Math.Max(ChunkMax[c * 3], v.X);
                 ChunkMin[c * 3 + 1] = Math.Min(ChunkMin[c * 3 + 1], v.Y); ChunkMax[c * 3 + 1] = Math.Max(ChunkMax[c * 3 + 1], v.Y);
                 ChunkMin[c * 3 + 2] = Math.Min(ChunkMin[c * 3 + 2], v.Z); ChunkMax[c * 3 + 2] = Math.Max(ChunkMax[c * 3 + 2], v.Z);
+                float q = BlackQuotient(v);
+                if (q < ChunkFogQ[c]) { ChunkFogQ[c] = q; ChunkFogOf[c] = v; }
             }
         }
         int at = 0;
@@ -151,6 +179,27 @@ public static class RetainedScene
         }
         _staticCount = n;
         StaticGeneration++;
+    }
+
+    /// <summary>The quotient H*65536/z at and below which a corner's depth cue
+    /// leaves nothing (the curves WorldVs fogs with), or 0 when it never does.</summary>
+    public static float BlackQuotient(in Vertex v)
+    {
+        int curve = (int)(v.Curve + 0.5f);
+        if (curve == 0 || v.Dqa >= 0f) return 0f;
+        float ir0 = curve == 1 ? 2848f : 3232f;
+        return Math.Max(0f, (ir0 * 4096f - v.Dqb) / v.Dqa);
+    }
+
+    /// <summary>How much of a corner's colour survives the cue at view depth z.</summary>
+    public static float FogKeep(in Vertex v, float h, float z)
+    {
+        int curve = (int)(v.Curve + 0.5f);
+        if (curve == 0) return 1f;
+        float q = Math.Min(h * 65536f / Math.Max(z, 1f), 131071f);
+        float ir0 = Math.Clamp((v.Dqa * q + v.Dqb) / 4096f, 0f, 4096f);
+        float w = curve == 1 ? Math.Max(ir0 - 800f, 0f) * 2f : ir0 < 2800f ? ir0 : 3f * ir0 - 5600f;
+        return Math.Clamp(1f - w / 4096f, 0f, 1f);
     }
 
     static int ChunkOf(in Vertex a, in Vertex b, in Vertex c)
@@ -207,6 +256,9 @@ public static class RetainedScene
         public bool SortedValid;
         public readonly float[] Planes = new float[MaxPlanes];
         public int PlaneCount;
+        /// <summary>1 for each map half the frame's own tile walk drew, by
+        /// <c>(tile Z * 80 + tile X) * 2 + upper</c>.</summary>
+        public readonly byte[] Halves = new byte[HalvesW * HalvesH];
 
         public ReadOnlySpan<Vertex> SortedDynamic()
         {
@@ -241,6 +293,14 @@ public static class RetainedScene
         f.DynamicCount = 0;
         f.SortedValid = false;
         f.PlaneCount = 0;
+        Array.Clear(f.Halves);
+    }
+
+    /// <summary>A map half the current frame's walk drew.</summary>
+    public static void NoteHalf(int tx, int tz, int upper)
+    {
+        var f = Current;
+        if (f.Serial == _serial && (uint)tx < 80u && (uint)tz < 80u) f.Halves[(tz * 80 + tx) * 2 + upper] = 1;
     }
 
     /// <summary>One model's triangles, in world space, to the current frame.</summary>
@@ -287,5 +347,24 @@ public static class RetainedScene
     /// had fallen out of the ring.</summary>
     public static long Found, Missed;
 
-    public static void ResetCounters() => PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
+    /// <summary>The probe's, per planar pass: pixels whose nearest opaque face is a
+    /// front face, and those a back face would have covered with culling off.</summary>
+    public static long FrontPixels, BackPixels;
+
+    /// <summary>The probe's, per planar pass: pixels a map half the game did not draw
+    /// that frame would have taken with the gate off.</summary>
+    public static long UndrawnPixels;
+
+    /// <summary>The probe's: mirrored chunks drawn that the old distance cull
+    /// (straight-line distance past one fog's black) dropped, and the most of a
+    /// colour any of them keeps at its nearest depth.</summary>
+    public static long OldCullVisible;
+    public static float OldCullKeep;
+
+    public static void ResetCounters()
+    {
+        PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
+        FrontPixels = BackPixels = OldCullVisible = UndrawnPixels = 0;
+        OldCullKeep = 0f;
+    }
 }

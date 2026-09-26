@@ -30,7 +30,10 @@ public sealed partial class GlCore
 
     int _uSsrRetN, _uSsrRetPlane, _uSsrCubeOn, _uSsrToWorld, _uSsrViewT, _uSsrCubeSteps, _uSsrCubeSize;
 
-    const int CubeUnit = 9, CubeDepthUnit = 10, MaskUnit = 11;
+    const int CubeUnit = 9, CubeDepthUnit = 10, MaskUnit = 11, HalvesUnit = 16;
+
+    uint _halvesTex;
+    int _uwHalfGate;
 
     /// <summary>How far above a plane geometry must stand to be mirrored in it:
     /// the water itself, and anything lying in it, is not its own reflection.</summary>
@@ -51,22 +54,31 @@ public sealed partial class GlCore
         for (int i = 0; i < 8; i++) { _uwFluidRect[i] = L($"uFluidRect[{i}]"); _uwFluidOff[i] = L($"uFluidOff[{i}]"); }
         _uwMaskOn = L("uMaskOn"); _uwMaskPlane = L("uMaskPlane"); _uwMaskTol = L("uMaskTol");
         _uwMaskCentre = L("uMaskCentre"); _uwMaskH = L("uMaskH"); _uwMaskSize = L("uMaskSize");
+        _uwHalfGate = L("uHalfGate");
 
         _gl.UseProgram(_progWorld);
         void Unit(string n, int u) { int l = L(n); if (l >= 0) _gl.Uniform1(l, u); }
         Unit("uVram", 0); Unit("uDest", 1); Unit("uExtTex", 2); Unit("uRepTex", 3); Unit("uRepClut", 4);
-        Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit);
+        Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit); Unit("uHalves", HalvesUnit);
         void I(string n, int v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
         void F(string n, float v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
         int tw = L("uTexWindow");
         if (tw >= 0) _gl.Uniform4(tw, 255, 255, 0, 0);
         F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
         I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
-        I("uMaskOn", 0);
+        I("uMaskOn", 0); I("uHalfGate", 0);
         InitShadowUniforms(_progWorld, false);
         if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
         int pb = L("uPosBias");
         if (pb >= 0) _gl.Uniform2(pb, 0f, 0f);
+
+        _halvesTex = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, _halvesTex);
+        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8ui, RetainedScene.HalvesW, RetainedScene.HalvesH, 0,
+            PixelFormat.RedInteger, PixelType.UnsignedByte, null);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
+        _gl.BindTexture(TextureTarget.Texture2D, 0);
 
         _worldVbo = _gl.GenBuffer();
         _worldDynVbo = _gl.GenBuffer();
@@ -133,6 +145,14 @@ public sealed partial class GlCore
         _gl.BindTexture(TextureTarget.Texture2D, _vram.SampleTexture);
         if (_uwAniso >= 0) _gl.Uniform1(_uwAniso, (float)GteDepth.Anisotropy);
         SendWorldFluid();
+        // Only the map halves the frame's walk drew: its visibility flood from the
+        // eye's level, which a mirror (pitch negated, same cone) shares.
+        _gl.ActiveTexture(TextureUnit.Texture0 + HalvesUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, _halvesTex);
+        _gl.TexSubImage2D<byte>(TextureTarget.Texture2D, 0, 0, 0, RetainedScene.HalvesW, RetainedScene.HalvesH,
+            PixelFormat.RedInteger, PixelType.UnsignedByte, f.Halves);
+        _gl.ActiveTexture(TextureUnit.Texture0);
+        if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, RetainedScene.HalfGate ? 1 : 0);
 
         if (RetainedScene.Planar && f.PlaneCount > 0 && src.Surface != 0)
         {
@@ -143,10 +163,11 @@ public sealed partial class GlCore
         if (RetainedScene.Cube)
         {
             uint q = BeginRetainedTimer();
-            DrawRetainedCube(f);
+            DrawRetainedCube(f, src);
             EndRetainedTimer(q, ref _cubeQuery, false);
         }
 
+        if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, 0);
         // Dual-source factors left set are an error for any draw into more than one
         // buffer, blending on or not -- the reflection pass's probe draws into two.
         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.Zero);
@@ -219,6 +240,14 @@ public sealed partial class GlCore
     /// this game reflects uses it.</summary>
     void DrawWorldRanges(RetainedScene.Frame f)
     {
+        // A mirror and a cube face (whose rotations all have determinant -1) turn
+        // the winding over, so the faces the game keeps are clockwise here.
+        if (RetainedScene.CullBack)
+        {
+            _gl.Enable(EnableCap.CullFace);
+            _gl.FrontFace(FrontFaceDirection.CW);
+            _gl.CullFace(TriangleFace.Back);
+        }
         _gl.Enable(EnableCap.DepthTest);
         _gl.DepthFunc(DepthFunction.Lequal);
         _gl.DepthMask(true);
@@ -237,6 +266,47 @@ public sealed partial class GlCore
             RetainedScene.Triangles += DrawRange(1 + mode, f) / 3;
         }
         _gl.Disable(EnableCap.Blend);
+        _gl.Disable(EnableCap.CullFace);
+        _gl.FrontFace(FrontFaceDirection.Ccw);
+    }
+
+    /// <summary>The probe's count on the planar pass just drawn: pixels whose
+    /// nearest opaque face is a front face, and pixels a back face would have taken
+    /// with culling off (drawn against the culled depth, nearer than it or where
+    /// nothing was). Waits on the queries; the probe only.</summary>
+    void CountFacing(RetainedScene.Frame f)
+    {
+        if (!RetainedScene.CullBack) return;
+        _gl.ColorMask(false, false, false, false);
+        _gl.DepthMask(false);
+        _gl.Enable(EnableCap.DepthTest);
+        _gl.Disable(EnableCap.Blend);
+        _gl.Enable(EnableCap.CullFace);
+        _gl.FrontFace(FrontFaceDirection.CW);
+        long Count(TriangleFace cull, DepthFunction func)
+        {
+            _gl.CullFace(cull);
+            _gl.DepthFunc(func);
+            uint q = _gl.GenQuery();
+            _gl.BeginQuery(QueryTarget.SamplesPassed, q);
+            DrawRange(0, f);
+            _gl.EndQuery(QueryTarget.SamplesPassed);
+            _gl.GetQueryObject(q, QueryObjectParameterName.Result, out long n);
+            _gl.DeleteQuery(q);
+            return n;
+        }
+        RetainedScene.FrontPixels += Count(TriangleFace.Back, DepthFunction.Equal);
+        RetainedScene.BackPixels += Count(TriangleFace.Front, DepthFunction.Less);
+        if (RetainedScene.HalfGate && _uwHalfGate >= 0)
+        {
+            _gl.Uniform1(_uwHalfGate, 2);
+            RetainedScene.UndrawnPixels += Count(TriangleFace.Back, DepthFunction.Less);
+            _gl.Uniform1(_uwHalfGate, 1);
+        }
+        _gl.Disable(EnableCap.CullFace);
+        _gl.FrontFace(FrontFaceDirection.Ccw);
+        _gl.DepthFunc(DepthFunction.Lequal);
+        _gl.ColorMask(true, true, true, true);
     }
 
     /// <summary>Range <paramref name="r"/> of the visible static chunks, and of the
@@ -279,13 +349,19 @@ public sealed partial class GlCore
     long _chunksDrawn, _chunksTested;
 
     /// <summary>The static chunks this view can see: in front of the near plane,
-    /// inside the picture, nearer than the fog's black (past which a reflection
-    /// is black whatever it hits), and for a mirror above the plane. A chunk is
-    /// dropped only when all eight corners of its box fail one test.</summary>
+    /// inside the picture, not wholly past where the fog is black, and for a mirror
+    /// above the plane. A chunk is dropped only when all eight corners of its box
+    /// fail one test. The fog is the game's depth cue, on view depth: a mirrored
+    /// chunk is black once its nearest corner is deeper than the depth its own
+    /// latest fog is black at (<paramref name="cueH"/> the game's H). A cube face
+    /// is drawn unfogged and its hit fogged for the whole path at the picture's
+    /// pixel, so there the bound is the frame's black depth over the cosine of the
+    /// picture's widest ray (<paramref name="cubeReach"/>, infinite for none).</summary>
     void CullChunks(ReadOnlySpan<float> r, double camX, double camY, double camZ, float tx, float ty, float tz,
-                    float h, float cx, float cy, float fbW, float fbH, bool mirror, float planeY)
+                    float h, float cx, float cy, float fbW, float fbH, bool mirror, float planeY, float cueH,
+                    float cubeReach)
     {
-        float reach = Math.Max(ScreenReflections.March(), 4096f) + 2048f;
+        float oldReach = Math.Max(ScreenReflections.March(), 4096f) + 2048f;
         for (int c = 0; c < RetainedScene.Chunks; c++)
         {
             _chunkVis[c] = false;
@@ -300,16 +376,19 @@ public sealed partial class GlCore
                 (y0, y1) = (2f * planeY - y1, 2f * planeY - y0);
             }
             double nx = Math.Clamp(camX, x0, x1) - camX, ny = Math.Clamp(camY, y0, y1) - camY, nz = Math.Clamp(camZ, z0, z1) - camZ;
-            if (nx * nx + ny * ny + nz * nz > (double)reach * reach) continue;
+            double dist = Math.Sqrt(nx * nx + ny * ny + nz * nz);
+            if (!mirror && dist > cubeReach) continue;
             // local x = cx + h*x/z inside [0, fbW]: h*x + cx*z >= 0 and h*x + (cx - fbW)*z <= 0;
             // the same for y. Out when every corner fails one of the five.
             int near = 0, left = 0, right = 0, top = 0, bottom = 0;
+            float minZ = float.MaxValue;
             for (int k = 0; k < 8; k++)
             {
                 double dx = ((k & 1) != 0 ? x1 : x0) - camX, dy = ((k & 2) != 0 ? y1 : y0) - camY, dz = ((k & 4) != 0 ? z1 : z0) - camZ;
                 float qx = (float)(r[0] * dx + r[1] * dy + r[2] * dz) + tx;
                 float qy = (float)(r[3] * dx + r[4] * dy + r[5] * dz) + ty;
                 float qz = (float)(r[6] * dx + r[7] * dy + r[8] * dz) + tz;
+                minZ = Math.Min(minZ, qz);
                 if (qz < 16f) near++;
                 if (h * qx + cx * qz < 0f) left++;
                 if (h * qx + (cx - fbW) * qz > 0f) right++;
@@ -317,6 +396,17 @@ public sealed partial class GlCore
                 if (h * qy + (cy - fbH) * qz > 0f) bottom++;
             }
             if (near == 8 || left == 8 || right == 8 || top == 8 || bottom == 8) continue;
+            if (mirror)
+            {
+                float q = RetainedScene.ChunkFogQ[c];
+                if (q > 0f && minZ > cueH * 65536f / q) continue;
+                if (RetainedScene.Probe && dist > oldReach)
+                {
+                    RetainedScene.OldCullVisible++;
+                    float keep = RetainedScene.FogKeep(RetainedScene.ChunkFogOf[c], cueH, Math.Max(minZ, 16f));
+                    RetainedScene.OldCullKeep = Math.Max(RetainedScene.OldCullKeep, keep);
+                }
+            }
             _chunkVis[c] = true;
             _chunksDrawn++;
         }
@@ -381,10 +471,12 @@ public sealed partial class GlCore
             _retPlanes[k * 4 + 2] = v.R21;
             _retPlanes[k * 4 + 3] = (float)(v.CamY - h) - tdot;
             if (_uwPlaneY >= 0) _gl.Uniform1(_uwPlaneY, h);
-            CullChunks(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, true, h);
+            CullChunks(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, true, h, v.H,
+                       float.PositiveInfinity);
             if (_uwMaskPlane >= 0)
                 _gl.Uniform4(_uwMaskPlane, _retPlanes[k * 4], _retPlanes[k * 4 + 1], _retPlanes[k * 4 + 2], _retPlanes[k * 4 + 3]);
             DrawWorldRanges(f);
+            if (RetainedScene.Probe) CountFacing(f);
         }
 
         _gl.Disable(EnableCap.ClipDistance0);
@@ -447,11 +539,17 @@ public sealed partial class GlCore
         _cubeMade = n;
     }
 
-    void DrawRetainedCube(RetainedScene.Frame f)
+    void DrawRetainedCube(RetainedScene.Frame f, GlDisplayRt src)
     {
         int n = Math.Clamp(RetainedScene.CubeSize, 16, 2048);
         EnsureCube(n);
         var v = f.View;
+        // A hit's image is fogged at the picture pixel's depth along the whole path,
+        // and that depth is the path times the cosine of the pixel's ray, which is
+        // least at the picture's corners.
+        float cxm = v.Cx + src.Margin, hh = Math.Max(1f, v.H);
+        float ex = Math.Max(cxm, src.Wide1x - cxm) / hh, ey = Math.Max(v.Cy, src.H - v.Cy) / hh;
+        float cubeReach = ScreenReflections.FogBlackDepth() * MathF.Sqrt(ex * ex + ey * ey + 1f);
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _cubeFbo);
         _gl.Viewport(0, 0, (uint)n, (uint)n);
         if (_uwMirror >= 0) _gl.Uniform1(_uwMirror, 0);
@@ -469,7 +567,8 @@ public sealed partial class GlCore
             _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             SetWorldView(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, v.H,
                          false, 1);
-            CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f);
+            CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f,
+                       v.H, cubeReach);
             DrawWorldRanges(f);
         }
         _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeTex);

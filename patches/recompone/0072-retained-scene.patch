@@ -1220,3 +1220,484 @@ index 0000000..d9bf00f
 +
 +    public static void ResetCounters() => PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
 +}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+index cadf596..e8bb9c0 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+@@ -30,7 +30,10 @@ public sealed partial class GlCore
+ 
+     int _uSsrRetN, _uSsrRetPlane, _uSsrCubeOn, _uSsrToWorld, _uSsrViewT, _uSsrCubeSteps, _uSsrCubeSize;
+ 
+-    const int CubeUnit = 9, CubeDepthUnit = 10, MaskUnit = 11;
++    const int CubeUnit = 9, CubeDepthUnit = 10, MaskUnit = 11, HalvesUnit = 16;
++
++    uint _halvesTex;
++    int _uwHalfGate;
+ 
+     /// <summary>How far above a plane geometry must stand to be mirrored in it:
+     /// the water itself, and anything lying in it, is not its own reflection.</summary>
+@@ -51,23 +54,32 @@ public sealed partial class GlCore
+         for (int i = 0; i < 8; i++) { _uwFluidRect[i] = L($"uFluidRect[{i}]"); _uwFluidOff[i] = L($"uFluidOff[{i}]"); }
+         _uwMaskOn = L("uMaskOn"); _uwMaskPlane = L("uMaskPlane"); _uwMaskTol = L("uMaskTol");
+         _uwMaskCentre = L("uMaskCentre"); _uwMaskH = L("uMaskH"); _uwMaskSize = L("uMaskSize");
++        _uwHalfGate = L("uHalfGate");
+ 
+         _gl.UseProgram(_progWorld);
+         void Unit(string n, int u) { int l = L(n); if (l >= 0) _gl.Uniform1(l, u); }
+         Unit("uVram", 0); Unit("uDest", 1); Unit("uExtTex", 2); Unit("uRepTex", 3); Unit("uRepClut", 4);
+-        Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit);
++        Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit); Unit("uHalves", HalvesUnit);
+         void I(string n, int v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         void F(string n, float v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         int tw = L("uTexWindow");
+         if (tw >= 0) _gl.Uniform4(tw, 255, 255, 0, 0);
+         F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
+         I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
+-        I("uMaskOn", 0);
++        I("uMaskOn", 0); I("uHalfGate", 0);
+         InitShadowUniforms(_progWorld, false);
+         if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
+         int pb = L("uPosBias");
+         if (pb >= 0) _gl.Uniform2(pb, 0f, 0f);
+ 
++        _halvesTex = _gl.GenTexture();
++        _gl.BindTexture(TextureTarget.Texture2D, _halvesTex);
++        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8ui, RetainedScene.HalvesW, RetainedScene.HalvesH, 0,
++            PixelFormat.RedInteger, PixelType.UnsignedByte, null);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++        _gl.BindTexture(TextureTarget.Texture2D, 0);
++
+         _worldVbo = _gl.GenBuffer();
+         _worldDynVbo = _gl.GenBuffer();
+         _worldVao = MakeWorldVao(_worldVbo);
+@@ -133,6 +145,14 @@ public sealed partial class GlCore
+         _gl.BindTexture(TextureTarget.Texture2D, _vram.SampleTexture);
+         if (_uwAniso >= 0) _gl.Uniform1(_uwAniso, (float)GteDepth.Anisotropy);
+         SendWorldFluid();
++        // Only the map halves the frame's walk drew: its visibility flood from the
++        // eye's level, which a mirror (pitch negated, same cone) shares.
++        _gl.ActiveTexture(TextureUnit.Texture0 + HalvesUnit);
++        _gl.BindTexture(TextureTarget.Texture2D, _halvesTex);
++        _gl.TexSubImage2D<byte>(TextureTarget.Texture2D, 0, 0, 0, RetainedScene.HalvesW, RetainedScene.HalvesH,
++            PixelFormat.RedInteger, PixelType.UnsignedByte, f.Halves);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, RetainedScene.HalfGate ? 1 : 0);
+ 
+         if (RetainedScene.Planar && f.PlaneCount > 0 && src.Surface != 0)
+         {
+@@ -143,10 +163,11 @@ public sealed partial class GlCore
+         if (RetainedScene.Cube)
+         {
+             uint q = BeginRetainedTimer();
+-            DrawRetainedCube(f);
++            DrawRetainedCube(f, src);
+             EndRetainedTimer(q, ref _cubeQuery, false);
+         }
+ 
++        if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, 0);
+         // Dual-source factors left set are an error for any draw into more than one
+         // buffer, blending on or not -- the reflection pass's probe draws into two.
+         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.Zero);
+@@ -219,6 +240,14 @@ public sealed partial class GlCore
+     /// this game reflects uses it.</summary>
+     void DrawWorldRanges(RetainedScene.Frame f)
+     {
++        // A mirror and a cube face (whose rotations all have determinant -1) turn
++        // the winding over, so the faces the game keeps are clockwise here.
++        if (RetainedScene.CullBack)
++        {
++            _gl.Enable(EnableCap.CullFace);
++            _gl.FrontFace(FrontFaceDirection.CW);
++            _gl.CullFace(TriangleFace.Back);
++        }
+         _gl.Enable(EnableCap.DepthTest);
+         _gl.DepthFunc(DepthFunction.Lequal);
+         _gl.DepthMask(true);
+@@ -237,6 +266,47 @@ public sealed partial class GlCore
+             RetainedScene.Triangles += DrawRange(1 + mode, f) / 3;
+         }
+         _gl.Disable(EnableCap.Blend);
++        _gl.Disable(EnableCap.CullFace);
++        _gl.FrontFace(FrontFaceDirection.Ccw);
++    }
++
++    /// <summary>The probe's count on the planar pass just drawn: pixels whose
++    /// nearest opaque face is a front face, and pixels a back face would have taken
++    /// with culling off (drawn against the culled depth, nearer than it or where
++    /// nothing was). Waits on the queries; the probe only.</summary>
++    void CountFacing(RetainedScene.Frame f)
++    {
++        if (!RetainedScene.CullBack) return;
++        _gl.ColorMask(false, false, false, false);
++        _gl.DepthMask(false);
++        _gl.Enable(EnableCap.DepthTest);
++        _gl.Disable(EnableCap.Blend);
++        _gl.Enable(EnableCap.CullFace);
++        _gl.FrontFace(FrontFaceDirection.CW);
++        long Count(TriangleFace cull, DepthFunction func)
++        {
++            _gl.CullFace(cull);
++            _gl.DepthFunc(func);
++            uint q = _gl.GenQuery();
++            _gl.BeginQuery(QueryTarget.SamplesPassed, q);
++            DrawRange(0, f);
++            _gl.EndQuery(QueryTarget.SamplesPassed);
++            _gl.GetQueryObject(q, QueryObjectParameterName.Result, out long n);
++            _gl.DeleteQuery(q);
++            return n;
++        }
++        RetainedScene.FrontPixels += Count(TriangleFace.Back, DepthFunction.Equal);
++        RetainedScene.BackPixels += Count(TriangleFace.Front, DepthFunction.Less);
++        if (RetainedScene.HalfGate && _uwHalfGate >= 0)
++        {
++            _gl.Uniform1(_uwHalfGate, 2);
++            RetainedScene.UndrawnPixels += Count(TriangleFace.Back, DepthFunction.Less);
++            _gl.Uniform1(_uwHalfGate, 1);
++        }
++        _gl.Disable(EnableCap.CullFace);
++        _gl.FrontFace(FrontFaceDirection.Ccw);
++        _gl.DepthFunc(DepthFunction.Lequal);
++        _gl.ColorMask(true, true, true, true);
+     }
+ 
+     /// <summary>Range <paramref name="r"/> of the visible static chunks, and of the
+@@ -279,13 +349,19 @@ public sealed partial class GlCore
+     long _chunksDrawn, _chunksTested;
+ 
+     /// <summary>The static chunks this view can see: in front of the near plane,
+-    /// inside the picture, nearer than the fog's black (past which a reflection
+-    /// is black whatever it hits), and for a mirror above the plane. A chunk is
+-    /// dropped only when all eight corners of its box fail one test.</summary>
++    /// inside the picture, not wholly past where the fog is black, and for a mirror
++    /// above the plane. A chunk is dropped only when all eight corners of its box
++    /// fail one test. The fog is the game's depth cue, on view depth: a mirrored
++    /// chunk is black once its nearest corner is deeper than the depth its own
++    /// latest fog is black at (<paramref name="cueH"/> the game's H). A cube face
++    /// is drawn unfogged and its hit fogged for the whole path at the picture's
++    /// pixel, so there the bound is the frame's black depth over the cosine of the
++    /// picture's widest ray (<paramref name="cubeReach"/>, infinite for none).</summary>
+     void CullChunks(ReadOnlySpan<float> r, double camX, double camY, double camZ, float tx, float ty, float tz,
+-                    float h, float cx, float cy, float fbW, float fbH, bool mirror, float planeY)
++                    float h, float cx, float cy, float fbW, float fbH, bool mirror, float planeY, float cueH,
++                    float cubeReach)
+     {
+-        float reach = Math.Max(ScreenReflections.March(), 4096f) + 2048f;
++        float oldReach = Math.Max(ScreenReflections.March(), 4096f) + 2048f;
+         for (int c = 0; c < RetainedScene.Chunks; c++)
+         {
+             _chunkVis[c] = false;
+@@ -300,16 +376,19 @@ public sealed partial class GlCore
+                 (y0, y1) = (2f * planeY - y1, 2f * planeY - y0);
+             }
+             double nx = Math.Clamp(camX, x0, x1) - camX, ny = Math.Clamp(camY, y0, y1) - camY, nz = Math.Clamp(camZ, z0, z1) - camZ;
+-            if (nx * nx + ny * ny + nz * nz > (double)reach * reach) continue;
++            double dist = Math.Sqrt(nx * nx + ny * ny + nz * nz);
++            if (!mirror && dist > cubeReach) continue;
+             // local x = cx + h*x/z inside [0, fbW]: h*x + cx*z >= 0 and h*x + (cx - fbW)*z <= 0;
+             // the same for y. Out when every corner fails one of the five.
+             int near = 0, left = 0, right = 0, top = 0, bottom = 0;
++            float minZ = float.MaxValue;
+             for (int k = 0; k < 8; k++)
+             {
+                 double dx = ((k & 1) != 0 ? x1 : x0) - camX, dy = ((k & 2) != 0 ? y1 : y0) - camY, dz = ((k & 4) != 0 ? z1 : z0) - camZ;
+                 float qx = (float)(r[0] * dx + r[1] * dy + r[2] * dz) + tx;
+                 float qy = (float)(r[3] * dx + r[4] * dy + r[5] * dz) + ty;
+                 float qz = (float)(r[6] * dx + r[7] * dy + r[8] * dz) + tz;
++                minZ = Math.Min(minZ, qz);
+                 if (qz < 16f) near++;
+                 if (h * qx + cx * qz < 0f) left++;
+                 if (h * qx + (cx - fbW) * qz > 0f) right++;
+@@ -317,6 +396,17 @@ public sealed partial class GlCore
+                 if (h * qy + (cy - fbH) * qz > 0f) bottom++;
+             }
+             if (near == 8 || left == 8 || right == 8 || top == 8 || bottom == 8) continue;
++            if (mirror)
++            {
++                float q = RetainedScene.ChunkFogQ[c];
++                if (q > 0f && minZ > cueH * 65536f / q) continue;
++                if (RetainedScene.Probe && dist > oldReach)
++                {
++                    RetainedScene.OldCullVisible++;
++                    float keep = RetainedScene.FogKeep(RetainedScene.ChunkFogOf[c], cueH, Math.Max(minZ, 16f));
++                    RetainedScene.OldCullKeep = Math.Max(RetainedScene.OldCullKeep, keep);
++                }
++            }
+             _chunkVis[c] = true;
+             _chunksDrawn++;
+         }
+@@ -381,10 +471,12 @@ public sealed partial class GlCore
+             _retPlanes[k * 4 + 2] = v.R21;
+             _retPlanes[k * 4 + 3] = (float)(v.CamY - h) - tdot;
+             if (_uwPlaneY >= 0) _gl.Uniform1(_uwPlaneY, h);
+-            CullChunks(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, true, h);
++            CullChunks(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, true, h, v.H,
++                       float.PositiveInfinity);
+             if (_uwMaskPlane >= 0)
+                 _gl.Uniform4(_uwMaskPlane, _retPlanes[k * 4], _retPlanes[k * 4 + 1], _retPlanes[k * 4 + 2], _retPlanes[k * 4 + 3]);
+             DrawWorldRanges(f);
++            if (RetainedScene.Probe) CountFacing(f);
+         }
+ 
+         _gl.Disable(EnableCap.ClipDistance0);
+@@ -447,11 +539,17 @@ public sealed partial class GlCore
+         _cubeMade = n;
+     }
+ 
+-    void DrawRetainedCube(RetainedScene.Frame f)
++    void DrawRetainedCube(RetainedScene.Frame f, GlDisplayRt src)
+     {
+         int n = Math.Clamp(RetainedScene.CubeSize, 16, 2048);
+         EnsureCube(n);
+         var v = f.View;
++        // A hit's image is fogged at the picture pixel's depth along the whole path,
++        // and that depth is the path times the cosine of the pixel's ray, which is
++        // least at the picture's corners.
++        float cxm = v.Cx + src.Margin, hh = Math.Max(1f, v.H);
++        float ex = Math.Max(cxm, src.Wide1x - cxm) / hh, ey = Math.Max(v.Cy, src.H - v.Cy) / hh;
++        float cubeReach = ScreenReflections.FogBlackDepth() * MathF.Sqrt(ex * ex + ey * ey + 1f);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _cubeFbo);
+         _gl.Viewport(0, 0, (uint)n, (uint)n);
+         if (_uwMirror >= 0) _gl.Uniform1(_uwMirror, 0);
+@@ -469,7 +567,8 @@ public sealed partial class GlCore
+             _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+             SetWorldView(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, v.H,
+                          false, 1);
+-            CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f);
++            CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f,
++                       v.H, cubeReach);
+             DrawWorldRanges(f);
+         }
+         _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeTex);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 6f04e56..5c5a158 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -716,7 +716,11 @@ internal static class GlShaders
+ 
+         // 0072. The retained planar reflection at this pixel: the first of the
+         // frame's planes its surface lies on, read unmirrored, bent by the water's
+-        // own brightness gradient as the old lookup was.
++        // own brightness gradient as the old lookup was. gRetEmpty: the surface is
++        // on a plane and the mirror drew nothing there, which is exact -- open sky
++        // -- and not a cue to march the cubemap, whose answer has the camera's
++        // parallax.
++        bool gRetEmpty = false;
+         bool retPlanarAt(vec3 p, float rough, out vec3 c) {
+             c = vec3(0.0);
+             if (uRetPlanarN == 0) return false;
+@@ -737,7 +741,7 @@ internal static class GlShaders
+             muv = clamp(muv, vec2(0.0), vec2(1.0));
+             vec3 pc = texture(uPlanar, tc(muv)).rgb;
+             float pd = texture(uPlanarDepth, tc(muv)).r;
+-            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) return false;
++            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) { gRetEmpty = true; return false; }
+             c = pc;
+             if (rough > 0.0) {
+                 float zi = pd * FAR;
+@@ -845,6 +849,7 @@ internal static class GlShaders
+ 
+             vec3 pc;
+             bool planarHit = planarAt(p, rough, pc) || retPlanarAt(p, rough, pc);
++            if (gRetEmpty && uCompare == 0) { emit(vec3(0.0), 0.0); return; }
+             if (planarHit && uCompare == 0) {
+                 oInfo.a += 4.0 / 255.0;
+                 emit(pc * tint, w);
+@@ -1039,6 +1044,10 @@ internal static class GlShaders
+         uniform int   uMirror;
+         uniform float uPlaneY;
+         uniform float uPlaneBias;
++        // The map halves the frame's walk drew, one byte each; 1 draws only those,
++        // 2 only the others (the probe's count). Models carry no half.
++        uniform usampler2D uHalves;
++        uniform int uHalfGate;
+ 
+         float cueKeep(float z) {
+             int curve = int(inCue.z + 0.5);
+@@ -1051,6 +1060,16 @@ internal static class GlShaders
+         }
+ 
+         void main() {
++            uint hid = (inFlags >> 13) & 0x3FFFu;
++            if (uHalfGate != 0) {
++                bool drawn = hid == 0u
++                    || texelFetch(uHalves, ivec2(int((hid - 1u) % 160u), int((hid - 1u) / 160u)), 0).r != 0u;
++                if (drawn != (uHalfGate == 1)) {
++                    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
++                    gl_ClipDistance[0] = -1.0;
++                    return;
++                }
++            }
+             vec3 w = inWorld;
+             gl_ClipDistance[0] = (uPlaneY - uPlaneBias) - w.y;
+             if (uMirror != 0) w.y = 2.0 * uPlaneY - w.y;
+@@ -1060,9 +1079,20 @@ internal static class GlShaders
+             vDepth = z > 0.0 ? z * (1.0 / 65536.0) : 0.0;
+ 
+             vColor = vec4(inColorF * cueKeep(z), 0.0) / 255.0;
+-            vLit = vec3(0.0);
+-            vFog = 0.0;
+-            vLight = 0u;
++            // Fogged per pixel as 0048 fogs the game's own faces: the raw IR0 is
++            // affine on screen (it goes as 1/z), so interpolated it is exact, and
++            // shade8 puts it through the curve at every pixel.
++            int curve = int(inCue.z + 0.5);
++            if (uFogOn != 0 && curve != 0) {
++                float q = min(uCueH * 65536.0 / max(z, 1.0), 131071.0);
++                vLit = inColorF;
++                vFog = (inCue.x * q + inCue.y) / 4096.0;
++                vLight = uint(curve) << 24;
++            } else {
++                vLit = vec3(0.0);
++                vFog = 0.0;
++                vLight = 0u;
++            }
+             vTex = uvec2(inRect, inFlags & 0x80000000u);
+             vMat = inFlags & 255u;
+             vDither = 0;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+index 98d4052..ed64ea9 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -51,6 +51,20 @@ public static class RetainedScene
+     /// <summary>0077. An effect (a spark, a flame): drawn, but it casts no shadow.</summary>
+     public const uint FlagNoShadow = 0x1000u;
+ 
++    /// <summary>Bits 13-26: the map half a static corner belongs to, plus one
++    /// ((tile Z * 80 + tile X) * 2 + upper), 0 for anything else. A reflection draws
++    /// only the halves the game's own walk drew in that frame
++    /// (<see cref="Frame.Halves"/>).</summary>
++    public const int HalfShift = 13;
++    public const uint HalfBits = 0x3FFFu;
++    public const int HalvesW = 160, HalvesH = 80;
++
++    public static uint HalfFlag(int tx, int tz, int upper) => (uint)((tz * 80 + tx) * 2 + upper + 1) << HalfShift;
++
++    /// <summary>Reflect only the halves the game drew in the frame. Off, every half on
++    /// the map is reflected, including those its visibility flood leaves out.</summary>
++    public static bool HalfGate = true;
++
+     /// <summary>The port's switch: draw reflections from this scene.</summary>
+     public static bool Enabled;
+ 
+@@ -74,6 +88,11 @@ public static class RetainedScene
+     /// pass marches it in.</summary>
+     public static int CubeSize = 256, CubeSteps = 48;
+ 
++    /// <summary>Cull the faces a view sees from behind, as the game's assemblers
++    /// do: a mirror or a cube face shows only what the game would draw from there.
++    /// Off, the underside of every floor above a plane is reflected.</summary>
++    public static bool CullBack = true;
++
+     /// <summary>The probe's switch: GPU time per draw, read back with a query.</summary>
+     public static bool Probe;
+ 
+@@ -101,6 +120,12 @@ public static class RetainedScene
+     public static readonly float[] ChunkMin = new float[Chunks * 3], ChunkMax = new float[Chunks * 3];
+     public static readonly bool[] ChunkUsed = new bool[Chunks];
+ 
++    /// <summary>Each chunk's latest fog: the depth-cue quotient (H*65536/z) at and
++    /// below which its last corner is black, 0 when a corner never goes black; and
++    /// that corner's DQA, DQB and curve, for the probe.</summary>
++    public static readonly float[] ChunkFogQ = new float[Chunks];
++    public static readonly Vertex[] ChunkFogOf = new Vertex[Chunks];
++
+     /// <summary>Draw ranges in <see cref="Static"/> as a whole: opaque first, then
+     /// the semi-transparent triangles by blend mode.</summary>
+     public static readonly int[] StaticStart = new int[5], StaticCount = new int[5];
+@@ -114,6 +139,7 @@ public static class RetainedScene
+         Array.Clear(ChunkUsed);
+         for (int c = 0; c < Chunks; c++)
+         {
++            ChunkFogQ[c] = float.MaxValue;
+             ChunkMin[c * 3] = ChunkMin[c * 3 + 1] = ChunkMin[c * 3 + 2] = float.MaxValue;
+             ChunkMax[c * 3] = ChunkMax[c * 3 + 1] = ChunkMax[c * 3 + 2] = float.MinValue;
+         }
+@@ -130,6 +156,8 @@ public static class RetainedScene
+                 ChunkMin[c * 3] = Math.Min(ChunkMin[c * 3], v.X); ChunkMax[c * 3] = Math.Max(ChunkMax[c * 3], v.X);
+                 ChunkMin[c * 3 + 1] = Math.Min(ChunkMin[c * 3 + 1], v.Y); ChunkMax[c * 3 + 1] = Math.Max(ChunkMax[c * 3 + 1], v.Y);
+                 ChunkMin[c * 3 + 2] = Math.Min(ChunkMin[c * 3 + 2], v.Z); ChunkMax[c * 3 + 2] = Math.Max(ChunkMax[c * 3 + 2], v.Z);
++                float q = BlackQuotient(v);
++                if (q < ChunkFogQ[c]) { ChunkFogQ[c] = q; ChunkFogOf[c] = v; }
+             }
+         }
+         int at = 0;
+@@ -153,6 +181,27 @@ public static class RetainedScene
+         StaticGeneration++;
+     }
+ 
++    /// <summary>The quotient H*65536/z at and below which a corner's depth cue
++    /// leaves nothing (the curves WorldVs fogs with), or 0 when it never does.</summary>
++    public static float BlackQuotient(in Vertex v)
++    {
++        int curve = (int)(v.Curve + 0.5f);
++        if (curve == 0 || v.Dqa >= 0f) return 0f;
++        float ir0 = curve == 1 ? 2848f : 3232f;
++        return Math.Max(0f, (ir0 * 4096f - v.Dqb) / v.Dqa);
++    }
++
++    /// <summary>How much of a corner's colour survives the cue at view depth z.</summary>
++    public static float FogKeep(in Vertex v, float h, float z)
++    {
++        int curve = (int)(v.Curve + 0.5f);
++        if (curve == 0) return 1f;
++        float q = Math.Min(h * 65536f / Math.Max(z, 1f), 131071f);
++        float ir0 = Math.Clamp((v.Dqa * q + v.Dqb) / 4096f, 0f, 4096f);
++        float w = curve == 1 ? Math.Max(ir0 - 800f, 0f) * 2f : ir0 < 2800f ? ir0 : 3f * ir0 - 5600f;
++        return Math.Clamp(1f - w / 4096f, 0f, 1f);
++    }
++
+     static int ChunkOf(in Vertex a, in Vertex b, in Vertex c)
+     {
+         int cx = Math.Clamp((int)((a.X + b.X + c.X) / 3f / ChunkUnits), 0, ChunkSide - 1);
+@@ -207,6 +256,9 @@ public static class RetainedScene
+         public bool SortedValid;
+         public readonly float[] Planes = new float[MaxPlanes];
+         public int PlaneCount;
++        /// <summary>1 for each map half the frame's own tile walk drew, by
++        /// <c>(tile Z * 80 + tile X) * 2 + upper</c>.</summary>
++        public readonly byte[] Halves = new byte[HalvesW * HalvesH];
+ 
+         public ReadOnlySpan<Vertex> SortedDynamic()
+         {
+@@ -241,6 +293,14 @@ public static class RetainedScene
+         f.DynamicCount = 0;
+         f.SortedValid = false;
+         f.PlaneCount = 0;
++        Array.Clear(f.Halves);
++    }
++
++    /// <summary>A map half the current frame's walk drew.</summary>
++    public static void NoteHalf(int tx, int tz, int upper)
++    {
++        var f = Current;
++        if (f.Serial == _serial && (uint)tx < 80u && (uint)tz < 80u) f.Halves[(tz * 80 + tx) * 2 + upper] = 1;
+     }
+ 
+     /// <summary>One model's triangles, in world space, to the current frame.</summary>
+@@ -287,5 +347,24 @@ public static class RetainedScene
+     /// had fallen out of the ring.</summary>
+     public static long Found, Missed;
+ 
+-    public static void ResetCounters() => PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
++    /// <summary>The probe's, per planar pass: pixels whose nearest opaque face is a
++    /// front face, and those a back face would have covered with culling off.</summary>
++    public static long FrontPixels, BackPixels;
++
++    /// <summary>The probe's, per planar pass: pixels a map half the game did not draw
++    /// that frame would have taken with the gate off.</summary>
++    public static long UndrawnPixels;
++
++    /// <summary>The probe's: mirrored chunks drawn that the old distance cull
++    /// (straight-line distance past one fog's black) dropped, and the most of a
++    /// colour any of them keeps at its nearest depth.</summary>
++    public static long OldCullVisible;
++    public static float OldCullKeep;
++
++    public static void ResetCounters()
++    {
++        PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
++        FrontPixels = BackPixels = OldCullVisible = UndrawnPixels = 0;
++        OldCullKeep = 0f;
++    }
+ }
