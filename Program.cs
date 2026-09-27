@@ -626,6 +626,9 @@ Kf2.Subpixel.Install();
 //                          picture that costs
 //     KF2_ZBUFFER_SOURCE=map  depth from the address map instead of the assemblers
 //     KF2_ZBUFFER_BIAS=1 KF2_ZBUFFER_SLOPE=0.5  coplanar tolerance: SZ units, and pixels of slope
+//     KF2_BLENDORDER=0        blended surfaces (water) drawn in table order again, under
+//                             opaque geometry behind them that the table put later (0079)
+//     KF2_BLENDORDER_PROBE=1  opaque samples drawn over a nearer translucent surface
 //
 // Off by default where perspective correction is on -- the recovered number is
 // the same one, but the picture has not been checked by eye. Its switch is under
@@ -635,7 +638,9 @@ Kf2.ZBuffer.Configure(Environment.GetEnvironmentVariable("KF2_ZBUFFER"),
                       Environment.GetEnvironmentVariable("KF2_ZBUFFER_THRESHOLD"),
                       Environment.GetEnvironmentVariable("KF2_ZBUFFER_SOURCE"),
                       Environment.GetEnvironmentVariable("KF2_ZBUFFER_BIAS"),
-                      Environment.GetEnvironmentVariable("KF2_ZBUFFER_SLOPE"));
+                      Environment.GetEnvironmentVariable("KF2_ZBUFFER_SLOPE"),
+                      Environment.GetEnvironmentVariable("KF2_BLENDORDER"),
+                      Environment.GetEnvironmentVariable("KF2_BLENDORDER_PROBE"));
 Kf2.ZBuffer.Install();
 
 // Ambient occlusion -- contact shading in the corners, under the doorframes and

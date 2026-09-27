@@ -369,7 +369,7 @@ How the vendored RecompOne checkout is kept, why it is not a patch stack, and wh
 
 ### [RECOMPONE_PATCHES.md](docs/RECOMPONE_PATCHES.md)
 
-Every change the port made to RecompOne, `0001`-`0073`, one entry each.
+Every change the port made to RecompOne, `0001`-`0079`, one entry each.
 
 ### [TODO.md](docs/TODO.md)
 

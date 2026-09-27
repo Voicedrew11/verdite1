@@ -29,7 +29,7 @@ you would be doing when you need them:
 | `docs/RECOMPILATION.md` | config, overlays, function maps, SDK addresses |
 | `docs/RUNTIME.md` | interrupts, HLE, the `patches/recompone/` stack |
 | `docs/RECOMPONE_FORK.md` | the vendored checkout, and merging from upstream |
-| `docs/RECOMPONE_PATCHES.md` | every change the port made to RecompOne, `0001`-`0078` |
+| `docs/RECOMPONE_PATCHES.md` | every change the port made to RecompOne, `0001`-`0079` |
 | `docs/RENDERING.md` | perspective correction, sub-pixel, Z-buffer, dither |
 | `docs/WIDESCREEN.md` | aspect ratio, the HUD, the three culls |
 | `docs/AUDIO.md` | SPU interpolation, reverb, XA resampling, the host output |
@@ -174,7 +174,7 @@ what it is) live there, not here.
 | `Stage13`, `CameraBlock` | stage 13 `func_800342D8` and its camera block `func_8002E22C` in C#: nineteen calls, each through its hooks, and the HUD block, with the compass needle's spring at `0x8006E608` stepped on the tick (`KF2_STAGE13_NEEDLE=0` to compare); `Stage13.HookOrder` orders the hooks on it (`0070`); `Stage13.ViewOverride` draws the frame from a `Camera` of the port's, the cull grid following; `Stage13.DrawScene` is the drawing half (`MenuWorld`); `CameraBlock.Build` (`PlanarWalk`); `ScenePass` points the frame at a table and arena of the port's and puts everything back (both); `KF2_STAGE13=verify` records the recompiled routine's calls and replays ours against them, `KF2_CAMERABLOCK=verify` diffs both | on; no override | PATCHES_AND_MODS, "Stage 13 in C#", "Drawing the frame from another camera", "The compass needle is held to the tick", "The hooks on stage 13 are ordered by what they need", "A pass of the port's own"; GAME_INTERNALS, "Stage 13's HUD block, and the compass needle" |
 | `Perspective` | perspective-correct textures (`0009`, `0012`) | on | RENDERING, "Perspective correction" |
 | `Subpixel` | sub-pixel vertex positions (`0010`); under it, the C# assemblers' backface cull is taken at the fractional corners (`0052`, `KF2_SUBPIXEL_CULL=0` to compare) | on | RENDERING, "Sub-pixel vertex positioning", "A thin face was culled on whole pixels" |
-| `ZBuffer` | per-pixel occlusion; depth from the C# assemblers' packet records (`0050`), coplanar tolerance on the test (`0051`), the address map without Fast geometry (`0014`, `0036`); Video ▸ Enhancements, with two tolerance sliders | on | RENDERING, "Z-buffer", "The assemblers write the depth" |
+| `ZBuffer` | per-pixel occlusion; depth from the C# assemblers' packet records (`0050`), coplanar tolerance on the test (`0051`), the address map without Fast geometry (`0014`, `0036`); blended surfaces drawn after the opaque ones the table put behind them, so a fish or the floor under the water no longer paints over it (`0079`, `KF2_BLENDORDER=0` to compare); Video ▸ Enhancements, with two tolerance sliders | on | RENDERING, "Z-buffer", "The assemblers write the depth", "Water was painted over by what lay under it" |
 | `Pgxp` | upstream's PGXP as the vertex source (`0034`-`0036`); env only | off | RENDERING, "PGXP has no control in the window" |
 | `AmbientOcclusion` | SSAO from painter's-order depth (`0040`), normals from the frame's own geometry redrawn into a G-buffer (`0058`); optional world-space term marching the area's tile grid, so off-screen geometry occludes (`0059`, off); the *SSAO* slider is Off/Low/Medium/High, and the three qualities cap the pass at 1x/2x the game's pixels or runs it at the render scale | on, Medium | RENDERING, "Ambient occlusion", "The normal was the guess", "Occluders the camera cannot see", "What the pass costs" |
 | `Reflections` | screen-space reflections on water (`0067`): the normal pass gains a surface buffer (normal, depth, material per pixel) that keeps the translucent water the depth buffer cannot; water found by the fluid slots' VRAM rects, translucent in an averaging blend; the material id is there for lighting later; the pass runs for any of the march, `Murk`, `PlanarWalk` or `RetainedMap`, each on its own switch | off (not judged) | RENDERING, "Screen-space reflections", "The reflection pass runs for each term on its own" |
@@ -437,7 +437,7 @@ removed for the same reason.
 
 **`tools/RecompOne/` is vendored: an edit inside it is a change to this
 repository like any other.** `patches/recompone/*.patch` are kept as the record of
-what the port changed and why, and the numbers (`0001`-`0078`) are how the source
+what the port changed and why, and the numbers (`0001`-`0079`) are how the source
 refers to each change, but they are **no longer replayed**. The merge base is
 `tools/RecompOne/UPSTREAM` (currently `d81dec8`); the fork's history is the
 gitignored `tools/RecompOne.git/`, reached with

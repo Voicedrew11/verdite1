@@ -30,6 +30,8 @@ public static class GtePacketDepth
         // 0067. The surface's material (SurfaceMaterial), when the port that built
         // the packet knows it; None leaves the choice to the texture.
         public byte Material;
+        // 0079. Built by the model submitter rather than the tile walk; the probe's only.
+        public bool Model;
     }
 
     /// <summary>The port's switch.</summary>
@@ -74,6 +76,18 @@ public static class GtePacketDepth
         found = true;
         Hits++;
         return ref r;
+    }
+
+    /// <summary>0079. <see cref="Find"/> without the hit and miss counters.</summary>
+    public static bool Peek(uint cmdSrc, uint cmd, uint xy0, uint xyLast, out Rec rec)
+    {
+        rec = default;
+        uint i = ((cmdSrc & 0x1FFFFFFFu) - 4u - _base) >> 2;
+        if (_recs == null || cmdSrc == 0 || i >= _count) return false;
+        ref readonly var r = ref _recs[i];
+        if (r.Cmd == 0 || r.Cmd != cmd || r.Xy0 != xy0 || r.XyLast != xyLast) return false;
+        rec = r;
+        return true;
     }
 
     /// <summary>Records written, and polygons that found theirs or did not.</summary>

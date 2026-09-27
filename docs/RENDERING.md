@@ -725,7 +725,9 @@ coordinate was read from. `patches/recompone/0014` is the rest:
 - **2D never hits**, so the HUD, the menus and the death fade still draw on top
   in table order with the depth test off.
 - **Semi-transparent tests and does not write**, so two overlapping additives
-  still blend in the order the table named.
+  still blend in the order the table named. They are drawn after the opaque
+  geometry the table put behind them, or that geometry paints over them (`0079`;
+  "Water was painted over by what lay under it" below).
 - **Untextured geometry is tested too.** Perspective correction only cares about
   textured polygons; a flat-shaded wall still has a view depth. `HasPersp` and
   `HasGteZ` are independent on `HleVertex` so putting SZ into clip W does not
@@ -970,6 +972,65 @@ look shifted, lower *Seam tolerance* (`KF2_ZBUFFER_BIAS`).
 Whether these two panels are separate tiles' faces, as assumed, or share vertices was
 not established. If they share vertices, neither change should have been needed, and
 a seam still fighting at a generous tolerance means the cause is something else.
+
+### Water was painted over by what lay under it
+
+**Mechanism measured; the picture has not been looked at.**
+
+Reported from play, and present since the start: fish and bones lying in the water
+drawn on top of it, and now and then a triangle or two of water missing. Both are one
+defect. **A blended polygon is depth-tested and writes no depth** (the bullet at the
+head of this section), so wherever the water is, the depth buffer holds whatever lies
+under it. Anything opaque that the ordering table puts *after* the water passes the
+test there and draws over it, as it did on the console, which had no test at all.
+The table does put such things after the water, for two reasons:
+
+- **Models are pulled forward.** The tile walk links every map tile 240 entries back
+  (`func_80031950` passes `0xF0` as the slot bias); the model submitter adds 240 only
+  when the model sits at or above the camera, and otherwise uses the caller's own
+  small bias (a creature's `rec+0x15`, 20 or -60 for the effects). A fish on the sea
+  floor below the camera therefore sorts a few hundred SZ in front of the water tile
+  above it. That is the fish drawn over the water.
+- **Tiles sort by their average.** A piece of sea floor whose four corners average
+  nearer than the water quad over it draws after it. That is the missing triangle:
+  the floor, untinted, where the water should be.
+
+The fix is the usual rule for a depth buffer: opaque first, then translucent.
+`0079`'s `BlendOrder` does it in the ordering table's walk (`LibGpu.WalkOTag`, which
+`Widescreen`'s replacement of `DrawOTag` now calls too, telling it each packet's
+entry): a blended polygon with a depth record is held, the opaque polygons with a
+record that follow it are sent, and the held ones go out in table order at the next
+packet that is anything else. **Moving a translucent packet past an opaque one is
+exact whichever is nearer**: the test decides what the opaque one covers, and the
+translucent one then blends over what is behind it and is rejected by what is in
+front. Everything the depth buffer does not order is a barrier: the HUD, the arm,
+the fades, a non-polygon command, a packet without a record, the table's first slot
+(the skybox's, which is never tested), and a blended model the port calls solid (the secret door, which writes depth). So nothing is ever moved
+past something it was not already ordered against by the test, and two blended
+surfaces keep the order the table gave them. It runs only while the Z-buffer tests
+and the assemblers' records are the depth source (Fast geometry); with either off
+the table is drawn as it always was. A held packet is sent under its own
+`GteDepth.OtEntry` and `OtSlot`, so the HUD anchoring, the census and the frame
+viewer see where it was linked.
+
+`KF2_BLENDORDER_PROBE=1` measures the defect itself rather than the mechanism:
+every recorded packet, in the order it is sent, is sampled on a 4-pixel grid
+(perspective-correct depth, and a sample already behind opaque geometry is
+skipped), and it counts opaque samples drawn behind a nearer translucent one, by
+source. Swept over the New Game beach in `fdat02` with the shell's `view` (a 7x7
+grid of camera positions four tiles apart around the spawn, four headings each, 196
+poses), fix off: tiles painted over nearer water at 106 of the poses, 7,228 samples
+in all and up to 887 at one (about 14,000 game pixels); models at 10, up to 205
+(`view 80896 -14408 82944 200 1024 0`). Fix on: **0 and 0 at every pose.** A frame
+there held 250-720 packets and sent them in one run, just before the HUD. Uncapped at
+a sea view, 317-321 fps either way; 144.0 fps drawn at 20.0 ticks/s, `[present] wide
+288, plain 0, vram fallback 0`, with the water enhancements on and with the HUD
+anchored, no exceptions. `KF2_BLENDORDER=0` is the comparison.
+
+**The trade** is at a waterline. A blended surface within the coplanar tolerance
+of an opaque one in front of it still draws over it (the previous section), and now
+does so whatever the table said, so the shore's edge in the water may move by that
+tolerance. Whether that shows is for the eye.
 
 ### The world lost its textures on NVIDIA
 

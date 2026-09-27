@@ -125,6 +125,7 @@ public static partial class PolyAssembler
                    : Remaster.Surfaces.PacketMaterial(mem, pkt, r.Cmd);
         if (r.Material != 0) Remaster.Surfaces.Packets++;
         if (Remaster.Faces.Recording) Remaster.Faces.Seal(mem, pkt, last, r);
+        r.Model = InModel;
         // Bit 25 of the command word: semi-transparent.
         r.Solid = false;
         if (InModel && (r.Cmd & (1u << 25)) != 0)

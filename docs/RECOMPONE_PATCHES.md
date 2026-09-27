@@ -13,7 +13,7 @@ amendment's diff appended to its `.patch` file, and the source comments keep its
 number. `0016` and `0057` predate this and keep their numbers, since the source
 refers to them.
 
-Sixty-seven of the seventy-five are load-bearing; `0002`, `0003`, `0015`, `0045`,
+Sixty-eight of the seventy-six are load-bearing; `0002`, `0003`, `0015`, `0045`,
 `0046`, `0065` and `0069` are diagnostics and `0013` is a settings-placement hook. `0063` is retired:
 it was folded into `0054` as an amendment, and the number is not reused. `0075` and `0076`
 are held by the remaster's plan for work not yet made (`docs/REMASTER.md`), which is
@@ -1201,6 +1201,23 @@ Four files in the directory have no entry below:
   `WaterWaves.Generation` moves. With `uWaveOn` 0 the texture path is the old one.
   The swell is the port's alone (`patches/WaterSwell.cs`). GL core only. **No
   recompile.** See "Water waves" in `docs/RENDERING.md`.
+
+- `0079-translucent-after-opaque.patch` — a blended polygon the depth buffer tests
+  is drawn after the opaque tested polygons the ordering table put after it. It
+  writes no depth, so those painted over it wherever they passed the test: a fish
+  under the water drawn on top of it, a floor tile a triangle of water missing.
+  `LibGpu.WalkOTag` is `DrawOTag`'s walk, public, with a callback told each
+  packet's entry before it is sent (`patches/Widescreen.cs` now calls it instead of
+  a copy). `Gpu/BlendOrder.cs` classifies a packet by its command and its
+  `0050` record (`GtePacketDepth.Peek`, `Find` without the counters): a blended
+  polygon with a full record and not solid is held; an opaque one with a full record
+  is sent past the held ones; anything else sends them first, in table order, each
+  under its own `OtEntry` and `OtSlot`. Only while `GteDepth.ZBuffer` and
+  `GtePacketDepth.Active`, and not with an asset pack's own primitives. The probe
+  (`BlendOrder.Probe`) samples what is sent on a 4-pixel grid and counts opaque
+  samples behind a nearer translucent one; `Rec.Model` splits them by source. **No
+  recompile.** See "Water was painted over by what lay under it" in
+  `docs/RENDERING.md`.
 
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a

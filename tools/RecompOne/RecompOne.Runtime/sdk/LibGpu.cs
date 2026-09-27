@@ -21,15 +21,35 @@ public static class LibGpu
 
     private static void DrawOTagCore(CpuContext c, IMemory m)
     {
+        if (Runtime.Gpu == null) return;
+        if (Log.SdkOn) Log.Sdk($"DrawOTag ot=0x{c.A0:X8}");
+        WalkOTag(m, c.A0, null);
+    }
+
+    /// <summary>
+    /// The ordering table's walk, back to front, for <see cref="DrawOTag"/> and for a
+    /// port that replaces it. <paramref name="onEntry"/>, if given, is told the entry
+    /// (counted from the head) before each packet is sent, which is the only way to
+    /// know where a primitive came from. 0079: while <see cref="BlendOrder.Active"/>,
+    /// a blended packet the depth buffer tests is sent after the opaque tested ones
+    /// that follow it, and is reported with its own entry when it is.
+    /// </summary>
+    public static void WalkOTag(IMemory m, uint head, Action<int>? onEntry)
+    {
         var gpu = Runtime.Gpu;
         if (gpu == null) return;
 
-        if (Log.SdkOn) Log.Sdk($"DrawOTag ot=0x{c.A0:X8}");
-
-        var addr = c.A0 & Runtime.RamWordMask;
+        var addr = head & Runtime.RamWordMask;
         var custom = GpuPrims.Any && GpuPrims.OtLength > 0;
         var otBase = GpuPrims.OtBase & Runtime.RamWordMask;
         var otEnd = otBase + (uint)GpuPrims.OtLength * 4u;
+        // An asset pack's own primitives are emitted by entry, so nothing may move.
+        var reorder = BlendOrder.Active && !custom;
+        var probe = BlendOrder.Probe && !custom && GtePacketDepth.Active;
+        if (probe) BlendOrder.ProbeBegin();
+        // A walk cut short by an exception must not hand the next one its packets.
+        BlendOrder.Clear();
+        BlendOrder.Walks++;
 
         var slot = -1;
         for (var guard = 0; guard < 0x100000; guard++)
@@ -50,19 +70,20 @@ public static class LibGpu
 
             if (count > 0)
             {
-                if (m is PSMemory ram && ram.TryWords(addr + 4u, count, out var words))
-                {
-                    gpu.WriteGp0Packet(words, addr + 4u);
-                }
+                // Slot 0 (the skybox) is never depth-tested, whatever it recorded.
+                var kind = (reorder || probe) && slot != 0 ? BlendOrder.Classify(m, addr, count, out _) : BlendOrder.Kind.Barrier;
+                if (reorder && kind == BlendOrder.Kind.Deferred)
+                    BlendOrder.Defer(addr, count, guard, slot);
                 else
                 {
-                    // 0012. The slow path has to carry the source address too, or
-                    // every vertex in a packet that took it misses the map.
-                    for (var i = 0; i < count; i++)
+                    if (BlendOrder.Queued > 0)
                     {
-                        var src = addr + 4u + (uint)i * 4u;
-                        gpu.WriteGp0(m.ReadU32(src), src);
+                        if (kind == BlendOrder.Kind.Opaque) BlendOrder.Passed++;
+                        else SendHeld(gpu, m, onEntry, probe, guard, slot);
                     }
+                    onEntry?.Invoke(guard);
+                    if (probe) BlendOrder.ProbePacket(m, addr, count);
+                    SendPacket(gpu, m, addr, count);
                 }
             }
 
@@ -70,6 +91,7 @@ public static class LibGpu
             if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
             addr = next & Runtime.RamWordMask;
         }
+        if (BlendOrder.Queued > 0) SendHeld(gpu, m, onEntry, probe, GteDepth.OtEntry, GteDepth.OtSlot);
 
         // The length is only known once the walk ends, so it is published for the
         // next one. An entry is readable as an OTZ against it: the walk starts at
@@ -78,6 +100,37 @@ public static class LibGpu
         GteDepth.OtEntry = -1;
         GteDepth.OtSlot = -1;
         if (custom) GpuPrims.Clear();
+    }
+
+    /// <summary>0079. The held packets, each under its own entry and slot, then the walk's put back.</summary>
+    private static void SendHeld(Gpu gpu, IMemory m, Action<int>? onEntry, bool probe, int entry, int slot)
+    {
+        foreach (var e in BlendOrder.Take())
+        {
+            GteDepth.OtEntry = e.OtEntry;
+            GteDepth.OtSlot = e.OtSlot;
+            onEntry?.Invoke(e.OtEntry);
+            if (probe) BlendOrder.ProbePacket(m, e.Addr, e.Count);
+            SendPacket(gpu, m, e.Addr, e.Count);
+        }
+        GteDepth.OtEntry = entry;
+        GteDepth.OtSlot = slot;
+    }
+
+    private static void SendPacket(Gpu gpu, IMemory m, uint addr, int count)
+    {
+        if (m is PSMemory ram && ram.TryWords(addr + 4u, count, out var words))
+        {
+            gpu.WriteGp0Packet(words, addr + 4u);
+            return;
+        }
+        // 0012. The slow path has to carry the source address too, or
+        // every vertex in a packet that took it misses the map.
+        for (var i = 0; i < count; i++)
+        {
+            var src = addr + 4u + (uint)i * 4u;
+            gpu.WriteGp0(m.ReadU32(src), src);
+        }
     }
 
     public static void DrawSync(CpuContext c, IMemory m)

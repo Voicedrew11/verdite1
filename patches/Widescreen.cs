@@ -389,11 +389,10 @@ public static class Widescreen
     }
 
     /// <summary>
-    /// The same walk libgpu's DrawOTag does, with the entries numbered. Two passes:
-    /// the first only follows the `next` pointers to learn the length, which is what
-    /// makes "how far from the end" answerable while the primitives are being
-    /// emitted. Everything else here mirrors the runtime's own implementation,
-    /// including the custom-primitive ordering an asset pack relies on.
+    /// libgpu's DrawOTag with the entries numbered. Two passes: the first only
+    /// follows the `next` pointers to learn the length, which is what makes "how far
+    /// from the end" answerable while the primitives are being emitted; the second
+    /// is the runtime's own walk (<c>LibGpu.WalkOTag</c>).
     ///
     /// <c>HookManager.Invoke</c> runs pre-hooks, then the replacement, then
     /// post-hooks, so the dither patch's pre/post pair and the frame pacing's,
@@ -421,47 +420,16 @@ public static class Widescreen
             addr = next & mask;
         }
 
-        bool custom = GpuPrims.Any && GpuPrims.OtLength > 0;
-        uint otBase = GpuPrims.OtBase & mask;
-        uint otEnd = otBase + (uint)GpuPrims.OtLength * 4u;
-
-        addr = c.A0 & mask;
-        int slot = -1;
-        for (int guard = 0; guard < 0x100000; guard++)
-        {
-            _fromEnd = entries - 1 - guard;
-            // The same number libgpu's own walk publishes, so a primitive's table
-            // position is answerable whether or not this replacement is in charge.
-            GteDepth.OtEntry = guard;
-
-            if (custom && addr >= otBase && addr < otEnd)
-                gpu.EmitCustomOrder((int)((addr - otBase) >> 2));
-
-            uint header = m.ReadU32(addr);
-            uint count = header >> 24;
-            if (count == 0) slot++;
-            GteDepth.OtSlot = slot;
-            for (uint i = 0; i < count; i++)
-            {
-                // The address the word was read from, not just the word: that is
-                // what GteVertexMap keys the recovered depth and sub-pixel fraction
-                // on (patch 0012), so dropping it would quietly turn perspective
-                // correction back off for every frame the HUD is anchored in.
-                uint src = addr + 4u + i * 4u;
-                gpu.WriteGp0(m.ReadU32(src), src);
-            }
-
-            uint next = header & 0xFFFFFFu;
-            if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
-            addr = next & mask;
-        }
-
+        // The runtime's own walk, told each primitive's entry before it is sent:
+        // 0079 can send a blended packet after entries that follow it, and it is
+        // anchored by where it was linked, not by where the walk had got to.
+        _entries = entries;
+        RecompOne.Runtime.Sdk.LibGpu.WalkOTag(m, c.A0, _onEntry);
         _fromEnd = -1;
-        if (GteDepth.OtEntry >= 0) GteDepth.OtLength = GteDepth.OtEntry + 1;
-        GteDepth.OtEntry = -1;
-        GteDepth.OtSlot = -1;
-        if (custom) GpuPrims.Clear();
     }
+
+    static int _entries;
+    static readonly Action<int> _onEntry = entry => _fromEnd = _entries - 1 - entry;
 
     // The draw area is the game's clip rect in VRAM coordinates and the primitive's
     // are already offset into the same space, so "reaches the margin" is just a
