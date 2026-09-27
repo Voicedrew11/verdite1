@@ -196,6 +196,16 @@ renderer builds its view from that store and nothing else.
 The submitters take the position relative to the camera store, so a model's
 matrix is built from those fields at draw time.
 
+**The map walk** `func_8001E83C` draws the cells of a 14×14 stencil around the
+camera, and **picks the stencil by heading**: `0x80065BE8 + (15 − (s8)(yaw >> 8)) ×
+0xCC`, one of 16, from the high byte of the stored yaw (`0x80095757`); a pitch
+beyond ±511 takes a special one at `0x80055E9C`. Stage A keeps the yaw in 0..4095
+(`andi 0xFFF` at `0x80018F94`), and anything writing a yaw the renderer will read
+must too: an interpolated 4101 across the wrap indexes past the table. `ViewCarry`,
+`ObjectCarry` and `MouseLook` all mask it. The stencil is a view cone drawn for a
+4:3 screen, so it is also the first thing to look at if widescreen shows missing
+geometry at the sides.
+
 ## Frame pacing
 
 King's Field II's frame pacing had to put the world on a tick clock of the port's

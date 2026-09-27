@@ -238,8 +238,10 @@ public static class MouseLook
         if (turn == 0 && pitch == 0) return;
 
         ushort yaw0 = m.ReadU16(Yaw);
-        // Not masked: the game keeps the low sixteen bits of whatever it sums.
-        m.WriteU16(Yaw, (ushort)(yaw0 + turn));
+        // Masked as stage A masks its own turn (`andi 0xFFF` at 0x80018F94): the
+        // map walk picks its visibility stencil by the yaw's high byte, and a yaw
+        // outside 0..4095 picks one outside the table.
+        m.WriteU16(Yaw, (ushort)((yaw0 + turn) & 0xFFF));
         short p0 = (short)m.ReadU16(Pitch);
         short p1 = (short)Math.Clamp(p0 + pitch, -PitchLimit, PitchLimit);
         m.WriteU16(Pitch, (ushort)p1);

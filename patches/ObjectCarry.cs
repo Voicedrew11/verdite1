@@ -182,6 +182,8 @@ public static class ObjectCarry
                     X = Lerp(p.X, q.X, phase), Y = Lerp(p.Y, q.Y, phase), Z = Lerp(p.Z, q.Z, phase),
                     Rx = LerpAngle(p.Rx, q.Rx, phase), Ry = LerpAngle(p.Ry, q.Ry, phase), Rz = LerpAngle(p.Rz, q.Rz, phase),
                 };
+                // Keep a yaw the game holds in 0..4095 there, as ViewCarry does.
+                if (p.Ry >= 0 && q.Ry >= 0 && p.Ry < 4096 && q.Ry < 4096) carried.Ry = (short)(carried.Ry & 0xFFF);
                 Truth[ti][i] = now;
                 Write(m, t, e, carried);
                 Written[ti][i] = true;

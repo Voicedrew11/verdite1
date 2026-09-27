@@ -140,7 +140,10 @@ public static class ViewCarry
         m.WriteU32(StorePos + 4, (uint)v.Y);
         m.WriteU32(StorePos + 8, (uint)v.Z);
         m.WriteU16(StoreRot, (ushort)v.Pitch);
-        m.WriteU16(StoreRot + 2, (ushort)v.Yaw);
+        // In the game's own range: the map walk (func_8001E83C) picks one of 16
+        // visibility stencils by the yaw's high byte (15 - (s8)(yaw >> 8)), so an
+        // interpolated 4101 would index past the table for that picture.
+        m.WriteU16(StoreRot + 2, (ushort)(v.Yaw & 0xFFF));
         m.WriteU16(StoreRot + 4, (ushort)v.Roll);
         // The cell the camera block derives from the position, the way it does:
         // MIPS div truncates towards zero, as C# does.
