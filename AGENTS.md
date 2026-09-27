@@ -4,11 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A static recompilation of **King's Field (NTSC-U, `SLUS-00158`)** — the North
-American release of the Japanese *King's Field II* (`SLPS-00069`) — using
-[RecompOne](https://github.com/BlackLabelHQ/RecompOne). The series was renumbered
-for the West: the US-boxed "King's Field II" (`SLUS-00255`) is a *different game*
-and every address here is wrong for it.
+A static recompilation of **King's Field (JP, `SLPS-00017`)** — the *first* game,
+1994, released only in Japan — using
+[RecompOne](https://github.com/BlackLabelHQ/RecompOne). **This repository is a
+copy of verdite2, the port of King's Field II (NTSC-U "King's Field",
+`SLUS-00158`), turned to the first game.** The series was renumbered for the West,
+so the North American "King's Field" is the *second* game; every address in
+`config/kf2.json`, `config/funcmaps/*.json`, `reference/kf2/` and almost every
+section of `docs/` belongs to that game, not this one.
+
+**Read `docs/KF1.md` first.** It is the King's Field log: the disc (`PSX.EXE`,
+`OPEN.EXE`, `GAME.EXE`, no `SYSTEM.CNF`, no `END.EXE`, no code modules), how the 42
+SDK bindings in `config/kf1.json` were found, what broke on the way into the first
+area, and which of verdite2's patches are installed here (the game-independent
+ones) and which are not (everything that reads a KF2 routine). **Every patch under
+`patches/` still compiles; `Program.cs` installs only the KF1-safe ones**, and the
+KF2 patches that call KF2 routines directly compile against the address shim
+`patches/kf2/KingsField2Game.cs`. Porting a KF2 feature means finding King's
+Field's equivalent of each routine it hooks, then installing it — never installing
+a KF2 patch as-is, since its hook addresses name different functions here. SDK
+addresses the patches hook are in one table, `patches/SdkAddr.cs`.
 
 There is no decompilation, no ELF and no `.map`. Function boundaries come from a
 linear sweep and PSY-Q library functions are identified by hand, so most work in
@@ -24,6 +39,7 @@ you would be doing when you need them:
 
 | file | when |
 |---|---|
+| `docs/KF1.md` | anything about King's Field (JP): start here |
 | `docs/DEVELOPMENT.md` | build, run, diagnose, measure |
 | `docs/ENV_VARS.md` | every `KF2_*` switch, in one list |
 | `docs/RECOMPILATION.md` | config, overlays, function maps, SDK addresses |
@@ -47,7 +63,7 @@ rather than a direct hit. Grep `docs/` for the title, not `NOTES.md`.
 
 ## Build and run
 
-Nothing here builds without the disc (gitignored, `disc/KingsField2.cue`).
+Nothing here builds without the disc (gitignored, `disc/King's Field (Japan).cue`).
 `tools/RecompOne` is **vendored** — its sources are tracked here, so a fresh
 clone already has it and nothing needs cloning.
 
@@ -55,10 +71,11 @@ clone already has it and nothing needs cloning.
 bash scripts/setup_tools.sh          # build the vendored recompiler
 
 # recompile MIPS -> C# into generated/ (~2234 functions, ~182k lines)
-dotnet run --project tools/RecompOne/RecompOne.Recompiler -c Release --no-build -- config/kf2.json
+# (~1639 functions: 9 boot stub, 665 OPEN, 965 GAME)
+dotnet run --project tools/RecompOne/RecompOne.Recompiler -c Release --no-build -- config/kf1.json
 
 dotnet build KingsField2Recomp.csproj -c Release
-dotnet run --project KingsField2Recomp.csproj -- disc/KingsField2.cue
+dotnet run --project KingsField2Recomp.csproj -- "disc/King's Field (Japan).cue"
 ```
 
 `setup_tools.sh` builds; `--sync-upstream` starts the next three-way merge from
@@ -151,7 +168,13 @@ See "Auto start and the agent beacon" and "The command channel" in
 
 Everything under `patches/*.cs` attaches at run time through `HookManager`; each
 has a write-up, and the specifics (addresses, measurements, why each default is
-what it is) live there, not here.
+what it is) live there, not here. **This table is verdite2's, for King's Field II.**
+In the King's Field build only `Perspective`, `Subpixel`, `ZBuffer` (depth from the
+address map; its arm and model hooks off), `AmbientOcclusion`, `NoDither`/`TrueColor`,
+`Anisotropic`, `Widescreen` (without `CullCone`/`ViewClip`), `Pgxp`, `AudioQuality`,
+`Prejit`, `UiScale` and `KeyLayout` are installed; the rest are reference until
+ported (the list, and what each needs, is "What came across from King's Field II"
+in `docs/KF1.md`).
 
 | patch | what | default | doc, section |
 |---|---|---|---|

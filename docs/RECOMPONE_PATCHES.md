@@ -1249,6 +1249,24 @@ Four files in the directory have no entry below:
   "Leaving fullscreen left the interface at the fullscreen size" in
   `docs/RUNTIME.md`.
 
+- `0081-vblank-from-the-poll.patch` — King's Field (the first game) waits for
+  its frame in a loop that never calls `VSync`: it spins on a counter its vblank
+  event handler bumps. `0021`'s wall-clock grid was advanced only from inside
+  `VSync`, so that loop waited forever. `Interrupts.PollSlow` now calls
+  `LibEtc.PollVBlanks`, which advances the same grid (each due vblank delivered
+  once, whoever asks first, with a guard against re-entering a delivery). And
+  `LibEtc.TickVBlank` stops delivering the `RCntCNT3` event itself: IRQ 0's
+  service routine (`BiosB.DeliverIrqEvents`, upstream's since the merge) already
+  does, so every `EvMdINTR` vblank handler ran twice a vblank. KF2 opens none, so
+  it never showed. **No recompile.** See "The vblank came only from VSync" and
+  "Every vblank event fired twice" in `docs/KF1.md`.
+
+- `0082-no-system-cnf.patch` — `SystemCfg.Parse` read `SYSTEM.CNF`
+  unconditionally, and a disc may have none: the BIOS then boots `cdrom:PSX.EXE`
+  with its own defaults, which are the class's field initialisers. King's Field
+  (JP) is such a disc. **Recompiler only.** See "The recompiler config" in
+  `docs/KF1.md`.
+
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a
 game that stops calling `VSync`**, and that failure mode is always silent.

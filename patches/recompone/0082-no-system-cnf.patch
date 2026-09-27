@@ -1,0 +1,18 @@
+0082: a disc with no SYSTEM.CNF boots PSX.EXE with the BIOS defaults.
+See "The recompiler config" in docs/KF1.md.
+
+diff --git a/tools/RecompOne/RecompOne.Recompiler/Psx/SystemCfg.cs b/tools/RecompOne/RecompOne.Recompiler/Psx/SystemCfg.cs
+index 307af22..3d8a181 100644
+--- a/tools/RecompOne/RecompOne.Recompiler/Psx/SystemCfg.cs
++++ b/tools/RecompOne/RecompOne.Recompiler/Psx/SystemCfg.cs
+@@ -13,6 +13,10 @@ public sealed class SystemCfg
+     public static SystemCfg Parse(DiscFs fs)
+     {
+         var cfg = new SystemCfg();
++        // A disc with no SYSTEM.CNF is legal: the BIOS then boots cdrom:PSX.EXE
++        // with its own defaults, which are the field initialisers above. King's
++        // Field (JP, SLPS-00017) is such a disc.
++        if (!fs.Exists("SYSTEM.CNF")) return cfg;
+         var text = Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF"));
+ 
+         foreach (var raw in text.Split('\n'))

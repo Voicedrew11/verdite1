@@ -1,21 +1,24 @@
-# King's Field II — RecompOne port
+# King's Field — RecompOne port (verdite1)
 
-Static recompilation of **King's Field** (NTSC-U, `SLUS-00158`) using
-[RecompOne](https://github.com/BlackLabelHQ/RecompOne) (MIT).
+Static recompilation of **King's Field** (JP, `SLPS-00017`, 1994 — the first game)
+using [RecompOne](https://github.com/BlackLabelHQ/RecompOne) (MIT).
+
+**This repository is a copy of the King's Field II port (verdite2) turned to the
+first game.** Everything under `docs/` except `docs/KF1.md` was written against
+King's Field II: its *mechanisms* carry over and its *addresses* do not. **Start
+with `docs/KF1.md`** — what the KF1 disc is, how its addresses were found, what
+broke, and which of verdite2's features run here yet.
 
 **This file is the index.** It carries what the project is and where it stands;
 everything else lives in `docs/`, split by what you would be doing when you need
-it. **Nine documents became ten**: `docs/PACKAGING.md` is how the port becomes
-something a person can download, which is a different job from building it. The
-eleventh, `docs/REMASTER.md`, is the design for a remaster's authoring tools,
-and the record of the work against it; Phase 1 is in, in two slices.
+it. `docs/PACKAGING.md` is how the port becomes something a person can download;
+`docs/REMASTER.md` is the design for a remaster's authoring tools, and the record
+of the work against it.
 
 **Source comments still say `See "X" in NOTES.md`, and the text they mean is no
 longer in this file.** The section titles are unchanged, so the map below resolves
 X to a document — but grepping this file for one will only find its bullet in that
-map, and the passage itself is one hop away. Four workflow headings were renamed
-in the move (`1. Set up the tools` → "Setting up the tools", and its three
-siblings); nothing in the source cites those.
+map, and the passage itself is one hop away.
 
 ## Which game this is
 
@@ -23,17 +26,29 @@ The series was renumbered for the West, so the name is ambiguous:
 
 | Chronological | Japan | North America |
 |---|---|---|
-| 1st (1994) | King's Field, SLPS-00017 | *not released* |
-| 2nd (1995) | King's Field II, SLPS-00069 | **King's Field, SLUS-00158** |
+| 1st (1994) | **King's Field, SLPS-00017** | *not released* |
+| 2nd (1995) | King's Field II, SLPS-00069 | King's Field, SLUS-00158 |
 | 3rd (1996) | King's Field III, SLPS-00377 | King's Field II, SLUS-00255 |
 
-This project targets the **second game**. The disc in use is the North American
-release, which is the English localization of the Japanese *King's Field II* —
-same game, so the "KFII" project name is accurate even though the disc says
-`SLUS-00158`. If you ever swap in the US-boxed "King's Field II" (`SLUS-00255`),
-that is a *different game* and every address and function map here is wrong for it.
+This project targets the **first game**, which was only released in Japan. The
+disc goes in `disc/` as `King's Field (Japan).cue`/`.bin` (the names
+`config/kf1.json` uses). The North American "King's Field" (`SLUS-00158`) is the
+*second* game — that is what verdite2 ports, and what `config/kf2.json`,
+`config/funcmaps/*.json` and `reference/kf2/` still describe.
 
-## Status
+## Status (King's Field)
+
+**Boots into the first area and runs at the game's own 20 fps.** `PSX.EXE` Execs
+`OPEN.EXE` (attract, title, New Game), which hands over to `GAME.EXE`; a New Game
+loads `KF/B1` and the frame loop runs. Perspective correction, sub-pixel
+positions, the Z-buffer, ambient occlusion, 24-bit shading, anisotropic
+filtering, widescreen and the audio quality settings are installed and measured
+engaging on KF1's geometry; **none of it has been looked at by eye yet.** Frame
+pacing, smoothing, the map, analog and mouse control and everything else that
+reads the game's own routines are King's Field II code and are not installed.
+See `docs/KF1.md`.
+
+## Status (King's Field II, the port this came from)
 
 **The game is playable.** `OPEN.EXE` streams the intro movies off the disc
 through the MDEC, the title screen loads and runs, the boot stub swaps in
@@ -148,8 +163,10 @@ any of them. What is open and undiagnosed is in `docs/TODO.md`.
 ## Layout
 
 ```
-config/kf2.json          recompiler config (schema: RecompOne.Recompiler/Config/ConfigLoader.cs)
-config/funcmaps/         generated function maps (address/name/size)
+config/kf1.json          recompiler config (schema: RecompOne.Recompiler/Config/ConfigLoader.cs)
+config/funcmaps/kf1/     King's Field's function maps (address/name/size)
+config/kf2.json, config/funcmaps/*.json   King's Field II's, kept as reference
+reference/kf2/           KF2's Program.cs, which the build does not compile
 patches/                 hand-written C# replacing recompiled functions
 mods/<id>/               runtime-loaded mods (mod.json + C#), toggled in-game
 scripts/inspect_disc.py  SYSTEM.CNF + ISO9660 listing from a .cue/.bin
@@ -157,7 +174,7 @@ scripts/extract_file.py  extract a disc file and dump its PS-X EXE header
 scripts/match_overlays.py  carry a function identified in one overlay to the other two
 disc/                    your own dump (gitignored)
 generated/               recompiler output (gitignored, derived from the disc)
-tools/RecompOne/         upstream tool checkout (gitignored)
+tools/RecompOne/         the vendored recompiler and runtime
 Program.cs               hand-owned entry point
 KingsField2Recomp.csproj
 ```
@@ -166,6 +183,21 @@ KingsField2Recomp.csproj
 
 A section name in quotes anywhere in these files is an exact heading, in the file
 named beside it here.
+
+### [KF1.md](docs/KF1.md)
+
+King's Field (JP): the disc, the addresses, what broke, what came across.
+
+- The disc
+- The recompiler config
+- The SDK entry points
+- What broke on the way in
+- The vblank came only from VSync, and this game waits without calling it
+- Every vblank event fired twice
+- setjmp and longjmp are a stack switch, and they happen to work
+- What the enhancements measure
+- What came across from King's Field II
+- Driving it without a human
 
 ### [DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
