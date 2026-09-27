@@ -581,7 +581,9 @@ public static class FrameSmoothing
 
         // Held inside the game's pitch limit, off the base angle the next tick
         // will add to, so looking into the limit does not overshoot and come back.
-        int basePitch = (short)m.ReadU16(Analog.Pitch);
+        // The base is a 12-bit angle: just above level it is 0x0FFx, and only the
+        // clamp writes the sign-extended 0xFD44.
+        int basePitch = S12(m.ReadU16(Analog.Pitch));
         int ahead = Math.Clamp(basePitch + (int)Math.Round(look), -PitchLimit, PitchLimit) - basePitch;
         _aheadPitch = ahead;
         double pitch = _tickPitch * keep + ahead;

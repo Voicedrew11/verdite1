@@ -833,7 +833,15 @@ back:
   it.
 * **Pitch is held inside ±`0x2BC`** off the base angle the next tick will add to,
   so looking into the limit stops at it rather than overshooting and coming back.
-  Pending yaw is capped at `StepCap`, as the tick caps it.
+  Pending yaw is capped at `StepCap`, as the tick caps it. **The base pitch is a
+  12-bit angle, not an s16**: the look routine stores `(pitch + vel) & 0xFFF`, so
+  looking just above level reads `0x0FFx`, and only the clamp writes the
+  sign-extended `0xFD44`. The first version read it as an s16, so any look upward
+  read as about +4,000, was clamped to the *downward* limit, and the view spun
+  round to the player's feet. Read both ways it is the same angle mod 4096, which
+  is also how the game's own limit test (`func_80015364`, `(a - b) & 0xFFF < 2049`)
+  compares them. Measured after, sweeping the full range synthetically: the view
+  follows the base from -700 to +700 and is never more than 33 units ahead of it.
 * **Nothing is shown unless the look routine is live**: spent within the last
   three ticks, and the world not paused. Motion arriving while it is not (a menu, a
   load, the paused map) is dropped, which is what `StaleMs` did before.

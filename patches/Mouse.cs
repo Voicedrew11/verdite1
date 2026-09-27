@@ -330,8 +330,7 @@ public static class Mouse
     static long _takenFrame = -1;
     static float _spentTurn, _spentPitch;
     static float _shareTurn, _sharePitch;
-    static ushort _yawBefore;
-    static short _pitchBefore;
+    static ushort _yawBefore, _pitchBefore;
 
     /// <summary>
     /// Drain the host's motion into the pending sum. Called every drawn frame
@@ -421,11 +420,17 @@ public static class Mouse
     internal static void NoteSpent(IMemory m, float turn, float stickTurn, float pitch, float stickPitch)
     {
         _yawBefore = m.ReadU16(Analog.Yaw);
-        _pitchBefore = (short)m.ReadU16(Analog.Pitch);
+        _pitchBefore = m.ReadU16(Analog.Pitch);
         _spentTurn = turn;
         _spentPitch = pitch;
         _shareTurn = Share(turn, stickTurn);
         _sharePitch = Share(pitch, stickPitch);
+    }
+
+    static int Delta12(ushort to, ushort from)
+    {
+        int d = (to - from) & 0xFFF;
+        return d >= 0x800 ? d - 0x1000 : d;
     }
 
     static float Share(float mouse, float stick) =>
@@ -442,10 +447,10 @@ public static class Mouse
     {
         if (_takenFrame != FramePacing.Frames || (_shareTurn == 0f && _sharePitch == 0f)) return null;
 
-        int dYaw = (m.ReadU16(Analog.Yaw) & 0xFFF) - (_yawBefore & 0xFFF);
-        if (dYaw > 2048) dYaw -= 4096;
-        else if (dYaw < -2048) dYaw += 4096;
-        int dPitch = (short)m.ReadU16(Analog.Pitch) - _pitchBefore;
+        // Both are 12-bit angles, pitch included: the look routine stores it
+        // `& 0xFFF`, so looking just above level reads 0x0FFx.
+        int dYaw = Delta12(m.ReadU16(Analog.Yaw), _yawBefore);
+        int dPitch = Delta12(m.ReadU16(Analog.Pitch), _pitchBefore);
 
         return ((int)MathF.Round(dYaw * _shareTurn), (int)MathF.Round(dPitch * _sharePitch),
                 _spentTurn, _spentPitch);
