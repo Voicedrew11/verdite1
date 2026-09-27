@@ -211,7 +211,12 @@ public static class KeyLayout
             };
         }
 
-        if (_wanted) ConfigManager.Game.Keys = Layout();
+        // Only a default: when settings.json already exists it holds the
+        // player's bindings. Under Verdite2.Launcher the runtime is initialised --
+        // and settings.json loaded -- before this runs, and the runtime does not
+        // load it again, so writing the layout unconditionally replaced saved
+        // bindings on every launch, and the close saved the replacement.
+        if (_wanted && !System.IO.File.Exists("settings.json")) ConfigManager.Game.Keys = Layout();
     }
 
     /// <summary>
