@@ -795,6 +795,76 @@ disappear into the game unasked is worse than one key to find, so look does
 nothing until that key is pressed.
 
 
+### The mouse leads the tick
+
+Reported from play (issue #38, a 360 Hz monitor on Wayland): mouse look *feels
+laggy*, and much better with the smoothing off. Both halves of that are right, and
+they add up. The look routine runs on the world's 20 Hz tick, so a movement of the
+hand waits up to 50 ms to be spent; `FrameSmoothing` then draws
+`lerp(prev, cur, phase)`, which reaches the new angle only at the *next* tick. Up
+to 100 ms from hand to picture, and a view that coasts on for a tick after the hand
+has stopped. For a stick that is the right trade ("The view has to be carried
+between ticks" in `docs/PATCHES_AND_MODS.md`): a stick asks for a rate the game
+ramps and damps, so only the game can say where the view ends up, and
+extrapolating it bounced. A mouse is different in exactly the way that matters. It
+asks for a **displacement**, and the game adds it to the angle unchanged: `Drive`
+pre-loads the velocity so the accumulate lands on the step, the release zeroes it,
+and nothing in between damps it. Measured against the base angle over 40 ticks,
+the game applies what was asked to within **0.33 units** of 4,096. So the view can
+show a mouse turn the frame it happens, and the tick will agree with it when it
+lands.
+
+That is `FrameSmoothing.MouseLead`, inside the stage-8 pair that already carries
+the view, so nothing new touches the game's state and `After` still puts it all
+back:
+
+* **The host's motion is drained every drawn frame** into a pending sum
+  (`Mouse.Poll`, called from stage 8), not once a tick. The look routine spends
+  the sum (`Mouse.TakeLook`) exactly as it spent the host's accumulator before.
+* **The view is `lerp(prev, cur, phase)` + (1 − phase) × the mouse's share of the
+  last tick's turn + the pending sum.** The lerp's own reading of the mouse turn
+  is replaced by all of it at once; the stick's and the keys' part still
+  interpolates as before. At a tick boundary the pending sum becomes the new
+  tick's share, so the two terms hand over continuously.
+* **The last tick's share is measured, not assumed.** `Analog.BeforeLook`
+  records the base angles and the mouse's fraction of each step
+  (`Mouse.NoteSpent`); on the tick frame stage 8 reads the base angles again. So
+  the pitch limit, the step cap and anything else the game did to the step are in
+  it.
+* **Pitch is held inside ±`0x2BC`** off the base angle the next tick will add to,
+  so looking into the limit stops at it rather than overshooting and coming back.
+  Pending yaw is capped at `StepCap`, as the tick caps it.
+* **Nothing is shown unless the look routine is live**: spent within the last
+  three ticks, and the world not paused. Motion arriving while it is not (a menu, a
+  load, the paused map) is dropped, which is what `StaleMs` did before.
+* **With smoothing off it still leads**: the view is the tick's angle plus the
+  pending sum. At the tick rate there is no frame between ticks and nothing to do.
+
+`KF2_MOUSE_LEAD=0` is the comparison. `KF2_SMOOTH_PROBE=1` adds a line: frames
+led, how far ahead of the tick, and the mean |applied − asked| per tick, which
+is the number that says whether the tick agreed with the picture.
+
+**Measured**, with a synthetic mouse (a local test hack, not committed) turning at
+a constant rate in bursts of 430 ms, at 144 fps against the 20 Hz world, slot 2:
+
+| | lead off | lead on |
+|---|---|---|
+| view starts moving after the hand | 26.3 ms (max 53) | 4.1 ms (max 7) |
+| view stops after the hand | 71.2 ms (max 94) | 4.9 ms (max 23) |
+| steady turn, view against the game's own angle | 24.9 ms behind | 21.5 ms ahead |
+| steady turn, speed sd at tick frames / between | 0.13 / 0.15 | 0.18 / 0.19 |
+
+The lead is under a frame at 144 fps, and a steady turn is as even across a tick
+boundary as between them. The one visible wart: when the hand stops, the view
+settles back by **1 unit** (0.09°) at the next tick on about one stop in ten,
+because the game truncates its step and carries the fraction while the picture
+rounds. Pacing held at 144.0 fps drawn and 20.0 ticks/s.
+
+**Not judged by eye**: whether it feels right on a real mouse, and on a
+high-refresh monitor in particular. Also not measured: a mouse turn made while
+opening a menu shows for up to three ticks and is then dropped, since the look
+routine never spends it.
+
 ## The menu pointer
 
 Mouse look leaves the menus pad-only: Circle opens `func_80018E80`, and from

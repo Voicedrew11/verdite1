@@ -187,7 +187,7 @@ what it is) live there, not here.
 | `AutoReload` | reload the last save on death, fixed 2 s delay | on | PATCHES_AND_MODS, "Auto reload" |
 | `Map*` | full-screen map (touchpad / `M`), minimap (`N`), fog of war, markers; full map pauses the world | map on; fog on; minimap, markers off | PATCHES_AND_MODS, "A dynamic map", "What the Map page is down to" |
 | `Analog` | twin-stick control | on | INPUT, "Analog twin-stick control" |
-| `Mouse` | mouse look, spent inside `Analog.BeforeLook` | on | INPUT, "Mouse look" |
+| `Mouse` | mouse look, spent inside `Analog.BeforeLook`; the view shows motion the tick has not spent yet (`FrameSmoothing.MouseLead`, `KF2_MOUSE_LEAD=0` to compare) | on | INPUT, "Mouse look", "The mouse leads the tick" |
 | `MenuMouse` | point-and-click in the in-game menus | on | INPUT, "The menu pointer" |
 | `KeyLayout` | the port's WASD layout | on | INPUT, "The keyboard layout" |
 | `CardIcon`, `DesktopEntry` | the window icon is the game's own memory-card icon, read off the player's disc at boot; the shipped orb is the fallback. On Linux the same pixels go into the icon theme under the app id, which is the only way a Wayland compositor can show one (`0061`) | on | PACKAGING, "The icon comes off the disc", "Wayland takes the icon from the desktop entry" |

@@ -393,13 +393,19 @@ public static class Analog
         int rate = (int)m.ReadU32(TurnRate);
         if (rate <= 0) return;
 
+        // The stick's share of each step, so FrameSmoothing can tell how much of
+        // what the game turns by this tick was the mouse's (Mouse.NoteSpent).
+        float stickTurn = -x * rate * TurnSens * mult * (InvertTurn ? -1f : 1f);
+        float stickPitch = y * PitchVelMax * PitchSens * mult * (InvertPitch ? -1f : 1f);
+        Mouse.NoteSpent(m, mTurn, stickTurn, mPitch, stickPitch);
+
         if (x != 0f || leftActive || mTurn != 0f || releaseTurn)
         {
             // Stick right turns right, and turning right is the *decreasing*
             // branch: the mask that increases yaw is the game's Left, which the
             // probe's table dump is the evidence for. Hence the negation. The
             // mouse arrives already in that convention, from Mouse.TakeLook.
-            int step = Step(-x * rate * TurnSens * mult * (InvertTurn ? -1f : 1f) + mTurn,
+            int step = Step(stickTurn + mTurn,
                             ref _turnCarry, Ceiling(rate * OverspeedCap, mTurn));
             pad = Drive(m, pad, TurnVel, step, rate >> 2, rate, MaskTurnInc, MaskTurnDec);
             _ownedTurn = step != 0;
@@ -414,7 +420,7 @@ public static class Analog
             // evidence settled -- the mask table gives the button but not which
             // way the view tips -- so it was fixed by playing it, and the sticks
             // agree with the D-pad's own L2/R2 now.
-            int step = Step(y * PitchVelMax * PitchSens * mult * (InvertPitch ? -1f : 1f) + mPitch,
+            int step = Step(stickPitch + mPitch,
                             ref _pitchCarry, Ceiling(PitchVelMax * OverspeedCap, mPitch));
             pad = Drive(m, pad, PitchVel, step, PitchAccel, PitchVelMax, MaskPitchInc, MaskPitchDec);
             _ownedPitch = step != 0;
