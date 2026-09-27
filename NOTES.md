@@ -38,15 +38,18 @@ disc goes in `disc/` as `King's Field (Japan).cue`/`.bin` (the names
 
 ## Status (King's Field)
 
-**Boots into the first area and runs at the game's own 20 fps.** `PSX.EXE` Execs
-`OPEN.EXE` (attract, title, New Game), which hands over to `GAME.EXE`; a New Game
-loads `KF/B1` and the frame loop runs. Perspective correction, sub-pixel
-positions, the Z-buffer, ambient occlusion, 24-bit shading, anisotropic
-filtering, widescreen and the audio quality settings are installed and measured
-engaging on KF1's geometry; **none of it has been looked at by eye yet.** Frame
-pacing, smoothing, the map, analog and mouse control and everything else that
-reads the game's own routines are King's Field II code and are not installed.
-See `docs/KF1.md`.
+**Boots into the first area and plays at 60 fps with the world at the game's own
+20.** `PSX.EXE` Execs `OPEN.EXE` (attract, title, New Game), which hands over to
+`GAME.EXE`; a New Game loads `KF/B1`. The frame gate redraws the world while it
+waits, with the view, the creatures and the objects carried between ticks
+(`GateRedraw`, `ViewCarry`, `ObjectCarry`); mouse look and twin-stick control are
+in; perspective correction, sub-pixel positions, the Z-buffer, ambient
+occlusion, 24-bit shading, anisotropic filtering, widescreen and the audio quality
+settings engage on KF1's geometry; the shipped launcher builds this game from the
+player's disc. **None of it has been looked at by eye yet**, and a save, a death,
+an area change and combat have not been exercised. What is still King's Field II
+code, and what each piece needs, is "What came across from King's Field II" in
+`docs/KF1.md`.
 
 ## Status (King's Field II, the port this came from)
 
@@ -195,8 +198,16 @@ King's Field (JP): the disc, the addresses, what broke, what came across.
 - The vblank came only from VSync, and this game waits without calling it
 - Every vblank event fired twice
 - setjmp and longjmp are a stack switch, and they happen to work
+- The main loop
+- Frame pacing
+- The view is carried between ticks
+- Creatures and objects
+- VSync outside the renderer blocks
+- Mouse look
+- Scripted input reaches the game now
 - What the enhancements measure
 - What came across from King's Field II
+- The shipped launcher
 - Driving it without a human
 
 ### [DEVELOPMENT.md](docs/DEVELOPMENT.md)

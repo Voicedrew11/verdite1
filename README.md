@@ -1,40 +1,36 @@
-# Verdite2
+# Verdite1
 
-[![Release](https://img.shields.io/github/v/release/Voicedrew11/verdite2)](https://github.com/Voicedrew11/verdite2/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/Voicedrew11/verdite2/total)](https://github.com/Voicedrew11/verdite2/releases)
-[![Discord](https://img.shields.io/discord/1553561882843947149?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/R4EKCs8RWH)
-
-Verdite2 is a PC port of King's Field (US) built atop of the [RecompOne](https://github.com/BlackLabelHQ/RecompOne) project. 
+Verdite1 is a PC port of **King's Field** (Japan, 1994 — the first game) built
+atop of the [RecompOne](https://github.com/BlackLabelHQ/RecompOne) project. It
+is a sibling of [Verdite2](https://github.com/Voicedrew11/verdite2), the port of
+King's Field II (released in North America as "King's Field"), and shares its
+runtime and most of its enhancements.
 
 ## Features
 
-- Widescreen support (16:9, 16:10, 21:9), with changed culling behavior
+- 60+ fps (any rate up to 240), with the game still running at its own speed:
+  the view, creatures and objects are smoothed between the game's 20 fps frames
+- Widescreen support (16:9, 16:10, 21:9)
 - Perspective-correct textures and corrected vertex wobbling
-- Anisotropic filtering
+- Anisotropic filtering and mipmaps
 - Ambient occlusion
 - Z-buffer
 - 24-bit colour
-- 60+ fps
-- Consistent game speed
-- Per-pixel lighting
-- Smooth fog
 - Enhanced audio quality
-- Automatic save reload after death
-- Keyboard and mouse support
-- Modern Twin-stick FPS controls
-- Mod support
+- Keyboard and mouse (Escape captures the pointer), and twin-stick gamepad controls
+- The game's own memory-card icon on the window
 
 ## Status
 
-Game is playable from start to finish. There may still be some intermittent issues.
+Early. The game boots, plays its title, starts a New Game and can be walked
+around in; most of what Verdite2 adds on top of that is not ported yet (per-pixel
+lighting, smooth fog, the map, auto reload, reflections). See `docs/KF1.md`.
 
 ## Requirements
 
-A dump of the North American PlayStation release (`SLUS-00158`) in `.cue` / `.bin`, or `.chd` format.
-
-## Mods
-
-A collection of mods by [@Acranon](https://github.com/Acranon) can be found in [Acranon/verdite2-mods](https://github.com/Acranon/verdite2-mods).
+A dump of the Japanese PlayStation release (`SLPS-00017`) in `.cue` / `.bin`, or
+`.chd` format. The North American "King's Field" (`SLUS-00158`) is the second
+game, which Verdite2 ports, and is refused here.
 
 ## Credits
 
