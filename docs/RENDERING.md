@@ -1980,7 +1980,28 @@ the right inside the `*` void: exactly the samples the fallback had been taking.
 Rays refused under the HUD: 0.0-0.4% of reflective pixels, depending on the yaw.
 **Not covered:** a HUD piece the GTE projects (a 3D compass or item model) reads
 as scene, and the first-person arm stamps the far plane without being 2D. Neither
-has been seen in a reflection, but nothing would stop either.
+has been seen in a reflection, but nothing would stop either. (The arm has since
+been seen, the other way round: see the next section.)
+
+### The arm showed the water through it
+
+Reported from play with the murk on: swinging over water, the first-person arm was
+drawn dark and carried the water's reflection. The arm's corners come out of the
+GTE (`func_8002E650`), so they are projected, but its packets are deliberately not
+recorded (`InArm`), so it draws in painter's order with no depth: zMode 3, the far
+plane stamped for the occlusion pass. The surface list kept such a triangle only
+as an `Overlay`, and only when no corner was projected, so the arm was not in it at
+all and the surface buffer still held the water drawn under it. The pass then
+composited the murk and the reflection at those pixels, over the arm.
+
+Every opaque zMode 3 triangle is now kept as `Overlay`, except in the table's slot 0
+(the skybox, which projects near and must read as no surface). Its pixels are what
+is on screen and are not water; the depth buffer already treated them as no
+surface. Measured in the `fdat02` New Game, facing the sea, `KF2_MURK=1
+KF2_SSR_PROBE=1`, 40 presses of Square: before, the material map's lower rows were
+all `~` and the 2D overlay count stayed at 16,170/s; after, the arm is an `H` block
+in the lower right over the `~` and the count rises from 17,160 to about 22,300/s
+while it swings. Judged by eye: fixed.
 
 ### Reflections popped in, because the path is longer than the direct distance
 

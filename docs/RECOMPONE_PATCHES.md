@@ -951,6 +951,13 @@ Four files in the directory have no entry below:
   `emit()`. With the march on and no murk the output is the one before. The ninth
   diff in the patch file. See "The reflection pass runs for each term on its own"
   and "Murky water" in `docs/RENDERING.md`.
+  Since amended: an opaque triangle drawn in painter's order (zMode 3, no depth
+  record) was kept out of the surface list unless no corner was projected, so the
+  first-person arm, whose corners the GTE projects but whose packets are not
+  recorded, left the water under it in the surface buffer, and the murk and the
+  reflection were composited over the arm. It is kept as `Overlay` now, except in
+  the table's slot 0 (the skybox, which must read as no surface). The tenth diff in
+  the patch file. See "The arm showed the water through it" in `docs/RENDERING.md`.
   `GlCore.RenderNormals` became `RenderSurfaces` and runs once for both passes,
   timed with the occlusion pass when that runs. New profiler sections (`Surfaces`,
   `Ssr`) and `GpuWork.Reflections`; the probe attaches a second target to the pass

@@ -2964,3 +2964,29 @@ index 0000000..dd9a7b8
 +    public static float Distance = 700f;
 +    public static float R = 0.03f, G = 0.05f, B = 0.06f;
 +}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index b0abd1b..d2b0d93 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -991,7 +991,10 @@ public sealed partial class GlCore : IGpuBackend
+         // blended one is kept when it has one -- water, which writes no depth and
+         // so reaches the surface buffer and nothing else.
+         // A 2D primitive (no corner the GTE projected) is kept too, as Overlay, so
+-        // the reflection pass can tell the HUD from the scene under it.
++        // the reflection pass can tell the HUD from the scene under it. So is an
++        // opaque one drawn in painter's order (zMode 3, the first-person arm), or
++        // the water under it keeps the surface buffer and is reflected and murked
++        // on top of it; not slot 0's skybox, which must read as no surface.
+         if (_kTarget != null && AoGeometry.Active && !_kTarget.IsPlanar)
+         {
+             byte m = SurfaceMaterial.None;
+@@ -1004,7 +1007,8 @@ public sealed partial class GlCore : IGpuBackend
+                         (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
+                         (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
+             }
+-            else if (GteDepth.Reflections && !a.Projected && !b.Projected && !c.Projected
++            else if (GteDepth.Reflections
++                     && (zMode == 3 && GteDepth.OtSlot != 0 || !a.Projected && !b.Projected && !c.Projected)
+                      && !CoversTarget(Math.Min(a.X, Math.Min(b.X, c.X)), Math.Min(a.Y, Math.Min(b.Y, c.Y)),
+                                       Math.Max(a.X, Math.Max(b.X, c.X)), Math.Max(a.Y, Math.Max(b.Y, c.Y))))
+                 m = SurfaceMaterial.Overlay;
