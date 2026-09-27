@@ -1635,6 +1635,9 @@ this one and draws `lerp(prev, cur, frac)`, which can never reach a position the
 game did not produce, so nothing overshoots and nothing snaps. The cost is a tick
 of latency — the picture trails input by up to 50 ms — but the input is sampled at
 the tick rate anyway, so that is a delay of the *display*, not of the response.
+**The mouse is the exception**: it asks for a displacement the game applies
+exactly, so the picture shows it before the tick lands rather than a tick after —
+see "The mouse leads the tick" in `docs/INPUT.md`.
 
 * **Yaw and pitch** are interpolated between the composed view angles at
   `0x80199504` / `0x80199506`, re-sampled on every frame the world advanced on.

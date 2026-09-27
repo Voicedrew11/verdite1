@@ -80,6 +80,9 @@ namespace Kf2;
 /// a delay of the *display*, not of the response, and is the price the smoothness
 /// is worth.
 ///
+/// The mouse is the exception, since the game applies its displacement exactly:
+/// the view shows it before the tick spends it. See <see cref="MouseLead"/>.
+///
 /// What is carried:
 /// * **Yaw and pitch**, the composed view angles at `0x80199504`/`0x80199506` --
 ///   the values stage 3 (`func_80028DB8`) has already folded this tick's turn into,
@@ -324,8 +327,6 @@ public static class FrameSmoothing
         _applied = false;
         Frames++;
         LastVerdict = 0;
-        if (!Enabled) { if (_probe) { _skipped++; _skipOff++; } return; }
-
         // Extrapolating, not Gating: Gating is true at the tick rate too, where
         // every frame ticks and LogicPhase is always ~0. Carrying there is not
         // merely pointless -- lerp(prev, cur, 0) is `prev`, so the renderer would
@@ -333,6 +334,16 @@ public static class FrameSmoothing
         // bought with no smoothing at all. The checkbox greys itself out on the
         // same test; this is the half that has to agree with it.
         if (!FramePacing.Extrapolating) { if (_probe) { _skipped++; _skipOff++; } return; }
+
+        // Off, the mouse still leads: the view is the tick's plus what the mouse
+        // has moved since, and nothing is interpolated.
+        if (!Enabled)
+        {
+            if (_probe) { _skipped++; _skipOff++; }
+            MouseLead(m, 1.0);
+            if (_aheadYaw != 0 || _aheadPitch != 0) LeadOnly(m);
+            return;
+        }
 
         // Roll forward on a tick, then re-read the values the game just produced.
         // Stage 3 (func_80028DB8 for the angles, func_80028080 for the position)
@@ -384,13 +395,21 @@ public static class FrameSmoothing
             OffTickMoves++;
         }
 
+        double frac = FramePacing.LogicPhase;
+        var (yawLead, pitchLead) = MouseLead(m, frac);
+        bool leading = _aheadYaw != 0 || _aheadPitch != 0;
+
         // Not gated on a small phase: interpolation must overwrite the live globals
         // even at frac ~= 0, because on a tick frame they hold `cur` (the new tick)
         // and the frame is meant to draw `prev`. Skipping there would leave the new
         // value on screen and put a snap back the other way.
-        if (!_carriable) { LastVerdict = 1; if (_probe) { _skipped++; _skipUnprimed++; } return; }
-
-        double frac = FramePacing.LogicPhase;
+        if (!_carriable)
+        {
+            LastVerdict = 1;
+            if (_probe) { _skipped++; _skipUnprimed++; }
+            if (leading) LeadOnly(m);
+            return;
+        }
 
         int yawD = Delta12(_prevYaw, _curYaw);
         int pitchD = S12(_curPitch) - S12(_prevPitch);
@@ -410,6 +429,7 @@ public static class FrameSmoothing
         {
             LastVerdict = 2;
             if (_probe) { _skipped++; _skipStill++; }
+            if (leading) LeadOnly(m);
             return;
         }
 
@@ -423,8 +443,10 @@ public static class FrameSmoothing
         _applied = true;
         _carries++;
 
-        int yawStep = (int)Math.Round(yawD * frac);
-        int pitchStep = (int)Math.Round(pitchD * frac);
+        // Rounded with the mouse's lead rather than apart, or the two roundings
+        // wobble the view by a unit as the phase moves.
+        int yawStep = (int)Math.Round(yawD * frac + yawLead);
+        int pitchStep = (int)Math.Round(pitchD * frac + pitchLead);
 
         // Stepped from the game's own previous-tick word, in the game's own 16-bit
         // domain, rather than rebuilt out of the 12-bit angle. The composer
@@ -461,8 +483,8 @@ public static class FrameSmoothing
         if (_probe)
         {
             _carried++;
-            _yawSum += Math.Abs(yawStep);
-            _pitchSum += Math.Abs(pitchStep);
+            _yawSum += Math.Abs(yawD * frac);
+            _pitchSum += Math.Abs(pitchD * frac);
             if (posLive) _posSum += Math.Abs(dx * frac) + Math.Abs(dz * frac);
             _fracSum += frac;
             if (eyeLive)
@@ -504,6 +526,87 @@ public static class FrameSmoothing
         }
 
         if (_probe) Report();
+    }
+
+    // ---- the mouse leads the tick ------------------------------------------------
+    //
+    // See "The mouse leads the tick" in docs/INPUT.md. A mouse turn is a
+    // displacement the game adds to the angle exactly, so the view can show it
+    // the frame it happens instead of a tick or two later: the tick's angle, plus
+    // whatever the mouse has moved since, plus the part of the last tick's mouse
+    // turn the interpolation has not reached yet.
+
+    const int PitchLimit = 0x2BC;
+
+    static long _leadFrame = -1;
+    static int _tickYaw, _tickPitch;
+
+    // The part of the lead the tick has not spent yet: all of it, on a frame
+    // that is not interpolated and so already shows the tick's own turn.
+    static int _aheadYaw, _aheadPitch;
+    static long _leadFrames, _leadTicks;
+    static double _leadSum, _leadMiss;
+
+    /// <summary>The yaw and pitch to add to this frame's view for the mouse.
+    /// <paramref name="frac"/> is the interpolation's phase; 1 when nothing is
+    /// interpolated.</summary>
+    static (double Yaw, double Pitch) MouseLead(IMemory m, double frac)
+    {
+        _aheadYaw = _aheadPitch = 0;
+        if (!Mouse.Lead) return (0, 0);
+        Mouse.Poll();
+
+        // On the tick the look routine spent the mouse, what the game actually
+        // turned by for it; the lerp from prev reaches it only at phase 1.
+        if (FramePacing.FirstWalkOfTick(ref _leadFrame))
+        {
+            var spent = Mouse.SpentThisFrame(m);
+            (_tickYaw, _tickPitch) = spent is { } t ? (t.Yaw, t.Pitch) : (0, 0);
+            if (_probe && spent is { } q)
+            {
+                _leadTicks++;
+                _leadMiss += Math.Abs(q.Yaw - q.AskedYaw) + Math.Abs(q.Pitch - q.AskedPitch);
+            }
+        }
+
+        double keep = 1.0 - frac;
+        var (turn, look) = Mouse.Pending;
+
+        _aheadYaw = (int)Math.Round(turn);
+        double yaw = _tickYaw * keep + turn;
+
+        // Held inside the game's pitch limit, off the base angle the next tick
+        // will add to, so looking into the limit does not overshoot and come back.
+        // The base is a 12-bit angle: just above level it is 0x0FFx, and only the
+        // clamp writes the sign-extended 0xFD44.
+        int basePitch = S12(m.ReadU16(Analog.Pitch));
+        int ahead = Math.Clamp(basePitch + (int)Math.Round(look), -PitchLimit, PitchLimit) - basePitch;
+        _aheadPitch = ahead;
+        double pitch = _tickPitch * keep + ahead;
+
+        if (_probe && (yaw != 0 || pitch != 0))
+        {
+            _leadFrames++;
+            _leadSum += Math.Abs(turn) + Math.Abs(ahead);
+        }
+        return (yaw, pitch);
+    }
+
+    /// <summary>The live view plus the unspent lead, on a frame nothing is
+    /// interpolated; <see cref="After"/> puts it back.</summary>
+    static void LeadOnly(IMemory m)
+    {
+        _pitch = m.ReadU16(ComposedPitch);
+        _yaw = m.ReadU16(ComposedYaw);
+        _x = m.ReadU32(PosX);
+        _y = m.ReadU32(PosY);
+        _z = m.ReadU32(PosZ);
+        _bob = m.ReadU16(Bob);
+        _land = m.ReadU16(Landing);
+        _applied = true;
+
+        m.WriteU16(ComposedYaw, (ushort)(_yaw + _aheadYaw));
+        m.WriteU16(ComposedPitch, (ushort)(_pitch + _aheadPitch));
     }
 
     /// <summary>Placements the pair was shifted across: the game moved the view
@@ -597,6 +700,14 @@ public static class FrameSmoothing
                               $"yaw {_yawSum / _carried:0.0} u, pitch {_pitchSum / _carried:0.0} u, " +
                               $"pos {_posSum / _carried:0.0} u, " +
                               $"bob carried on {_bobFrames} ({_bobOffTick} between the ticks' values)");
+
+        if (_leadFrames > 0 || _leadTicks > 0)
+            Console.WriteLine($"[KF2] smoothing: mouse led {_leadFrames} frames, " +
+                              $"mean {(_leadFrames > 0 ? _leadSum / _leadFrames : 0):0.0} u ahead of the tick; " +
+                              $"{_leadTicks} ticks spent it, mean |applied - asked| " +
+                              $"{(_leadTicks > 0 ? _leadMiss / _leadTicks : 0):0.00} u");
+        _leadFrames = _leadTicks = 0;
+        _leadSum = _leadMiss = 0.0;
 
         _carried = _skipped = _skipStill = _skipOff = _skipUnprimed = 0;
         _yawSum = _pitchSum = _posSum = _fracSum = 0.0;

@@ -210,6 +210,7 @@ public static class PatchSettings
         // are held by InputSection and drawn inside the tab each belongs to.
         Register("gameplay", new MapPage());
         Register("gameplay", new AutoReloadPage());
+        Register("gameplay", new MouseLeadPage());
         Event.AddListener<RuntimeReadyEvent>(_ => RegisterUi());
     }
 
