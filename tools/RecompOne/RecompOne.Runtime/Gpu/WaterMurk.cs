@@ -21,4 +21,19 @@ public static class WaterMurk
     /// under it fades to 63% of <see cref="R"/>/G/B.</summary>
     public static float Distance = 2654f;
     public static float R = 0.03f, G = 0.05f, B = 0.06f;
+
+    /// <summary>Water with no floor drawn under it takes its depth from the map: per
+    /// tile, the depth of the floor below the water's surface times a weight, and the
+    /// weight (1 where the tile has a floor or borders one, 0 where the water is open
+    /// and deep). <see cref="GridSpan"/> squared pairs, row by tile Z. The port fills
+    /// it and bumps <see cref="GridGen"/>.</summary>
+    public const int GridSpan = 80, TileUnits = 2048;
+    public static float[]? Grid;
+    public static int GridGen;
+
+    /// <summary>The camera the frame now being drawn was walked with, as
+    /// <see cref="WaterWaves"/> holds it (view = R (world - cam) + T): the rotation
+    /// row by row, the camera's world position, the translation.</summary>
+    public static readonly float[] View = new float[15];
+    public static bool ViewSet;
 }

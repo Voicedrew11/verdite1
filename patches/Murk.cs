@@ -52,6 +52,7 @@ public static class Murk
             Console.WriteLine($"[KF2] murky water: {(Enabled ? $"on, {WaterMurk.Distance:F0} units to " +
                                                               $"{WaterMurk.R:F2},{WaterMurk.G:F2},{WaterMurk.B:F2}" : "off")}");
         });
+        Event.AddListener<OverlayLoadedEvent>(_ => MurkFloor.Forget());
     }
 
     public static void SetEnabled(bool on)

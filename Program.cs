@@ -717,6 +717,7 @@ Kf2.Reflections.Install();
 Kf2.Murk.Configure(Environment.GetEnvironmentVariable("KF2_MURK"),
                    Environment.GetEnvironmentVariable("KF2_MURK_DISTANCE"));
 Kf2.Murk.Install();
+Kf2.MurkFloor.Configure(Environment.GetEnvironmentVariable("KF2_MURK_PROBE"));
 
 // Water waves: a slow swell moves the water's own vertices (the tile walk points each
 // water mesh at a moved copy), and ripples push and shade its texture per pixel

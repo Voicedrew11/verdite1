@@ -622,15 +622,15 @@ internal static class GlShaders
         // runs through it, surface to the opaque floor behind. 0 is off.
         uniform float uMurkDist;
         uniform vec3  uMurkColor;
-        // Water with no floor drawn under it (the cells along the pier) takes its
-        // depth from the water around it: a first run of this program with
-        // uMurkPass 1 writes each water pixel's depth to its floor, measured along
-        // the surface's normal, and a weight, and the mip chain of that is read at
-        // the finest level with any weight. 0 in uMurkFillOn: the sky's full run.
-        uniform int   uMurkPass;
-        uniform int   uMurkFillOn;
-        uniform int   uMurkFillLods;
-        uniform sampler2D uMurkFill;
+        // Water with no floor drawn under it takes its depth from the map: an 80x80
+        // grid by tile of (floor depth below the surface times a weight, the weight),
+        // read at the pixel's world position, with the camera the frame was drawn
+        // with (view = R (world - cam) + T). 0 in uMurkGridOn: the sky's full run.
+        uniform int   uMurkGridOn;
+        uniform sampler2D uMurkGrid;
+        uniform mat3  uMurkR;
+        uniform vec3  uMurkCam;
+        uniform vec3  uMurkT;
         // SurfaceMaterial's table, by id: row 0 is reflectivity, F0 and roughness.
         uniform sampler2D uMatTable;
         // The game's depth cue, off the GTE: IR0 = (DQA * H/SZ + DQB) / 4096, and
@@ -683,6 +683,7 @@ internal static class GlShaders
 
         const float FAR = 65536.0;
         const float OVERLAY = 3.0;
+        const float TILE = 2048.0;
 
         // How much of a colour survives the fog at view depth z: the per-pixel
         // lighting shader's curve (shade8), evaluated at the GTE's own quotient.
@@ -967,23 +968,18 @@ internal static class GlShaders
                 }
                 bool floorless = d <= 0.0 || d >= 1.0;
                 float run = floorless ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
-                float cv = max(abs(dot(normalize(p), octDecode(s.rg))), 0.02);
-                if (uMurkPass != 0) {
-                    oColor = floorless ? vec4(0.0) : vec4(run * cv, 1.0, 0.0, 0.0);
-                    return;
-                }
-                if (floorless && uMurkFillOn != 0) {
-                    // Coarse and blended between levels, so a sliver of something
-                    // standing in the water does not lend its short run to the
-                    // water round it, and the level chosen leaves no edge.
-                    for (int i = 0; i <= 16; i++) {
-                        float lod = float(uMurkFillLods - 4 + i);
-                        if (lod > float(uMurkFillLods)) break;
-                        vec2 f = textureLod(uMurkFill, vUv, lod).rg;
-                        if (f.y > 0.25) { run = f.x / f.y / cv; break; }
+                gMurk = 1.0 - exp(-run / uMurkDist);
+                if (floorless && uMurkGridOn != 0) {
+                    // Bilinear between tile centres, so the depth changes across a
+                    // tile rather than at its edge, and open water fades to deep
+                    // over the tile past the last floor.
+                    vec3 wp = transpose(uMurkR) * (p - uMurkT) + uMurkCam;
+                    vec2 g = texture(uMurkGrid, wp.xz / (TILE * 80.0)).rg;
+                    if (g.y > 1e-4) {
+                        float cv = max(abs(dot(normalize(p), octDecode(s.rg))), 0.02);
+                        gMurk = mix(gMurk, 1.0 - exp(-g.x / g.y / cv / uMurkDist), clamp(g.y, 0.0, 1.0));
                     }
                 }
-                gMurk = 1.0 - exp(-run / uMurkDist);
                 gMurkCol = fogTo(uMurkColor, fogKeep(zs));
             }
             if (refl <= 0.0) { emit(vec3(0.0), 0.0); return; }
