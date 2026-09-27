@@ -72,7 +72,7 @@ public sealed partial class GlCore : IGpuBackend
     // redrawn into the target's own coordinates once the frame is finished.
     uint _progNormal, _nrmVao, _nrmVbo;
     int _nrmVboVerts;
-    int _uNrmPosBias, _uNrmFbInv, _uNrmProjH, _uNrmCentre, _uNrmScale;
+    int _uNrmPosBias, _uNrmFbInv, _uNrmProjH, _uNrmCentre, _uNrmScale, _uNrmVeilPass;
 
     // 0067. Screen-space reflections: one full-screen pass at present, reading the
     // target's colour, depth and surface buffer into its own premultiplied texture.
@@ -367,7 +367,7 @@ public sealed partial class GlCore : IGpuBackend
             // nothing with the prim VAO: three floats and a position, drawn once a
             // frame from a list the port kept.
             _progNormal = GlShaders.Build(_gl, GlShaders.NormalVs, GlShaders.NormalFs, "aonormal",
-                [(0, "inPos"), (1, "inZ"), (2, "inM")]);
+                [(0, "inPos"), (1, "inZ"), (2, "inM"), (3, "inUv"), (4, "inTex")]);
             if (_progNormal != 0)
             {
                 _uNrmPosBias = _gl.GetUniformLocation(_progNormal, "uPosBias");
@@ -375,6 +375,10 @@ public sealed partial class GlCore : IGpuBackend
                 _uNrmProjH = _gl.GetUniformLocation(_progNormal, "uProjH");
                 _uNrmCentre = _gl.GetUniformLocation(_progNormal, "uCentre");
                 _uNrmScale = _gl.GetUniformLocation(_progNormal, "uScale");
+                _uNrmVeilPass = _gl.GetUniformLocation(_progNormal, "uVeilPass");
+                _gl.UseProgram(_progNormal);
+                _gl.Uniform1(_gl.GetUniformLocation(_progNormal, "uVram"), 0);
+                _gl.UseProgram(0);
 
                 _nrmVao = _gl.GenVertexArray();
                 _nrmVbo = _gl.GenBuffer();
@@ -384,6 +388,8 @@ public sealed partial class GlCore : IGpuBackend
                 _gl.EnableVertexAttribArray(0); _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, ns, (void*)0);
                 _gl.EnableVertexAttribArray(1); _gl.VertexAttribPointer(1, 1, VertexAttribPointerType.Float, false, ns, (void*)8);
                 _gl.EnableVertexAttribArray(2); _gl.VertexAttribPointer(2, 1, VertexAttribPointerType.Float, false, ns, (void*)12);
+                _gl.EnableVertexAttribArray(3); _gl.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, ns, (void*)16);
+                _gl.EnableVertexAttribArray(4); _gl.VertexAttribIPointer(4, 1, VertexAttribIType.UnsignedInt, ns, (void*)24);
                 _gl.BindVertexArray(0);
                 _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
             }
@@ -999,9 +1005,12 @@ public sealed partial class GlCore : IGpuBackend
         // opaque one drawn in painter's order (zMode 3, the first-person arm), or
         // the water under it keeps the surface buffer and is reflected and murked
         // on top of it; not slot 0's skybox, which must read as no surface.
+        // A see-through untextured one (a message box) is a veil instead: it keeps
+        // the surface under it, so the water it shows is murked like the rest.
         if (_kTarget != null && AoGeometry.Active && !_kTarget.IsPlanar)
         {
             byte m = SurfaceMaterial.None;
+            float veil = 0f;
             if (zMode == 1 || zMode == 4 || zMode == 2)
             {
                 m = zMode == 2 ? SurfaceMaterial.None : SurfaceMaterial.Opaque;
@@ -1015,8 +1024,20 @@ public sealed partial class GlCore : IGpuBackend
                      && (zMode == 3 && GteDepth.OtSlot != 0 || !a.Projected && !b.Projected && !c.Projected)
                      && !CoversTarget(Math.Min(a.X, Math.Min(b.X, c.X)), Math.Min(a.Y, Math.Min(b.Y, c.Y)),
                                       Math.Max(a.X, Math.Max(b.X, c.X)), Math.Max(a.Y, Math.Max(b.Y, c.Y))))
-                m = SurfaceMaterial.Overlay;
+            {
+                if (f.SemiTrans && zMode == 0 && !f.UseImage) veil = VeilOf(f);
+                else m = SurfaceMaterial.Overlay;
+                if (f.SemiTrans && zMode == 0 && f.Textured) SurfaceMaterial.TexturedVeils++;
+            }
             if (m == SurfaceMaterial.Overlay) SurfaceMaterial.Overlays++;
+            if (veil > 0f)
+            {
+                SurfaceMaterial.Veils++;
+                _kTarget.Geo.Frame(_frame, GteDepth.Generation);
+                uint tex = VeilTex(f);
+                _kTarget.Geo.Add(VeilVert(a.X, a.Y, a.U, a.V, veil, tex), VeilVert(b.X, b.Y, b.U, b.V, veil, tex),
+                                 VeilVert(c.X, c.Y, c.U, c.V, veil, tex));
+            }
             // 0068. The plane a planar reflection mirrors in is found here, from
             // the water the frame actually drew.
             if (m == SurfaceMaterial.Water && PlanarReflections.Enabled)
@@ -1100,7 +1121,18 @@ public sealed partial class GlCore : IGpuBackend
     /// <summary>0058. A vertex as the normal pass wants it: the position the colour
     /// pass is about to draw, and the view depth the plane is reconstructed from.</summary>
     static AoGeometry.V GeoVert(in HleVertex v, float m) =>
-        new() { X = v.X, Y = v.Y, Z = m == SurfaceMaterial.Overlay ? 0f : v.Z, M = m };
+        new() { X = v.X, Y = v.Y, Z = m == SurfaceMaterial.Overlay || m >= SurfaceMaterial.VeilHalf ? 0f : v.Z, M = m };
+
+    /// <summary>A see-through 2D primitive's mark: mode 0 shows half of what is behind it.</summary>
+    static float VeilOf(in PrimFlags f) => f.BlendMode == 0 ? SurfaceMaterial.VeilHalf : SurfaceMaterial.VeilFull;
+
+    /// <summary>What the normal pass reads a veil's texel with: bit 31 textured,
+    /// the CLUT above the texpage.</summary>
+    static uint VeilTex(in PrimFlags f) =>
+        f.Textured ? 0x80000000u | ((uint)f.Clut & 0x7FFF) << 16 | f.TPage : 0u;
+
+    static AoGeometry.V VeilVert(float x, float y, float u, float v, float m, uint tex) =>
+        new() { X = x, Y = y, M = m, Tu = u, Tv = v, Tex = tex };
 
     /// <summary>0067. A 2D primitive over most of the target is a fade or a flash
     /// the world is seen through, not a piece of the HUD; it is not an overlay.</summary>
@@ -1131,10 +1163,15 @@ public sealed partial class GlCore : IGpuBackend
             && !CoversTarget(r.X, r.Y, r.X + r.W, r.Y + r.H))
         {
             float m = SurfaceMaterial.Overlay;
-            SurfaceMaterial.Overlays += 2;
+            if (f.SemiTrans && !f.UseImage) { m = VeilOf(f); SurfaceMaterial.Veils += 2; }
+            else SurfaceMaterial.Overlays += 2;
+            if (f.SemiTrans && f.Textured) SurfaceMaterial.TexturedVeils += 2;
             _kTarget.Geo.Frame(_frame, GteDepth.Generation);
-            _kTarget.Geo.Add(GeoVert(a, m), GeoVert(b, m), GeoVert(c, m));
-            _kTarget.Geo.Add(GeoVert(b, m), GeoVert(d, m), GeoVert(c, m));
+            uint tex = m == SurfaceMaterial.Overlay ? 0u : VeilTex(f);
+            _kTarget.Geo.Add(VeilVert(a.X, a.Y, a.U, a.V, m, tex), VeilVert(b.X, b.Y, b.U, b.V, m, tex),
+                             VeilVert(c.X, c.Y, c.U, c.V, m, tex));
+            _kTarget.Geo.Add(VeilVert(b.X, b.Y, b.U, b.V, m, tex), VeilVert(d.X, d.Y, d.U, d.V, m, tex),
+                             VeilVert(c.X, c.Y, c.U, c.V, m, tex));
         }
     }
 
@@ -2689,7 +2726,38 @@ public sealed partial class GlCore : IGpuBackend
             _nrmVboVerts = verts.Length;
         }
         _gl.BufferSubData<AoGeometry.V>(BufferTargetARB.ArrayBuffer, 0, verts);
-        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)verts.Length);
+        // A veil keeps the surface under it and adds its mark to the id: RGB kept,
+        // alpha added, on both attachments (it writes zero to the normal buffer).
+        // A veil run is drawn twice: its see-through texels with that blend
+        // (uVeilPass 1), then a textured one's opaque texels as an overlay (2).
+        var breaks = src.Geo.Breaks;
+        if (breaks.Count > 0)
+        {
+            _gl.ActiveTexture(TextureUnit.Texture0);
+            _gl.BindTexture(TextureTarget.Texture2D, _vram.SampleTexture);
+        }
+        int start = 0;
+        bool veil = false;
+        for (int i = 0; i <= breaks.Count; i++)
+        {
+            int end = i < breaks.Count ? breaks[i] : verts.Length;
+            if (end > start)
+            {
+                if (veil)
+                {
+                    if (src.Surface != 0) _gl.Enable(EnableCap.Blend, 1);
+                    _gl.BlendFuncSeparate(BlendingFactor.Zero, BlendingFactor.One, BlendingFactor.One, BlendingFactor.One);
+                    if (_uNrmVeilPass >= 0) _gl.Uniform1(_uNrmVeilPass, 1);
+                    _gl.DrawArrays(PrimitiveType.Triangles, start, (uint)(end - start));
+                }
+                if (src.Surface != 0) _gl.Disable(EnableCap.Blend, 1);
+                _gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+                if (_uNrmVeilPass >= 0) _gl.Uniform1(_uNrmVeilPass, veil ? 2 : 0);
+                _gl.DrawArrays(PrimitiveType.Triangles, start, (uint)(end - start));
+            }
+            start = end;
+            veil = !veil;
+        }
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
         _gl.Disable(EnableCap.Blend);
         AoGeometry.Passes++;

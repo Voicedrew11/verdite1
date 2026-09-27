@@ -41,6 +41,12 @@ public static class SurfaceMaterial
     /// normal pass takes opacity from the draw rather than from the id.</summary>
     public const float BlendedFlag = 256f;
 
+    /// <summary>A see-through 2D primitive (a message box) leaves the surface under
+    /// it and adds this to its id: <see cref="VeilHalf"/> for blend mode 0, which
+    /// shows half of what is behind, <see cref="VeilFull"/> for the others. The
+    /// water under it is murked and reflected at that share, not left bare.</summary>
+    public const float VeilHalf = 512f, VeilFull = 1024f;
+
     /// <summary>How much of the scene a material reflects at most, 0..1; 0 is not
     /// reflective, and the pass skips the pixel after one texture read.</summary>
     public static readonly float[] Reflectivity = new float[Count];
@@ -143,11 +149,14 @@ public static class SurfaceMaterial
 
     /// <summary>2D triangles kept as <see cref="Overlay"/>.</summary>
     public static long Overlays;
+    /// <summary>2D triangles kept as a veil, and see-through textured ones kept as
+    /// <see cref="Overlay"/> (a texel may be opaque, which the normal pass cannot see).</summary>
+    public static long Veils, TexturedVeils;
     public static readonly long[] RefusedByBlend = new long[4];
 
     public static void ResetCounters()
     {
-        FromPacket = FromRect = Blended = Overlays = 0;
+        FromPacket = FromRect = Blended = Overlays = Veils = TexturedVeils = 0;
         Array.Clear(ByMaterial);
         Array.Clear(RefusedByBlend);
     }

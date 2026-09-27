@@ -50,13 +50,14 @@ internal static class GlShaders
         vec2 ssrKey(vec2 uv) {
             vec2 tt = (uOrigin + uv * uSize) / uTexSize;
             vec4 s = texture(uSurface, tt);
-            int m = int(s.a + 0.5);
+            // Above 511 is a see-through 2D box's mark over the surface (SsrFs).
+            int m = int(s.a + 0.5) & 511;
             if (m != 2) {
                 vec2 tx = 1.0 / uTexSize;
                 vec4 a0 = texture(uSurface, tt - vec2(tx.x, 0.0)), a1 = texture(uSurface, tt + vec2(tx.x, 0.0));
                 vec4 b0 = texture(uSurface, tt - vec2(0.0, tx.y)), b1 = texture(uSurface, tt + vec2(0.0, tx.y));
-                if (int(a0.a + 0.5) == 2 && int(a1.a + 0.5) == 2) { s.b = 0.5 * (a0.b + a1.b); m = 2; }
-                else if (int(b0.a + 0.5) == 2 && int(b1.a + 0.5) == 2) { s.b = 0.5 * (b0.b + b1.b); m = 2; }
+                if ((int(a0.a + 0.5) & 511) == 2 && (int(a1.a + 0.5) & 511) == 2) { s.b = 0.5 * (a0.b + a1.b); m = 2; }
+                else if ((int(b0.a + 0.5) & 511) == 2 && (int(b1.a + 0.5) & 511) == 2) { s.b = 0.5 * (b0.b + b1.b); m = 2; }
             }
             if (m <= 0 || m >= 256 || s.b * 65536.0 <= 1.0) return vec2(0.0);
             float d = texture(uSsrDepth, tt).r;
@@ -102,7 +103,7 @@ internal static class GlShaders
             if (uAoOn > 0.5) {
                 float ao = texture(uAo, vUv).r;
                 if (uAoMatOn > 0.5) {
-                    int m = int(texture(uSurface, t).a + 0.5);
+                    int m = int(texture(uSurface, t).a + 0.5) & 511;
                     if (m > 0 && m < 256) ao = mix(ao, 1.0, texelFetch(uMatTable, ivec2(m, 2), 0).g);
                 }
                 c *= ao;
@@ -487,12 +488,16 @@ internal static class GlShaders
         layout(location = 0) in vec2  inPos;
         layout(location = 1) in float inZ;
         layout(location = 2) in float inM;
+        layout(location = 3) in vec2  inUv;
+        layout(location = 4) in uint  inTex;
 
         uniform vec2 uPosBias;
         uniform vec2 uFbInv;
 
         out float vDepth;
         flat out float vM;
+        out vec2 vUv;
+        flat out uint vTex;
 
         void main() {
             vec2 p = (inPos + uPosBias) * uFbInv - 1.0;
@@ -500,6 +505,8 @@ internal static class GlShaders
             gl_Position = vec4(p * w, 0.0, w);
             vDepth = inZ * (1.0/65536.0);
             vM = inM;
+            vUv = inUv;
+            vTex = inTex;
         }
         """;
 
@@ -520,6 +527,8 @@ internal static class GlShaders
         #version 330 core
         in float vDepth;
         flat in float vM;
+        in vec2 vUv;
+        flat in uint vTex;
         // 0067. Two outputs. The first is the occlusion pass's normal buffer and
         // is blended (ONE, ONE_MINUS_SRC_ALPHA), so a translucent surface writes
         // alpha 0 and leaves the opaque surface under it -- whose depth is the one
@@ -534,6 +543,34 @@ internal static class GlShaders
         // gl_FragCoord / uScale is where this fragment is in the game's.
         uniform vec2  uCentre;
         uniform float uScale;
+        // A veil's texel comes from sample VRAM; 1 draws its see-through texels,
+        // 2 a textured one's opaque texels, 0 is no veil.
+        uniform sampler2D uVram;
+        uniform int uVeilPass;
+
+        vec4 vfetch(ivec2 c) { return texelFetch(uVram, c & ivec2(1023, 511), 0); }
+        int vu5(float f) { return int(floor(f * 31.0 + 0.5)); }
+        int vfetch16(ivec2 c) {
+            vec4 p = vfetch(c);
+            return vu5(p.r) | (vu5(p.g) << 5) | (vu5(p.b) << 10) | (int(ceil(p.a)) << 15);
+        }
+        // PrimFs's decode, without the texture window: 2D needs none.
+        vec4 veilTexel(ivec2 uv) {
+            int tp = int(vTex & 0xffffu), cl = int((vTex >> 16) & 0x7fffu);
+            int mode = (tp >> 7) & 3;
+            ivec2 page = ivec2((tp & 0xf) * 64, ((tp >> 4) & 1) * 256);
+            ivec2 clut = ivec2((cl & 0x3f) * 16, (cl >> 6) & 0x1ff);
+            uv &= ivec2(0xff);
+            if (mode == 0) {
+                int s = vfetch16(page + ivec2(uv.x >> 2, uv.y));
+                return vfetch(ivec2(clut.x + ((s >> ((uv.x & 3) << 2)) & 0xf), clut.y));
+            }
+            if (mode == 1) {
+                int s = vfetch16(page + ivec2(uv.x >> 1, uv.y));
+                return vfetch(ivec2(clut.x + ((s >> ((uv.x & 1) << 3)) & 0xff), clut.y));
+            }
+            return vfetch(page + uv);
+        }
 
         // Octahedral: a unit normal in two numbers, exact enough in half floats.
         vec2 octEncode(vec3 n) {
@@ -546,6 +583,21 @@ internal static class GlShaders
 
         void main() {
             float z = vDepth * 65536.0;
+            // A veil, a see-through 2D box: where it is see-through, both buffers
+            // are left as they are and its mark is added to the id (the draw blends
+            // it so); a texel without the semi-transparency bit is an overlay.
+            if (vM > 511.5) {
+                bool see = true;
+                if ((vTex & 0x80000000u) != 0u) {
+                    vec4 t = veilTexel(ivec2(floor(vUv)));
+                    if (t.rgb == vec3(0.0) && t.a < 0.5) discard;
+                    see = t.a >= 0.5;
+                }
+                if (see != (uVeilPass == 1)) discard;
+                oColor = vec4(0.0);
+                oSurface = vec4(0.0, 0.0, 0.0, see ? vM : 3.0);
+                return;
+            }
             // A blended triangle arrives with 256 added to its material, so
             // opacity is the draw's and not a guess from the id.
             bool opaque = vM < 255.5;
@@ -703,7 +755,11 @@ internal static class GlShaders
 
         vec2 tc(vec2 uv) { return (uOrigin + uv * uSize) / uTexSize; }
         float depthAt(vec2 uv) { return texture(uDepth, tc(uv)).r; }
-        bool overlayAt(vec2 uv) { return abs(texture(uSurface, tc(uv)).a - OVERLAY) < 0.5; }
+        // Above 511 a see-through 2D box lies over the surface: 512 for one that
+        // shows half of it (blend mode 0), 1024 for any other.
+        bool overlayAt(vec2 uv) { float a = texture(uSurface, tc(uv)).a; return a > 511.5 || abs(a - OVERLAY) < 0.5; }
+        int surfId(float a) { return int(a + 0.5) & 511; }
+        float veilShare(float a) { return (int(a + 0.5) >> 9) == 1 ? 0.5 : 1.0; }
         vec3 viewAt(vec2 uv, float z) { return vec3((uv - uCentre) * uSize * (z / uProjH), z); }
         vec2 project(vec3 q) { return uCentre + q.xy * (uProjH / q.z) / uSize; }
 
@@ -759,6 +815,8 @@ internal static class GlShaders
         // The murk's share and its (fogged) colour, laid under the reflection.
         float gMurk = 0.0;
         vec3 gMurkCol = vec3(0.0);
+        // How much of the surface a see-through box over it lets show.
+        float gShare = 1.0;
         void emit(vec3 c, float w) {
             w = clamp(w, 0.0, 1.0);
             float a = gMetalDark > 0.0 ? 1.0 - (1.0 - gMetalDark) * (1.0 - w) : w;
@@ -767,7 +825,7 @@ internal static class GlShaders
                 rgb += gMurkCol * gMurk * (1.0 - a);
                 a = 1.0 - (1.0 - a) * (1.0 - gMurk);
             }
-            oColor = vec4(rgb, a);
+            oColor = vec4(rgb, a) * gShare;
         }
 
         // 0068. The planar reflection at this pixel, when the surface lies on the
@@ -908,7 +966,8 @@ internal static class GlShaders
             oColor = vec4(0.0);
             oInfo = vec4(0.0);
             vec4 s = texture(uSurface, tc(vUv));
-            int m = int(s.a + 0.5);
+            gShare = veilShare(s.a);
+            int m = surfId(s.a);
             // A texel the water's triangles left uncovered between two that are
             // water is water: the tiles meet with hairline cracks, and the murk
             // made each one a line.
@@ -916,8 +975,8 @@ internal static class GlShaders
                 vec2 tx = 1.0 / uTexSize;
                 vec4 a0 = texture(uSurface, tc(vUv) - vec2(tx.x, 0.0)), a1 = texture(uSurface, tc(vUv) + vec2(tx.x, 0.0));
                 vec4 b0 = texture(uSurface, tc(vUv) - vec2(0.0, tx.y)), b1 = texture(uSurface, tc(vUv) + vec2(0.0, tx.y));
-                if (int(a0.a + 0.5) == 2 && int(a1.a + 0.5) == 2) { s = a0; s.b = 0.5 * (a0.b + a1.b); m = 2; }
-                else if (int(b0.a + 0.5) == 2 && int(b1.a + 0.5) == 2) { s = b0; s.b = 0.5 * (b0.b + b1.b); m = 2; }
+                if (surfId(a0.a) == 2 && surfId(a1.a) == 2) { s = a0; s.b = 0.5 * (a0.b + a1.b); m = 2; }
+                else if (surfId(b0.a) == 2 && surfId(b1.a) == 2) { s = b0; s.b = 0.5 * (b0.b + b1.b); m = 2; }
             }
             // Red is the material here, for the probe's map.
             oInfo = vec4(float(clamp(m, 0, 255)) / 255.0, depthAt(vUv) >= 1.0 ? 1.0 / 255.0 : 0.0, 0.0, 0.0);

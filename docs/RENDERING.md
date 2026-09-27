@@ -2003,6 +2003,35 @@ all `~` and the 2D overlay count stayed at 16,170/s; after, the arm is an `H` bl
 in the lower right over the `~` and the count rises from 17,160 to about 22,300/s
 while it swings. Judged by eye: fixed.
 
+### A see-through box showed the water unmurked
+
+Reported from play with the murk on: an item's name box over water ("BONES",
+bottom of the picture) showed the water through it at its own, lighter colour, as
+a pale patch in the murk. Every 2D primitive went into the surface list as
+`Overlay`, which the pass leaves alone, so the water under a *translucent* box
+kept no surface and got no murk, while the picture through the box was still that
+water.
+
+A see-through 2D primitive is a **veil** now. It leaves the surface under it and
+adds a mark to the id: `SurfaceMaterial.VeilHalf` (512) for blend mode 0, which
+shows half of what is behind, `VeilFull` (1024) for the others. The normal pass
+draws a run of veils blended RGB-kept, alpha-added, so the water's normal, depth
+and id stay; the reflection pass decodes `id & 511` and scales its whole output by
+the share (0.5 or 1), and treats a veiled pixel as the HUD for a ray landing on
+it. A textured veil is decided per texel: `NormalFs` reads the texel from sample
+VRAM (`veilTexel`, PrimFs's decode without the window), marks it where the
+semi-transparency bit is set, and writes `Overlay` where it is not, in a second
+draw of the run (`uVeilPass` 1 and 2); a transparent texel writes nothing. A
+replacement image stays `Overlay`, since VRAM is not its texel. `ssrKey` and the
+occlusion's material lookup decode the id the same way.
+
+Exact only where the box does not change what is behind it: the murk is laid over
+the finished picture, so it darkens a mode-0 box's own colour by half its weight
+as well as the water through it. Measured in the `fdat02` New Game, `KF2_MURK=1
+KF2_SSR_PROBE=1 KF2_GLDEBUG=1`: 8,580 textured see-through 2D triangles a second
+(the HUD panel) now go in as veils, no GL error, the probe's map unchanged. The
+name box itself was not measured. Judged by eye: fixed.
+
 ### Reflections popped in, because the path is longer than the direct distance
 
 Also reported from play: pop-in in the reflection, of things the fog should have

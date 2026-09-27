@@ -38,6 +38,10 @@ public sealed class AoGeometry
         // 0067. The surface's material (SurfaceMaterial); every opaque triangle is
         // at least Opaque, and a translucent one is kept only when it has one.
         public float M;
+        // A veil's texel, for its semi-transparency bit: the UV, and the texpage
+        // and CLUT with bit 31 set when it is textured.
+        public float Tu, Tv;
+        public uint Tex;
     }
 
     /// <summary>The port's switch.</summary>
@@ -67,6 +71,13 @@ public sealed class AoGeometry
 
     public ReadOnlySpan<V> Verts => _v.AsSpan(0, _n);
 
+    // Where the list turns from surfaces to veils and back (SurfaceMaterial.VeilHalf),
+    // as vertex indices, starting with surfaces: the normal pass blends a veil.
+    readonly List<int> _breaks = new();
+    bool _inVeil;
+
+    public List<int> Breaks => _breaks;
+
     /// <summary>Start this target's list over when it is first drawn in a new frame,
     /// or when the depth generation moved under it.</summary>
     public void Frame(long frame, int gen)
@@ -75,12 +86,16 @@ public sealed class AoGeometry
         _frame = frame;
         _gen = gen;
         _n = 0;
+        _breaks.Clear();
+        _inVeil = false;
     }
 
     public void Add(in V a, in V b, in V c)
     {
         if (_n + 3 > MaxVerts) { Dropped++; return; }
         if (_n + 3 > _v.Length) Array.Resize(ref _v, Math.Min(MaxVerts, _v.Length * 2));
+        bool veil = a.M >= SurfaceMaterial.VeilHalf;
+        if (veil != _inVeil) { _breaks.Add(_n); _inVeil = veil; }
         _v[_n++] = a;
         _v[_n++] = b;
         _v[_n++] = c;

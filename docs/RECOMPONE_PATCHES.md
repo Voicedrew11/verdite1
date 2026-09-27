@@ -964,6 +964,13 @@ Four files in the directory have no entry below:
   under each pixel (`ssrAt`), with the surface buffer at the render scale while the
   pass runs and the depth on unit 4. The eleventh diff in the patch file. See "A
   halo round the pier's pillars" in `docs/RENDERING.md`.
+  Since amended: a see-through 2D primitive (a name box, the HUD panel) is a veil
+  in the surface list rather than an `Overlay`: it keeps the water under it and adds
+  512 (blend mode 0) or 1024 to the id, and the pass murks and reflects that water
+  at the share the box lets through. A textured one is decided per texel from
+  sample VRAM in `NormalFs`, its opaque texels an `Overlay` as before. The twelfth
+  diff in the patch file. See "A see-through box showed the water unmurked" in
+  `docs/RENDERING.md`.
   `GlCore.RenderNormals` became `RenderSurfaces` and runs once for both passes,
   timed with the occlusion pass when that runs. New profiler sections (`Surfaces`,
   `Ssr`) and `GpuWork.Reflections`; the probe attaches a second target to the pass
