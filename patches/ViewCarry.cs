@@ -72,6 +72,13 @@ public static class ViewCarry
     static bool _have;
     static double _lastSampleMs = double.NegativeInfinity;
 
+    /// <summary>For the length of a renderer call: whether this picture is being
+    /// carried, whether it is a tick's first, and how far across the tick it is.
+    /// <see cref="ObjectCarry"/> reads these inside the call.</summary>
+    public static bool Carrying { get; private set; }
+    public static bool TickRender { get; private set; }
+    public static double Phase { get; private set; }
+
     // What the store must hold when the renderer returns.
     static bool _restore;
     static Cam _true;
@@ -154,6 +161,7 @@ public static class ViewCarry
         bool mainLoop = c.RA == MainLoopRenderReturn;
         GateRedraw.NoteRender(mainLoop);
         _restore = false;
+        Carrying = false;
         if (!Enabled || !GateRedraw.Redrawing) return;
         if (!mainLoop && !GateRedraw.InRedraw) return;
 
@@ -190,6 +198,9 @@ public static class ViewCarry
         c.A1 = 0;
         _true = truth;
         _restore = true;
+        Carrying = true;
+        TickRender = !GateRedraw.InRedraw;
+        Phase = phase;
 
         if (_probe)
         {
@@ -203,6 +214,7 @@ public static class ViewCarry
     public static void After(CpuContext c, IMemory m)
     {
         _renders++;
+        Carrying = false;
         if (_restore)
         {
             // What the game's own call leaves in the store: its camera, not ours.

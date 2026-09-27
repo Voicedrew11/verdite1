@@ -20,7 +20,9 @@ namespace Kf2;
 /// </summary>
 public static class StageProbe
 {
-    public static readonly (uint Addr, string Name)[] Stages =
+    // KF2_STAGE_PROBE_FUNCS=8001E83C+8001F218 measures those instead (up to 15),
+    // the gate staying last: it is what closes each report.
+    public static (uint Addr, string Name)[] Stages =
     [
         (0x80018880, "A 80018880"),
         (0x80017E3C, "B 80017E3C"),
@@ -43,10 +45,11 @@ public static class StageProbe
     };
 
     static bool _on;
-    static readonly long[] Calls = new long[Stages.Length + 1];
-    static readonly long[] Ticks = new long[Stages.Length + 1];
-    static readonly long[] Projected = new long[Stages.Length + 1];
-    static readonly long[] Draws = new long[Stages.Length + 1];
+    static long[] _calls = new long[17];
+    static readonly long[] Ticks = new long[17];
+    static readonly long[] Projected = new long[17];
+    static readonly long[] Draws = new long[17];
+    static long[] Calls => _calls;
     static readonly int[] _stack = new int[64];
     static readonly long[] _t0 = new long[64];
     static readonly long[] _p0 = new long[64];
@@ -59,6 +62,17 @@ public static class StageProbe
     public static void Configure(string? probe)
     {
         _on = !string.IsNullOrWhiteSpace(probe) && probe.Trim() != "0";
+        var funcs = Environment.GetEnvironmentVariable("KF2_STAGE_PROBE_FUNCS");
+        if (_on && !string.IsNullOrWhiteSpace(funcs))
+        {
+            var list = funcs.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Take(15)
+                .Select(h => (Convert.ToUInt32(h, 16), h.ToUpperInvariant()))
+                .ToList();
+            list.Add((0x800149F4, "gate 800149F4"));
+            Stages = list.ToArray();
+            Array.Resize(ref _calls, Stages.Length + 1);
+        }
         // KF2_STAGE_PROBE=flip:N turns the halfword at 0x80065098+N by 2048 (half a
         // turn) for the length of the renderer's call, and puts it back: the test
         // of whether the renderer builds its view from that block.
@@ -169,4 +183,16 @@ public static class StageProbe
     public static void Post8(CpuContext c, IMemory m) => Leave(8);
     public static void Pre9(CpuContext c, IMemory m) => Enter(9);
     public static void Post9(CpuContext c, IMemory m) => Leave(9);
+    public static void Pre10(CpuContext c, IMemory m) => Enter(10);
+    public static void Post10(CpuContext c, IMemory m) => Leave(10);
+    public static void Pre11(CpuContext c, IMemory m) => Enter(11);
+    public static void Post11(CpuContext c, IMemory m) => Leave(11);
+    public static void Pre12(CpuContext c, IMemory m) => Enter(12);
+    public static void Post12(CpuContext c, IMemory m) => Leave(12);
+    public static void Pre13(CpuContext c, IMemory m) => Enter(13);
+    public static void Post13(CpuContext c, IMemory m) => Leave(13);
+    public static void Pre14(CpuContext c, IMemory m) => Enter(14);
+    public static void Post14(CpuContext c, IMemory m) => Leave(14);
+    public static void Pre15(CpuContext c, IMemory m) => Enter(15);
+    public static void Post15(CpuContext c, IMemory m) => Leave(15);
 }

@@ -143,10 +143,22 @@ public static class GateRedraw
     static double Now => Interrupts.ClockMs;
 
     /// <summary>Called by <see cref="ViewCarry"/> at the head of every renderer call.</summary>
+    /// <summary>Pictures drawn in the last whole second, for the settings page.</summary>
+    public static double Measured { get; private set; }
+    static double _measureStart;
+    static int _measureCount;
+
     internal static void NoteRender(bool mainLoop)
     {
         _renderedSinceGate = true;
         _lastRenderMs = Now;
+        _measureCount++;
+        if (_lastRenderMs - _measureStart >= 1000.0)
+        {
+            Measured = _measureCount * 1000.0 / (_lastRenderMs - _measureStart);
+            _measureCount = 0;
+            _measureStart = _lastRenderMs;
+        }
         _renders++;
         if (mainLoop && !InRedraw)
         {

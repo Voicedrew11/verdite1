@@ -23,6 +23,12 @@ public static class Controller
     public static bool Analog2;
 
     public static ushort State = 0xFFFF;
+
+    //0085. Buttons a script holds down (active low, like State): ANDed into State
+    //every time the host input is polled, so a scripted press survives the poll
+    //that a pad read makes first (BiosB.PadRead pumps input before it reads).
+    //Writing State directly lost the race to that poll on every read.
+    public static volatile ushort ScriptMask = 0xFFFF;
     public static byte RightX = 0x80;
     public static byte RightY = 0x80;
     public static byte LeftX = 0x80;

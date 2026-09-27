@@ -192,6 +192,7 @@ public static class PatchSettings
         // MapPage, AutoReloadPage and MouseLeadPage under gameplay; each comes back
         // with the patch it controls (docs/KF1.md, "What came across from King's
         // Field II").
+        Register("display", new FrameRatePage());
         Register("display", new PerspectivePage());
         Register("display", new SubpixelPage());
         Register("display", new ShadingPage());

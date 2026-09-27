@@ -63,10 +63,9 @@ RecompOne.Runtime.Events.Event.AddListener<RecompOne.Runtime.Events.OverlayLoade
 // the Controller field names (Start, Select, Cross, Circle, Square, Triangle,
 // L1, R1, L2, R2, Up, Down, Left, Right).
 //
-// It writes Controller.State only while a button is held, so an idle script
-// never fights the keyboard. InputManager.Poll rewrites that field once a frame
-// from the real keyboard; the game reads the pad far more often than that, so a
-// hold of a few hundred ms lands regardless of who wrote last.
+// It holds its buttons down through Controller.ScriptMask, which the input poll
+// ANDs into the keyboard's state (0085), so an idle script never fights the
+// keyboard and a held one is not undone by the poll each pad read makes first.
 var autopad = Environment.GetEnvironmentVariable("KF2_AUTOPAD");
 if (!string.IsNullOrWhiteSpace(autopad))
 {
@@ -111,7 +110,10 @@ if (!string.IsNullOrWhiteSpace(autopad))
             foreach (var (at, until, bit) in press)
                 if (t >= at && t < until) mask &= ~bit;
 
-            if (mask != 0xFFFF) Controller.State = (ushort)mask;
+            // Through the script mask (0085), not State: the input poll a pad read
+            // makes first would overwrite State before the game saw it.
+            Controller.ScriptMask = (ushort)mask;
+            if (mask != 0xFFFF) Controller.State &= (ushort)mask;
             if (mask != last)
             {
                 Console.WriteLine($"[KF1] autopad t={t:F1}s state=0x{mask:X4}");
@@ -446,6 +448,10 @@ Kf2.GateRedraw.Install();
 Kf2.ViewCarry.Configure(Environment.GetEnvironmentVariable("KF2_SMOOTH"),
                         Environment.GetEnvironmentVariable("KF2_SMOOTH_PROBE"));
 Kf2.ViewCarry.Install();
+//     KF2_SMOOTH_OBJECTS=0  leave creatures and objects at the tick
+Kf2.ObjectCarry.Configure(Environment.GetEnvironmentVariable("KF2_SMOOTH_OBJECTS"),
+                          Environment.GetEnvironmentVariable("KF2_SMOOTH_OBJECTS_PROBE"));
+Kf2.ObjectCarry.Install();
 
 // King's Field's main loop, stage by stage: calls, time, GTE projections and
 // DrawOTag calls per stage, for deciding what frame pacing may gate.
