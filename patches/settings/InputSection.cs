@@ -91,10 +91,10 @@ public sealed class InputSection : ISettingsSection
     // for what a button does looks under Input; AnalogPage and MousePage are the
     // stick and pointer halves of the same keyboard-and-mouse question.
     readonly IPatchPage[] _keyboard = [new KeyLayoutPage()];
-    // King's Field has no twin-stick control, map button or mouse look yet; the
-    // King's Field II port's pages were AnalogPage, MapButtonPage and MousePage.
-    readonly IPatchPage[] _gamepad = [];
-    readonly IPatchPage[] _mouse = [];
+    // King's Field's own: the King's Field II port's pages were AnalogPage,
+    // MapButtonPage and MousePage, which drive KF2's patches.
+    readonly IPatchPage[] _gamepad = [new TwinStickPage()];
+    readonly IPatchPage[] _mouse = [new MouseLookPage()];
 
     public void Draw()
     {

@@ -25,6 +25,10 @@ public static class TwinStick
     public static float TurnSens = 1f, LookSens = 1f, Deadzone = 0.15f;
     public static bool InvertY;
 
+    public const string OnKey = "kf1.analog.on", TurnKey = "kf1.analog.turn", LookKey = "kf1.analog.look",
+        DeadzoneKey = "kf1.analog.deadzone", InvertKey = "kf1.analog.inverty";
+    static readonly HashSet<string> _pinned = new();
+
     /// <summary>Full deflection: about 1.5 times the D-pad's turn (which measures
     /// about 560 units a second), in 12-bit angle units a second.</summary>
     const float TurnPerSecond = 840f;
@@ -35,28 +39,42 @@ public static class TwinStick
 
     public static void Configure()
     {
-        Env("KF2_ANALOG", ref Enabled);
-        Env("KF2_ANALOG_INVERTY", ref InvertY);
-        EnvF("KF2_ANALOG_TURN", ref TurnSens);
-        EnvF("KF2_ANALOG_LOOK", ref LookSens);
-        EnvF("KF2_ANALOG_DEADZONE", ref Deadzone);
+        if (Env("KF2_ANALOG", ref Enabled)) _pinned.Add(OnKey);
+        if (Env("KF2_ANALOG_INVERTY", ref InvertY)) _pinned.Add(InvertKey);
+        if (EnvF("KF2_ANALOG_TURN", ref TurnSens)) _pinned.Add(TurnKey);
+        if (EnvF("KF2_ANALOG_LOOK", ref LookSens)) _pinned.Add(LookKey);
+        if (EnvF("KF2_ANALOG_DEADZONE", ref Deadzone)) _pinned.Add(DeadzoneKey);
     }
 
-    static void Env(string n, ref bool v)
+    static bool Env(string n, ref bool v)
     {
         var s = Environment.GetEnvironmentVariable(n);
-        if (!string.IsNullOrWhiteSpace(s)) v = s.Trim() != "0";
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        v = s.Trim() != "0";
+        return true;
     }
 
-    static void EnvF(string n, ref float v)
+    static bool EnvF(string n, ref float v)
     {
-        if (float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var f)) v = f;
+        if (!float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var f)) return false;
+        v = f;
+        return true;
     }
 
     public static void Install()
     {
-        if (!Enabled) return;
+        Event.AddListener<RuntimeReadyEvent>(_ =>
+        {
+            var view = RecompOne.Runtime.Runtime.View;
+            if (!_pinned.Contains(OnKey)) Enabled = view.GetBool(OnKey, Enabled);
+            if (!_pinned.Contains(InvertKey)) InvertY = view.GetBool(InvertKey, InvertY);
+            if (!_pinned.Contains(TurnKey)) TurnSens = view.GetFloat(TurnKey, TurnSens);
+            if (!_pinned.Contains(LookKey)) LookSens = view.GetFloat(LookKey, LookSens);
+            if (!_pinned.Contains(DeadzoneKey)) Deadzone = view.GetFloat(DeadzoneKey, Deadzone);
+        });
+        // Always listening; it reads Enabled on each pad read, so the setting can
+        // change in play.
         Event.AddListener<PadReadEvent>(Strafe);
     }
 
@@ -73,7 +91,7 @@ public static class TwinStick
     /// buffer is active low with its bytes swapped from Controller's layout.</summary>
     static void Strafe(PadReadEvent e)
     {
-        if (e.Port != 0 || !HostWindow.IsPadConnected(0)) return;
+        if (!Enabled || e.Port != 0 || !HostWindow.IsPadConnected(0)) return;
         float x = Axis(Controller.LeftX);
         if (x == 0f) return;
 

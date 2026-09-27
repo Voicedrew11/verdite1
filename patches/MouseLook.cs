@@ -59,6 +59,12 @@ public static class MouseLook
 
     public static bool Captured { get; private set; }
 
+    public const string OnKey = "kf1.mouse.on", TurnKey = "kf1.mouse.turn", LookKey = "kf1.mouse.look",
+        InvertKey = "kf1.mouse.inverty", LeadKey = "kf1.mouse.lead";
+
+    // Which settings the environment pinned; those are not read from the config.
+    static readonly HashSet<string> _pinned = new();
+
     static readonly ModInfo _self = new()
     {
         Id = "kf1.mouselook",
@@ -78,11 +84,11 @@ public static class MouseLook
 
     public static void Configure()
     {
-        Env("KF2_MOUSE", ref Enabled);
-        Env("KF2_MOUSE_LEAD", ref Lead);
-        Env("KF2_MOUSE_INVERTY", ref InvertY);
-        EnvF("KF2_MOUSE_TURN", ref TurnSens);
-        EnvF("KF2_MOUSE_LOOK", ref LookSens);
+        if (Env("KF2_MOUSE", ref Enabled)) _pinned.Add(OnKey);
+        if (Env("KF2_MOUSE_LEAD", ref Lead)) _pinned.Add(LeadKey);
+        if (Env("KF2_MOUSE_INVERTY", ref InvertY)) _pinned.Add(InvertKey);
+        if (EnvF("KF2_MOUSE_TURN", ref TurnSens)) _pinned.Add(TurnKey);
+        if (EnvF("KF2_MOUSE_LOOK", ref LookSens)) _pinned.Add(LookKey);
         var buttons = Environment.GetEnvironmentVariable("KF2_MOUSE_BUTTONS");
         if (!string.IsNullOrWhiteSpace(buttons))
         {
@@ -95,17 +101,31 @@ public static class MouseLook
         if (!string.IsNullOrWhiteSpace(key) && Enum.TryParse<Key>(key.Trim(), true, out var k)) CaptureKey = k;
     }
 
-    static void Env(string name, ref bool v)
+    static bool Env(string name, ref bool v)
     {
         var s = Environment.GetEnvironmentVariable(name);
-        if (!string.IsNullOrWhiteSpace(s)) v = s.Trim() != "0";
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        v = s.Trim() != "0";
+        return true;
     }
 
-    static void EnvF(string name, ref float v)
+    static bool EnvF(string name, ref float v)
     {
         var s = Environment.GetEnvironmentVariable(name);
-        if (float.TryParse(s, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var f)) v = f;
+        if (!float.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var f)) return false;
+        v = f;
+        return true;
+    }
+
+    static void LoadSaved()
+    {
+        var view = RecompOne.Runtime.Runtime.View;
+        if (!_pinned.Contains(OnKey)) Enabled = view.GetBool(OnKey, Enabled);
+        if (!_pinned.Contains(LeadKey)) Lead = view.GetBool(LeadKey, Lead);
+        if (!_pinned.Contains(InvertKey)) InvertY = view.GetBool(InvertKey, InvertY);
+        if (!_pinned.Contains(TurnKey)) TurnSens = view.GetFloat(TurnKey, TurnSens);
+        if (!_pinned.Contains(LookKey)) LookSens = view.GetFloat(LookKey, LookSens);
     }
 
     static ushort Button(string name, ushort fallback) => name.ToLowerInvariant() switch
@@ -123,10 +143,10 @@ public static class MouseLook
         // The stage A hook carries the right stick too, so it attaches whether or
         // not the mouse is on.
         HookAttach.OnOverlayLoad("mouse look", Attach);
-        if (!Enabled) return;
 
         Event.AddListener<RuntimeReadyEvent>(_ =>
         {
+            LoadSaved();
             PanelManager.Register(MouseIndicator.Instance);
             Console.WriteLine($"[KF1] mouse: {CaptureKey} captures the pointer (turn x{TurnSens:0.##}, look x{LookSens:0.##})");
         });
@@ -134,6 +154,7 @@ public static class MouseLook
         Event.AddListener<KeyboardEvent>(e =>
         {
             if (!e.Pressed || e.Key != (int)CaptureKey) return;
+            if (!Enabled && !Captured) return;
             if (!Captured && PopupManager.AnyOpen) return;
             SetCaptured(!Captured);
         });
