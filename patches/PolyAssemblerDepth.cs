@@ -57,7 +57,9 @@ public static partial class PolyAssembler
         ref var e = ref _cacheDepth[i];
         e.W0 = sxy;
         e.W1 = Peek32(mem, dst + 4u);
-        e.Z = Unrounded(mem, src, (int)Gte.Read(19));
+        // A corner at or behind the camera saturates to 0; recorded at the nearest
+        // depth, so its polygon is ordered rather than a barrier (docs/RENDERING.md).
+        e.Z = MathF.Max(Unrounded(mem, src, (int)Gte.Read(19)), 1f);
     }
 
     /// <summary>

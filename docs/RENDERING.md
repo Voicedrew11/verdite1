@@ -1032,6 +1032,18 @@ of an opaque one in front of it still draws over it (the previous section), and 
 does so whatever the table said, so the shore's edge in the water may move by that
 tolerance. Whether that shows is for the eye.
 
+**A corner at the camera made its polygon a barrier.** Up close, looking down at
+something under the water, it could still show above it. The GTE saturates a
+corner at or behind the camera plane to SZ 0, and a record with a zero corner was
+dropped, so a nearby model's polygon was a barrier in the middle of the table:
+it sent the held water there, and every underwater packet linked after it drew
+over the water. Measured with a census of the barriers that sent held packets (a
+local probe, not kept) at four poses over the `fdat02` beach: textured Gouraud
+polygons (`0x3C`, `0x34`) with no record at slots 7494-7678, and the water sent in
+1.9-2.5 runs. Such a corner is now recorded at depth 1, the nearest there is:
+after, the only barriers were the table's last two slots and the water went in
+1.0 runs at every pose, no exceptions. Judged by eye: fixed.
+
 ### The world lost its textures on NVIDIA
 
 Issue #34 (Windows 10, RTX 3080 Ti): every world surface was drawn in its shaded
