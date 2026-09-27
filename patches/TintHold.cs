@@ -7,7 +7,7 @@ using RecompOne.Runtime.Modding;
 namespace Kf2;
 
 /// <summary>
-/// Stage 1, <c>func_8002C944</c>, in C#, with its screen-tint reset moved onto the tick.
+/// Stage 1, <c>func_8002C944</c>, in C#, with its screen-tint and light-record resets moved onto the tick.
 ///
 ///     KF2_TINTHOLD=0        the recompiled routine: the tints strobe above the tick rate
 ///     KF2_TINTHOLD=verify   run both on every call and compare RAM and registers
@@ -19,14 +19,16 @@ namespace Kf2;
 /// <c>0x80192D45</c>, and the second wash at <c>0x80192D49</c>..<c>0x80192D4F</c>
 /// zeroed. The stages that ask for a tint (2 and 3: the death fade, the damage
 /// flash) are gated to the tick, so above the tick rate the reset alone ran on the
-/// frames between and a tint showed one frame in seven. Here the reset runs only
-/// when the gated stages will; the copy and the clear still run every frame, as
-/// stage 10 (ungated) reads that word. See "The tints strobed between ticks" in
+/// frames between and a tint showed one frame in seven. Here the resets -- the
+/// tint block and the record copy, which stage 3 blends the DARK fog into -- run
+/// only when the gated stages will; the clear still runs every frame, as stage 10
+/// (ungated) reads that word. See "The tints strobed between ticks" in
 /// docs/PATCHES_AND_MODS.md.
 /// </summary>
 public static class TintHold
 {
     const uint Stage1 = 0x8002C944;
+    const uint MainLoopSite = 0x80013920;   // return address of func_8001369C's per-frame call
 
     const uint Src = 0x800679A0, Dst = 0x801930F0;
     const uint SrcStride = 0x2C, DstStride = 0x68;
@@ -91,20 +93,38 @@ public static class TintHold
             return;
         }
 
+        // Only the main loop's call is held. The other eight callers reload the
+        // lights and rebuild the quarter-turn matrices from the copy straight after.
         if (_mode == Mode.Verify) Verify(orig, c, mem);
-        else Run(c, mem, FramePacing.StagesWillRun);
+        else Run(c, mem, c.RA != MainLoopSite || FramePacing.StagesWillRun);
     }
 
     static void Run(CpuContext c, PSMemory m, bool reset)
     {
+        // The record copy is a reset too, and belongs on the tick with the tint
+        // one: stage 3 blends the darkness condition's fog into these records
+        // (func_8002A318 -> func_8002CC70 -> func_8002CBD4), and above the tick
+        // rate the copy alone ran on the frames between, putting the undarkened
+        // records back -- the screen strobed while DARK was up. Held, the records
+        // keep the last tick's blend until the next tick rebuilds them. The load
+        // flag below is still cleared every frame: func_8002CBD4 sets it only when
+        // the light matrices change, and stage 10 recomputes on that frame.
         uint src = Src, dst = Dst;
-        for (int i = 0; i < Records; i++)
+        if (reset)
         {
-            Interrupts.Poll(c, m);
-            for (uint o = 0; o < 0x14; o += 2) m.WriteU16(dst + o, m.ReadU16(src + o));
-            for (uint o = 0x14; o < SrcStride; o += 2) m.WriteU16(dst + 0x3C + o, m.ReadU16(src + o));
-            src += SrcStride;
-            dst += DstStride;
+            for (int i = 0; i < Records; i++)
+            {
+                Interrupts.Poll(c, m);
+                for (uint o = 0; o < 0x14; o += 2) m.WriteU16(dst + o, m.ReadU16(src + o));
+                for (uint o = 0x14; o < SrcStride; o += 2) m.WriteU16(dst + 0x3C + o, m.ReadU16(src + o));
+                src += SrcStride;
+                dst += DstStride;
+            }
+        }
+        else
+        {
+            src += SrcStride * Records;
+            dst += DstStride * Records;
         }
 
         m.WriteU32(LoadFlag, 0);
