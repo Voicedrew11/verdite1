@@ -251,6 +251,7 @@ public sealed class PSMemory : IMemory
     {
         var phys = MemoryMap.ToPhysical(address);
         if (RamProbe.On) RamProbe.Note(phys);
+        if (RamWatch.On) RamWatch.Note(phys);
         var off = phys & _ramMask;
         if (_frozenCount == 0 && phys < MemoryMap.RamWindow && off < (uint)_ram.Length && !RamLogger.TrackWrites)
         {
@@ -274,6 +275,7 @@ public sealed class PSMemory : IMemory
     {
         var phys = MemoryMap.ToPhysical(address);
         if (RamProbe.On) RamProbe.Note(phys);
+        if (RamWatch.On) RamWatch.Note(phys);
         var off = phys & _ramMask;
         if (_frozenCount == 0 && phys < MemoryMap.RamWindow && off + 2u <= (uint)_ram.Length && !RamLogger.TrackWrites)
         {
@@ -298,6 +300,7 @@ public sealed class PSMemory : IMemory
     {
         var phys = MemoryMap.ToPhysical(address);
         if (RamProbe.On) RamProbe.Note(phys);
+        if (RamWatch.On) RamWatch.Note(phys);
         var off = phys & _ramMask;
         if (_frozenCount == 0 && phys < MemoryMap.RamWindow && off + 4u <= (uint)_ram.Length && !RamLogger.TrackWrites)
         {

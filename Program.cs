@@ -429,6 +429,31 @@ Kf2.Widescreen.Configure(Environment.GetEnvironmentVariable("KF2_WIDESCREEN"),
                          Environment.GetEnvironmentVariable("KF2_WIDESCREEN_HUD"));
 Kf2.Widescreen.Install();
 
+// Frame pacing and view smoothing. King's Field draws at 20 fps: its frame gate
+// (func_800149F4) spins on a vblank counter until three vblanks have passed. The
+// gate is replaced by the same wait, which redraws the world at the target rate
+// while it waits; the logic stages still run once per three vblanks on the
+// game's own clock. The view is carried between the last two ticks for each
+// picture, so the extra frames move. See "Frame pacing" in docs/KF1.md.
+//
+//     KF2_FPS=60           frames drawn a second (default 60); 20 or off is the game's own
+//     KF2_FPS_PROBE=1      a line a second: drawn, redraws, ticks, time spun
+//     KF2_SMOOTH=0         leave the view at the tick
+//     KF2_SMOOTH_PROBE=1   a line a second: renders carried, phase, step sizes
+Kf2.GateRedraw.Configure(Environment.GetEnvironmentVariable("KF2_FPS"),
+                         Environment.GetEnvironmentVariable("KF2_FPS_PROBE"));
+Kf2.GateRedraw.Install();
+Kf2.ViewCarry.Configure(Environment.GetEnvironmentVariable("KF2_SMOOTH"),
+                        Environment.GetEnvironmentVariable("KF2_SMOOTH_PROBE"));
+Kf2.ViewCarry.Install();
+
+// King's Field's main loop, stage by stage: calls, time, GTE projections and
+// DrawOTag calls per stage, for deciding what frame pacing may gate.
+//
+//     KF2_STAGE_PROBE=1
+Kf2.StageProbe.Configure(Environment.GetEnvironmentVariable("KF2_STAGE_PROBE"));
+Kf2.StageProbe.Install();
+
 // Where the patches' own settings live. A patch registers a page against one of
 // the runtime's settings sections and is drawn inside it, so the frame rate is in
 // System > Settings > Video beside vsync rather than in a box of its own; the one
