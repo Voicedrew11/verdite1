@@ -28,6 +28,12 @@ Game is playable from start to finish. There may still be some intermittent issu
 
 A dump of the North American PlayStation release (`SLUS-00158`) in `.cue` / `.bin`, or `.chd` format.
 
+## Mods
+
+Community mods live in [Acranon/verdite2-mods](https://github.com/Acranon/verdite2-mods): a
+separate run key, jumping, quick save, gear comparison and more. Each one is switched on
+and off in the game's **Mods** panel; see that repo for installing.
+
 ## Credits
 
 Built on [RecompOne](https://github.com/BlackLabelHQ/RecompOne) (MIT). *King's
