@@ -13,6 +13,10 @@ public sealed class SystemCfg
     public static SystemCfg Parse(DiscFs fs)
     {
         var cfg = new SystemCfg();
+        // A disc with no SYSTEM.CNF is legal: the BIOS then boots cdrom:PSX.EXE
+        // with its own defaults, which are the field initialisers above. King's
+        // Field (JP, SLPS-00017) is such a disc.
+        if (!fs.Exists("SYSTEM.CNF")) return cfg;
         var text = Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF"));
 
         foreach (var raw in text.Split('\n'))

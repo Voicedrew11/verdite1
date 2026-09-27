@@ -108,6 +108,17 @@
       become a second Main. The rest of packaging/ is scripts and icons, so the
       remove is the whole tree.
     -->
+    <!--
+      reference/ holds what this repository carried over from the King's Field II
+      port that the King's Field build does not compile: KF2's Program.cs above
+      all, which would be a second set of top-level statements. See docs/KF1.md.
+    -->
+    <ItemGroup>
+        <Compile Remove="reference/**" />
+        <EmbeddedResource Remove="reference/**" />
+        <None Remove="reference/**" />
+    </ItemGroup>
+
     <ItemGroup>
         <Compile Remove="packaging/**" />
         <EmbeddedResource Remove="packaging/**" />

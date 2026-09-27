@@ -1,0 +1,49 @@
+{
+  "functions": [
+    {
+      "address": "0x80010028",
+      "name": "func_80010028",
+      "size": 208
+    },
+    {
+      "address": "0x800100F8",
+      "name": "func_800100F8",
+      "size": 8
+    },
+    {
+      "address": "0x80010100",
+      "name": "func_80010100",
+      "size": 180
+    },
+    {
+      "address": "0x800101C4",
+      "name": "EnterCriticalSection",
+      "size": 16
+    },
+    {
+      "address": "0x800101D4",
+      "name": "func_800101D4",
+      "size": 12
+    },
+    {
+      "address": "0x800101E4",
+      "name": "func_800101E4",
+      "size": 12
+    },
+    {
+      "address": "0x800101F4",
+      "name": "func_800101F4",
+      "size": 12
+    },
+    {
+      "address": "0x80010204",
+      "name": "func_80010204",
+      "size": 12
+    },
+    {
+      "address": "0x80010214",
+      "name": "func_80010214",
+      "size": 12
+    }
+  ]
+}

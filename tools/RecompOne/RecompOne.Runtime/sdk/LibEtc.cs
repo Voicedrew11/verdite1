@@ -139,7 +139,31 @@ public static class LibEtc
         c.V0 = 0;
     }
 
+    //0081. The interrupt poll's way onto the grid. A vblank handler is recompiled
+    //code and polls too, so a delivery already under way is not re-entered.
+    private static bool _advancing;
+
+    internal static void PollVBlanks(CpuContext c, IMemory m)
+    {
+        if (BlockingVSync || !_timelineStarted) return;
+        AdvanceVBlanks(c, m);
+    }
+
     private static void AdvanceVBlanks(CpuContext c, IMemory m)
+    {
+        if (_advancing) return;
+        _advancing = true;
+        try
+        {
+            AdvanceVBlanksCore(c, m);
+        }
+        finally
+        {
+            _advancing = false;
+        }
+    }
+
+    private static void AdvanceVBlanksCore(CpuContext c, IMemory m)
     {
         var now = VBlankClock.Elapsed.TotalMilliseconds;
         if (!_timelineStarted)

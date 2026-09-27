@@ -139,6 +139,12 @@ public static class Interrupts
         TakeExceptionStack(cpu);
         try
         {
+            //0081. The port's wall-clock vblank grid (0021) was advanced only from
+            //inside VSync, so a game that waits for a vblank *without* calling it --
+            //King's Field's frame gate spins on a counter its vblank event handler
+            //bumps -- waited forever. The grid is time, so it is advanced from the
+            //poll too; AdvanceVBlanks delivers each due vblank once, whoever asks.
+            Sdk.LibEtc.PollVBlanks(cpu, mem);
             DrainPending(cpu, mem);
             BiosB.PumpCardEvents(cpu, mem);
             Sdk.LibCd.Pump();
