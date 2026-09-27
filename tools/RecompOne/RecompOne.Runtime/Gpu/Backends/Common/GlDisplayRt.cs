@@ -38,10 +38,6 @@ public sealed class GlDisplayRt
     public readonly float[] ClipPlane = new float[4];
     // 0072. The retained scene's frame this target's picture was drawn under.
     public int RetainedSerial;
-    // The murk's camera for the frame this target holds (WaterMurk.View), stamped
-    // with RetainedSerial: the pass runs at present, a frame after the walk.
-    public readonly float[] MurkView = new float[15];
-    public bool MurkViewSet;
     public int CreatedScale;
     public bool Dirty;
     public long Stamp;

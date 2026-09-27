@@ -4,19 +4,19 @@ using RecompOne.Runtime.Memory;
 namespace Kf2;
 
 /// <summary>
-/// The floor under the murk, from the map: where the water has nothing drawn under it
-/// (the open sea, the cells along the pier), the murk would otherwise take the sky's
-/// full run and go solid. Per tile, the water's level from its water faces and the
-/// deepest vertex of the tile's meshes below it; a floorless tile takes the average of
-/// its eight neighbours' floors, and one with none stays deep. The reflection pass
-/// reads it by world position, so it is fixed to the world as the camera turns.
+/// Where the water is, for the murk: per map tile, the world Y of its water's surface,
+/// from the water faces of the tile's meshes. The prim shader fades whatever it draws
+/// below that level by the view ray's run through the water to it, so the murk is on
+/// what is seen through the water and the water's own ripples stay on top, and it is
+/// fixed to the world. Water with nothing drawn under it (the open sea past the
+/// shelves, which the map gives no floor) is the reflection pass's.
 ///
-///     KF2_MURK_PROBE=1   a line every 2 s: water tiles, floored, filled, deep, and the grid round the player
+///     KF2_MURK_PROBE=1   a line every 2 s: water tiles, the build, and the levels round the camera
 ///
 /// Rebuilt when the map, the bank or the water's rects change. See "Murky water" in
 /// docs/RENDERING.md.
 /// </summary>
-public static class MurkFloor
+public static class MurkLevel
 {
     const uint MapBase = 0x801C8484;
     const uint Banks = 0x8018E18C;
@@ -24,7 +24,7 @@ public static class MurkFloor
 
     static ulong _hash;
     static bool _probe;
-    static int _water, _floored, _filled;
+    static int _water;
     static double _buildMs;
     static long _lastReport;
 
@@ -43,6 +43,7 @@ public static class MurkFloor
         o[9] = (float)v.CamX; o[10] = (float)v.CamY; o[11] = (float)v.CamZ;
         o[12] = v.Tx; o[13] = v.Ty; o[14] = v.Tz;
         WaterMurk.ViewSet = true;
+        WaterMurk.ViewGen++;
 
         ulong h = Hash(mem);
         if (h != _hash)
@@ -58,7 +59,7 @@ public static class MurkFloor
     public static void Forget()
     {
         _hash = 0;
-        WaterMurk.Grid = null;
+        WaterMurk.Level = null;
         WaterMurk.ViewSet = false;
     }
 
@@ -86,7 +87,7 @@ public static class MurkFloor
     static void Build(PSMemory mem)
     {
         uint table = mem.ReadU32(Banks);
-        if (table == 0 || SurfaceMaterial.RectN == 0) { WaterMurk.Grid = null; return; }
+        if (table == 0 || SurfaceMaterial.RectN == 0) { WaterMurk.Level = null; return; }
 
         // Pass one: each tile's water level, Y being down.
         var level = new float[Span * Span];
@@ -103,81 +104,41 @@ public static class MurkFloor
             foreach (int v in m.Water) { level[tile] += baseY + m.Verts[v * 4 + 1]; levelN[tile]++; }
         }
 
-        // Pass two: the floor below it, from both halves -- the faces wholly under
-        // the surface, each by its mean depth weighed by the area it covers seen from
-        // above, so a cliff's wall or a pillar's side counts for nothing.
-        var depthSum = new double[Span * Span];
-        var areaSum = new double[Span * Span];
-        for (int i = 0; i < Span * Span * 2; i++)
-        {
-            int tile = i >> 1;
-            if (levelN[tile] == 0) continue;
-            uint rec = MapBase + (uint)(i >> 1) * 10u + (uint)(i & 1) * 5u;
-            uint model = mem.ReadU8(rec);
-            if (model >= 240) continue;
-            if (MeshOf(mem, table, model, meshes) is not { } m) continue;
-            float surface = level[tile] / levelN[tile];
-            int baseY = -mem.ReadU8(rec + 1u) * 128;
-            foreach (var f in m.Floors)
-            {
-                double y0 = baseY + m.Verts[f.A * 4 + 1] - surface, y1 = baseY + m.Verts[f.B * 4 + 1] - surface,
-                       y2 = baseY + m.Verts[f.C * 4 + 1] - surface;
-                if (y0 <= 16 || y1 <= 16 || y2 <= 16) continue;
-                double ax = m.Verts[f.B * 4] - m.Verts[f.A * 4], az = m.Verts[f.B * 4 + 2] - m.Verts[f.A * 4 + 2];
-                double bx = m.Verts[f.C * 4] - m.Verts[f.A * 4], bz = m.Verts[f.C * 4 + 2] - m.Verts[f.A * 4 + 2];
-                double area = Math.Abs(ax * bz - az * bx) * 0.5;
-                depthSum[tile] += area * (y0 + y1 + y2) / 3.0;
-                areaSum[tile] += area;
-            }
-        }
-        var depth = new float[Span * Span];
-        for (int t = 0; t < Span * Span; t++)
-            if (areaSum[t] > 1e4) depth[t] = (float)(depthSum[t] / areaSum[t]);
-
-        // The grid: a floored tile weighs 1. A tile without a floor, water or not,
-        // takes the floors within Reach tiles, the nearer the more, and weighs less
-        // the further the nearest is: 1 beside it, none past Reach. So open water past
-        // a shelf deepens over a few tiles rather than at the shelf's edge, and
-        // floorless water beside a bank or the pier's deck is not faded by it.
-        const int Reach = 3;
         var grid = new float[Span * Span * 2];
-        _water = _floored = _filled = 0;
+        _water = 0;
         for (int t = 0; t < Span * Span; t++)
         {
-            if (levelN[t] > 0) _water++;
-            if (depth[t] > 0f) { grid[t * 2] = depth[t]; grid[t * 2 + 1] = 1f; _floored++; }
+            if (levelN[t] == 0) continue;
+            grid[t * 2] = level[t] / levelN[t];
+            grid[t * 2 + 1] = 1f;
+            _water++;
         }
-        for (int z = 0; z < Span; z++)
-            for (int x = 0; x < Span; x++)
+        // A tile beside water takes its level too: a shore's or a platform's faces
+        // below the surface lie in the land tile, which has no water of its own.
+        for (int t = 0; t < Span * Span; t++)
+        {
+            if (levelN[t] != 0) continue;
+            int x = t % Span, z = t / Span, n = 0;
+            float sum = 0f;
+            for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -1; dx <= 1; dx++)
             {
-                int t = z * Span + x;
-                if (depth[t] > 0f) continue;
-                double sum = 0, wsum = 0, nearest = double.MaxValue;
-                for (int dz = -Reach; dz <= Reach; dz++)
-                    for (int dx = -Reach; dx <= Reach; dx++)
-                    {
-                        int nx = x + dx, nz = z + dz;
-                        if (nx < 0 || nz < 0 || nx >= Span || nz >= Span) continue;
-                        float d = depth[nz * Span + nx];
-                        if (d <= 0f) continue;
-                        double dist = Math.Sqrt(dx * dx + dz * dz);
-                        sum += d / (dist * dist);
-                        wsum += 1.0 / (dist * dist);
-                        nearest = Math.Min(nearest, dist);
-                    }
-                double w = Math.Clamp((Reach + 1 - nearest) / Reach, 0.0, 1.0);
-                if (wsum <= 0 || w <= 0) continue;
-                grid[t * 2] = (float)(sum / wsum * w);
-                grid[t * 2 + 1] = (float)w;
-                if (levelN[t] > 0) _filled++;
+                int nx = x + dx, nz = z + dz;
+                if (nx < 0 || nz < 0 || nx >= Span || nz >= Span || levelN[nz * Span + nx] == 0) continue;
+                sum += grid[(nz * Span + nx) * 2];
+                n++;
             }
-        WaterMurk.Grid = grid;
-        WaterMurk.GridGen++;
+            if (n == 0) continue;
+            grid[t * 2] = sum / n;
+            grid[t * 2 + 1] = 1f;
+        }
+        WaterMurk.Level = grid;
+        WaterMurk.LevelGen++;
     }
 
-    /// <summary>A model's vertices (x, y, z, pad), the indices of those its water
-    /// faces use, and its other faces as triangles.</summary>
-    sealed record MeshData(short[] Verts, int[] Water, (int A, int B, int C)[] Floors);
+    /// <summary>A model's vertices (x, y, z, pad) and the indices of those its water
+    /// faces use.</summary>
+    sealed record MeshData(short[] Verts, int[] Water);
 
     /// <summary>A model's mesh, once per model per build.</summary>
     static MeshData? MeshOf(PSMemory mem, uint table, uint model, Dictionary<uint, MeshData?> known)
@@ -198,7 +159,6 @@ public static class MurkFloor
         var v = new short[vcount * 4];
         for (uint i = 0; i < vcount * 4; i++) v[i] = (short)mem.ReadU16(verts + i * 2u);
         var water = new HashSet<int>();
-        var floors = new List<(int A, int B, int C)>();
         for (uint f = 0; f < count; f++)
         {
             uint word = mem.ReadU32(face);
@@ -217,16 +177,10 @@ public static class MurkFloor
                 }
                 if (ok && IsWater(mem, word, at, corners))
                     for (int c = 0; c < corners; c++) water.Add(o[c]);
-                else if (ok)
-                {
-                    // A quad is the strip 0,1,2 / 1,3,2.
-                    floors.Add((o[0], o[1], o[2]));
-                    if (corners == 4) floors.Add((o[1], o[3], o[2]));
-                }
             }
             face = at + ((word >> 6) & 0x3FCu);
         }
-        var r = new MeshData(v, water.ToArray(), floors.ToArray());
+        var r = new MeshData(v, water.ToArray());
         known[model] = r;
         return r;
     }
@@ -264,21 +218,20 @@ public static class MurkFloor
         long now = Environment.TickCount64;
         if (now - _lastReport < 2000) return;
         _lastReport = now;
-        var grid = WaterMurk.Grid;
+        var grid = WaterMurk.Level;
         var v = WaterMurk.View;
         int px = (int)Math.Floor(v[9] / WaterMurk.TileUnits), pz = (int)Math.Floor(v[11] / WaterMurk.TileUnits);
         var sb = new System.Text.StringBuilder();
         if (grid != null)
             for (int z = Math.Min(Span - 1, pz + 3); z >= Math.Max(0, pz - 3); z--)
             {
-                sb.Append($"\n[KF2] murk floor z{z,2}:");
+                sb.Append($"\n[KF2] murk level z{z,2}:");
                 for (int x = Math.Max(0, px - 5); x <= Math.Min(Span - 1, px + 5); x++)
                 {
                     int t = z * Span + x;
-                    sb.Append(grid[t * 2 + 1] > 0f ? $" {grid[t * 2],5:F0}" : "     -");
+                    sb.Append(grid[t * 2 + 1] > 0f ? $" {grid[t * 2],6:F0}" : "      -");
                 }
             }
-        Console.WriteLine($"[KF2] murk floor: {_water} water tile(s), {_floored} floored, {_filled} water filled from a neighbour, " +
-                          $"{_water - _floored - _filled} deep; built in {_buildMs:F2} ms; camera tile {px},{pz}{sb}");
+        Console.WriteLine($"[KF2] murk level: {_water} water tile(s); built in {_buildMs:F2} ms; camera tile {px},{pz} at Y {v[10]:F0}{sb}");
     }
 }

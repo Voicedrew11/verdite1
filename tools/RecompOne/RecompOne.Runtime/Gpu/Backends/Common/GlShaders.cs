@@ -46,7 +46,9 @@ internal static class GlShaders
         // What the reflection pass computed at uv from: the surface there (its
         // material and view depth), or material 0 where the pass writes nothing --
         // no surface, or one the depth buffer shows is behind an opaque one. A
-        // crack between two water texels is water, as the pass takes it.
+        // crack between two water texels is water, as the pass takes it. Water
+        // with nothing drawn under it is a material of its own here, since the
+        // murk adds to it and not to the water over a floor beside it.
         vec2 ssrKey(vec2 uv) {
             vec2 tt = (uOrigin + uv * uSize) / uTexSize;
             vec4 s = texture(uSurface, tt);
@@ -61,7 +63,7 @@ internal static class GlShaders
             if (m <= 0 || m >= 256 || s.b * 65536.0 <= 1.0) return vec2(0.0);
             float d = texture(uSsrDepth, tt).r;
             if (d > 0.0 && d < 1.0 && d < s.b * 0.99 - 8.0 / 65536.0) return vec2(0.0);
-            return vec2(float(m), s.b);
+            return vec2(float(m) + (d <= 0.0 || d >= 1.0 ? 256.0 : 0.0), s.b);
         }
 
         // The pass's four texels around this pixel, each weighed as bilinear only
@@ -618,19 +620,13 @@ internal static class GlShaders
         // The screen march; 0 leaves the pass the planar lookups, the cubemap and
         // the murk.
         uniform int   uMarchOn;
-        // Murk: water thickens towards its colour with the distance the view ray
-        // runs through it, surface to the opaque floor behind. 0 is off.
+        // Murk: under water with nothing drawn behind it, the murk's colour. 0 is
+        // off; everything with a floor is murked where it is drawn (PrimFs).
         uniform float uMurkDist;
         uniform vec3  uMurkColor;
-        // Water with no floor drawn under it takes its depth from the map: an 80x80
-        // grid by tile of (floor depth below the surface times a weight, the weight),
-        // read at the pixel's world position, with the camera the frame was drawn
-        // with (view = R (world - cam) + T). 0 in uMurkGridOn: the sky's full run.
-        uniform int   uMurkGridOn;
-        uniform sampler2D uMurkGrid;
-        uniform mat3  uMurkR;
-        uniform vec3  uMurkCam;
-        uniform vec3  uMurkT;
+        // The haze on the water itself: a fixed thickness of water over the haze
+        // distance, taken along the view ray. 0 is none.
+        uniform float uMurkHaze;
         // SurfaceMaterial's table, by id: row 0 is reflectivity, F0 and roughness.
         uniform sampler2D uMatTable;
         // The game's depth cue, off the GTE: IR0 = (DQA * H/SZ + DQB) / 4096, and
@@ -683,7 +679,6 @@ internal static class GlShaders
 
         const float FAR = 65536.0;
         const float OVERLAY = 3.0;
-        const float TILE = 2048.0;
 
         // How much of a colour survives the fog at view depth z: the per-pixel
         // lighting shader's curve (shade8), evaluated at the GTE's own quotient.
@@ -766,17 +761,17 @@ internal static class GlShaders
         // hit or miss, and the reflection's weight comes off what is left. With no
         // metal the weight is the reflection's alone, to the bit.
         float gMetalDark = 0.0;
-        // The murk's share and its (fogged) colour, laid under the reflection.
+        // The murk under floorless water, fogged, added to the picture; then the
+        // haze's share and colour laid over that. Both go under the reflection.
+        vec3 gMurkAdd = vec3(0.0);
         float gMurk = 0.0;
         vec3 gMurkCol = vec3(0.0);
         void emit(vec3 c, float w) {
             w = clamp(w, 0.0, 1.0);
             float a = gMetalDark > 0.0 ? 1.0 - (1.0 - gMetalDark) * (1.0 - w) : w;
             vec3 rgb = c * w;
-            if (gMurk > 0.0) {
-                rgb += gMurkCol * gMurk * (1.0 - a);
-                a = 1.0 - (1.0 - a) * (1.0 - gMurk);
-            }
+            rgb += (gMurkAdd * (1.0 - gMurk) + gMurkCol * gMurk) * (1.0 - a);
+            a = 1.0 - (1.0 - a) * (1.0 - gMurk);
             oColor = vec4(rgb, a);
         }
 
@@ -951,36 +946,20 @@ internal static class GlShaders
             // floor under it: the ray's run between the two is how much water it
             // crosses. An opaque surface has none; the sky behind is all water.
             if (murky) {
-                // The same for a crack in the floor under the water: the nearest
-                // depth beside it, rather than the sky's full run.
-                if (d <= 0.0 || d >= 1.0) {
-                    vec2 tx = 1.0 / uTexSize;
-                    float n0 = texture(uDepth, tc(vUv) - vec2(tx.x, 0.0)).r, n1 = texture(uDepth, tc(vUv) + vec2(tx.x, 0.0)).r;
-                    float n2 = texture(uDepth, tc(vUv) - vec2(0.0, tx.y)).r, n3 = texture(uDepth, tc(vUv) + vec2(0.0, tx.y)).r;
-                    // Only a depth behind the water: beside something standing
-                    // in it, the nearest is that thing, and the run came out 0.
-                    float nd = 1.0, zw = zs / FAR;
-                    if (n0 > zw) nd = min(nd, n0);
-                    if (n1 > zw) nd = min(nd, n1);
-                    if (n2 > zw) nd = min(nd, n2);
-                    if (n3 > zw) nd = min(nd, n3);
-                    if (nd < 1.0) d = nd;
+                // Water with a floor under it was murked as the floor was drawn
+                // (PrimFs's murkAt). With nothing under it the water is over the
+                // sky: deep, so the half of the picture the averaging blend takes
+                // from behind the water is the murk's, added under the surface. A
+                // crack in the floor is the same: the sky shows through it.
+                vec3 mc = fogTo(uMurkColor, fogKeep(zs));
+                if (d <= 0.0 || d >= 1.0) gMurkAdd = 0.5 * mc;
+                // The haze on the water itself, as if the view crossed a fixed
+                // thickness at the angle it meets the surface.
+                if (uMurkHaze > 0.0) {
+                    float cv = max(abs(dot(normalize(p), octDecode(s.rg))), 0.02);
+                    gMurk = 1.0 - exp(-uMurkHaze / cv);
+                    gMurkCol = mc;
                 }
-                bool floorless = d <= 0.0 || d >= 1.0;
-                float run = floorless ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
-                gMurk = 1.0 - exp(-run / uMurkDist);
-                if (floorless && uMurkGridOn != 0) {
-                    // Bilinear between tile centres, so the depth changes across a
-                    // tile rather than at its edge, and open water fades to deep
-                    // over the tile past the last floor.
-                    vec3 wp = transpose(uMurkR) * (p - uMurkT) + uMurkCam;
-                    vec2 g = texture(uMurkGrid, wp.xz / (TILE * 80.0)).rg;
-                    if (g.y > 1e-4) {
-                        float cv = max(abs(dot(normalize(p), octDecode(s.rg))), 0.02);
-                        gMurk = mix(gMurk, 1.0 - exp(-g.x / g.y / cv / uMurkDist), clamp(g.y, 0.0, 1.0));
-                    }
-                }
-                gMurkCol = fogTo(uMurkColor, fogKeep(zs));
             }
             if (refl <= 0.0) { emit(vec3(0.0), 0.0); return; }
             vec3 n = octDecode(s.rg);
@@ -1421,6 +1400,22 @@ internal static class GlShaders
         // was drawn with (view = R (world - cam) + T) and the projection, to take a
         // fragment to the world; the field's clock; the push in world units, the
         // longest wavelength and the shading.
+        // Murky water, under the surface: a fragment below its tile's water level
+        // fades to the murk by the view ray's run through the water to it, fogged as
+        // the fragment is. The water is drawn over it untouched, so its own ripples
+        // stay. The level by tile is an 80x80 grid of (world Y, 1 where the tile has
+        // water); the camera as the ripples take it (view = R (world - cam) + T).
+        uniform int   uMurkOn;
+        uniform sampler2D uMurkLevel;
+        uniform mat3  uMurkR;
+        uniform vec3  uMurkCam;
+        uniform vec3  uMurkT;
+        uniform vec2  uMurkCentre;
+        uniform float uMurkH;
+        uniform float uMurkDist;
+        uniform vec3  uMurkColor;
+        // The frame's DQA, DQB and the reflections' fog curve, as SsrFs's fogKeep.
+        uniform vec3  uMurkFog;
         uniform int   uWaveOn;
         uniform int   uWaveN;
         uniform vec4  uWaveRect[8];
@@ -1782,6 +1777,46 @@ internal static class GlShaders
             return vec3(min(c8 >> 3, 31)) / 31.0;
         }
 
+        float gMurkK = 0.0;
+        float gMurkZ = 0.0;
+        void murkAt() {
+            float z = vDepth * 65536.0;
+            vec3 vp = vec3((gl_FragCoord.xy / float(uScale) - uMurkCentre) * (z / uMurkH), z);
+            mat3 toWorld = transpose(uMurkR);
+            vec3 wp = toWorld * (vp - uMurkT) + uMurkCam;
+            ivec2 tile = ivec2(floor(wp.xz / 2048.0));
+            if (any(lessThan(tile, ivec2(0))) || any(greaterThanEqual(tile, ivec2(80)))) return;
+            vec2 lv = texelFetch(uMurkLevel, tile, 0).rg;
+            float below = wp.y - lv.x;
+            if (lv.y < 0.5 || below <= 0.0) return;
+            vec3 eye = toWorld * -uMurkT + uMurkCam;
+            vec3 ray = wp - eye;
+            // Y is down: the part of the ray under the surface, or all of it from an
+            // eye under the water. The murk is seen at the surface, fogged there.
+            bool under = eye.y > lv.x;
+            float part = under ? 1.0 : below / max(ray.y, 1e-3);
+            gMurkK = 1.0 - exp(-length(ray) * part / uMurkDist);
+            gMurkZ = under ? z : z * (1.0 - part);
+        }
+        ivec3 murk8(ivec3 c) {
+            if (gMurkK <= 0.0) return c;
+            float w = 0.0;
+            if (uMurkFog.z > 0.5) {
+                float q = min(uMurkH * 65536.0 / max(gMurkZ, 1.0), 131071.0);
+                float ir0 = clamp((uMurkFog.x * q + uMurkFog.y) / 4096.0, 0.0, 4096.0);
+                int curve = int(uMurkFog.z + 0.5);
+                w = curve == 1 ? max(ir0 - 800.0, 0.0) * 2.0
+                  : curve == 2 ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
+                  : curve == 3 ? ir0 * 0.5
+                  : ir0;
+                if (uAtmosOn != 0 && uAtmosShape != vec2(1.0) && w > 0.0)
+                    w = 4096.0 * min(pow(min(w / 4096.0, 1.0), uAtmosShape.x), uAtmosShape.y);
+            }
+            float keep = clamp(1.0 - w / 4096.0, 0.0, 1.0);
+            vec3 m8 = uAtmosOn != 0 ? mix(uAtmosColour, uMurkColor * 255.0, keep) : uMurkColor * 255.0 * keep;
+            return ivec3(mix(vec3(c), m8, gMurkK) + 0.5);
+        }
+
         void main() {
             // Written on every path so a 3D triangle's recovered SZ is the
             // window depth. Everything that recovered none writes the *far*
@@ -1831,11 +1866,12 @@ internal static class GlShaders
                 gMetal = m0.a;
             }
             ivec3 c8in = shade8(extra);
+            if (uMurkOn != 0 && vDepth > 0.0 && uClipOn == 0) murkAt();
             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
 
             if (texMode == 4) {
                 if (uOpaqueDepth == 1) discard;
-                FragColor = vec4(quant5(c8in + post(vec3(c8in) / 255.0) + fogAdd(true)), uSetMask);
+                FragColor = vec4(quant5(murk8(c8in + post(vec3(c8in) / 255.0) + fogAdd(true))), uSetMask);
                 BlendColor = uBlend;
                 return;
             }
@@ -1844,7 +1880,7 @@ internal static class GlShaders
                 vec4 img = texture(uExtTex, vUV);
                 if (img.a < 0.5 || uOpaqueDepth == 1) discard;
                 ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + post(img.rgb) + fogAdd(true);
-                FragColor = vec4(quant5(e8), uSetMask);
+                FragColor = vec4(quant5(murk8(e8)), uSetMask);
                 BlendColor = uBlend;
                 return;
             }
@@ -1899,7 +1935,7 @@ internal static class GlShaders
                 ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + post(img.rgb);
                 float stp = img.a < 0.95 ? 1.0 : 0.0;
                 if (uOpaqueDepth == 1 && stp > 0.5) discard;
-                FragColor = vec4(quant5(e8 + fogAdd(stp > 0.5)), max(stp, uSetMask));
+                FragColor = vec4(quant5(murk8(e8 + fogAdd(stp > 0.5))), max(stp, uSetMask));
                 BlendColor = stp > 0.5 ? uBlend : uBlendOpaque;
                 return;
             }
@@ -1968,7 +2004,7 @@ internal static class GlShaders
                 ivec3 e8 = ((ivec3(texel.rgb * 255.0 + 0.5) * c8in) >> 7) + post(texel.rgb);
                 float stp = texel.a < 0.95 ? 1.0 : 0.0;
                 if (uOpaqueDepth == 1 && stp > 0.5) discard;
-                FragColor = vec4(quant5(e8 + fogAdd(stp > 0.5)), max(stp, uSetMask));
+                FragColor = vec4(quant5(murk8(e8 + fogAdd(stp > 0.5))), max(stp, uSetMask));
                 BlendColor = stp > 0.5 ? uBlend : uBlendOpaque;
                 return;
             }
@@ -1978,7 +2014,7 @@ internal static class GlShaders
             // 248 = 31 << 3: exact for a texel, and keeps a filtered colour's fraction.
             ivec3 t8 = ivec3(texel.rgb * 248.0 + 0.5);
             ivec3 c8 = ((t8 * c8in) >> 7) + post(texel.rgb) + fogAdd(texel.a >= 0.5);
-            FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
+            FragColor = vec4(quant5(murk8(c8)), max(texel.a, uSetMask));
             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
         }
         """;

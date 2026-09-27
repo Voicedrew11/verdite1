@@ -167,7 +167,9 @@ KF2_AO_WORLD_STRENGTH=0.6 KF2_AO_WORLD_RADIUS=3072   # how dark that term goes, 
 KF2_AO_WORLD_PROBE=1                   # the transform, the grid, and whether either is missing; =2 the camera's own tile
 KF2_AO_PROBE=1                         # coverage, the projection read off the GTE, passes run
 KF2_AO_PROBE=2                         # also read the occlusion back: how dark, how much, and where
-KF2_MURK=1 KF2_MURK_DISTANCE=2654      # murky water: a dark murk by the distance the view ray runs through water, surface to floor, 63% at the distance (off by default; independent of any reflection; GL core only; depth and colour are also sliders under Video ▸ Experimental ▸ Murky water)
+KF2_MURK=1 KF2_MURK_DISTANCE=200       # murky water: what is under the water fades to a dark murk by the view ray's run below the surface, 63% at the distance (off by default; independent of any reflection; GL core only; depth, haze and colour are also sliders under Video ▸ Experimental ▸ Murky water)
+KF2_MURK_HAZE=2654                     # the haze on the water's own surface: 63% at this distance over a fixed 640 units of water along the view ray; 0 none
+KF2_MURK_PROBE=1                       # a line every 2 s: the water tiles the murk found in the map, and the water level by tile round the camera
 KF2_WAVES=1                            # water waves: a swell moves the water's vertices, ripples push and shade its texture (off by default; GL core only for the ripples; the settings are sliders under Video ▸ Experimental ▸ Water waves, and the `waves` shell verb)
 KF2_WAVES_PROBE=1                      # a line every 2 s: rects, the clock, rippled batches, water positions free/rim/shared, halves and vertices moved
 KF2_SSR=1                              # screen-space reflections on water (off by default; independent of the murk, planar and retained reflections; GL core only)

@@ -77,14 +77,17 @@ public sealed partial class GlCore : IGpuBackend
     // 0067. Screen-space reflections: one full-screen pass at present, reading the
     // target's colour, depth and surface buffer into its own premultiplied texture.
     uint _progSsr, _ssrFbo, _ssrTex, _ssrInfoTex;
-    uint _murkGridTex;
-    int _murkGridGen = -1;
-    int _uSsrMurkGridOn = -1, _uSsrMurkR = -1, _uSsrMurkCam = -1, _uSsrMurkT = -1;
-    const int MurkGridUnit = 17;
+    // Murky water in the prim shader: the water level by tile, on its own unit.
+    uint _murkLevelTex;
+    int _murkLevelGen = -1, _murkOnSent = -1, _murkViewGenSent = -1;
+    int _uMurkOn = -1, _uMurkR = -1, _uMurkCam = -1, _uMurkT = -1, _uMurkCentre = -1, _uMurkH = -1,
+        _uMurkDist = -1, _uMurkColor = -1, _uMurkFog = -1;
+    (float, float, float) _murkCentreSent;
+    const int MurkLevelUnit = 17;
     int _ssrW, _ssrH;
     bool _ssrInfo;
     int _uSsrOrigin, _uSsrSize, _uSsrTexSize, _uSsrProjH, _uSsrCentre;
-    int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps, _uSsrMarchOn, _uSsrMurkDist, _uSsrMurkColor;
+    int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps, _uSsrMarchOn, _uSsrMurkDist, _uSsrMurkColor, _uSsrMurkHaze;
     int _uSsrDqa, _uSsrDqb, _uSsrFogCurve;
     int _uPresentSsrOn;
     int _uPresentAoMatOn;
@@ -255,6 +258,20 @@ public sealed partial class GlCore : IGpuBackend
         _uLightH = _gl.GetUniformLocation(_progPrim, "uLightH");
         _lightNSent = _lightsSentGen = -1;
         RemasterUniforms.Supported = !_legacy && _uLightN >= 0 && _uLightPos >= 0;
+        _uMurkOn = _gl.GetUniformLocation(_progPrim, "uMurkOn");
+        _uMurkR = _gl.GetUniformLocation(_progPrim, "uMurkR");
+        _uMurkCam = _gl.GetUniformLocation(_progPrim, "uMurkCam");
+        _uMurkT = _gl.GetUniformLocation(_progPrim, "uMurkT");
+        _uMurkCentre = _gl.GetUniformLocation(_progPrim, "uMurkCentre");
+        _uMurkH = _gl.GetUniformLocation(_progPrim, "uMurkH");
+        _uMurkDist = _gl.GetUniformLocation(_progPrim, "uMurkDist");
+        _uMurkColor = _gl.GetUniformLocation(_progPrim, "uMurkColor");
+        _uMurkFog = _gl.GetUniformLocation(_progPrim, "uMurkFog");
+        int uMurkLevel = _gl.GetUniformLocation(_progPrim, "uMurkLevel");
+        if (uMurkLevel >= 0) { _gl.UseProgram(_progPrim); _gl.Uniform1(uMurkLevel, MurkLevelUnit); }
+        _murkOnSent = _murkViewGenSent = -1;
+        _murkCentreSent = default;
+        _murkFogSent = (-1f, -1f, -1f);
         _uWaveOn = _gl.GetUniformLocation(_progPrim, "uWaveOn");
         _uWaveN = _gl.GetUniformLocation(_progPrim, "uWaveN");
         _uWaveRect = _gl.GetUniformLocation(_progPrim, "uWaveRect");
@@ -407,10 +424,7 @@ public sealed partial class GlCore : IGpuBackend
                 _uSsrMarchOn = _gl.GetUniformLocation(_progSsr, "uMarchOn");
                 _uSsrMurkDist = _gl.GetUniformLocation(_progSsr, "uMurkDist");
                 _uSsrMurkColor = _gl.GetUniformLocation(_progSsr, "uMurkColor");
-                _uSsrMurkGridOn = _gl.GetUniformLocation(_progSsr, "uMurkGridOn");
-                _uSsrMurkR = _gl.GetUniformLocation(_progSsr, "uMurkR");
-                _uSsrMurkCam = _gl.GetUniformLocation(_progSsr, "uMurkCam");
-                _uSsrMurkT = _gl.GetUniformLocation(_progSsr, "uMurkT");
+                _uSsrMurkHaze = _gl.GetUniformLocation(_progSsr, "uMurkHaze");
                 _uSsrSteps = _gl.GetUniformLocation(_progSsr, "uSteps");
                 _uSsrDqa = _gl.GetUniformLocation(_progSsr, "uDqa");
                 _uSsrDqb = _gl.GetUniformLocation(_progSsr, "uDqb");
@@ -428,8 +442,6 @@ public sealed partial class GlCore : IGpuBackend
                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uDepth"), 0);
                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uSurface"), 1);
                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uColor"), 2);
-                int uMurkGrid = _gl.GetUniformLocation(_progSsr, "uMurkGrid");
-                if (uMurkGrid >= 0) _gl.Uniform1(uMurkGrid, MurkGridUnit);
                 int uPlanar = _gl.GetUniformLocation(_progSsr, "uPlanar");
                 if (uPlanar >= 0) _gl.Uniform1(uPlanar, 3);
                 int uPlanarDepth = _gl.GetUniformLocation(_progSsr, "uPlanarDepth");
@@ -1739,6 +1751,16 @@ public sealed partial class GlCore : IGpuBackend
                 RemasterUniforms.LitBatches++;
             }
         }
+        // Murky water: everything drawn into the frame below its tile's water level,
+        // except the water itself (the averaging blends), which is drawn over it.
+        int murkOn = WaterMurk.Enabled && WaterMurk.ViewSet && WaterMurk.Level != null && rt is { IsPlanar: false }
+                     && !(_kTransparent && (_kBlend == 0 || _kBlend == 3)) ? 1 : 0;
+        if (_uMurkOn >= 0 && (murkOn != 0 || _murkOnSent != 0))
+        {
+            if (murkOn != _murkOnSent) _gl.Uniform1(_uMurkOn, murkOn);
+            _murkOnSent = murkOn;
+            if (murkOn != 0) SendMurk(rt!);
+        }
         // 0078. Water's blend, drawn into the frame (not a planar reflection, whose
         // camera is the mirrored one): the ripples, with this frame's camera and clock.
         int waveOn = WaterWaves.Active && rt is { IsPlanar: false } && _kTransparent
@@ -1965,11 +1987,6 @@ public sealed partial class GlCore : IGpuBackend
             rt.Dirty = true;
             rt.LastDrawFrame = _frame;
             if (!rt.IsPlanar) rt.RetainedSerial = RetainedScene.Serial;
-            if (!rt.IsPlanar && WaterMurk.Enabled && WaterMurk.ViewSet)
-            {
-                Array.Copy(WaterMurk.View, rt.MurkView, 15);
-                rt.MurkViewSet = true;
-            }
         }
         else
         {
@@ -2768,6 +2785,8 @@ public sealed partial class GlCore : IGpuBackend
         if (_uSsrMarchOn >= 0) _gl.Uniform1(_uSsrMarchOn, ScreenReflections.Enabled ? 1 : 0);
         if (_uSsrMurkDist >= 0) _gl.Uniform1(_uSsrMurkDist, WaterMurk.Enabled ? Math.Max(1f, WaterMurk.Distance) : 0f);
         if (_uSsrMurkColor >= 0) _gl.Uniform3(_uSsrMurkColor, WaterMurk.R, WaterMurk.G, WaterMurk.B);
+        if (_uSsrMurkHaze >= 0)
+            _gl.Uniform1(_uSsrMurkHaze, WaterMurk.Haze > 0f ? WaterMurk.HazeThickness / WaterMurk.Haze : 0f);
         if (_uSsrSteps >= 0) _gl.Uniform1(_uSsrSteps, Math.Clamp(ScreenReflections.Steps, 1, 128));
         if (_uSsrDqa >= 0) _gl.Uniform1(_uSsrDqa, (float)GteDepth.ProjDqa);
         if (_uSsrDqb >= 0) _gl.Uniform1(_uSsrDqb, (float)GteDepth.ProjDqb);
@@ -2827,8 +2846,6 @@ public sealed partial class GlCore : IGpuBackend
         _gl.BindTexture(TextureTarget.Texture2D, src.Surface);
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
-        bool grid = WaterMurk.Enabled && _uSsrMurkGridOn >= 0 && BindMurkGrid(src);
-        if (_uSsrMurkGridOn >= 0) _gl.Uniform1(_uSsrMurkGridOn, grid ? 1 : 0);
         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
         ScreenReflections.Passes++;
         if (planarOn || _retPlanar != null)
@@ -2845,38 +2862,48 @@ public sealed partial class GlCore : IGpuBackend
         if (ScreenReflections.WantMap && _ssrInfo) CaptureSsrMap(w, h);
     }
 
-    /// <summary>The murk's grid (<see cref="WaterMurk.Grid"/>) on its unit, and the
-    /// camera the target was drawn with; false with either missing.</summary>
-    unsafe bool BindMurkGrid(GlDisplayRt src)
+    /// <summary>The murk's level grid, camera and settings, sent as they change.</summary>
+    (float, float, float) _murkFogSent = (-1f, -1f, -1f);
+
+    unsafe void SendMurk(GlDisplayRt rt)
     {
-        var grid = WaterMurk.Grid;
-        if (grid == null || !src.MurkViewSet) return false;
-        _gl.ActiveTexture(TextureUnit.Texture0 + MurkGridUnit);
-        if (_murkGridTex == 0)
+        if (_murkLevelGen != WaterMurk.LevelGen || _murkLevelTex == 0)
         {
-            _murkGridTex = _gl.GenTexture();
-            _gl.BindTexture(TextureTarget.Texture2D, _murkGridTex);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
-            _murkGridGen = -1;
-        }
-        else _gl.BindTexture(TextureTarget.Texture2D, _murkGridTex);
-        if (_murkGridGen != WaterMurk.GridGen)
-        {
+            if (_murkLevelTex == 0) _murkLevelTex = _gl.GenTexture();
+            _gl.ActiveTexture(TextureUnit.Texture0 + MurkLevelUnit);
+            _gl.BindTexture(TextureTarget.Texture2D, _murkLevelTex);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
             int n = WaterMurk.GridSpan;
-            fixed (float* p = grid)
+            fixed (float* p = WaterMurk.Level)
                 _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.RG32f, (uint)n, (uint)n, 0,
                     PixelFormat.RG, PixelType.Float, p);
-            _murkGridGen = WaterMurk.GridGen;
+            _gl.ActiveTexture(TextureUnit.Texture0);
+            _murkLevelGen = WaterMurk.LevelGen;
         }
-        _gl.ActiveTexture(TextureUnit.Texture0);
-        var v = src.MurkView;
-        _gl.UniformMatrix3(_uSsrMurkR, 1, true, new ReadOnlySpan<float>(v, 0, 9));
-        _gl.Uniform3(_uSsrMurkCam, v[9], v[10], v[11]);
-        _gl.Uniform3(_uSsrMurkT, v[12], v[13], v[14]);
-        return true;
+        if (_murkViewGenSent != WaterMurk.ViewGen)
+        {
+            var v = WaterMurk.View;
+            _gl.UniformMatrix3(_uMurkR, 1, true, new ReadOnlySpan<float>(v, 0, 9));
+            _gl.Uniform3(_uMurkCam, v[9], v[10], v[11]);
+            _gl.Uniform3(_uMurkT, v[12], v[13], v[14]);
+            _gl.Uniform1(_uMurkDist, Math.Max(1f, WaterMurk.Distance));
+            _gl.Uniform3(_uMurkColor, WaterMurk.R, WaterMurk.G, WaterMurk.B);
+            _murkViewGenSent = WaterMurk.ViewGen;
+        }
+        var centre = (GteDepth.ProjCx + rt.Margin, GteDepth.ProjCy, Math.Max(1f, GteDepth.ProjH));
+        if (centre != _murkCentreSent)
+        {
+            _gl.Uniform2(_uMurkCentre, centre.Item1, centre.Item2);
+            _gl.Uniform1(_uMurkH, centre.Item3);
+            _murkCentreSent = centre;
+        }
+        var fog = ((float)GteDepth.ProjDqa, (float)GteDepth.ProjDqb, (float)ScreenReflections.FogCurve);
+        if (fog != _murkFogSent)
+        {
+            _gl.Uniform3(_uMurkFog, fog.Item1, fog.Item2, fog.Item3);
+            _murkFogSent = fog;
+        }
     }
 
     const int ColorMipUnit = 7, PlanarMipUnit = 8, SsrDepthUnit = 4;
@@ -3148,7 +3175,7 @@ public sealed partial class GlCore : IGpuBackend
         if (_aoFbo != 0) _gl.DeleteFramebuffer(_aoFbo);
         if (_aoBlurFbo != 0) _gl.DeleteFramebuffer(_aoBlurFbo);
         if (_ssrTex != 0) _gl.DeleteTexture(_ssrTex);
-        if (_murkGridTex != 0) _gl.DeleteTexture(_murkGridTex);
+        if (_murkLevelTex != 0) _gl.DeleteTexture(_murkLevelTex);
         if (_colorMipTex != 0) _gl.DeleteTexture(_colorMipTex);
         if (_colorMipFbo != 0) _gl.DeleteFramebuffer(_colorMipFbo);
         if (_planarMipTex != 0) _gl.DeleteTexture(_planarMipTex);

@@ -39,6 +39,16 @@ public sealed class ReflectionsPage : IPatchPage
           "pt-BR": "Quanta água a vista atravessa antes de ficar quase toda turva, em unidades do mundo (um ladrilho do piso tem 2048). Menor é mais turvo.",
           "es-419": "Cuánta agua atraviesa la vista antes de ser casi toda turbia, en unidades del mundo (una baldosa del piso mide 2048). Menor es más turbio."
         },
+        "kf2.murk.haze": {
+          "en": "Murk haze",
+          "pt-BR": "Névoa da turvação",
+          "es-419": "Neblina de la turbidez"
+        },
+        "kf2.murk.haze.tooltip": {
+          "en": "How much the murk hazes the water's own surface, the more so the flatter the view across it. Lower is hazier; the far left is none.",
+          "pt-BR": "Quanto a turvação embaça a própria superfície da água, mais ainda quanto mais rasante a vista sobre ela. Menor é mais embaçado; no extremo esquerdo, nada.",
+          "es-419": "Cuánto la turbidez empaña la propia superficie del agua, más cuanto más rasante es la vista sobre ella. Menor es más empañado; en el extremo izquierdo, nada."
+        },
         "kf2.murk.colour": {
           "en": "Murk colour",
           "pt-BR": "Cor da turvação",
@@ -265,7 +275,7 @@ public sealed class ReflectionsPage : IPatchPage
         ImGui.Indent();
 
         float dist = WaterMurk.Distance;
-        if (ImGui.SliderFloat(Localization.T("kf2.murk.distance"), ref dist, 100f, 8000f, "%.0f",
+        if (ImGui.SliderFloat(Localization.T("kf2.murk.distance"), ref dist, 25f, 8000f, "%.0f",
                               ImGuiSliderFlags.AlwaysClamp | ImGuiSliderFlags.Logarithmic))
         {
             WaterMurk.Distance = dist;
@@ -273,6 +283,17 @@ public sealed class ReflectionsPage : IPatchPage
         }
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(Localization.T("kf2.murk.distance.tooltip"));
+
+        // 0 is off, so the slider's floor is 0 and not the log scale's.
+        float haze = WaterMurk.Haze;
+        if (ImGui.SliderFloat(Localization.T("kf2.murk.haze"), ref haze, 0f, 20000f, haze <= 0f ? "-" : "%.0f",
+                              ImGuiSliderFlags.AlwaysClamp | ImGuiSliderFlags.Logarithmic))
+        {
+            WaterMurk.Haze = haze;
+            PatchSettings.Set(Murk.HazeKey, haze);
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(Localization.T("kf2.murk.haze.tooltip"));
 
         var col = new System.Numerics.Vector3(WaterMurk.R, WaterMurk.G, WaterMurk.B);
         if (ImGui.ColorEdit3(Localization.T("kf2.murk.colour"), ref col, ImGuiColorEditFlags.Float))
@@ -290,8 +311,10 @@ public sealed class ReflectionsPage : IPatchPage
         if (ImGui.Button(Localization.T("kf2.murk.reset")))
         {
             WaterMurk.Distance = Murk.DefaultDistance;
+            WaterMurk.Haze = Murk.DefaultHaze;
             WaterMurk.R = Murk.DefaultR; WaterMurk.G = Murk.DefaultG; WaterMurk.B = Murk.DefaultB;
             PatchSettings.Set(Murk.DistanceKey, Murk.DefaultDistance);
+            PatchSettings.Set(Murk.HazeKey, Murk.DefaultHaze);
             PatchSettings.Set(Murk.RKey, Murk.DefaultR);
             PatchSettings.Set(Murk.GKey, Murk.DefaultG);
             PatchSettings.Set(Murk.BKey, Murk.DefaultB);

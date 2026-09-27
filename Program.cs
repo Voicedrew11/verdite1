@@ -715,9 +715,10 @@ Kf2.Reflections.Install();
 // view ray crosses, on its own switch -- no reflection needs to be on. Off by
 // default. See "Murky water" in docs/RENDERING.md.
 Kf2.Murk.Configure(Environment.GetEnvironmentVariable("KF2_MURK"),
-                   Environment.GetEnvironmentVariable("KF2_MURK_DISTANCE"));
+                   Environment.GetEnvironmentVariable("KF2_MURK_DISTANCE"),
+                   Environment.GetEnvironmentVariable("KF2_MURK_HAZE"));
 Kf2.Murk.Install();
-Kf2.MurkFloor.Configure(Environment.GetEnvironmentVariable("KF2_MURK_PROBE"));
+Kf2.MurkLevel.Configure(Environment.GetEnvironmentVariable("KF2_MURK_PROBE"));
 
 // Water waves: a slow swell moves the water's own vertices (the tile walk points each
 // water mesh at a moved copy), and ripples push and shade its texture per pixel

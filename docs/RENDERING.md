@@ -3724,68 +3724,128 @@ so the vendor half of the question is a report rather than a measurement.
 
 ### Murky water
 
-**Mechanism measured; the tuning judged by eye. Off by default**, at the user's
-tuning when switched on (depth 2654, the colour unchanged; `KF2_MURK=1`, or Video ▸
-Experimental ▸ *Murky water*). Runtime `WaterMurk`
-(amending `0067`), port `patches/Murk.cs`.
+**Mechanism measured; the look since the rework below not judged. Off by default**,
+depth 200 and haze 2654 when switched on (the colour and the haze the user's tuning;
+`KF2_MURK=1`, or Video ▸ Experimental ▸ *Murky water*). Runtime `WaterMurk`
+(amending `0067`), port `patches/Murk.cs` and `patches/MurkLevel.cs`.
 
-Water was clear to the bottom. The reflection pass now lays a murk under the
-reflection on water (material 2): the depth buffer holds the opaque floor under a
-translucent surface and the surface buffer the water itself, so the view ray's run
-between the two is the water it crosses, `1 - exp(-run / KF2_MURK_DISTANCE)` of a
-dark teal (`WaterMurk.R/G/B`, fogged at the water's depth); water with nothing
-drawn behind it takes its depth from the water around it (below). It is per pixel and independent of world height, so a pond
-above the player does not darken anything else. Default 2654 units (a tile is 2048;
-700 until it was judged).
-Under the checkbox, *Murk depth* (100-8000, logarithmic; `kf2.murk.distance`,
-which `KF2_MURK_DISTANCE` overrides) and *Murk colour* (`kf2.murk.r/g/b`) set both
-live, with a reset back to 2654 and `0.03,0.05,0.06`.
+Water was clear to the bottom. Whatever is drawn below the water now fades to a
+dark teal (`WaterMurk.R/G/B`) by the view ray's run through the water to it,
+`1 - exp(-run / KF2_MURK_DISTANCE)`, fogged at the point the ray crosses the
+surface; the water itself is hazed over it (below). Default 200 units (a tile is
+2048). Under the checkbox, *Murk depth* (25-8000, logarithmic; `kf2.murk.depth`,
+which `KF2_MURK_DISTANCE` overrides), *Murk haze* (0-20000, 0 none;
+`kf2.murk.distance`, `KF2_MURK_HAZE`) and *Murk colour* (`kf2.murk.r/g/b`) set them
+live, with a reset back to 200, 2654 and `0.03,0.05,0.06`.
 
-**The tiles' cracks as lines of murk.** Reported: seams between water quads with
-the murk on. The likely cause, not measured: the water tiles and the floor under
-them meet with hairline cracks the game's own picture hides, and the murk turned
-each into a seam: a surface texel no water triangle covered took no murk, and a
-floor texel no floor covered read as the sky's full run. `SsrFs` now takes such a
-texel as water when the texels either side of it on one axis are, and a missing
-floor depth from its nearest neighbour. Judged by eye: the seams are gone.
+**Where the murk goes.** It was first laid over the finished picture by the
+reflection pass, as a share of the murk colour by the run from the water's surface
+(the surface buffer) to the floor (the depth buffer). At full strength that painted
+out the water's own ripples, so deep water read as flat colour. It is now on what
+is seen through the water, where it is drawn:
 
-**A halo round the pier's pillars.** Reported with a screenshot at `fdat02`'s
-pier (player `75773,-11520,83101`, yaw 1586, pitch 35; `view 75773 -13026 83101 35
-1586 0`), with the murk on and nothing else mattering. Measured at that camera with
-`snap`, three faults, each checked by its own before and after:
+- **`PrimFs`'s `murkAt`.** A fragment with a recovered depth is taken to the world
+  with the frame's camera (as the ripples take one, `0078`), and its tile's water
+  level read from `WaterMurk.Level`, an 80x80 grid of (world Y, has water); below
+  it, the run is the part of the view ray under the surface (all of it from a
+  camera under the water), and `murk8` mixes every output colour towards the
+  murk colour by it, fogged on the reflections' curve at the view depth where the
+  ray crosses the surface (`uMurkFog`, the frame's DQA and DQB), as the floorless
+  water below is. Not for the averaging blends (the water, drawn over
+  it), not into a planar reflection. `GlCore.SendMurk`, the level on unit 17.
+- **`MurkLevel`** builds the grid from the map, once an area: each tile's water
+  level is the mean height of the vertices its meshes' water faces use (water as
+  the reflections find it: semi-transparent, averaging, in a water rect). A tile
+  with no water beside one that has takes its neighbours' mean, since a shore's
+  or a platform's sides below the surface lie in the land tile.
+- **The reflection pass** keeps only water with nothing drawn under it (the depth
+  buffer holds the sky): half the fogged murk colour, the share the averaging blend
+  takes from behind the water, added under the surface and the reflection.
 
-- **Water with no floor under it.** The cells along the pier have no seabed: with
-  the murk off the water there lies over black. The murk took the sky behind water
-  as a full run, so those cells went solid teal and hid the water's texture, flat
-  patches ending at the cell edges beside each pillar. The pass now runs once more
-  first (`uMurkPass`, into an RG16F chain at the pass's size, `RunMurkFill`): each
-  water pixel with a floor writes its depth to the floor along the surface's normal,
-  with a weight; a floorless pixel reads the mip chain from four levels above the
-  coarsest, the first level at least a quarter covered, trilinear, and takes its run
-  as that depth over the cosine of the view against the normal. With nothing on
-  screen to take it from, the full run as before. The first version read the finest
-  level with any weight, and a sliver of a pillar standing in the water lent its
-  short run to the water round it as a dark pillar-shaped ghost; hence the coarse
-  levels.
-- **The crack fill borrowed the pillar's depth.** The fill for a one-texel crack in
-  the floor took the nearest neighbouring depth, and beside a pillar that is the
-  pillar, in front of the water: a run of 0, and a strip of unmurked water about a
-  game pixel wide down both sides of every pillar. Only a depth behind the water
-  counts now.
-- **The pass's resolution.** The pass runs at `KF2_SSR_RESOLUTION` (2x the game's
-  pixels) and the present read it bilinear, which put a teal fringe on the pillar's
-  own edge. `PresentFs` upsamples it by the surface under each pixel (`ssrAt`): what
-  the pass computed from at the pixel and at each of the four texels round it (the
-  surface buffer's material and view depth, cracks filled as the pass fills them,
-  nothing where the depth buffer has an opaque surface in front), nothing where
-  that is nothing, and otherwise only the texels with the same material and a depth
-  within 10%, renormalised, or the nearest such. The surface buffer is drawn at the
-  render scale while the pass runs, and the depth is bound for the composite on
-  unit 4.
+**Why the rework: `fdat02`'s pier and shelf.** Reported as a halo round the pier's
+pillars (player `75773,-11520,83101`, yaw 1586, pitch 35; `view 75773 -13026 83101
+35 1586 0`), then as blotches swimming over the water at the shore (`82062,-12800,
+73763`, yaw 1991) and a dark box from above. The map says (dumped from the meshes):
+the pier and the shore stand on a shelf whose seabed is 640 below the surface; at
+the shelf's edge a wall drops to 7040; past it the open sea (model 18) has no floor
+at all. The "halo" was that deep water, solid because the murk took the sky behind
+water as a full run, and the box was the wall seen down through the water. Three
+tries at filling the open sea's floor from the water around it failed on
+measurement: from the screen's mip chain (a coarse level's edges fixed on the
+screen, sliding over the water as it turned: the blotches), from a world grid of the
+floors spread three tiles (the shelf's shallow depth lent to the open sea, lighter
+than the wall in front of it), and a "floor on both sides" test (the sea past a
+shelf is not a gap). With the murk under the surface, deep water and bottomless
+water agree: at `KF2_MURK_DISTANCE=50` the shelf read (27,35,45) against the open
+sea's (26,33,44) from the pier's deck, and at 2654 the shelf 43 against 50 with the
+murk off. A 120-degree sweep at the shore shows no edge that moves with the screen.
 
-At the pier, uncapped, 330 fps with the murk against 336 without, and no GL errors.
-The floorless strip is still a shade apart from the water over the seabed beside
-it, as it is with the murk off. Checked by eye only at this one view.
+**What it cost the look.** The water's texture is half of every water pixel, and
+the murk under the surface does not reach it, so the tuned dark-teal water was
+gone: deep water read about as the open sea does with the murk off, tinted. The
+haze below puts it back. Uncapped at the pier,
+289 fps with the murk against 305 without.
+
+**The bottom has to be hidden, and 2654 did not.** The murk is there to hide the
+geometry under the water, and the depth the user had tuned (2654, under the first
+version, where the murk also covered the water) murked the shelf's seabed, 640
+down, by about a quarter: from the deck its edge and the wall below it showed
+plainly. Three causes, each measured on the shore sweep's water band (column
+means, the shelf on the left, the open sea on the right) and seen from the deck:
+the depth (at 400 the shelf's edge still showed, at 200 it was gone); the land
+tiles' underwater sides, which had no level and no murk (the platform's stone
+showed under the surface; the grid is dilated a tile now); and the fog, which
+darkened the murk at the floor's distance rather than the surface's, leaving a
+band at the drop-off (27.5 against 31.3 either side; 31.0-31.5 across after). The
+default is 200 under a new key, `kf2.murk.depth`, so the 2654 saved under
+`kf2.murk.distance` for the other model is not read, and the slider goes down to
+25. A pillar fades within a few hundred units below the waterline. Whether 200 is
+the look is judged by eye.
+
+**The fog came back as a haze on the surface.** Reported from the open sea west of
+the shore (`view 78000 -13300 73763 200 1024 0`, the pier ahead on the right): no
+look of fog under the surface, and the outline of the geometry beneath showing.
+Two causes, measured there with `snap`:
+
+- **No fog.** With what is under the water fully murked, every water pixel was
+  half its own texture and half the murk colour, which is nearly black, so the
+  sea read as its texture over black, the murk-off open sea's look. The first
+  version's fog was the murk laid over the water too. That is back, in the
+  reflection pass, under the reflection, but over a fixed thickness of water
+  (`WaterMurk.HazeThickness`, 640, the shelf's depth, where the 2654 was judged)
+  taken along the view ray at the angle it meets the surface, rather than over the
+  run to the floor: `1 - exp(-640 / (cos * haze))`. Deep and bottomless water
+  therefore haze alike, and the haze depends only on the surface, so it has no
+  edge at a drop-off and nothing on the screen to swim. Its distance is the first
+  version's key, `kf2.murk.distance`, so the 2654 the user saved there is read
+  again, and on the shelf the haze is the first version's to the formula; what is
+  under it is murked, so the seabed no longer shows through it. The water's mean
+  at that view went 35.3 to about 20.5.
+- **The outline was the shelf's edge, drawn by the crack fill.** With the murk off
+  the cliff at the shelf's edge shows through the water there; with it on a dark
+  band about 14 pixels wide ran along the edge's top (column means 36, 32, 37
+  across it), the same at `KF2_SSR_RESOLUTION=0`, so not the pass's resolution.
+  Colouring the two paths (the floor's murk red, the floorless add green) showed a
+  dark rim between them round every drop-off: the one-texel fill for a crack in
+  the floor took the floor beside it for the floorless water at the edge, so those
+  pixels had neither the floor's murk (nothing murked is drawn there) nor the
+  floorless add. The fill belonged to the first version, where the pass worked the
+  run out itself; now a crack shows the sky, and the floorless add is right for
+  it, so the fill is gone. `ssrKey` also counts floorless water as a material of
+  its own, so the composite does not blend the add across the edge. After: 20-21
+  straight across.
+
+At the pier the pillars stand clean, and from the deck the water past the shelf
+is one tone; no GL errors. Whether the haze and the depth together are the look is
+judged by eye.
+
+Kept from the first version, still measured at the pier: a one-texel gap in the
+water's triangles or in the floor under them is filled from its neighbours (only a
+depth behind the water counts, or a pillar's lent the water beside it a run of 0),
+and `PresentFs` upsamples the pass by the surface under each pixel (`ssrAt`: the
+same material and a depth within 10%, else the nearest such), with the surface
+buffer at the render scale while the pass runs, since the pass runs at 2x the
+game's pixels and a bilinear read put a fringe on a pillar's edge.
 
 ### The reflection pass runs for each term on its own
 
