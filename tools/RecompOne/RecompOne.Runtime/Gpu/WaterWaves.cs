@@ -45,7 +45,7 @@ public static class WaterWaves
     /// <summary>How far the texture is pushed at the steepest slope, in world units (a
     /// water texel is 32); the wavelength of the longest ripple, in world units (a tile
     /// is 2048); and how much the slope lightens and darkens, 0-1.</summary>
-    public static float Distort = 48f, Scale = 700f, Shade = 0.25f;
+    public static float Distort = 139f, Scale = 700f, Shade = 0.51f;
 
     /// <summary>Bumped by the port when anything above changes; the backend sends the
     /// uniforms again only then.</summary>

@@ -3691,8 +3691,9 @@ so the vendor half of the question is a report rather than a measurement.
 
 ### Murky water
 
-**Mechanism measured; the picture has not been judged. Off by default**
-(`KF2_MURK=1`, or Video ▸ Experimental ▸ *Murky water*). Runtime `WaterMurk`
+**Mechanism measured; the tuning judged by eye. Off by default**, at the user's
+tuning when switched on (depth 2654, the colour unchanged; `KF2_MURK=1`, or Video ▸
+Experimental ▸ *Murky water*). Runtime `WaterMurk`
 (amending `0067`), port `patches/Murk.cs`.
 
 Water was clear to the bottom. The reflection pass now lays a murk under the
@@ -3701,10 +3702,11 @@ translucent surface and the surface buffer the water itself, so the view ray's r
 between the two is the water it crosses, `1 - exp(-run / KF2_MURK_DISTANCE)` of a
 dark teal (`WaterMurk.R/G/B`, fogged at the water's depth), sky behind the water
 counting as all water. It is per pixel and independent of world height, so a pond
-above the player does not darken anything else. Default 700 units (a tile is 2048).
+above the player does not darken anything else. Default 2654 units (a tile is 2048;
+700 until it was judged).
 Under the checkbox, *Murk depth* (100-8000, logarithmic; `kf2.murk.distance`,
 which `KF2_MURK_DISTANCE` overrides) and *Murk colour* (`kf2.murk.r/g/b`) set both
-live, with a reset back to 700 and `0.03,0.05,0.06`.
+live, with a reset back to 2654 and `0.03,0.05,0.06`.
 
 ### The reflection pass runs for each term on its own
 
@@ -3729,8 +3731,10 @@ pass. 144.0 fps drawn at 19.9-20.0 ticks/s and `[present] wide 288` in each.
 
 ### Water waves
 
-**Mechanism measured; the picture has not been judged. Off by default**
-(`KF2_WAVES=1`, or Video ▸ Experimental ▸ *Water waves*). Runtime `WaterWaves`
+**Mechanism measured; the tuning judged by eye. Off by default**, at the user's
+tuning when switched on: swell 338 over 6114, ripples 139 over 700, shade 0.51,
+speed 1 (first 96 over 12000, 48 over 700 and 0.25; `KF2_WAVES=1`, or Video ▸
+Experimental ▸ *Water waves*). Runtime `WaterWaves`
 (`0078`), port `patches/Waves.cs` and `patches/WaterSwell.cs`.
 
 **The water is coarse, and that decides what a vertex can do.** A census of
@@ -3790,6 +3794,6 @@ construction (`uv` is `vUV`, the wrap returns its argument, no multiply).
 
 **What still needs an eye**: whether the swell reads as water or as the floor
 moving (at tile-corner resolution a short swell is faceted, which is why the
-default length is 12000); whether the rims, held still, look pinned; the ripples'
+length was first 12000, and the judged default is 6114); whether the rims, held still, look pinned; the ripples'
 strength and shading defaults; and that no crack opens anywhere a water tile meets
 something else.

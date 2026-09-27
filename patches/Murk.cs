@@ -7,8 +7,8 @@ namespace Kf2;
 /// Murky water: water darkens with the distance the view ray runs through it to the
 /// floor, so a shallow edge stays clear and a deep pool goes dark.
 ///
-///     KF2_MURK=1              on (off by default: the picture has not been judged)
-///     KF2_MURK_DISTANCE=700   the distance through water that takes 63% of the way to the murk
+///     KF2_MURK=1              on (off by default)
+///     KF2_MURK_DISTANCE=2654  the distance through water that takes 63% of the way to the murk
 ///
 /// The distance and the colour are also sliders under the checkbox, saved.
 ///
@@ -23,7 +23,8 @@ public static class Murk
     public const string DistanceKey = "kf2.murk.distance";
     public const string RKey = "kf2.murk.r", GKey = "kf2.murk.g", BKey = "kf2.murk.b";
 
-    public const float DefaultDistance = 700f;
+    public const float DefaultDistance = 2654f;
+    public const bool DefaultOn = false;
     public const float DefaultR = 0.03f, DefaultG = 0.05f, DefaultB = 0.06f;
 
     static bool? _forced;
@@ -39,11 +40,11 @@ public static class Murk
 
     public static void Install()
     {
-        WaterMurk.Enabled = _forced ?? false;
+        WaterMurk.Enabled = _forced ?? DefaultOn;
         Event.AddListener<RuntimeReadyEvent>(_ =>
         {
             var view = RecompOne.Runtime.Runtime.View;
-            WaterMurk.Enabled = _forced ?? view.GetBool(OnKey, false);
+            WaterMurk.Enabled = _forced ?? view.GetBool(OnKey, DefaultOn);
             WaterMurk.Distance = _forcedDistance ?? view.GetFloat(DistanceKey, DefaultDistance);
             WaterMurk.R = Math.Clamp(view.GetFloat(RKey, DefaultR), 0f, 1f);
             WaterMurk.G = Math.Clamp(view.GetFloat(GKey, DefaultG), 0f, 1f);

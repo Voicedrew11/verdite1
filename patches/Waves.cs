@@ -13,7 +13,7 @@ namespace Kf2;
 /// by a moving slope, so the one 64x64 image every water tile repeats stops reading
 /// as a grid.
 ///
-///     KF2_WAVES=1          on (off by default: the picture has not been judged)
+///     KF2_WAVES=1          on (off by default)
 ///     KF2_WAVES_PROBE=1    a line every 2 s: rects, halves and vertices moved, batches rippled
 ///
 /// Everything else is a slider under Video ▸ Experimental ▸ *Water waves*, saved.
@@ -34,8 +34,9 @@ public static class Waves
     public const string RippleKey = "kf2.waves.ripple", RippleSizeKey = "kf2.waves.ripplesize";
     public const string ShadeKey = "kf2.waves.shade", SpeedKey = "kf2.waves.speed";
 
-    public const float DefaultSwell = 96f, DefaultSwellSize = 12000f;
-    public const float DefaultRipple = 48f, DefaultRippleSize = 700f, DefaultShade = 0.25f, DefaultSpeed = 1f;
+    public const bool DefaultOn = false;
+    public const float DefaultSwell = 338f, DefaultSwellSize = 6114f;
+    public const float DefaultRipple = 139f, DefaultRippleSize = 700f, DefaultShade = 0.51f, DefaultSpeed = 1f;
 
     const uint Slots = 0x80192D58;
     const int SlotCount = 8;
@@ -64,11 +65,11 @@ public static class Waves
 
     public static void Install()
     {
-        Enabled = _forced ?? false;
+        Enabled = _forced ?? DefaultOn;
         Event.AddListener<RuntimeReadyEvent>(_ =>
         {
             var view = RecompOne.Runtime.Runtime.View;
-            Enabled = _forced ?? view.GetBool(OnKey, false);
+            Enabled = _forced ?? view.GetBool(OnKey, DefaultOn);
             Swell = Math.Clamp(view.GetFloat(SwellKey, DefaultSwell), 0f, 512f);
             SwellSize = Math.Clamp(view.GetFloat(SwellSizeKey, DefaultSwellSize), 2048f, 65536f);
             WaterWaves.Distort = Math.Clamp(view.GetFloat(RippleKey, DefaultRipple), 0f, 200f);

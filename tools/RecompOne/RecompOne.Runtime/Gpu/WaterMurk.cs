@@ -19,6 +19,6 @@ public static class WaterMurk
 
     /// <summary>The distance through water, in world units, over which the floor
     /// under it fades to 63% of <see cref="R"/>/G/B.</summary>
-    public static float Distance = 700f;
+    public static float Distance = 2654f;
     public static float R = 0.03f, G = 0.05f, B = 0.06f;
 }

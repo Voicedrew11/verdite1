@@ -710,15 +710,14 @@ Kf2.Reflections.Install();
 
 // Murky water: the same pass lays a dark colour over water by how much of it the
 // view ray crosses, on its own switch -- no reflection needs to be on. Off by
-// default: measured, not judged. See "Murky water" in docs/RENDERING.md.
+// default. See "Murky water" in docs/RENDERING.md.
 Kf2.Murk.Configure(Environment.GetEnvironmentVariable("KF2_MURK"),
                    Environment.GetEnvironmentVariable("KF2_MURK_DISTANCE"));
 Kf2.Murk.Install();
 
 // Water waves: a slow swell moves the water's own vertices (the tile walk points each
 // water mesh at a moved copy), and ripples push and shade its texture per pixel
-// (patches/recompone/0078), on the world's clock. Off by default: measured, not
-// judged. See "Water waves" in docs/RENDERING.md.
+// (patches/recompone/0078), on the world's clock. Off by default. See "Water waves" in docs/RENDERING.md.
 Kf2.Waves.Configure(Environment.GetEnvironmentVariable("KF2_WAVES"),
                     Environment.GetEnvironmentVariable("KF2_WAVES_PROBE"));
 Kf2.Waves.Install();
