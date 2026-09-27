@@ -8,57 +8,36 @@ namespace Verdite2.Launcher.Build;
 ///
 /// Runtime.DiscValidator is a Func&lt;string,string?&gt; consulted by
 /// WaitForValidDisc; left null, every existing file passes and any dump at all is
-/// accepted. That was survivable while the only user was a developer pointing at
-/// a known-good image, and it is not survivable in a release: a wrong disc here
-/// does not fail, it recompiles into a game that is wrong in ways that surface
-/// hours later.
+/// accepted. A wrong disc here does not fail, it recompiles into a game that is
+/// wrong in ways that surface hours later.
 ///
-/// Two failures are worth naming precisely rather than generically:
-///
-///   - King's Field II (SLUS-00255) is the game most people will reach for, and it
-///     is a DIFFERENT GAME. The series was renumbered for the West: this port is
-///     of King's Field (SLUS-00158), the US release of the Japanese King's Field
-///     II. Every address in config/ is wrong for SLUS-00255 and it would build.
-///
-///   - CD/COM/FDAT.T carries the nine per-area code modules, sliced out by
-///     absolute byte offset. A truncated or differently built archive would let
-///     the recompile pass and then produce area modules made of whatever bytes
-///     were at those offsets.
+/// This port is of King's Field (JP, SLPS-00017), the first game, and the
+/// failure worth naming precisely is the North American "King's Field"
+/// (SLUS-00158): it is the *second* game (the series was renumbered for the
+/// West), it is the disc most people own, and it is verdite2's. The first game's
+/// disc has no SYSTEM.CNF at all -- the BIOS boots PSX.EXE -- so a disc that has
+/// one is not this game, and its serial says which it is.
 /// </summary>
 static class DiscCheck
 {
-    public const string Serial = "SLUS-00158";
-    const string BootExe = "SLUS_001.58";
+    public const string Serial = "SLPS-00017";
 
-    /// <summary>Files the recompile reads, and the smallest each may be.</summary>
+    /// <summary>Files the recompile reads, and the smallest each may be, plus one
+    /// that only this game has.</summary>
     static readonly (string Path, uint MinSize)[] Required =
     [
+        ("PSX.EXE", 0x800),
         ("OPEN.EXE", 0x800),
         ("GAME.EXE", 0x800),
-        ("END.EXE", 0x800),
-        // FDAT.T is checked against the config rather than a constant -- see
-        // FdatFloor below.
-        ("CD/COM/FDAT.T", 0),
+        ("KF/COM/COM.DAT", 1),
     ];
 
     /// <summary>
     /// Null if the image is usable, otherwise the reason it is not.
     ///
     /// Memoised, because HostWindow.WaitForValidDisc calls this from inside its own
-    /// frame loop: a saved CdPath that no longer validates -- a moved image, a dump
-    /// replaced in place, a settings.json written before there was a validator at
-    /// all -- would otherwise reopen the cue and re-parse the ISO directory sixty
-    /// times a second for as long as the picker is up, which is exactly when the
-    /// interface has to stay responsive.
-    ///
-    /// Keyed on the image's size and mtime as well as its path, and nothing is
-    /// cached for a path with no file at it, so a player who puts a missing image
-    /// back or re-points the cue at the right bin gets a fresh reading rather than
-    /// the verdict from before they fixed it. What that does NOT see is a bin
-    /// swapped under an unchanged cue -- a CHD, being one file, has no such gap --
-    /// and it does not need to: a wrong disc is refused here and never saved, so
-    /// the only path that reaches the loop is one that validated when it was
-    /// chosen.
+    /// frame loop, and keyed on the image's size and mtime as well as its path, so
+    /// a player who fixes the image gets a fresh reading.
     /// </summary>
     public static string? Validate(string path)
     {
@@ -86,31 +65,27 @@ static class DiscCheck
 
     static string? Check(string path)
     {
-        // DiscFs.Open dispatches on the extension, falling back to the CHD magic
-        // for a file named neither .cue nor .chd, so one message covers every way
-        // it can refuse: an unreadable cue/bin pair, an unsupported CHD codec (only
-        // cdzl/cdlz/cdfl/zlib/lzma are decoded, so a `chdman -c cdzs` image lands
-        // here rather than crashing during the build), and a file that is neither.
         DiscFs fs;
         try { fs = DiscFs.Open(path); }
         catch (Exception e) { return $"Could not read this image as a cue/bin pair or a CHD: {e.Message}"; }
 
         using (fs)
         {
-            string boot;
-            try { boot = System.Text.Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF")); }
-            catch { return "No SYSTEM.CNF on this disc, so it is not a PlayStation game image."; }
-
-            if (boot.IndexOf(BootExe, StringComparison.OrdinalIgnoreCase) < 0)
+            if (fs.Exists("SYSTEM.CNF"))
+            {
+                string boot;
+                try { boot = System.Text.Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF")); }
+                catch { boot = ""; }
                 return Wrong(boot);
+            }
 
             foreach (var (file, min) in Required)
             {
                 if (!fs.Locate(file, out _, out uint size))
-                    return $"This disc is missing {file}, which the recompiler needs. The image may be incomplete.";
-                uint floor = file == "CD/COM/FDAT.T" ? FdatFloor() : min;
-                if (size < floor)
-                    return $"{file} is {size} bytes on this disc; {Serial} has at least {floor}. The image may be truncated.";
+                    return $"This disc is missing {file}, which King's Field ({Serial}) has. " +
+                           "It is either another game or an incomplete image.";
+                if (size < min)
+                    return $"{file} is {size} bytes on this disc; {Serial} has at least {min}. The image may be truncated.";
             }
         }
 
@@ -118,65 +93,20 @@ static class DiscCheck
     }
 
     /// <summary>
-    /// The end of the last area-module slice in config/kf2.json.
-    ///
-    /// Read out of the config rather than written here, because the two would
-    /// otherwise drift silently: adding an area module past the current end would
-    /// leave this check passing a disc whose FDAT.T is too short for it, and the
-    /// recompile would slice whatever bytes happened to follow.
-    /// </summary>
-    static uint FdatFloor()
-    {
-        if (_fdatFloor is { } cached) return cached;
-
-        uint end = 0;
-        try
-        {
-            var json = File.ReadAllText(Path.Combine(Paths.ContentConfig, "kf2.json"));
-            using var doc = System.Text.Json.JsonDocument.Parse(json,
-                new System.Text.Json.JsonDocumentOptions
-                {
-                    CommentHandling = System.Text.Json.JsonCommentHandling.Skip,
-                    AllowTrailingCommas = true,
-                });
-
-            foreach (var overlay in doc.RootElement.GetProperty("overlays").EnumerateArray())
-            {
-                if (!overlay.TryGetProperty("file", out var f)) continue;
-                if (!string.Equals(f.GetString(), "CD/COM/FDAT.T", StringComparison.OrdinalIgnoreCase)) continue;
-
-                uint offset = overlay.TryGetProperty("offset", out var o) ? o.GetUInt32() : 0;
-                uint size = overlay.TryGetProperty("size", out var z) ? z.GetUInt32() : 0;
-                end = Math.Max(end, offset + size);
-            }
-        }
-        catch
-        {
-            // A payload we cannot parse is a broken install, not a bad disc. Fall
-            // through to 0 so this check passes and the recompile reports the real
-            // problem instead of blaming the player's dump.
-        }
-
-        return (_fdatFloor = end).Value;
-    }
-
-    static uint? _fdatFloor;
-
-    /// <summary>
-    /// Name the disc the player actually inserted, so the message is about their
-    /// disc rather than about ours. The serial in SYSTEM.CNF is written
-    /// "cdrom:\SLUS_002.55;1", i.e. the boot file name, so it is recovered from
-    /// that rather than looked up.
+    /// Name the disc the player actually inserted. The serial in SYSTEM.CNF is
+    /// written "cdrom:\SLUS_001.58;1", i.e. the boot file name.
     /// </summary>
     static string Wrong(string systemCnf)
     {
         var found = Serials(systemCnf);
         string got = found is null ? "" : $" This one is {found}.";
 
-        if (found == "SLUS-00255")
-            return "This is King's Field II (SLUS-00255), which is a different game. " +
-                   "The series was renumbered for the West: this port is of King's Field " +
-                   $"({Serial}), the US release of the Japanese King's Field II.";
+        if (found is "SLUS-00158" or "SLPS-00069")
+            return "This is King's Field II (in North America it was released as \"King's Field\"). " +
+                   $"This port is of the first game, King's Field ({Serial}), released only in Japan. " +
+                   "King's Field II has a port of its own: verdite2.";
+        if (found is "SLUS-00255" or "SLPS-00377")
+            return $"This is King's Field III (King's Field II in North America). This port is of the first game, King's Field ({Serial}).";
 
         return $"This is not King's Field ({Serial}).{got}";
     }

@@ -112,18 +112,19 @@ jobs:
         with:
           files: dist/*
           draft: true
-          name: Verdite2 ${{ github.ref_name }}
+          name: Verdite1 ${{ github.ref_name }}
           # Appended under the text below: the commits since the previous tag,
           # which is what makes a tag worth cutting rather than a number worth
           # remembering.
           generate_release_notes: true
           body: |
-            **Verdite2 ships no game data.** You need your own dump of King's
-            Field (NTSC-U, `SLUS-00158`) as a `.chd`, or as a `.cue` / `.bin` pair.
+            **Verdite1 ships no game data.** You need your own dump of King's
+            Field (Japan, `SLPS-00017`) -- the first game -- as a `.chd`, or as a
+            `.cue` / `.bin` pair.
 
-            On first launch Verdite2 asks for that image and builds the game from
+            On first launch Verdite1 asks for that image and builds the game from
             it, which takes about fifteen seconds and happens once. Later launches
             start straight away.
 
-            Note that the US-boxed *King's Field II* (`SLUS-00255`) is a different
-            game and will be refused.
+            Note that the North American *King's Field* (`SLUS-00158`) is the
+            second game, which verdite2 ports, and will be refused here.

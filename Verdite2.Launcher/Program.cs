@@ -42,8 +42,8 @@ try
 
     // Before the window is made: on Wayland the app id is how the compositor
     // finds this entry, and so the icon.
-    Runtime.AppId = "verdite2";
-    Runtime.Initialize($"Verdite2 {Ver.Number}");
+    Runtime.AppId = "verdite1";
+    Runtime.Initialize($"Verdite1 {Ver.Number}");
     Localization.Merge(BuildProgressPopup.Strings);
 
     var icon = Path.Combine(AppContext.BaseDirectory, "verdite2.png");

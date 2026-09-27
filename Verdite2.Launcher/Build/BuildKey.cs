@@ -12,9 +12,9 @@ namespace Verdite2.Launcher.Build;
 ///
 ///   - The disc's own code. Not the file's hash: an image can differ in padding,
 ///     track layout or the 180 MB of streamed media and still produce byte-identical
-///     output. What the recompiler reads is the three executables and the nine
-///     FDAT.T slices, so those are what is hashed -- two dumps that recompile the
-///     same get one cache entry between them.
+///     output. What the recompiler reads is the three executables (King's Field
+///     has no code modules), so those are what is hashed -- two dumps that
+///     recompile the same get one cache entry between them.
 ///
 ///   - The shipped sources. content/src is compiled into the assembly, so an
 ///     updated port must rebuild. Hashing the text catches that without asking
@@ -43,11 +43,11 @@ static class BuildKey
     {
         var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
-        Add(hash, "verdite2");
+        Add(hash, "verdite1");
         Add(hash, typeof(BuildKey).Assembly.GetName().Version?.ToString() ?? "0");
 
         using (var fs = DiscFs.Open(discPath))
-            foreach (var file in new[] { "SYSTEM.CNF", "SLUS_001.58", "OPEN.EXE", "GAME.EXE", "END.EXE", "CD/COM/FDAT.T" })
+            foreach (var file in new[] { "PSX.EXE", "OPEN.EXE", "GAME.EXE" })
             {
                 Add(hash, file);
                 try { hash.AppendData(SHA256.HashData(fs.ReadFile(file))); }
@@ -81,7 +81,7 @@ static class Sources
     /// <summary>The port's own C#, compiled into the assembly.</summary>
     public static IEnumerable<string> All() => In(Paths.ContentSrc, "*.cs");
 
-    /// <summary>The recompiler's inputs: kf2.json and the function maps under it.</summary>
+    /// <summary>The recompiler's inputs: kf1.json and the function maps under it.</summary>
     public static IEnumerable<string> Config() => In(Paths.ContentConfig, "*.json");
 
     static IEnumerable<string> In(string dir, string pattern)

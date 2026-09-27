@@ -33,9 +33,9 @@ static class Paths
 
     /// <summary>
     /// Per-user, writable, and stable across updates:
-    ///   $VERDITE2_DATA, if set
-    ///   %LOCALAPPDATA%\Verdite2
-    ///   $XDG_DATA_HOME/verdite2, else ~/.local/share/verdite2
+    ///   $VERDITE1_DATA, if set
+    ///   %LOCALAPPDATA%\Verdite1
+    ///   $XDG_DATA_HOME/verdite1, else ~/.local/share/verdite1
     /// Saves live here, so it deliberately does not move when the install does.
     /// </summary>
     public static string Data { get; } = ResolveData();
@@ -68,23 +68,23 @@ static class Paths
     {
         // An explicit override, for a second install, a save directory on another
         // drive, or a test that must not write into the player's real one.
-        var pinned = Environment.GetEnvironmentVariable("VERDITE2_DATA");
+        var pinned = Environment.GetEnvironmentVariable("VERDITE1_DATA");
         if (!string.IsNullOrWhiteSpace(pinned))
             return Path.GetFullPath(pinned);
 
         if (OperatingSystem.IsWindows())
         {
             var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (!string.IsNullOrWhiteSpace(local)) return Path.Combine(local, "Verdite2");
+            if (!string.IsNullOrWhiteSpace(local)) return Path.Combine(local, "Verdite1");
         }
 
         var xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
         if (!string.IsNullOrWhiteSpace(xdg) && Path.IsPathRooted(xdg))
-            return Path.Combine(xdg, "verdite2");
+            return Path.Combine(xdg, "verdite1");
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrWhiteSpace(home)) home = Directory.GetCurrentDirectory();
-        return Path.Combine(home, ".local", "share", "verdite2");
+        return Path.Combine(home, ".local", "share", "verdite1");
     }
 
     /// <summary>

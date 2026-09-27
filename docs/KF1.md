@@ -326,6 +326,21 @@ Not installed — each needs King's Field's own routine found first:
 `mods/kf2debug` fails to compile at load (it calls KF2 routines the shim does not
 carry); it is off unless enabled in the Mods panel.
 
+## The shipped launcher
+
+`Verdite2.Launcher/` builds the game at first run from the player's disc, as it
+did for King's Field II, and now does it for this one: `DiscCheck` accepts a disc
+with **no** `SYSTEM.CNF` and `PSX.EXE`, `OPEN.EXE`, `GAME.EXE` and
+`KF/COM/COM.DAT` on it, and names the North American "King's Field"
+(`SLUS-00158`) as King's Field II, verdite2's game, when it is offered;
+`BuildKey` hashes the three executables; `Recompile` stages and rewrites
+`kf1.json`; the data directory is `verdite1` (`VERDITE1_DATA`), so an installed
+verdite2's build cache and cards are not shared. Measured: from an empty data
+directory, the recompile (1,639 functions) and the compile run and the game plays.
+**The project, the executable, the packaging and the icons are still named
+Verdite2** (`Verdite2.Launcher`, `packaging/*/verdite2.*`); renaming them is a
+separate change that touches CI and both packaging scripts.
+
 ## Driving it without a human
 
 `KF2_AUTOPAD` works, with its clock starting when OPEN.EXE loads

@@ -35,8 +35,8 @@ static class Recompile
         // does in the repository. It is 260 KB and only copied when it has changed.
         var staged = Stage();
 
-        var cfgPath = Path.Combine(staged, "kf2.build.json");
-        File.WriteAllText(cfgPath, Rewrite(File.ReadAllText(Path.Combine(staged, "kf2.json")), discPath, outDir));
+        var cfgPath = Path.Combine(staged, "kf1.build.json");
+        File.WriteAllText(cfgPath, Rewrite(File.ReadAllText(Path.Combine(staged, "kf1.json")), discPath, outDir));
 
         try { Invoke(cfgPath); }
         finally { try { File.Delete(cfgPath); } catch { } }
@@ -77,7 +77,7 @@ static class Recompile
     /// DiscFs.Open dispatches on the extension, so a .chd goes in the same slot.
     ///
     /// Done as a string edit rather than by parsing and re-emitting, because
-    /// kf2.json carries comments and trailing commas -- the recompiler's loader
+    /// kf1.json carries comments and trailing commas -- the recompiler's loader
     /// accepts both and System.Text.Json will not write them back. Losing the
     /// comments would not break the build, but it would silently turn the one
     /// documented copy of the overlay layout into a machine-written blob the next
@@ -94,16 +94,16 @@ static class Recompile
     {
         var needle = $"\"{key}\"";
         int at = json.IndexOf(needle, StringComparison.Ordinal);
-        if (at < 0) throw new InvalidOperationException($"content/config/kf2.json has no \"{key}\" entry.");
+        if (at < 0) throw new InvalidOperationException($"content/config/kf1.json has no \"{key}\" entry.");
 
         int colon = json.IndexOf(':', at + needle.Length);
-        if (colon < 0) throw new InvalidOperationException($"content/config/kf2.json: \"{key}\" has no value.");
+        if (colon < 0) throw new InvalidOperationException($"content/config/kf1.json: \"{key}\" has no value.");
 
         int open = json.IndexOf('"', colon + 1);
-        if (open < 0) throw new InvalidOperationException($"content/config/kf2.json: \"{key}\" is not a string.");
+        if (open < 0) throw new InvalidOperationException($"content/config/kf1.json: \"{key}\" is not a string.");
 
         int close = json.IndexOf('"', open + 1);
-        if (close < 0) throw new InvalidOperationException($"content/config/kf2.json: \"{key}\" is unterminated.");
+        if (close < 0) throw new InvalidOperationException($"content/config/kf1.json: \"{key}\" is unterminated.");
 
         return json[..(open + 1)] + System.Text.Json.JsonEncodedText.Encode(value) + json[close..];
     }
