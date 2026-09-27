@@ -908,6 +908,16 @@ Four files in the directory have no entry below:
   `PlanarReflections.Supported` is set only by the GL core backend. Off by
   default. **No recompile.** See "Planar reflections" in `docs/RENDERING.md`.
 
+- `0069-imgui-size-after-fullscreen.patch` — Silk's `ImGuiController` takes the
+  window's size only from the `Resize` event, and GLFW on Wayland raises none when
+  a window leaves fullscreen (the framebuffer callback fires; the window-size one
+  does not), so `io.DisplaySize` stayed at the fullscreen size and the menu bar
+  lay above the window. `HostWindow.SyncImGuiSize` compares `io.DisplaySize` with
+  `IWindow.Size` before each `Update()` and hands the controller's private
+  `WindowResized` the real size on a difference. UI only — **no recompile**. See
+  "Leaving fullscreen left the interface at the fullscreen size" in
+  `docs/RUNTIME.md`.
+
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a
 game that stops calling `VSync`**, and that failure mode is always silent.
