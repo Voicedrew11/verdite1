@@ -52,13 +52,21 @@ public static class CardIcon
         try
         {
             using var disc = DiscFs.Open(path);
-            if (Read(disc, out byte[] clut, out byte[] pixels) is { } why)
+            byte[] argb;
+            if (ReadKf1(disc, frame) is { } kf1)
             {
-                Console.Error.WriteLine($"[KF2] icon: {why}; keeping the shipped mark");
-                return;
+                argb = kf1;
+            }
+            else
+            {
+                if (Read(disc, out byte[] clut, out byte[] pixels) is { } why)
+                {
+                    Console.Error.WriteLine($"[KF2] icon: {why}; keeping the shipped mark");
+                    return;
+                }
+                argb = Decode(clut, pixels, frame);
             }
 
-            var argb = Decode(clut, pixels, frame);
             var images = new List<(byte[] Rgba, int W, int H)>(Sizes.Length);
             foreach (int n in Sizes) images.Add((Scale(argb, n / Side), n, n));
             RecompOne.Runtime.Runtime.SetIcons(images);
@@ -69,6 +77,36 @@ public static class CardIcon
         {
             Console.Error.WriteLine($"[KF2] icon: {e.Message}; keeping the shipped mark");
         }
+    }
+
+    /// <summary>
+    /// King's Field (JP) keeps its card icon as three plain TIMs, one a frame, at
+    /// KF/TIM/ICO1-3.TIM: 192 bytes each, a 16-colour CLUT and a 16x16 4-bit image
+    /// (a knight swinging a sword). Null when the disc has none, which is the KF2
+    /// disc, so the path below still serves it.
+    /// </summary>
+    static byte[]? ReadKf1(DiscFs disc, int frame)
+    {
+        if (!disc.Locate($"KF/TIM/ICO{frame + 1}.TIM", out int lba, out uint size) || size < 192) return null;
+        var d = disc.ReadSector(lba);
+        if (BitConverter.ToUInt32(d, 0) != 0x10 || (BitConverter.ToUInt32(d, 4) & 0xF) != 0x8) return null;
+        int clutLen = (int)BitConverter.ToUInt32(d, 8);
+        byte[] clut = d[20..52];
+        int img = 8 + clutLen + 12;
+        var rgba = new byte[Side * Side * 4];
+        for (int y = 0; y < Side; y++)
+        for (int x = 0; x < Side; x++)
+        {
+            int b = d[img + y * (Side / 2) + x / 2];
+            int index = (x & 1) == 0 ? b & 0xF : b >> 4;
+            int c = clut[index * 2] | (clut[index * 2 + 1] << 8);
+            int o = (y * Side + x) * 4;
+            rgba[o + 0] = (byte)((c & 31) * 255 / 31);
+            rgba[o + 1] = (byte)((c >> 5 & 31) * 255 / 31);
+            rgba[o + 2] = (byte)((c >> 10 & 31) * 255 / 31);
+            rgba[o + 3] = index == 0 ? (byte)0 : (byte)255;
+        }
+        return rgba;
     }
 
     /// <summary>

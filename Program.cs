@@ -548,6 +548,11 @@ foreach (var icon in new[]
     break;
 }
 
+// And over it, the game's own memory-card icon off the player's disc
+// (KF/TIM/ICO1.TIM, a knight swinging a sword). KF2_ICON=orb keeps the shipped
+// mark, KF2_ICON=off shows none, KF2_ICON=1 or 2 picks another frame.
+Kf2.CardIcon.Install(args.Length > 0 ? args[0] : null);
+
 var memory = new PSMemory();
 Entry.Run(memory, args.Length > 0 ? args[0] : null);
 return 0;

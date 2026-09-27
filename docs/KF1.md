@@ -202,9 +202,12 @@ camera, and **picks the stencil by heading**: `0x80065BE8 + (15 − (s8)(yaw >> 
 beyond ±511 takes a special one at `0x80055E9C`. Stage A keeps the yaw in 0..4095
 (`andi 0xFFF` at `0x80018F94`), and anything writing a yaw the renderer will read
 must too: an interpolated 4101 across the wrap indexes past the table. `ViewCarry`,
-`ObjectCarry` and `MouseLook` all mask it. The stencil is a view cone drawn for a
-4:3 screen, so it is also the first thing to look at if widescreen shows missing
-geometry at the sides.
+`ObjectCarry` and `MouseLook` all mask it. **The stencils are generous**
+(dumped with `KF2_AGENT_DUMP`): 14 cells (28,000 units) wide, full width from
+three cells ahead, and skewed to cover the whole 22.5° sector a heading stands
+for, so a 16:9 view (±46.8° against 4:3's ±38.7°, at `H` = 200) stays inside them
+except possibly right beside the camera. Nothing widens them; if widescreen shows
+missing geometry at the sides, they are the first place to look.
 
 ## Frame pacing
 
@@ -377,9 +380,10 @@ Not installed — each needs King's Field's own routine found first:
 | `Analog` | **done differently**: `TwinStick` (above) |
 | `AutoStart` | **done differently**: `KF2_AUTOSTART=new` in `Program.cs` |
 | `MenuMouse` | the menu layout |
-| `Map*`, `AutoReload`, `AutoStart`, `AgentBeacon`, `AgentServer`, `AreaWarp`, `HitGuard`, `MenuWorld`, `MessageText` | the game's state (area, HP, save slots, menus) |
+| `AgentBeacon` | **done differently**: `Kf1Beacon` — overlay, position, rotation, and the two HP/MP pairs at `0x800A0790`/`0x800A0794` (30/30 and 20/20 at a New Game; the renderer's HUD code reads them to size its gauges, so they are the stats; which of each pair is current is not confirmed) |
+| `Map*`, `AutoReload`, `AgentServer`, `AreaWarp`, `HitGuard`, `MenuWorld`, `MessageText` | the game's state (area, death, save slots, menus) |
 | `PositionalAudio` | the game's 3D sound routine |
-| `CardIcon` | reads KF2's icon out of `FDAT.T`; KF1's is probably `KF/TIM/ICO1.TIM` |
+| `CardIcon` | **installed**: KF1's card icon is `KF/TIM/ICO1-3.TIM`, three plain 16×16 4-bit TIMs (a knight swinging a sword), read directly; KF2's path stays for KF2's disc |
 | `EndingHold`, `BootExe` | KF2's `END.EXE` and boot stub |
 
 `mods/kf2debug` fails to compile at load (it calls KF2 routines the shim does not
