@@ -3708,6 +3708,14 @@ Under the checkbox, *Murk depth* (100-8000, logarithmic; `kf2.murk.distance`,
 which `KF2_MURK_DISTANCE` overrides) and *Murk colour* (`kf2.murk.r/g/b`) set both
 live, with a reset back to 2654 and `0.03,0.05,0.06`.
 
+**The tiles' cracks as lines of murk.** Reported: seams between water quads with
+the murk on. The likely cause, not measured: the water tiles and the floor under
+them meet with hairline cracks the game's own picture hides, and the murk turned
+each into a seam: a surface texel no water triangle covered took no murk, and a
+floor texel no floor covered read as the sky's full run. `SsrFs` now takes such a
+texel as water when the texels either side of it on one axis are, and a missing
+floor depth from its nearest neighbour. Judged by eye: the seams are gone.
+
 ### The reflection pass runs for each term on its own
 
 The pass at present used to be switched by the screen-space reflections, and the

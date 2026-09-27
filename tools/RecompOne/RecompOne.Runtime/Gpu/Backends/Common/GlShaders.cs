@@ -852,6 +852,16 @@ internal static class GlShaders
             oInfo = vec4(0.0);
             vec4 s = texture(uSurface, tc(vUv));
             int m = int(s.a + 0.5);
+            // A texel the water's triangles left uncovered between two that are
+            // water is water: the tiles meet with hairline cracks, and the murk
+            // made each one a line.
+            if (m != 2) {
+                vec2 tx = 1.0 / uTexSize;
+                vec4 a0 = texture(uSurface, tc(vUv) - vec2(tx.x, 0.0)), a1 = texture(uSurface, tc(vUv) + vec2(tx.x, 0.0));
+                vec4 b0 = texture(uSurface, tc(vUv) - vec2(0.0, tx.y)), b1 = texture(uSurface, tc(vUv) + vec2(0.0, tx.y));
+                if (int(a0.a + 0.5) == 2 && int(a1.a + 0.5) == 2) { s = a0; s.b = 0.5 * (a0.b + a1.b); m = 2; }
+                else if (int(b0.a + 0.5) == 2 && int(b1.a + 0.5) == 2) { s = b0; s.b = 0.5 * (b0.b + b1.b); m = 2; }
+            }
             // Red is the material here, for the probe's map.
             oInfo = vec4(float(clamp(m, 0, 255)) / 255.0, depthAt(vUv) >= 1.0 ? 1.0 / 255.0 : 0.0, 0.0, 0.0);
             if (m <= 0 || m >= 256) return;
@@ -874,6 +884,19 @@ internal static class GlShaders
             // floor under it: the ray's run between the two is how much water it
             // crosses. An opaque surface has none; the sky behind is all water.
             if (murky) {
+                // The same for a crack in the floor under the water: the nearest
+                // depth beside it, rather than the sky's full run.
+                if (d <= 0.0 || d >= 1.0) {
+                    vec2 tx = 1.0 / uTexSize;
+                    float n0 = texture(uDepth, tc(vUv) - vec2(tx.x, 0.0)).r, n1 = texture(uDepth, tc(vUv) + vec2(tx.x, 0.0)).r;
+                    float n2 = texture(uDepth, tc(vUv) - vec2(0.0, tx.y)).r, n3 = texture(uDepth, tc(vUv) + vec2(0.0, tx.y)).r;
+                    float nd = 1.0;
+                    if (n0 > 0.0) nd = min(nd, n0);
+                    if (n1 > 0.0) nd = min(nd, n1);
+                    if (n2 > 0.0) nd = min(nd, n2);
+                    if (n3 > 0.0) nd = min(nd, n3);
+                    if (nd < 1.0) d = nd;
+                }
                 float run = (d <= 0.0 || d >= 1.0) ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
                 gMurk = 1.0 - exp(-run / uMurkDist);
                 gMurkCol = fogTo(uMurkColor, fogKeep(zs));
