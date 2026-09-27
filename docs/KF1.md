@@ -271,9 +271,31 @@ the new camera. Measured walking: `60/60 renders carried, mean phase 0.33, move
 units, the creatures and the objects, around the model walk: a slot live and of
 the same model at both ticks, and not moved further than 2000 units, is drawn at
 `lerp(prev, cur, phase)` for position and rotation and put back afterwards.
-Measured at the start of `KF/B1`: 3-4 live slots, 1.2-3.0 of them carried a
-picture. **Their animation (the model's pose) is still stepped at 20**; the
-creature entry's `+4` names the animated path, which is where that would start.
+Measured at the start of `KF/B1`: 3-5 live slots, 1.2-3.7 of them carried a
+picture.
+
+### Creature animation
+
+An animated creature (entry `+4`, the clip, not `0xFF`) is posed by
+`func_800205D4(entry+0x34, model = +3 + 0x1E, clip, time = u16 at +8)`. The model's
+animation header is `*(0x80090FCC + model*4)`; its clip table is at header +
+`*(header+0x10)`, a clip is a count and a list of segment offsets, and a segment
+is a flag (`+0`) and a duration (`+2`) in ticks. The routine finds the segment
+`time` lies in, copies that segment's base pose when the segment changes, and
+morphs towards the next key with `gteMIMefunc` at weight
+`((time − start) << 12) / duration` (4096 minus that when the flag is set). Time is
+whole ticks, so a pose changes only at a tick.
+
+`patches/AnimCarry.cs` walks the same table in C# for the time the picture stands
+for (`cur − (cur − prev) × (1 − phase)`, as `ObjectCarry` places the creature) and,
+when it lies in the segment the game chose, hands `gteMIMefunc` the weight for it
+at its one weight-applying call (return address `0x8002092C`). A different clip, a
+different segment or a step of more than 8 ticks leaves the game's pose alone.
+**Not yet measured on a creature that is animating**: the only one near the New
+Game spawn is idle (clip 0, time 0), and the probe counts it posed 60 times a
+second and carried none, as it should. It rides on the object smoothing switch
+(`KF2_SMOOTH_ANIM=0` turns it off alone; `KF2_SMOOTH_OBJECTS_PROBE=2` logs the
+creatures' clip and time).
 
 ### VSync outside the renderer blocks
 
@@ -372,7 +394,8 @@ Not installed — each needs King's Field's own routine found first:
 | feature | what it needs in KF1 |
 |---|---|
 | `FramePacing`, `FrameSmoothing`, `ObjectSmoothing` | **done differently**: `GateRedraw`, `ViewCarry`, `ObjectCarry` (above) |
-| `AnimSmoothing`, `FluidSmoothing`, `LoopPacing`, `MenuPacing`, `LoadPacing`, `SpriteAnim`, `TintHold` | the creatures' pose, the scrolling textures, and the modal loops, which keep the game's 20 |
+| `AnimSmoothing` | **done differently**: `AnimCarry` (above), unmeasured on a moving creature |
+| `FluidSmoothing`, `LoopPacing`, `MenuPacing`, `LoadPacing`, `SpriteAnim`, `TintHold` | the scrolling textures, and the modal loops, which keep the game's 20 — five of them (`func_80033820`, `func_80033D80`, `func_80034438`, `func_80034DE4`'s own, `func_80036D3C`) call the renderer and then the gate with nothing between, and `func_80034DE4` is the Circle "examine" interaction (doors and the like), so they are the candidates for redrawing next |
 | `PolyAssembler`, `TileWalk`, `ModelWalk`, `Stage13`, `CameraBlock` | KF1's renderer, from the map tiles to the model submitter |
 | `PerPixelLighting`, `EvenFog`, `Reflections`, `Murk`, `Waves`, `PlanarWalk`, `Retained*`, `Remaster.*` | the C# assemblers above (they record what these read) |
 | `CullCone`, `ViewClip`, `CullGrid`, `PrimBuffer` | KF1's cull and its primitive buffers |

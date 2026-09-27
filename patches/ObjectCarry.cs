@@ -52,6 +52,8 @@ public static class ObjectCarry
         public short Rx, Ry, Rz;
         public byte Kind;
         public bool Live;
+        public byte Clip;       // creatures: +4, the animation (0xFF: none)
+        public ushort Time;     // creatures: +8, the animation's time in ticks
     }
 
     static readonly Pose[][] Prev = Tables.Select(t => new Pose[t.Count]).ToArray();
@@ -68,17 +70,18 @@ public static class ObjectCarry
     };
 
     static bool? _forced;
-    static bool _probe;
+    static bool _probe, _probe2;
     public static bool Enabled { get; private set; } = true;
     public const string OnKey = "kf1.smooth.objects";
 
-    static long _walks, _carried, _live, _warps;
+    static long _walks, _carried, _live, _warps, _dbg;
     static double _windowStart;
 
     public static void Configure(string? on, string? probe)
     {
         if (!string.IsNullOrWhiteSpace(on)) _forced = on.Trim() != "0";
         _probe = !string.IsNullOrWhiteSpace(probe) && probe.Trim() != "0";
+        _probe2 = probe?.Trim() == "2";
     }
 
     public static void Install()
@@ -127,6 +130,8 @@ public static class ObjectCarry
         Rz = (short)m.ReadU16(e + (uint)t.Rot + 4),
         Kind = m.ReadU8(e + (uint)t.Kind),
         Live = t.Live(m, e),
+        Clip = t.Name == "creatures" ? m.ReadU8(e + 4) : (byte)0xFF,
+        Time = t.Name == "creatures" ? m.ReadU16(e + 8) : (ushort)0,
     };
 
     static void Write(IMemory m, Table t, uint e, in Pose p)
@@ -146,6 +151,7 @@ public static class ObjectCarry
     public static void Before(CpuContext c, IMemory m)
     {
         for (int ti = 0; ti < Tables.Length; ti++) Array.Clear(Written[ti]);
+        AnimCarry.Clear();
         if (!Enabled || !ViewCarry.Carrying) return;
         _walks++;
         double phase = ViewCarry.Phase;
@@ -165,6 +171,8 @@ public static class ObjectCarry
                 }
                 if (!now.Live) continue;
                 _live++;
+                if (_probe2 && tick && t.Name == "creatures" && _dbg++ % 20 == 0)
+                    Console.WriteLine($"[KF1] creature {i}: kind {now.Kind} clip {now.Clip} time {Prev[ti][i].Time}->{now.Time} pos {now.X},{now.Y},{now.Z}");
 
                 ref var p = ref Prev[ti][i];
                 ref var q = ref Cur[ti][i];
@@ -173,6 +181,10 @@ public static class ObjectCarry
                 // sees the tick's values; anything else is a write we did not see).
                 if (!p.Live || !q.Live || p.Kind != q.Kind) continue;
                 if (now.X != q.X || now.Y != q.Y || now.Z != q.Z || now.Ry != q.Ry) continue;
+                // The pose's time, for AnimCarry: the same clip at both ticks and
+                // moving forward by a little.
+                if (q.Clip != 0xFF && p.Clip == q.Clip && now.Time == q.Time && q.Time > p.Time && q.Time - p.Time <= 8)
+                    AnimCarry.Note(e, q.Time - (q.Time - p.Time) * (1.0 - phase));
                 if (Math.Abs((long)q.X - p.X) > WarpUnits || Math.Abs((long)q.Y - p.Y) > WarpUnits ||
                     Math.Abs((long)q.Z - p.Z) > WarpUnits) { _warps++; continue; }
                 if (p.X == q.X && p.Y == q.Y && p.Z == q.Z && p.Rx == q.Rx && p.Ry == q.Ry && p.Rz == q.Rz) continue;

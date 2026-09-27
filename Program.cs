@@ -485,6 +485,10 @@ Kf2.ViewCarry.Install();
 Kf2.ObjectCarry.Configure(Environment.GetEnvironmentVariable("KF2_SMOOTH_OBJECTS"),
                           Environment.GetEnvironmentVariable("KF2_SMOOTH_OBJECTS_PROBE"));
 Kf2.ObjectCarry.Install();
+//     KF2_SMOOTH_ANIM=0     leave creature poses at the tick
+Kf2.AnimCarry.Configure(Environment.GetEnvironmentVariable("KF2_SMOOTH_ANIM"),
+                        Environment.GetEnvironmentVariable("KF2_SMOOTH_ANIM_PROBE"));
+Kf2.AnimCarry.Install();
 
 // Mouse look: Escape captures the pointer; the motion is spent into the player's
 // yaw and pitch at the end of stage A, and shown by the view before the tick.
