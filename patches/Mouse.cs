@@ -109,6 +109,7 @@ public static class Mouse
     public const string RightKey   = "kf2.mouse.right";
     public const string MiddleKey  = "kf2.mouse.middle";
     public const string CaptureKeyKey = "kf2.mouse.capturekey";
+    public const string LeadKey    = "kf2.mouse.lead";
 
     /// <summary>
     /// On by default. Capture is still Escape, so a pointer does not disappear
@@ -116,6 +117,13 @@ public static class Mouse
     /// buttons are already wired.
     /// </summary>
     public static bool Enabled = true;
+
+    /// <summary>
+    /// Show mouse look the frame it happens rather than when the next tick spends
+    /// it. On by default; <c>KF2_MOUSE_LEAD=0</c> is the comparison. See
+    /// "The mouse leads the tick" in docs/INPUT.md.
+    /// </summary>
+    public static bool Lead = true;
 
     public static float TurnSens = 1.0f;
     public static float LookSens = 1.0f;
@@ -194,6 +202,7 @@ public static class Mouse
         Analog.Env("KF2_MOUSE_TURN", TurnKey, ref TurnSens, _fromEnv);
         Analog.Env("KF2_MOUSE_LOOK", LookKey, ref LookSens, _fromEnv);
         Analog.Env("KF2_MOUSE_INVERTY", InvertKey, ref InvertY, _fromEnv);
+        Analog.Env("KF2_MOUSE_LEAD", LeadKey, ref Lead, _fromEnv);
 
         // One variable for the three buttons rather than three: they are set
         // together or not at all, and "Square,Triangle,Cross" says what it does.
@@ -245,6 +254,7 @@ public static class Mouse
             Analog.Saved(TurnKey, ref TurnSens, _fromEnv);
             Analog.Saved(LookKey, ref LookSens, _fromEnv);
             Analog.Saved(InvertKey, ref InvertY, _fromEnv);
+            Analog.Saved(LeadKey, ref Lead, _fromEnv);
             Analog.Saved(LeftKey, ref LeftButton, _fromEnv);
             Analog.Saved(RightKey, ref RightButton, _fromEnv);
             Analog.Saved(MiddleKey, ref MiddleButton, _fromEnv);

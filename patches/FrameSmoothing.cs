@@ -536,10 +536,6 @@ public static class FrameSmoothing
     // whatever the mouse has moved since, plus the part of the last tick's mouse
     // turn the interpolation has not reached yet.
 
-    /// <summary>KF2_MOUSE_LEAD=0 is the comparison: the mouse steps with the tick
-    /// and is interpolated like everything else.</summary>
-    static readonly bool Lead = Environment.GetEnvironmentVariable("KF2_MOUSE_LEAD") != "0";
-
     const int PitchLimit = 0x2BC;
 
     static long _leadFrame = -1;
@@ -557,7 +553,7 @@ public static class FrameSmoothing
     static (double Yaw, double Pitch) MouseLead(IMemory m, double frac)
     {
         _aheadYaw = _aheadPitch = 0;
-        if (!Lead) return (0, 0);
+        if (!Mouse.Lead) return (0, 0);
         Mouse.Poll();
 
         // On the tick the look routine spent the mouse, what the game actually

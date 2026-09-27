@@ -848,7 +848,9 @@ back:
 * **With smoothing off it still leads**: the view is the tick's angle plus the
   pending sum. At the tick rate there is no frame between ticks and nothing to do.
 
-`KF2_MOUSE_LEAD=0` is the comparison. `KF2_SMOOTH_PROBE=1` adds a line: frames
+It is **Instant mouse look** under Gameplay (`MouseLeadPage`, saved as
+`kf2.mouse.lead`), on by default and dimmed while mouse look is off;
+`KF2_MOUSE_LEAD=0` or `=1` overrides the saved choice. `KF2_SMOOTH_PROBE=1` adds a line: frames
 led, how far ahead of the tick, and the mean |applied − asked| per tick, which
 is the number that says whether the tick agreed with the picture.
 
@@ -868,10 +870,12 @@ settles back by **1 unit** (0.09°) at the next tick on about one stop in ten,
 because the game truncates its step and carries the fraction while the picture
 rounds. Pacing held at 144.0 fps drawn and 20.0 ticks/s.
 
-**Not judged by eye**: whether it feels right on a real mouse, and on a
-high-refresh monitor in particular. Also not measured: a mouse turn made while
-opening a menu shows for up to three ticks and is then dropped, since the look
-routine never spends it.
+**Judged by eye**, in play on a real mouse: reported as feeling *freaking
+fantastic*, which is why it is on by default. That verdict is on ordinary
+walking and looking. **Not yet tried by hand**: turning while a menu, a dialogue
+or a scripted sequence opens (the look routine never spends that motion, so it
+shows for up to three ticks and is then dropped), the mouse and a stick or turn
+key at once, turning across an area load or a death, and the head bob.
 
 ## The menu pointer
 
