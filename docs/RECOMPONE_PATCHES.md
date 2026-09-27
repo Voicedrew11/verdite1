@@ -958,26 +958,6 @@ Four files in the directory have no entry below:
   reflection were composited over the arm. It is kept as `Overlay` now, except in
   the table's slot 0 (the skybox, which must read as no surface). The tenth diff in
   the patch file. See "The arm showed the water through it" in `docs/RENDERING.md`.
-  Since amended: the one-texel crack fill took a pillar in front of the water as
-  the floor, leaving a strip unmurked; it takes only a depth behind the water now.
-  And `PresentFs` upsamples the pass by the surface under each pixel (`ssrAt`),
-  with the surface buffer at the render scale while the pass runs and the depth on
-  unit 4. The eleventh diff in the patch file.
-  Since amended: the murk moved under the water's surface. Laid over the picture,
-  at full strength it painted out the water's own ripples. `PrimFs` gains
-  `murkAt`/`murk8`: a fragment below its tile's water level (`WaterMurk.Level`, the
-  port's grid on unit 17, `GlCore.SendMurk`) is mixed towards the fogged murk
-  colour by the view ray's run under the surface, on every output path, except in
-  the averaging blends and a planar reflection. `SsrFs` keeps only water with
-  nothing drawn under it: half the murk colour, added under the surface. The
-  eleventh diff's screen-space fill of such water (`uMurkPass`) is gone. The murk
-  colour is fogged at the view depth where the ray crosses the surface (`uMurkFog`),
-  not at the floor's. The water itself is hazed again, as the first version hazed
-  it, but over a fixed thickness (`WaterMurk.Haze`, `HazeThickness`, `uMurkHaze`)
-  rather than the run to the floor, so deep and bottomless water haze alike. The
-  floor-crack fill is gone (a crack shows the sky, and takes the floorless murk),
-  and `ssrKey` tells floorless water from water over a floor. The twelfth diff in
-  the patch file. See "Murky water" in `docs/RENDERING.md`.
   `GlCore.RenderNormals` became `RenderSurfaces` and runs once for both passes,
   timed with the occlusion pass when that runs. New profiler sections (`Surfaces`,
   `Ssr`) and `GpuWork.Reflections`; the probe attaches a second target to the pass

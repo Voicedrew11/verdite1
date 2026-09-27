@@ -207,7 +207,7 @@ public static class TileWalk
         mem.WriteU32(sp + 0x10u, c.S0);
 
         if (Remaster.Faces.Recording) Remaster.Faces.FrameStart();
-        if (!PlanarWalk.Mirroring) { RetainedMap.AtWalk(c, mem); Waves.AtWalk(c, mem); MurkLevel.AtWalk(mem); }
+        if (!PlanarWalk.Mirroring) { RetainedMap.AtWalk(c, mem); Waves.AtWalk(c, mem); }
         c.A0 = 0u;
         c.RA = 0x80031CBCu;
         KingsField2.func_8002E190(c, mem);
