@@ -207,8 +207,10 @@ King's Field (JP): the disc, the addresses, what broke, what came across.
 - Scripted input reaches the game now
 - What the enhancements measure
 - What came across from King's Field II
+- Creature animation
 - The shipped launcher
 - Driving it without a human
+- Next
 
 ### [DEVELOPMENT.md](docs/DEVELOPMENT.md)
 

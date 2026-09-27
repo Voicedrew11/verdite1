@@ -448,3 +448,23 @@ the area load does. Both scripts hold their buttons through `Controller.ScriptMa
 The files OPEN reads say where it is: `KF/B0/L0.` then `MIX0.`/`MIXA0.`/`OPEN0.`/
 `MIXB0.` for the attract; Start loads `MIXA1.` and `OPEN1.`; Start again loads
 `OPEN3.`, `MIX3.`, `MIXA3.`, `MIXB3.`; Cross hands over to GAME.EXE.
+
+## Next
+
+In rough order of what a player would notice:
+
+1. **Look at it.** Every picture feature here is measured and none is judged:
+   the 60 fps view and objects, widescreen at the sides, the Z-buffer, AO,
+   perspective. The Video pane has each switch, for comparing.
+2. **Play the things a script cannot reach**: a save and a load, a death, an area
+   change, a door, a fight. None has been exercised. The menus now wait for their
+   vblanks ("VSync outside the renderer blocks"); whether they feel right is
+   untested.
+3. **The modal loops at 20** — doors and the other interactions (see the table in
+   "What came across from King's Field II") — could redraw as the main loop does.
+4. **Creature animation** (`AnimCarry`) needs a creature that animates, to measure.
+5. **The C# polygon assemblers** for King's Field's map walk (`func_8001E83C`, per
+   cell `func_8001E5EC`) and model submitters, which is what per-pixel lighting,
+   even fog, reflections and the remaster tools all stand on in King's Field II.
+6. The launcher, packaging and CI still carry the Verdite2 names.
+
