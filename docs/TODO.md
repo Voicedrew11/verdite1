@@ -404,7 +404,8 @@ useful than the question was.
    but Silk.NET's — the integer division in
    `ImGuiController.SetPerFrameImGuiData` that `patches/recompone/0018` works
    around, which breaks every fractionally scaled display and belongs in
-   `dotnet/Silk.NET`.
+   `dotnet/Silk.NET`; and the same controller trusting `Resize` alone for the
+   window's size, which `0069` works around on Wayland.
 9. **Walk a wall with sub-pixel on.** The default is now on. The mechanism is
    measured — 47k vertices a second recovered, offsets uniform across the pixel,
    no frame-rate cost. `GteDepth.Subpixel` is read at vertex-decode time. Expect a
