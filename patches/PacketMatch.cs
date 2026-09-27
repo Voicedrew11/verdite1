@@ -149,7 +149,7 @@ public static class PacketMatch
     /// <see cref="Widescreen"/>, NoDither, Perspective and Subpixel use.</summary>
     static readonly (string Overlay, uint Addr)[] DrawOTagSites =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     /// <summary>`func_80032588`, the model submitter: `a2` is the position

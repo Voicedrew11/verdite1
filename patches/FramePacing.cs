@@ -196,7 +196,7 @@ public static class FramePacing
     // drawing is done and the loop is about to VSync and show it.
     static readonly (string Overlay, uint Addr)[] DrawOTag =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     // libetc VSync, per overlay -- the same three addresses config/kf2.json binds
@@ -206,7 +206,7 @@ public static class FramePacing
     // frame boundary below rate-independent; VSyncEvent is a vblank, not a call.
     static readonly (string Overlay, uint Addr)[] VSyncThunk =
     [
-        ("open", 0x8001EB88), ("game", 0x8005FCC8), ("end", 0x8001B154),
+        .. SdkAddr.VSync,
     ];
 
     /// <summary>

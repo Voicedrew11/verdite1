@@ -91,8 +91,10 @@ public sealed class InputSection : ISettingsSection
     // for what a button does looks under Input; AnalogPage and MousePage are the
     // stick and pointer halves of the same keyboard-and-mouse question.
     readonly IPatchPage[] _keyboard = [new KeyLayoutPage()];
-    readonly IPatchPage[] _gamepad = [new AnalogPage(), new MapButtonPage()];
-    readonly IPatchPage[] _mouse = [new MousePage()];
+    // King's Field has no twin-stick control, map button or mouse look yet; the
+    // King's Field II port's pages were AnalogPage, MapButtonPage and MousePage.
+    readonly IPatchPage[] _gamepad = [];
+    readonly IPatchPage[] _mouse = [];
 
     public void Draw()
     {
@@ -100,7 +102,7 @@ public sealed class InputSection : ISettingsSection
 
         Tab(Localization.T("settings.input.keyboard"), DrawKeyboard);
         Tab(Localization.T("settings.input.gamepad"), DrawGamepad);
-        Tab("Mouse", DrawMouse);
+        if (_mouse.Length > 0) Tab("Mouse", DrawMouse);
 
         ImGui.EndTabBar();
     }

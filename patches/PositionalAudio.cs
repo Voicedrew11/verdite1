@@ -121,8 +121,13 @@ public static class PositionalAudio
         Probe = probe is "1";
     }
 
+    /// <summary>Whether Program.cs installed it; the Audio page hides the control
+    /// otherwise. It hooks King's Field II's sound routines and is not ported.</summary>
+    public static bool Installed { get; private set; }
+
     public static void Install()
     {
+        Installed = true;
         Current = _env ?? Mode.Headphones;
         Event.AddListener<RuntimeReadyEvent>(_ =>
         {

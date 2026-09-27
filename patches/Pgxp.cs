@@ -74,7 +74,7 @@ public static class Pgxp
     // libgpu DrawOTag, per overlay -- the same three addresses Perspective hooks.
     static readonly (string Overlay, uint Addr)[] DrawOTag =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     /// <summary>

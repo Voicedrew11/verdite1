@@ -196,10 +196,12 @@ public static class LibEtc
     {
         _vcount++;
 
-        //RCntCNT3/EvSpINT -- the vblank root counter. a game that opened it with
-        //EvMdINTR expects its handler once a frame; the recompiled build has no
-        //timer interrupt, so this is the only place it can come from.
-        Bios.BiosB.DeliverEventIntr(c, m, 0xF2000003u, 0x0002u);
+        //RCntCNT3/EvSpINT -- the vblank root counter. A game that opened it with
+        //EvMdINTR expects its handler once a frame. This used to deliver it here
+        //as well as through IRQ 0 below, whose service routine (BiosB.
+        //DeliverIrqEvents, upstream's since the merge) delivers the same event:
+        //every handler ran twice a vblank. KF2 opens no such handler, so nothing
+        //showed; King's Field's frame counter and sound tick both ran double (0081).
 
         if (Event.HasAnyListeners<VSyncEvent>())
         {

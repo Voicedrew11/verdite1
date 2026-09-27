@@ -152,7 +152,7 @@ KF2_ZBUFFER=0                          # painter's order (the Z-buffer is on by 
 KF2_ZBUFFER_THRESHOLD=300              # restart the depth buffer when the scene jumps forward (0, off; no longer a setting)
 KF2_ZBUFFER_PROBE=1                    # how many triangles actually depth-tested
 KF2_ZBUFFER_PROBE=2                    # the frame's polygon census, and a map of the depth buffer
-KF2_ZBUFFER_SOURCE=map                 # depth from the address map, not the assemblers' packet records (0050)
+KF2_ZBUFFER_SOURCE=packet              # depth from the C# assemblers' packet records (0050); King's Field has none yet, so the address map is the default
 KF2_ZBUFFER_BIAS=1 KF2_ZBUFFER_SLOPE=0.5  # coplanar tolerance on the test: SZ units, and pixels of depth slope; 0 0 is exact (0051)
 KF2_BLENDORDER=0                       # blended surfaces (water) in table order again, painted over by opaque geometry behind them that the table put later (drawn after it by default, 0079)
 KF2_BLENDORDER_PROBE=1                 # a line every 2 s: packets held and passed, and opaque samples drawn behind a nearer translucent one, models and tiles

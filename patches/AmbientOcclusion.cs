@@ -89,7 +89,7 @@ public static class AmbientOcclusion
     // libgpu DrawOTag, per overlay -- the same three addresses Subpixel hooks.
     static readonly (string Overlay, uint Addr)[] DrawOTag =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     /// <summary>Where the choice is kept between runs.</summary>

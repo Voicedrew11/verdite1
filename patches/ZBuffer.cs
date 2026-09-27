@@ -68,7 +68,7 @@ public static class ZBuffer
 {
     static readonly (string Overlay, uint Addr)[] DrawOTag =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     /// <summary>Where the choice is kept between runs.</summary>
@@ -115,9 +115,10 @@ public static class ZBuffer
     /// Zero or less is one buffer for the whole frame.</summary>
     static float? _forcedThreshold;
 
-    /// <summary>KF2_ZBUFFER_SOURCE: the depth the assemblers record (the default), or
-    /// <c>map</c> for the address map's.</summary>
-    static bool _packetSource = true;
+    /// <summary>KF2_ZBUFFER_SOURCE: the address map's depth (the default in King's
+    /// Field, whose polygon assemblers are not in C# yet), or <c>packet</c> for the
+    /// depth the C# assemblers record, which was King's Field II's default.</summary>
+    static bool _packetSource;
 
     /// <summary>KF2_ZBUFFER_BIAS and KF2_ZBUFFER_SLOPE: the coplanar tolerance.</summary>
     static float? _forcedBias, _forcedSlope;
@@ -133,7 +134,7 @@ public static class ZBuffer
         _blendProbe = !string.IsNullOrWhiteSpace(blendProbe) && blendProbe.Trim() != "0";
         BlendOrder.Probe = _blendProbe;
 
-        _packetSource = source?.Trim().ToLowerInvariant() != "map";
+        _packetSource = source?.Trim().ToLowerInvariant() == "packet";
         _forcedBias = ParseFloat(bias);
         _forcedSlope = ParseFloat(slope);
 
@@ -153,13 +154,15 @@ public static class ZBuffer
         }
     }
 
-    /// <summary>The first-person arm, which keeps painter's order.</summary>
-    const uint ArmDraw = 0x80032400;
+    /// <summary>The first-person arm, which keeps painter's order. KF2's was
+    /// 0x80032400; King's Field's has not been found, and 0 attaches nothing.</summary>
+    const uint ArmDraw = 0;
 
     /// <summary>The model submitter: a blended packet built inside it is a solid
     /// surface for the occlusion pass (the secret door), where the blended map
-    /// tiles (water) and the billboards (flames) are not.</summary>
-    const uint ModelSubmit = 0x80032588;
+    /// tiles (water) and the billboards (flames) are not. KF2's was 0x80032588;
+    /// not found in King's Field yet, and 0 attaches nothing.</summary>
+    const uint ModelSubmit = 0;
 
     /// <summary>The packet source needs the C# assemblers to write it.</summary>
     public static void SyncSource() =>
@@ -192,8 +195,8 @@ public static class ZBuffer
                               $", clear threshold {(GteDepth.DepthClearThreshold <= 0f ? "off" : GteDepth.DepthClearThreshold.ToString("0"))}");
         });
 
-        HookAttach.OnOverlayLoad("zbuffer arm", AttachArm);
-        if (Environment.GetEnvironmentVariable("KF2_AO_SOLID") != "0")
+        if (ArmDraw != 0) HookAttach.OnOverlayLoad("zbuffer arm", AttachArm);
+        if (ModelSubmit != 0 && Environment.GetEnvironmentVariable("KF2_AO_SOLID") != "0")
             HookAttach.OnOverlayLoad("zbuffer models", AttachModel);
 
         bool attached = false;

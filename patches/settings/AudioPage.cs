@@ -35,6 +35,8 @@ public sealed class AudioPage : IPatchPage
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("The console's reverb, or a denser, smoother one sized from the same room settings.");
 
+        if (!PositionalAudio.Installed) return;
+
         var positional = (int)PositionalAudio.Current;
         if (ImGui.Combo("Positional audio", ref positional, PositionalLabels, PositionalLabels.Length))
         {

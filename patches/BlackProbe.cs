@@ -141,7 +141,7 @@ public static class BlackProbe
     // boundary from. A post: Widescreen owns the one Replace.
     static readonly (string Overlay, uint Addr)[] DrawOTag =
     [
-        ("open", 0x80016078u), ("game", 0x80060818u), ("end", 0x80013D80u),
+        .. SdkAddr.DrawOTag,
     ];
 
     static readonly HashSet<uint> _hooked = [];

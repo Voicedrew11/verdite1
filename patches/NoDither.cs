@@ -85,12 +85,12 @@ public static class NoDither
     // libgpu PutDrawEnv and DrawOTag, per overlay.
     static readonly (string Overlay, uint Addr)[] PutDrawEnv =
     [
-        ("open", 0x800160D0), ("game", 0x80060870), ("end", 0x80013DD8),
+        .. SdkAddr.PutDrawEnv,
     ];
 
     static readonly (string Overlay, uint Addr)[] DrawOTag =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     /// <summary>Where the choice is kept between runs. Named as the mod named it,

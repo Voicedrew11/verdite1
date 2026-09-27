@@ -128,7 +128,7 @@ public static class Widescreen
     // those three are pre/post hooks and compose with it.
     static readonly (string Overlay, uint Addr)[] DrawOTagSites =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     /// <summary>Where the choices are kept between runs. Named as the mod named

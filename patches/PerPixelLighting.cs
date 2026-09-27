@@ -35,7 +35,7 @@ public static class PerPixelLighting
 {
     static readonly (string Overlay, uint Addr)[] DrawOTag =
     [
-        ("open", 0x80016078), ("game", 0x80060818), ("end", 0x80013D80),
+        .. SdkAddr.DrawOTag,
     ];
 
     public const string OnKey = "kf2.perpixel.on";

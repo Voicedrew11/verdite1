@@ -185,20 +185,19 @@ public static class PatchSettings
         if (_installed) return;
         _installed = true;
 
-        Register("display", new FramePacingPage());
-        Register("display", new FrameSmoothingPage());
+        // King's Field has the pages whose features do not depend on the game's own
+        // routines. The King's Field II port also registered FramePacingPage,
+        // FrameSmoothingPage, PerPixelLightingPage, EvenFogPage, ReflectionsPage,
+        // RemasterPage, RemasterPacksPage and FastGeometryPage under display, and
+        // MapPage, AutoReloadPage and MouseLeadPage under gameplay; each comes back
+        // with the patch it controls (docs/KF1.md, "What came across from King's
+        // Field II").
         Register("display", new PerspectivePage());
         Register("display", new SubpixelPage());
         Register("display", new ShadingPage());
         Register("display", new AmbientOcclusionPage());
         Register("display", new AnisotropicPage());
-        Register("display", new PerPixelLightingPage());
-        Register("display", new EvenFogPage());
         Register("display", new ZBufferPage());
-        Register("display", new ReflectionsPage());
-        Register("display", new RemasterPage());
-        Register("display", new RemasterPacksPage());
-        Register("display", new FastGeometryPage());
         // Nothing registers a PGXP or a geometry-precision page either. PGXP buys
         // no coverage in this game and costs a fifth of the frame rate, and the
         // depth buffer's picture has never been judged -- both are comparisons, so
@@ -208,11 +207,7 @@ public static class PatchSettings
         // Nothing registers against "input": the port draws that whole pane
         // itself (InputSection), and SettingsRegistry.Extend has no un-extend --
         // a page left here would draw a second time under the tab bar, outside
-        // every tab, with no way to take it back. The four pages that were here
-        // are held by InputSection and drawn inside the tab each belongs to.
-        Register("gameplay", new MapPage());
-        Register("gameplay", new AutoReloadPage());
-        Register("gameplay", new MouseLeadPage());
+        // every tab, with no way to take it back.
         Event.AddListener<RuntimeReadyEvent>(_ => RegisterUi());
     }
 
@@ -261,7 +256,9 @@ public static class PatchSettings
         // Load, and RuntimeReadyEvent is dispatched after it, so this is the
         // earliest moment a sixth can join them and still be in place for the
         // first frame of the settings popup.
-        SettingsRegistry.Register(new GameplaySection());
+        // Only with something to put in it: nothing registers against "gameplay"
+        // until a gameplay feature is ported to King's Field.
+        if (_pages.ContainsKey("gameplay")) SettingsRegistry.Register(new GameplaySection());
 
         // Input is a *replacement*, not an addition: Register removes by id, so
         // this takes the runtime's own pane over. If upstream ever renames that

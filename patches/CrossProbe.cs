@@ -88,7 +88,7 @@ public static class CrossProbe
     // Posts only: Widescreen owns the one Replace.
     static readonly (string Overlay, uint Addr)[] DrawOTagAt =
     [
-        ("open", 0x80016078u), ("game", 0x80060818u), ("end", 0x80013D80u),
+        .. SdkAddr.DrawOTag,
     ];
 
     static readonly HashSet<uint> _otHooked = [];
