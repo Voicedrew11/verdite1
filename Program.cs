@@ -124,6 +124,39 @@ if (!string.IsNullOrWhiteSpace(autopad))
     }) { IsBackground = true, Name = "kf1-autopad" }.Start();
 }
 
+// Straight into a New Game, for a program driving the port without a person:
+//
+//     KF2_AUTOSTART=new
+//
+// King's Field's title takes Start to its menu and Start again to a New Game, and
+// ignores a press during its fades, so this presses Start every 1.5 s from 6 s
+// after OPEN.EXE loads until GAME.EXE does, and then stops -- a press that lands
+// in the area opens the in-game menu. Pair it with KF2_AUTOPAD_FROM=game for a
+// script in the area. Through Controller.ScriptMask (0085), like KF2_AUTOPAD.
+if (Environment.GetEnvironmentVariable("KF2_AUTOSTART")?.Trim() is "new" or "1")
+{
+    var openAt = new ManualResetEventSlim(false);
+    bool inGame = false;
+    RecompOne.Runtime.Events.Event.AddListener<RecompOne.Runtime.Events.OverlayLoadedEvent>(e =>
+    {
+        if (e.Name == "open") openAt.Set();
+        if (e.Name == "game") inGame = true;
+    });
+    new Thread(() =>
+    {
+        openAt.Wait();
+        Thread.Sleep(6000);
+        while (!inGame)
+        {
+            Controller.ScriptMask = unchecked((ushort)~Controller.Start);
+            Thread.Sleep(200);
+            Controller.ScriptMask = 0xFFFF;
+            Thread.Sleep(1300);
+        }
+        Console.WriteLine("[KF1] autostart: GAME.EXE loaded, hands off");
+    }) { IsBackground = true, Name = "kf1-autostart" }.Start();
+}
+
 // The way back from an interface scaled too large to use:
 //
 //     KF2_UISCALE=1     force the interface scale for this run, and save it
@@ -460,6 +493,12 @@ Kf2.ObjectCarry.Install();
 //     KF2_MOUSE_BUTTONS=Square,Triangle,Cross  KF2_MOUSE_KEY=Escape  KF2_MOUSE_LEAD=0
 Kf2.MouseLook.Configure();
 Kf2.MouseLook.Install();
+
+// Twin-stick control: the left stick walks and strafes, the right stick turns and
+// looks (spent with the mouse, at the end of stage A).
+//     KF2_ANALOG=0  KF2_ANALOG_TURN=1.0  KF2_ANALOG_LOOK=1.0  KF2_ANALOG_DEADZONE=0.15  KF2_ANALOG_INVERTY=1
+Kf2.TwinStick.Configure();
+Kf2.TwinStick.Install();
 
 // State lines on stdout, once a second: overlay, position, rotation.
 //     KF2_AGENT=1

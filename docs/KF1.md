@@ -305,6 +305,14 @@ Square, Triangle and Cross while the pointer is captured; **which of those King'
 Field uses to attack has not been checked**, so `KF2_MOUSE_BUTTONS` may need
 reordering. 0.15° a pixel at sensitivity 1, as KF2's.
 
+**Twin-stick** (`patches/TwinStick.cs`): on a gamepad the runtime binds the left
+stick onto the D-pad, a tank control. The left stick's X now presses L1/R1 (the
+strafe) instead of Left/Right unless the D-pad itself is held, and the right stick
+turns and looks — a squared response, full deflection about 1.5 times the D-pad's
+turn — spent at the end of stage A with the mouse, but into the tick and
+interpolated like the D-pad's turn rather than led. `KF2_ANALOG=0` restores the
+runtime's mapping. **Untested with a pad**: without one it is inert, measured.
+
 Measured with a synthetic source (`KF2_MOUSE_SYNTH=30`, 30 px right a tick): the
 carried yaw steps 51 units a tick (30 × 0.15° × 4096/360 = 51.2), so the game
 takes the written yaw and the camera turns with it. **Capture, the real mouse and
@@ -366,7 +374,9 @@ Not installed — each needs King's Field's own routine found first:
 | `PerPixelLighting`, `EvenFog`, `Reflections`, `Murk`, `Waves`, `PlanarWalk`, `Retained*`, `Remaster.*` | the C# assemblers above (they record what these read) |
 | `CullCone`, `ViewClip`, `CullGrid`, `PrimBuffer` | KF1's cull and its primitive buffers |
 | `Mouse` | **done differently**: `MouseLook` (above) |
-| `Analog`, `MenuMouse` | the player's movement words for the sticks, and the menu layout |
+| `Analog` | **done differently**: `TwinStick` (above) |
+| `AutoStart` | **done differently**: `KF2_AUTOSTART=new` in `Program.cs` |
+| `MenuMouse` | the menu layout |
 | `Map*`, `AutoReload`, `AutoStart`, `AgentBeacon`, `AgentServer`, `AreaWarp`, `HitGuard`, `MenuWorld`, `MessageText` | the game's state (area, HP, save slots, menus) |
 | `PositionalAudio` | the game's 3D sound routine |
 | `CardIcon` | reads KF2's icon out of `FDAT.T`; KF1's is probably `KF/TIM/ICO1.TIM` |
@@ -392,32 +402,21 @@ separate change that touches CI and both packaging scripts.
 
 ## Driving it without a human
 
-`KF2_AUTOPAD` works, with its clock starting when OPEN.EXE loads
-(`KF2_AUTOPAD_FROM=game` for GAME.EXE). The title needs Start twice and then
-Cross, and it ignores a press during its fades, so a schedule of repeated presses
-is what gets through reliably:
+**`KF2_AUTOSTART=new`** presses Start every 1.5 s from 6 s after OPEN.EXE loads
+until GAME.EXE does, then stops: Start twice takes the title to a New Game in
+`KF/B1` (about 18 s after boot). It has to stop, because a Start or a Cross that
+lands in the area opens the in-game menu, which is a modal 2D loop (no
+projections, DrawOTag at 60/s). **`KF2_AUTOPAD` with `KF2_AUTOPAD_FROM=game`** then
+scripts the area on a clock that starts at GAME.EXE's load:
 
 ```bash
-KF2_AUTOPAD=8:Start:200,9.5:Start:200,11:Start:200,12.5:Start:200,14:Start:200,15.5:Start:200,17:Cross:200,18.5:Cross:200
+KF2_AUTOSTART=new KF2_AUTOPAD_FROM=game KF2_AUTOPAD=6:Left:2000,9:L1:1500 KF2_AGENT=1 \
+  dotnet run --project KingsField2Recomp.csproj -- "disc/King's Field (Japan).cue"
 ```
 
-`KF2_AGENT=1` prints `[KF1-AGENT] {"overlay":…,"pos":[x,y,z],"rot":[pitch,yaw,roll]}`
-once a second (`patches/Kf1Beacon.cs`). With it, one button at a time from the
-New Game spawn (`pos [31000,-11500,4000]`, facing `+z`):
-
-| button | effect |
-|---|---|
-| Up / Down | walk along the facing (+z / −z at yaw 0), with a head bob in y |
-| Left / Right | turn: yaw rises / falls (about 560 units a second) |
-| L1 / R1 | strafe: −x / +x at yaw 0 |
-| L2 / R2 | pitch: down to −191 / up to +191 (the stage A clamp); positive looks down, as in KF2 |
-
-**The movement map is King's Field II's**, so the port's WASD layout (W/S walk,
-A/D strafe, arrows turn and look) and the mouse's signs carry over unchanged. The
-face buttons have not been mapped.
-
-That starts a New Game in `KF/B1` about 20 s after boot. With `KF2_LOG=sdk`, the
-read of `MIXB.DAT` (`CdRead … lba=2923`) is the last thing the area load does.
+With `KF2_LOG=sdk`, the read of `MIXB.DAT` (`CdRead … lba=2923`) is the last thing
+the area load does. Both scripts hold their buttons through `Controller.ScriptMask`
+(see below).
 
 The files OPEN reads say where it is: `KF/B0/L0.` then `MIX0.`/`MIXA0.`/`OPEN0.`/
 `MIXB0.` for the attract; Start loads `MIXA1.` and `OPEN1.`; Start again loads

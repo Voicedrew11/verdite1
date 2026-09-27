@@ -222,7 +222,7 @@ KF2_MENUMOUSE_PROBE=1                    # the layout table, the pointer's row, 
 KF2_AUTORELOAD=1 KF2_AUTORELOAD_SLOT=0   # reload the last save on death
 KF2_AUTORELOAD_DELAY=2.0                 # seconds of the death first (2.0; no longer a setting)
 KF2_AUTOSTART=2                          # boot straight into save slot 1..3, past the title menus
-KF2_AUTOSTART=new                        # the same, but stay in the New Game (fdat02, which has scrolling water)
+KF2_AUTOSTART=new                        # the same, but stay in the New Game (fdat02, which has scrolling water); King's Field: Start until GAME.EXE loads, then hands off
 KF2_BOOTEXE=end                          # boot straight into OPEN.EXE, GAME.EXE or END.EXE
 KF2_ENDINGEXIT=0                         # leave "The End" hanging, as the original does (a button exits by default)
 KF2_AGENT=1                              # [KF2-AGENT] state lines on stdout: overlay, inGame, HP/MP/area/slot

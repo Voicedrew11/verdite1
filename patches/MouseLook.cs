@@ -120,6 +120,9 @@ public static class MouseLook
 
     public static void Install()
     {
+        // The stage A hook carries the right stick too, so it attaches whether or
+        // not the mouse is on.
+        HookAttach.OnOverlayLoad("mouse look", Attach);
         if (!Enabled) return;
 
         Event.AddListener<RuntimeReadyEvent>(_ =>
@@ -134,8 +137,6 @@ public static class MouseLook
             if (!Captured && PopupManager.AnyOpen) return;
             SetCaptured(!Captured);
         });
-
-        HookAttach.OnOverlayLoad("mouse look", Attach);
     }
 
     static bool Attach()
@@ -221,6 +222,16 @@ public static class MouseLook
     public static void AfterStageA(CpuContext c, IMemory m)
     {
         SpentYaw = SpentPitch = 0;
+
+        // The right stick: into the tick, and interpolated by the view like the
+        // D-pad's turn rather than led like the mouse's.
+        var (sTurn, sPitch) = TwinStick.TakeLook();
+        if (sTurn != 0 || sPitch != 0)
+        {
+            m.WriteU16(Yaw, (ushort)((m.ReadU16(Yaw) + sTurn) & 0xFFF));
+            m.WriteU16(Pitch, (ushort)(short)Math.Clamp((short)m.ReadU16(Pitch) + sPitch, -PitchLimit, PitchLimit));
+        }
+
         if (Synth != 0f)
         {
             Captured = true;
