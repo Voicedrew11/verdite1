@@ -958,6 +958,12 @@ Four files in the directory have no entry below:
   reflection were composited over the arm. It is kept as `Overlay` now, except in
   the table's slot 0 (the skybox, which must read as no surface). The tenth diff in
   the patch file. See "The arm showed the water through it" in `docs/RENDERING.md`.
+  Since amended: the one-texel crack fill took a pillar in front of the water as
+  the floor, leaving a strip unmurked; it takes only a depth behind the water now.
+  And `PresentFs` upsamples the pass by the surface
+  under each pixel (`ssrAt`), with the surface buffer at the render scale while the
+  pass runs and the depth on unit 4. The eleventh diff in the patch file. See "A
+  halo round the pier's pillars" in `docs/RENDERING.md`.
   `GlCore.RenderNormals` became `RenderSurfaces` and runs once for both passes,
   timed with the occlusion pass when that runs. New profiler sections (`Surfaces`,
   `Ssr`) and `GpuWork.Reflections`; the probe attaches a second target to the pass

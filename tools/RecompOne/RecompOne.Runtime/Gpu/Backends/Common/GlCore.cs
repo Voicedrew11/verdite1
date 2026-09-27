@@ -301,6 +301,10 @@ public sealed partial class GlCore : IGpuBackend
         _uPresentSsrOn = _gl.GetUniformLocation(_progPresent, "uSsrOn");
         int uPresentSsr = _gl.GetUniformLocation(_progPresent, "uSsr");
         if (uPresentSsr >= 0) _gl.Uniform1(uPresentSsr, 2);
+        int uPresentSsrDepth = _gl.GetUniformLocation(_progPresent, "uSsrDepth");
+        if (uPresentSsrDepth >= 0) _gl.Uniform1(uPresentSsrDepth, SsrDepthUnit);
+        int uPresentSurface = _gl.GetUniformLocation(_progPresent, "uSurface");
+        if (uPresentSurface >= 0) _gl.Uniform1(uPresentSurface, 3);
         if (_uPresentSsrOn >= 0) _gl.Uniform1(_uPresentSsrOn, 0f);
         _uPresentAoMatOn = _gl.GetUniformLocation(_progPresent, "uAoMatOn");
         if (_uPresentAoMatOn >= 0)
@@ -2262,7 +2266,9 @@ public sealed partial class GlCore : IGpuBackend
         // surface buffers both passes read, timed with whichever pass runs first --
         // the occlusion pass's, when it runs, as it always was.
         bool surfaces = false;
-        int gScale = Math.Max(aoOn ? AoScale : 1, ssrOn ? SsrScale : 1);
+        // The reflection pass runs coarser, but the present upsamples it by the
+        // surface under each pixel, so with it on the buffer is at the render scale.
+        int gScale = Math.Max(aoOn ? AoScale : 1, ssrOn ? Math.Max(1, src!.CreatedScale) : 1);
         if (aoOn)
         {
             var aoProfile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Ao);
@@ -2334,6 +2340,10 @@ public sealed partial class GlCore : IGpuBackend
             {
                 _gl.ActiveTexture(TextureUnit.Texture2);
                 _gl.BindTexture(TextureTarget.Texture2D, _ssrTex);
+                _gl.ActiveTexture(TextureUnit.Texture0 + SsrDepthUnit);
+                _gl.BindTexture(TextureTarget.Texture2D, src!.Depth);
+                _gl.ActiveTexture(TextureUnit.Texture3);
+                _gl.BindTexture(TextureTarget.Texture2D, src.Surface);
             }
         }
         _gl.ActiveTexture(TextureUnit.Texture0);
@@ -2356,6 +2366,13 @@ public sealed partial class GlCore : IGpuBackend
             _gl.Uniform2(_uPresentTexSize, (float)VramShadow.Width, VramShadow.Height);
         }
         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+        if (ssrOn && !rgb24)
+        {
+            // The next frame draws into this depth; leave it bound nowhere.
+            _gl.ActiveTexture(TextureUnit.Texture0 + SsrDepthUnit);
+            _gl.BindTexture(TextureTarget.Texture2D, 0);
+            _gl.ActiveTexture(TextureUnit.Texture0);
+        }
 
         uint outTex = ApplyPostFx(_presentTex, fbW, fbH);
         EndGpuTimer(compQuery, GpuWork.Composite, compStart);
@@ -2811,7 +2828,7 @@ public sealed partial class GlCore : IGpuBackend
         if (ScreenReflections.WantMap && _ssrInfo) CaptureSsrMap(w, h);
     }
 
-    const int ColorMipUnit = 7, PlanarMipUnit = 8;
+    const int ColorMipUnit = 7, PlanarMipUnit = 8, SsrDepthUnit = 4;
 
     /// <summary>A target's colour, shrunk to half size and mipped, bound on
     /// <paramref name="unit"/>; its level-0 height in texels.</summary>
