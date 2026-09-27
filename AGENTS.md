@@ -29,7 +29,7 @@ you would be doing when you need them:
 | `docs/RECOMPILATION.md` | config, overlays, function maps, SDK addresses |
 | `docs/RUNTIME.md` | interrupts, HLE, the `patches/recompone/` stack |
 | `docs/RECOMPONE_FORK.md` | the vendored checkout, and merging from upstream |
-| `docs/RECOMPONE_PATCHES.md` | every change the port made to RecompOne, `0001`-`0079` |
+| `docs/RECOMPONE_PATCHES.md` | every change the port made to RecompOne, `0001`-`0080` |
 | `docs/RENDERING.md` | perspective correction, sub-pixel, Z-buffer, dither |
 | `docs/WIDESCREEN.md` | aspect ratio, the HUD, the three culls |
 | `docs/AUDIO.md` | SPU interpolation, reverb, XA resampling, the host output |
@@ -192,7 +192,7 @@ what it is) live there, not here.
 | `AutoReload` | reload the last save on death, fixed 2 s delay | on | PATCHES_AND_MODS, "Auto reload" |
 | `Map*` | full-screen map (touchpad / `M`), minimap (`N`), fog of war, markers; full map pauses the world | map on; fog on; minimap, markers off | PATCHES_AND_MODS, "A dynamic map", "What the Map page is down to" |
 | `Analog` | twin-stick control | on | INPUT, "Analog twin-stick control" |
-| `Mouse` | mouse look, spent inside `Analog.BeforeLook` | on | INPUT, "Mouse look" |
+| `Mouse` | mouse look, spent inside `Analog.BeforeLook`; the view shows motion the tick has not spent yet (`FrameSmoothing.MouseLead`; Gameplay ▸ *Instant mouse look*, `KF2_MOUSE_LEAD`) | on; lead on (judged) | INPUT, "Mouse look", "The mouse leads the tick" |
 | `MenuMouse` | point-and-click in the in-game menus | on | INPUT, "The menu pointer" |
 | `KeyLayout` | the port's WASD layout | on | INPUT, "The keyboard layout" |
 | `CardIcon`, `DesktopEntry` | the window icon is the game's own memory-card icon, read off the player's disc at boot; the shipped orb is the fallback. On Linux the same pixels go into the icon theme under the app id, which is the only way a Wayland compositor can show one (`0061`) | on | PACKAGING, "The icon comes off the disc", "Wayland takes the icon from the desktop entry" |
@@ -437,7 +437,7 @@ removed for the same reason.
 
 **`tools/RecompOne/` is vendored: an edit inside it is a change to this
 repository like any other.** `patches/recompone/*.patch` are kept as the record of
-what the port changed and why, and the numbers (`0001`-`0079`) are how the source
+what the port changed and why, and the numbers (`0001`-`0080`) are how the source
 refers to each change, but they are **no longer replayed**. The merge base is
 `tools/RecompOne/UPSTREAM` (currently `d81dec8`); the fork's history is the
 gitignored `tools/RecompOne.git/`, reached with

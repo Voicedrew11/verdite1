@@ -190,7 +190,10 @@ Kf2.KeyLayout.Install();
 // Defaults runs after ConfigManager.Load and only writes a key that is missing,
 // so an existing config keeps what it had. MasterVolume is on Game, which Load
 // deserialises over this when settings.json exists and saves it when it does not.
-RecompOne.Runtime.Config.ConfigManager.Game.MasterVolume = 1f;
+// Guarded for the same reason as KeyLayout.Configure: under the launcher,
+// settings.json has already been loaded by now and this would reset the volume.
+if (!System.IO.File.Exists("settings.json"))
+    RecompOne.Runtime.Config.ConfigManager.Game.MasterVolume = 1f;
 RecompOne.Runtime.Runtime.Defaults(v =>
 {
     v.Default("ShowFps", true);

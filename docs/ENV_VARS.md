@@ -208,6 +208,7 @@ KF2_MOUSE=0                              # mouse look off (it is on by default; 
 KF2_MOUSE_TURN=1.0 KF2_MOUSE_LOOK=1.0 KF2_MOUSE_INVERTY=1   # its sensitivities and look-Y
 KF2_MOUSE_BUTTONS=Square,Triangle,Cross  # left, right, middle, as pad buttons
 KF2_MOUSE_KEY=Escape                     # the key that captures and releases
+KF2_MOUSE_LEAD=0                         # mouse look waits for the tick, as with Gameplay ▸ Instant mouse look off (on by default); =1 forces it on
 KF2_MENUMOUSE=0                          # the menu pointer off (on by default)
 KF2_MENUMOUSE_PROBE=1                    # the layout table, the pointer's row, and what it did
 KF2_AUTORELOAD=1 KF2_AUTORELOAD_SLOT=0   # reload the last save on death

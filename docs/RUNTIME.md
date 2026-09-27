@@ -737,10 +737,49 @@ it changes — `Theme.Apply()` sets absolute sizes before `ScaleAllSizes`, so it
 safe to call again. Both are unwritten: the numbers above are measured, but how
 large the interface *should* look is a judgement by eye.
 
-One loose end, measured and not chased: a **programmatic** `IWindow.Size` set does
-not raise Silk's `Resize` event under GLFW-on-Wayland, so `io.DisplaySize` goes
-stale. Compositor-driven resizes do raise it — the reported screenshot has the
-correct logical width — so nothing in the port depends on it.
+One loose end, measured and not chased at the time: a **programmatic** `IWindow.Size`
+set does not raise Silk's `Resize` event under GLFW-on-Wayland, so `io.DisplaySize`
+goes stale. Compositor-driven resizes do raise it — the reported screenshot has the
+correct logical width. Leaving fullscreen turned out to be the same hole; see the
+next section.
+
+## Leaving fullscreen left the interface at the fullscreen size
+
+Reported from play on Linux: after fullscreen and back, the menu bar is gone and
+the picture fills the window as if the interface had been hidden. Nothing was
+hidden — `HideTopBar` stays false throughout — the interface was still laid out
+for the fullscreen window, and a GL viewport is anchored bottom-left, so the top
+of that layout, the menu bar, lay above the window.
+
+Silk's `ImGuiController` learns the window's size **only** from `IView.Resize`,
+caching it in `_windowWidth`/`_windowHeight` and writing it to `io.DisplaySize` in
+every `Update()`. GLFW 3.4 on Wayland raises no window-size callback when a window
+leaves fullscreen — `glfwSetWindowMonitor(NULL, …)` sets the size itself, and the
+compositor's configure then matches it, so nothing is reported — only the
+framebuffer-size one. Measured on KWin, a 2560×1440 monitor at scale 1.15, with
+fullscreen toggled on a timer, and the events Silk raised:
+
+```
+toggle -> fullscreen   FramebufferResize 2559x1439   Resize 2226x1252
+toggle -> windowed     FramebufferResize 1472x828    (no Resize)
+window.Size 1280x720   io.DisplaySize 2226x1252      <- stays there
+```
+
+Four toggles out of four, so here it is every time, not "sometimes"; how visible
+it is depends on how much bigger the fullscreen layout is than the window. The
+controller's integer framebuffer scale also reads `0` then (`1472 / 2226`), which
+`0018` overwrites with 1.15 after `Update()` — so the stale layout was drawn at
+1.15× on top, pushing even more of it off the window.
+
+`0080` compares `io.DisplaySize` — which still holds what the controller last
+applied — with `IWindow.Size` before each `Update()`, and on a difference calls the
+controller's private `WindowResized` with the real size (by reflection, once; Silk
+is pinned at 2.22.0 and trimming is off). It catches any missed resize, not only
+this one, a frame late. Measured after, same toggles: the layout goes back to
+1280×720 (work area 1280×693.76, under the menu bar) on the frame after each exit.
+The logged sizes are the mechanism; that the menu bar is back on screen was not
+looked at by eye here. X11 and Windows were not run — both raise the event, as far
+as is known, and the check does nothing when the sizes agree.
 
 ## The scale can put the settings out of reach
 

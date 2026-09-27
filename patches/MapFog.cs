@@ -683,7 +683,22 @@ public static class MapFog
     /// rather than a map, which reads as the feature being broken; drawing the
     /// whole area for that fraction of a second is the honest fallback.
     /// </summary>
-    public static Func<int, int, int>? Predicate => Enabled && _live != null ? StateFn : null;
+    public static Func<int, int, int>? Predicate =>
+        _live == null ? null : Enabled ? StateFn : WholeFn;
+
+    /// <summary>
+    /// The "Whole area" setting: every tile drawn, but the cull cone still lit.
+    /// <see cref="Sample"/> is gated on the map rather than on this switch, so the
+    /// cone is recorded either way; returning null here (as this used to) threw it
+    /// away along with the fog. Unexplored reads as remembered instead.
+    /// </summary>
+    static int Whole(int x, int z)
+    {
+        int s = State(x, z);
+        return s == 0 ? 1 : s;
+    }
+
+    static readonly Func<int, int, int> WholeFn = Whole;
 
     /// <summary>The two maintenance buttons on the settings page, which are what
     /// make the picture judgeable inside one session.</summary>

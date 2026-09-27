@@ -2,6 +2,7 @@ using RecompOne.Runtime.Events;
 using RecompOne.Runtime.Hardware;
 using RecompOne.Runtime.Host;
 using RecompOne.Runtime.Host.Window;
+using RecompOne.Runtime.Memory;
 using Silk.NET.Input;
 // Both namespaces above define a MouseButton; the host's input one is the one
 // HostWindow.IsMouseButtonDown takes.
@@ -108,6 +109,7 @@ public static class Mouse
     public const string RightKey   = "kf2.mouse.right";
     public const string MiddleKey  = "kf2.mouse.middle";
     public const string CaptureKeyKey = "kf2.mouse.capturekey";
+    public const string LeadKey    = "kf2.mouse.lead";
 
     /// <summary>
     /// On by default. Capture is still Escape, so a pointer does not disappear
@@ -115,6 +117,13 @@ public static class Mouse
     /// buttons are already wired.
     /// </summary>
     public static bool Enabled = true;
+
+    /// <summary>
+    /// Show mouse look the frame it happens rather than when the next tick spends
+    /// it. On by default; <c>KF2_MOUSE_LEAD=0</c> is the comparison. See
+    /// "The mouse leads the tick" in docs/INPUT.md.
+    /// </summary>
+    public static bool Lead = true;
 
     public static float TurnSens = 1.0f;
     public static float LookSens = 1.0f;
@@ -193,6 +202,7 @@ public static class Mouse
         Analog.Env("KF2_MOUSE_TURN", TurnKey, ref TurnSens, _fromEnv);
         Analog.Env("KF2_MOUSE_LOOK", LookKey, ref LookSens, _fromEnv);
         Analog.Env("KF2_MOUSE_INVERTY", InvertKey, ref InvertY, _fromEnv);
+        Analog.Env("KF2_MOUSE_LEAD", LeadKey, ref Lead, _fromEnv);
 
         // One variable for the three buttons rather than three: they are set
         // together or not at all, and "Square,Triangle,Cross" says what it does.
@@ -244,6 +254,7 @@ public static class Mouse
             Analog.Saved(TurnKey, ref TurnSens, _fromEnv);
             Analog.Saved(LookKey, ref LookSens, _fromEnv);
             Analog.Saved(InvertKey, ref InvertY, _fromEnv);
+            Analog.Saved(LeadKey, ref Lead, _fromEnv);
             Analog.Saved(LeftKey, ref LeftButton, _fromEnv);
             Analog.Saved(RightKey, ref RightButton, _fromEnv);
             Analog.Saved(MiddleKey, ref MiddleButton, _fromEnv);
@@ -319,26 +330,78 @@ public static class Mouse
         e.Buttons &= (ushort)~(ushort)((press >> 8) | (press << 8));
     };
 
+    // Motion drained from the host but not yet spent by a tick, in game units.
+    // Stage 8 drains it every drawn frame (Poll) so FrameSmoothing can show it
+    // before the tick lands; the look routine spends it (TakeLook).
+    static float _pendTurn, _pendPitch;
+    static long _polled;
+
+    // What the last tick asked for, and the base angles before the game applied
+    // it, so FrameSmoothing can measure what the game actually turned by.
+    static long _takenFrame = -1;
+    static float _spentTurn, _spentPitch;
+    static float _shareTurn, _sharePitch;
+    static ushort _yawBefore, _pitchBefore;
+
     /// <summary>
-    /// This frame's motion, in the game's own angle units and in its own sign
-    /// convention: turn is positive to the left, because yaw increases turning
-    /// left, and pitch is positive downward, because that is which way the game's
-    /// R2 tips the view. Both zero unless the pointer is captured.
+    /// Drain the host's motion into the pending sum. Called every drawn frame
+    /// from stage 8 and again by <see cref="TakeLook"/>. Motion is dropped rather
+    /// than kept while the look routine is not running (a menu, a load, the
+    /// paused map), for the reason <see cref="StaleMs"/> gives.
+    /// </summary>
+    internal static void Poll()
+    {
+        long now = Environment.TickCount64;
+        var (dx, dy) = HostWindow.TakeMouseMotion();
+        long gap = now - _polled;
+        _polled = now;
+
+        if (!Enabled || !Captured || gap > StaleMs || !Live(now))
+        {
+            _pendTurn = _pendPitch = 0f;
+            return;
+        }
+
+        const float units = DegreesPerPixel * UnitsPerDegree;
+        _pendTurn += -dx * units * TurnSens;
+        _pendPitch += dy * units * LookSens * (InvertY ? -1f : 1f);
+    }
+
+    /// <summary>Whether the look routine has spent the mouse recently enough
+    /// that motion now will be spent too: three ticks, or
+    /// <see cref="StaleMs"/> if that is shorter.</summary>
+    static bool Live(long now) =>
+        !FramePacing.Paused &&
+        now - _taken <= Math.Min(StaleMs, (long)(3000.0 / Math.Max(1.0, FramePacing.LogicHz)));
+
+    /// <summary>
+    /// Motion drawn but not yet spent, capped as the look routine will cap it:
+    /// what the next tick will turn by, as far as the mouse is concerned. Zero
+    /// unless the look routine is live.
+    /// </summary>
+    internal static (float Turn, float Pitch) Pending
+    {
+        get
+        {
+            if (!Enabled || !Captured || !Live(Environment.TickCount64)) return (0f, 0f);
+            return (Math.Clamp(_pendTurn, -StepCap, StepCap),
+                    Math.Clamp(_pendPitch, -StepCap, StepCap));
+        }
+    }
+
+    /// <summary>
+    /// The motion since the last tick, in the game's own angle units and in its
+    /// own sign convention: turn is positive to the left, because yaw increases
+    /// turning left, and pitch is positive downward, because that is which way the
+    /// game's R2 tips the view. Both zero unless the pointer is captured.
     ///
-    /// Called once a frame from <see cref="Analog.BeforeLook"/>, and it clears the
-    /// accumulator whether or not it is going to use it — motion collected while
+    /// Called once a tick from <see cref="Analog.BeforeLook"/>, and it empties the
+    /// pending sum whether or not it is going to use it — motion collected while
     /// the mouse was doing something else is not a turn anybody asked for.
     /// </summary>
     internal static (float Turn, float Pitch) TakeLook()
     {
-        long now = Environment.TickCount64;
-        var (dx, dy) = HostWindow.TakeMouseMotion();
-        long since = now - _taken;
-        _taken = now;
-
-        if (!Enabled) return (0f, 0f);
-
-        if (!Captured)
+        if (!Captured && Enabled && !_hinted)
         {
             // Said once, and here rather than at boot: this runs from the game's
             // own look routine, so reaching it means the player is walking around
@@ -346,19 +409,62 @@ public static class Mouse
             // mouse is the whole of the answer -- moving the mouse and getting
             // nothing is the question "is this on?", not "which key is it?", and
             // the console line and the settings page both name the key.
-            if (!_hinted)
-            {
-                _hinted = true;
-                MouseIndicator.Show(false);
-            }
-            return (0f, 0f);
+            _hinted = true;
+            MouseIndicator.Show(false);
         }
 
-        if (since > StaleMs) return (0f, 0f);
+        Poll();
+        var take = (_pendTurn, _pendPitch);
+        _pendTurn = _pendPitch = 0f;
+        _taken = Environment.TickCount64;
+        _takenFrame = FramePacing.Frames;
+        _spentTurn = _spentPitch = 0f;
+        _shareTurn = _sharePitch = 0f;
+        return take;
+    }
 
-        const float units = DegreesPerPixel * UnitsPerDegree;
-        return (-dx * units * TurnSens,
-                dy * units * LookSens * (InvertY ? -1f : 1f));
+    /// <summary>
+    /// What <see cref="Analog.BeforeLook"/> asked the game for this tick: the
+    /// base angles before, and the mouse's share of each axis's step. The rest of
+    /// the step was a stick's.
+    /// </summary>
+    internal static void NoteSpent(IMemory m, float turn, float stickTurn, float pitch, float stickPitch)
+    {
+        _yawBefore = m.ReadU16(Analog.Yaw);
+        _pitchBefore = m.ReadU16(Analog.Pitch);
+        _spentTurn = turn;
+        _spentPitch = pitch;
+        _shareTurn = Share(turn, stickTurn);
+        _sharePitch = Share(pitch, stickPitch);
+    }
+
+    static int Delta12(ushort to, ushort from)
+    {
+        int d = (to - from) & 0xFFF;
+        return d >= 0x800 ? d - 0x1000 : d;
+    }
+
+    static float Share(float mouse, float stick) =>
+        mouse == 0f ? 0f : stick == 0f ? 1f : Math.Clamp(mouse / (mouse + stick), 0f, 1f);
+
+    /// <summary>
+    /// What the game turned by for the mouse on the tick spent in frame
+    /// <see cref="FramePacing.Frames"/>, measured off the base angles rather than
+    /// assumed, so the pitch limit and anything else the game did to the step are
+    /// in it. Null when the look routine did not spend the mouse on this frame.
+    /// Also returns what was asked for, which the probe compares.
+    /// </summary>
+    internal static (int Yaw, int Pitch, float AskedYaw, float AskedPitch)? SpentThisFrame(IMemory m)
+    {
+        if (_takenFrame != FramePacing.Frames || (_shareTurn == 0f && _sharePitch == 0f)) return null;
+
+        // Both are 12-bit angles, pitch included: the look routine stores it
+        // `& 0xFFF`, so looking just above level reads 0x0FFx.
+        int dYaw = Delta12(m.ReadU16(Analog.Yaw), _yawBefore);
+        int dPitch = Delta12(m.ReadU16(Analog.Pitch), _pitchBefore);
+
+        return ((int)MathF.Round(dYaw * _shareTurn), (int)MathF.Round(dPitch * _sharePitch),
+                _spentTurn, _spentPitch);
     }
 
     /// <summary>
@@ -391,7 +497,8 @@ public static class Mouse
         // Taking the pointer back has to clear the accumulator too: the jump from
         // wherever the cursor was left is not motion.
         HostWindow.TakeMouseMotion();
-        _taken = Environment.TickCount64;
+        _pendTurn = _pendPitch = 0f;
+        _taken = _polled = Environment.TickCount64;
 
         MouseIndicator.Show(Captured);
     }

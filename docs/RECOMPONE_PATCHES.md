@@ -13,7 +13,7 @@ amendment's diff appended to its `.patch` file, and the source comments keep its
 number. `0016` and `0057` predate this and keep their numbers, since the source
 refers to them.
 
-Sixty-eight of the seventy-six are load-bearing; `0002`, `0003`, `0015`, `0045`,
+Sixty-nine of the seventy-seven are load-bearing; `0002`, `0003`, `0015`, `0045`,
 `0046`, `0065` and `0069` are diagnostics and `0013` is a settings-placement hook. `0063` is retired:
 it was folded into `0054` as an amendment, and the number is not reused. `0075` and `0076`
 are held by the remaster's plan for work not yet made (`docs/REMASTER.md`), which is
@@ -1218,6 +1218,16 @@ Four files in the directory have no entry below:
   samples behind a nearer translucent one; `Rec.Model` splits them by source. **No
   recompile.** See "Water was painted over by what lay under it" in
   `docs/RENDERING.md`.
+
+- `0080-imgui-size-after-fullscreen.patch` — Silk's `ImGuiController` takes the
+  window's size only from the `Resize` event, and GLFW on Wayland raises none when
+  a window leaves fullscreen (the framebuffer callback fires; the window-size one
+  does not), so `io.DisplaySize` stayed at the fullscreen size and the menu bar
+  lay above the window. `HostWindow.SyncImGuiSize` compares `io.DisplaySize` with
+  `IWindow.Size` before each `Update()` and hands the controller's private
+  `WindowResized` the real size on a difference. UI only — **no recompile**. See
+  "Leaving fullscreen left the interface at the fullscreen size" in
+  `docs/RUNTIME.md`.
 
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a

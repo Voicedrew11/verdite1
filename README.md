@@ -1,16 +1,24 @@
 # Verdite2
 
+[![Release](https://img.shields.io/github/v/release/Voicedrew11/verdite2)](https://github.com/Voicedrew11/verdite2/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Voicedrew11/verdite2/total)](https://github.com/Voicedrew11/verdite2/releases)
+[![Discord](https://img.shields.io/discord/1553561882843947149?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/R4EKCs8RWH)
+
 Verdite2 is a PC port of King's Field (US) built atop of the [RecompOne](https://github.com/BlackLabelHQ/RecompOne) project. 
 
 ## Features
 
-- Widescreen support (16:9, 16:10, 21:9), with changed culling behaviour
+- Widescreen support (16:9, 16:10, 21:9), with changed culling behavior
 - Perspective-correct textures and corrected vertex wobbling
 - Anisotropic filtering
 - Ambient occlusion
+- Z-buffer
 - 24-bit colour
 - 60+ fps
 - Consistent game speed
+- Per-pixel lighting
+- Smooth fog
+- Enhanced audio quality
 - Automatic save reload after death
 - Keyboard and mouse support
 - Modern Twin-stick FPS controls
@@ -23,6 +31,10 @@ Game is playable from start to finish. There may still be some intermittent issu
 ## Requirements
 
 A dump of the North American PlayStation release (`SLUS-00158`) in `.cue` / `.bin`, or `.chd` format.
+
+## Mods
+
+A collection of mods by [@Acranon](https://github.com/Acranon) can be found in [Acranon/verdite2-mods](https://github.com/Acranon/verdite2-mods).
 
 ## Credits
 

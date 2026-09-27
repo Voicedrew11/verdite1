@@ -235,6 +235,7 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - The picture is inset inside its own panel
 - The interface's font
 - CHD disc images
+- Leaving fullscreen left the interface at the fullscreen size
 - Minimising froze the game on Wayland
 - Two general shapes worth keeping
 - Upstream contribution policy
@@ -369,7 +370,7 @@ How the vendored RecompOne checkout is kept, why it is not a patch stack, and wh
 
 ### [RECOMPONE_PATCHES.md](docs/RECOMPONE_PATCHES.md)
 
-Every change the port made to RecompOne, `0001`-`0079`, one entry each.
+Every change the port made to RecompOne, `0001`-`0080`, one entry each.
 
 ### [TODO.md](docs/TODO.md)
 
