@@ -3778,8 +3778,8 @@ pier (player `75773,-11520,83101`, yaw 1586, pitch 35; `view 75773 -13026 83101 
   unit 4.
 
 Measured, with the fill, at the pier: 330 fps uncapped with the murk against 336
-without, and no GL errors. The two edge fixes without the fill have not been
-measured or checked by eye.
+without, and no GL errors. The two edge fixes without the fill: no GL errors, 144.0
+fps drawn at 20.0 ticks/s in `fdat02`; judged by eye at the pier, good.
 
 ### The reflection pass runs for each term on its own
 
