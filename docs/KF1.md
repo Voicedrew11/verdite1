@@ -391,7 +391,20 @@ is what gets through reliably:
 KF2_AUTOPAD=8:Start:200,9.5:Start:200,11:Start:200,12.5:Start:200,14:Start:200,15.5:Start:200,17:Cross:200,18.5:Cross:200
 ```
 
-In the area, Up walks forward (the D-pad walks and turns, as in King's Field II).
+`KF2_AGENT=1` prints `[KF1-AGENT] {"overlay":…,"pos":[x,y,z],"rot":[pitch,yaw,roll]}`
+once a second (`patches/Kf1Beacon.cs`). With it, one button at a time from the
+New Game spawn (`pos [31000,-11500,4000]`, facing `+z`):
+
+| button | effect |
+|---|---|
+| Up / Down | walk along the facing (+z / −z at yaw 0), with a head bob in y |
+| Left / Right | turn: yaw rises / falls (about 560 units a second) |
+| L1 / R1 | strafe: −x / +x at yaw 0 |
+| L2 / R2 | pitch: down to −191 / up to +191 (the stage A clamp); positive looks down, as in KF2 |
+
+**The movement map is King's Field II's**, so the port's WASD layout (W/S walk,
+A/D strafe, arrows turn and look) and the mouse's signs carry over unchanged. The
+face buttons have not been mapped.
 
 That starts a New Game in `KF/B1` about 20 s after boot. With `KF2_LOG=sdk`, the
 read of `MIXB.DAT` (`CdRead … lba=2923`) is the last thing the area load does.

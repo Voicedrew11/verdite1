@@ -461,6 +461,11 @@ Kf2.ObjectCarry.Install();
 Kf2.MouseLook.Configure();
 Kf2.MouseLook.Install();
 
+// State lines on stdout, once a second: overlay, position, rotation.
+//     KF2_AGENT=1
+Kf2.Kf1Beacon.Configure(Environment.GetEnvironmentVariable("KF2_AGENT"));
+Kf2.Kf1Beacon.Install();
+
 // King's Field's main loop, stage by stage: calls, time, GTE projections and
 // DrawOTag calls per stage, for deciding what frame pacing may gate.
 //
