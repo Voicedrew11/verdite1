@@ -77,6 +77,10 @@ public sealed partial class GlCore : IGpuBackend
     // 0067. Screen-space reflections: one full-screen pass at present, reading the
     // target's colour, depth and surface buffer into its own premultiplied texture.
     uint _progSsr, _ssrFbo, _ssrTex, _ssrInfoTex;
+    uint _murkFillTex, _murkFillFbo;
+    int _murkFillW, _murkFillH, _murkFillLods;
+    int _uSsrMurkPass = -1, _uSsrMurkFillOn = -1, _uSsrMurkFillLods = -1;
+    const int MurkFillUnit = 17;
     int _ssrW, _ssrH;
     bool _ssrInfo;
     int _uSsrOrigin, _uSsrSize, _uSsrTexSize, _uSsrProjH, _uSsrCentre;
@@ -301,6 +305,10 @@ public sealed partial class GlCore : IGpuBackend
         _uPresentSsrOn = _gl.GetUniformLocation(_progPresent, "uSsrOn");
         int uPresentSsr = _gl.GetUniformLocation(_progPresent, "uSsr");
         if (uPresentSsr >= 0) _gl.Uniform1(uPresentSsr, 2);
+        int uPresentSsrDepth = _gl.GetUniformLocation(_progPresent, "uSsrDepth");
+        if (uPresentSsrDepth >= 0) _gl.Uniform1(uPresentSsrDepth, SsrDepthUnit);
+        int uPresentSurface = _gl.GetUniformLocation(_progPresent, "uSurface");
+        if (uPresentSurface >= 0) _gl.Uniform1(uPresentSurface, 3);
         if (_uPresentSsrOn >= 0) _gl.Uniform1(_uPresentSsrOn, 0f);
         _uPresentAoMatOn = _gl.GetUniformLocation(_progPresent, "uAoMatOn");
         if (_uPresentAoMatOn >= 0)
@@ -399,6 +407,9 @@ public sealed partial class GlCore : IGpuBackend
                 _uSsrMarchOn = _gl.GetUniformLocation(_progSsr, "uMarchOn");
                 _uSsrMurkDist = _gl.GetUniformLocation(_progSsr, "uMurkDist");
                 _uSsrMurkColor = _gl.GetUniformLocation(_progSsr, "uMurkColor");
+                _uSsrMurkPass = _gl.GetUniformLocation(_progSsr, "uMurkPass");
+                _uSsrMurkFillOn = _gl.GetUniformLocation(_progSsr, "uMurkFillOn");
+                _uSsrMurkFillLods = _gl.GetUniformLocation(_progSsr, "uMurkFillLods");
                 _uSsrSteps = _gl.GetUniformLocation(_progSsr, "uSteps");
                 _uSsrDqa = _gl.GetUniformLocation(_progSsr, "uDqa");
                 _uSsrDqb = _gl.GetUniformLocation(_progSsr, "uDqb");
@@ -416,6 +427,8 @@ public sealed partial class GlCore : IGpuBackend
                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uDepth"), 0);
                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uSurface"), 1);
                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uColor"), 2);
+                int uMurkFill = _gl.GetUniformLocation(_progSsr, "uMurkFill");
+                if (uMurkFill >= 0) _gl.Uniform1(uMurkFill, MurkFillUnit);
                 int uPlanar = _gl.GetUniformLocation(_progSsr, "uPlanar");
                 if (uPlanar >= 0) _gl.Uniform1(uPlanar, 3);
                 int uPlanarDepth = _gl.GetUniformLocation(_progSsr, "uPlanarDepth");
@@ -2262,7 +2275,9 @@ public sealed partial class GlCore : IGpuBackend
         // surface buffers both passes read, timed with whichever pass runs first --
         // the occlusion pass's, when it runs, as it always was.
         bool surfaces = false;
-        int gScale = Math.Max(aoOn ? AoScale : 1, ssrOn ? SsrScale : 1);
+        // The reflection pass runs coarser, but the present upsamples it by the
+        // surface under each pixel, so with it on the buffer is at the render scale.
+        int gScale = Math.Max(aoOn ? AoScale : 1, ssrOn ? Math.Max(1, src!.CreatedScale) : 1);
         if (aoOn)
         {
             var aoProfile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Ao);
@@ -2334,6 +2349,10 @@ public sealed partial class GlCore : IGpuBackend
             {
                 _gl.ActiveTexture(TextureUnit.Texture2);
                 _gl.BindTexture(TextureTarget.Texture2D, _ssrTex);
+                _gl.ActiveTexture(TextureUnit.Texture0 + SsrDepthUnit);
+                _gl.BindTexture(TextureTarget.Texture2D, src!.Depth);
+                _gl.ActiveTexture(TextureUnit.Texture3);
+                _gl.BindTexture(TextureTarget.Texture2D, src.Surface);
             }
         }
         _gl.ActiveTexture(TextureUnit.Texture0);
@@ -2356,6 +2375,13 @@ public sealed partial class GlCore : IGpuBackend
             _gl.Uniform2(_uPresentTexSize, (float)VramShadow.Width, VramShadow.Height);
         }
         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+        if (ssrOn && !rgb24)
+        {
+            // The next frame draws into this depth; leave it bound nowhere.
+            _gl.ActiveTexture(TextureUnit.Texture0 + SsrDepthUnit);
+            _gl.BindTexture(TextureTarget.Texture2D, 0);
+            _gl.ActiveTexture(TextureUnit.Texture0);
+        }
 
         uint outTex = ApplyPostFx(_presentTex, fbW, fbH);
         EndGpuTimer(compQuery, GpuWork.Composite, compStart);
@@ -2795,7 +2821,16 @@ public sealed partial class GlCore : IGpuBackend
         _gl.BindTexture(TextureTarget.Texture2D, src.Surface);
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
+        bool fill = WaterMurk.Enabled && _uSsrMurkPass >= 0 && RunMurkFill(w, h);
+        if (_uSsrMurkFillOn >= 0) _gl.Uniform1(_uSsrMurkFillOn, fill ? 1 : 0);
         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+        if (fill)
+        {
+            // The next frame's fill pass draws into it.
+            _gl.ActiveTexture(TextureUnit.Texture0 + MurkFillUnit);
+            _gl.BindTexture(TextureTarget.Texture2D, 0);
+            _gl.ActiveTexture(TextureUnit.Texture0);
+        }
         ScreenReflections.Passes++;
         if (planarOn || _retPlanar != null)
         {
@@ -2811,7 +2846,54 @@ public sealed partial class GlCore : IGpuBackend
         if (ScreenReflections.WantMap && _ssrInfo) CaptureSsrMap(w, h);
     }
 
-    const int ColorMipUnit = 7, PlanarMipUnit = 8;
+    /// <summary>The murk's fill: each water pixel's depth to its floor along the
+    /// surface normal, with a weight, drawn by the reflection program itself and
+    /// mipped, so water with no floor under it takes the depth around it. Leaves
+    /// the reflection pass's framebuffer bound and the chain on its unit.</summary>
+    unsafe bool RunMurkFill(int w, int h)
+    {
+        if (_murkFillTex == 0)
+        {
+            _murkFillTex = _gl.GenTexture();
+            _murkFillFbo = _gl.GenFramebuffer();
+        }
+        _gl.ActiveTexture(TextureUnit.Texture0 + MurkFillUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, _murkFillTex);
+        if (w != _murkFillW || h != _murkFillH)
+        {
+            _murkFillLods = (int)Math.Floor(Math.Log2(Math.Max(w, h)));
+            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.RG16f, (uint)w, (uint)h, 0,
+                PixelFormat.RG, PixelType.HalfFloat, null);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.LinearMipmapLinear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, _murkFillLods);
+            _gl.GenerateMipmap(TextureTarget.Texture2D);
+            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _murkFillFbo);
+            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                TextureTarget.Texture2D, _murkFillTex, 0);
+            _murkFillW = w; _murkFillH = h;
+        }
+        // Not bound for sampling while it is drawn into.
+        _gl.BindTexture(TextureTarget.Texture2D, 0);
+        _gl.ActiveTexture(TextureUnit.Texture0);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _murkFillFbo);
+        _gl.Viewport(0, 0, (uint)w, (uint)h);
+        _gl.Uniform1(_uSsrMurkPass, 1);
+        _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+        _gl.Uniform1(_uSsrMurkPass, 0);
+        _gl.ActiveTexture(TextureUnit.Texture0 + MurkFillUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, _murkFillTex);
+        _gl.GenerateMipmap(TextureTarget.Texture2D);
+        _gl.ActiveTexture(TextureUnit.Texture0);
+        if (_uSsrMurkFillLods >= 0) _gl.Uniform1(_uSsrMurkFillLods, _murkFillLods);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _ssrFbo);
+        _gl.Viewport(0, 0, (uint)w, (uint)h);
+        return true;
+    }
+
+    const int ColorMipUnit = 7, PlanarMipUnit = 8, SsrDepthUnit = 4;
 
     /// <summary>A target's colour, shrunk to half size and mipped, bound on
     /// <paramref name="unit"/>; its level-0 height in texels.</summary>
@@ -3080,6 +3162,8 @@ public sealed partial class GlCore : IGpuBackend
         if (_aoFbo != 0) _gl.DeleteFramebuffer(_aoFbo);
         if (_aoBlurFbo != 0) _gl.DeleteFramebuffer(_aoBlurFbo);
         if (_ssrTex != 0) _gl.DeleteTexture(_ssrTex);
+        if (_murkFillTex != 0) _gl.DeleteTexture(_murkFillTex);
+        if (_murkFillFbo != 0) _gl.DeleteFramebuffer(_murkFillFbo);
         if (_colorMipTex != 0) _gl.DeleteTexture(_colorMipTex);
         if (_colorMipFbo != 0) _gl.DeleteFramebuffer(_colorMipFbo);
         if (_planarMipTex != 0) _gl.DeleteTexture(_planarMipTex);

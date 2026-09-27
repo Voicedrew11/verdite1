@@ -958,6 +958,15 @@ Four files in the directory have no entry below:
   reflection were composited over the arm. It is kept as `Overlay` now, except in
   the table's slot 0 (the skybox, which must read as no surface). The tenth diff in
   the patch file. See "The arm showed the water through it" in `docs/RENDERING.md`.
+  Since amended: water with no floor drawn under it took the murk's full run and
+  went solid, and the one-texel crack fill took a pillar in front of the water as
+  the floor, leaving a strip unmurked. A first run of the pass (`uMurkPass`,
+  `RunMurkFill`) writes each floored water pixel's depth along the normal into a
+  mip chain, which a floorless pixel reads at a coarse level; the crack fill takes
+  only a depth behind the water. And `PresentFs` upsamples the pass by the surface
+  under each pixel (`ssrAt`), with the surface buffer at the render scale while the
+  pass runs and the depth on unit 4. The eleventh diff in the patch file. See "A
+  halo round the pier's pillars" in `docs/RENDERING.md`.
   `GlCore.RenderNormals` became `RenderSurfaces` and runs once for both passes,
   timed with the occlusion pass when that runs. New profiler sections (`Surfaces`,
   `Ssr`) and `GpuWork.Reflections`; the probe attaches a second target to the pass

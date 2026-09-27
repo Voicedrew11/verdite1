@@ -30,12 +30,69 @@ internal static class GlShaders
         // rectangle; skipped rather than blended with zero when it is off.
         uniform sampler2D uSsr;
         uniform float uSsrOn;
+        // The target's depth. The pass runs coarser than the picture, and a plain
+        // bilinear read spread the murk's edge over whatever stood in front of the
+        // water, and that thing's empty texels over the water beside it; with the
+        // surface buffer, drawn at the render scale while the pass runs, it says
+        // what each of the pass's texels was computed from.
+        uniform sampler2D uSsrDepth;
         // How much the occlusion reaches each material: the surface buffer's id and
         // row 2 of SurfaceMaterial's table, whose green is the share taken off.
         uniform sampler2D uSurface;
         uniform sampler2D uMatTable;
         uniform float uAoMatOn;
         out vec4 oColor;
+
+        // What the reflection pass computed at uv from: the surface there (its
+        // material and view depth), or material 0 where the pass writes nothing --
+        // no surface, or one the depth buffer shows is behind an opaque one. A
+        // crack between two water texels is water, as the pass takes it.
+        vec2 ssrKey(vec2 uv) {
+            vec2 tt = (uOrigin + uv * uSize) / uTexSize;
+            vec4 s = texture(uSurface, tt);
+            int m = int(s.a + 0.5);
+            if (m != 2) {
+                vec2 tx = 1.0 / uTexSize;
+                vec4 a0 = texture(uSurface, tt - vec2(tx.x, 0.0)), a1 = texture(uSurface, tt + vec2(tx.x, 0.0));
+                vec4 b0 = texture(uSurface, tt - vec2(0.0, tx.y)), b1 = texture(uSurface, tt + vec2(0.0, tx.y));
+                if (int(a0.a + 0.5) == 2 && int(a1.a + 0.5) == 2) { s.b = 0.5 * (a0.b + a1.b); m = 2; }
+                else if (int(b0.a + 0.5) == 2 && int(b1.a + 0.5) == 2) { s.b = 0.5 * (b0.b + b1.b); m = 2; }
+            }
+            if (m <= 0 || m >= 256 || s.b * 65536.0 <= 1.0) return vec2(0.0);
+            float d = texture(uSsrDepth, tt).r;
+            if (d > 0.0 && d < 1.0 && d < s.b * 0.99 - 8.0 / 65536.0) return vec2(0.0);
+            return vec2(float(m), s.b);
+        }
+
+        // The pass's four texels around this pixel, each weighed as bilinear only
+        // when it was computed from this pixel's surface (the same material, the
+        // depth within 10%); with none, the nearest such in depth.
+        vec4 ssrAt(vec2 uv) {
+            vec2 key = ssrKey(uv);
+            if (key.x == 0.0) return vec4(0.0);
+            vec2 sz = vec2(textureSize(uSsr, 0));
+            vec2 f = uv * sz - 0.5;
+            vec2 i0 = floor(f);
+            vec2 fr = f - i0;
+            vec4 sum = vec4(0.0);
+            float wsum = 0.0, best = 1e9;
+            ivec2 bestT = ivec2(clamp(floor(uv * sz), vec2(0.0), sz - 1.0));
+            for (int k = 0; k < 4; k++) {
+                vec2 o = vec2(k & 1, k >> 1);
+                vec2 ik = clamp(i0 + o, vec2(0.0), sz - 1.0);
+                vec2 kk = ssrKey((ik + 0.5) / sz);
+                if (kk.x != key.x) continue;
+                float diff = abs(kk.y - key.y) / max(min(kk.y, key.y), 1e-5);
+                if (diff < best) { best = diff; bestT = ivec2(ik); }
+                if (diff < 0.1) {
+                    float bw = mix(1.0 - fr.x, fr.x, o.x) * mix(1.0 - fr.y, fr.y, o.y);
+                    sum += texelFetch(uSsr, ivec2(ik), 0) * bw;
+                    wsum += bw;
+                }
+            }
+            return wsum > 1e-4 ? sum / wsum : texelFetch(uSsr, bestT, 0);
+        }
+
         void main() {
             vec2 t = (uOrigin + vUv * uSize) / uTexSize;
             vec3 c = texture(uVram, t).rgb;
@@ -51,7 +108,7 @@ internal static class GlShaders
                 c *= ao;
             }
             if (uSsrOn > 0.5) {
-                vec4 r = texture(uSsr, vUv);
+                vec4 r = ssrAt(vUv);
                 c = c * (1.0 - r.a) + r.rgb;
             }
             oColor = vec4(c, 1.0);
@@ -565,6 +622,15 @@ internal static class GlShaders
         // runs through it, surface to the opaque floor behind. 0 is off.
         uniform float uMurkDist;
         uniform vec3  uMurkColor;
+        // Water with no floor drawn under it (the cells along the pier) takes its
+        // depth from the water around it: a first run of this program with
+        // uMurkPass 1 writes each water pixel's depth to its floor, measured along
+        // the surface's normal, and a weight, and the mip chain of that is read at
+        // the finest level with any weight. 0 in uMurkFillOn: the sky's full run.
+        uniform int   uMurkPass;
+        uniform int   uMurkFillOn;
+        uniform int   uMurkFillLods;
+        uniform sampler2D uMurkFill;
         // SurfaceMaterial's table, by id: row 0 is reflectivity, F0 and roughness.
         uniform sampler2D uMatTable;
         // The game's depth cue, off the GTE: IR0 = (DQA * H/SZ + DQB) / 4096, and
@@ -890,14 +956,33 @@ internal static class GlShaders
                     vec2 tx = 1.0 / uTexSize;
                     float n0 = texture(uDepth, tc(vUv) - vec2(tx.x, 0.0)).r, n1 = texture(uDepth, tc(vUv) + vec2(tx.x, 0.0)).r;
                     float n2 = texture(uDepth, tc(vUv) - vec2(0.0, tx.y)).r, n3 = texture(uDepth, tc(vUv) + vec2(0.0, tx.y)).r;
-                    float nd = 1.0;
-                    if (n0 > 0.0) nd = min(nd, n0);
-                    if (n1 > 0.0) nd = min(nd, n1);
-                    if (n2 > 0.0) nd = min(nd, n2);
-                    if (n3 > 0.0) nd = min(nd, n3);
+                    // Only a depth behind the water: beside something standing
+                    // in it, the nearest is that thing, and the run came out 0.
+                    float nd = 1.0, zw = zs / FAR;
+                    if (n0 > zw) nd = min(nd, n0);
+                    if (n1 > zw) nd = min(nd, n1);
+                    if (n2 > zw) nd = min(nd, n2);
+                    if (n3 > zw) nd = min(nd, n3);
                     if (nd < 1.0) d = nd;
                 }
-                float run = (d <= 0.0 || d >= 1.0) ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
+                bool floorless = d <= 0.0 || d >= 1.0;
+                float run = floorless ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
+                float cv = max(abs(dot(normalize(p), octDecode(s.rg))), 0.02);
+                if (uMurkPass != 0) {
+                    oColor = floorless ? vec4(0.0) : vec4(run * cv, 1.0, 0.0, 0.0);
+                    return;
+                }
+                if (floorless && uMurkFillOn != 0) {
+                    // Coarse and blended between levels, so a sliver of something
+                    // standing in the water does not lend its short run to the
+                    // water round it, and the level chosen leaves no edge.
+                    for (int i = 0; i <= 16; i++) {
+                        float lod = float(uMurkFillLods - 4 + i);
+                        if (lod > float(uMurkFillLods)) break;
+                        vec2 f = textureLod(uMurkFill, vUv, lod).rg;
+                        if (f.y > 0.25) { run = f.x / f.y / cv; break; }
+                    }
+                }
                 gMurk = 1.0 - exp(-run / uMurkDist);
                 gMurkCol = fogTo(uMurkColor, fogKeep(zs));
             }
