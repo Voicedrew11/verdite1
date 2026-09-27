@@ -1267,6 +1267,18 @@ Four files in the directory have no entry below:
   (JP) is such a disc. **Recompiler only.** See "The recompiler config" in
   `docs/KF1.md`.
 
+- `0084-ram-watch.patch` — a diagnostic: `Memory/RamWatch.cs`. `KF2_RAM_WATCH=`
+  a list of words; the first store to each from every distinct recompiled routine
+  prints that routine's managed call chain, which names the writer of a word
+  written through a pointer, where a static search finds nothing. A test in
+  `PSMemory.WriteU8/16/32` behind a `static readonly` the JIT folds away. **No
+  recompile.** See "Frame pacing" in `docs/KF1.md`.
+
+- `0085-script-mask.patch` — `Controller.ScriptMask`, ANDed into `Controller.State`
+  at the end of every input poll. A script that wrote `State` lost the race to the
+  poll `BiosB.PadRead` makes before each pad read. **No recompile.** See "Scripted
+  input reaches the game now" in `docs/KF1.md`.
+
 `0007`, `0008` and `patches/EndingHold.cs` are the shape to keep in mind
 generally: **anything the runtime refreshes only at `VSync` is invisible to a
 game that stops calling `VSync`**, and that failure mode is always silent.

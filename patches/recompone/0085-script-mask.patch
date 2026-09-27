@@ -1,0 +1,31 @@
+0085: Controller.ScriptMask. See "Scripted input reaches the game now" in docs/KF1.md.
+
+diff --git a/tools/RecompOne/RecompOne.Runtime/Hardware/Controller.cs b/tools/RecompOne/RecompOne.Runtime/Hardware/Controller.cs
+index 2a1095f..a8c9037 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Hardware/Controller.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/Controller.cs
+@@ -23,6 +23,12 @@ public static class Controller
+     public static bool Analog2;
+ 
+     public static ushort State = 0xFFFF;
++
++    //0085. Buttons a script holds down (active low, like State): ANDed into State
++    //every time the host input is polled, so a scripted press survives the poll
++    //that a pad read makes first (BiosB.PadRead pumps input before it reads).
++    //Writing State directly lost the race to that poll on every read.
++    public static volatile ushort ScriptMask = 0xFFFF;
+     public static byte RightX = 0x80;
+     public static byte RightY = 0x80;
+     public static byte LeftX = 0x80;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs b/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs
+index 8d2bb4c..3a0dba2 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs
+@@ -183,6 +183,7 @@ internal static unsafe class InputManager
+         PollGamepadEvents();
+         PollKeyboard();
+         PollGamepads();
++        Controller.State &= Controller.ScriptMask; //0085
+         Controller.Connected2 = _pad1 != null || HasAnyKey(ConfigManager.Game.Keys2);
+     }
+ 

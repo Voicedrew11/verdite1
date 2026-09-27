@@ -11,11 +11,12 @@ Everything else under `docs/` was written against King's Field II. Its
 *addresses* do not, and every one of them names a routine in a different game.
 
 **Status.** Boots, plays the attract sequence and the title, starts a New Game and
-runs the first area at the game's own 20 fps. Perspective correction, sub-pixel
-positions, the Z-buffer, ambient occlusion, true colour, anisotropic filtering,
-widescreen and the audio quality settings all engage on KF1's geometry (measured,
-below). **The picture has not been looked at by eye** — every number here is a
-counter.
+runs the first area. **It draws at 60 fps (any rate up to 240) with the world at
+the game's own 20**, the view, the creatures and the objects carried between
+ticks. Perspective correction, sub-pixel positions, the Z-buffer, ambient
+occlusion, true colour, anisotropic filtering, widescreen and the audio quality
+settings all engage on KF1's geometry (measured, below). **The picture has not
+been looked at by eye** — every number here is a counter.
 
 ## The disc
 
@@ -147,6 +148,130 @@ correct by the accident of the layout. **A longjmp anywhere else in this game wo
 not be**; there are none (two `jal` sites to the thunk in each executable, both
 here).
 
+## The main loop
+
+`func_800146B8` sets the game up and runs the loop at `0x8001482C`:
+
+| stage | routine | what (measured with `KF2_STAGE_PROBE=1`, standing in `KF/B1`) |
+|---|---|---|
+| A | `func_80018880` | 0.16 ms; the player and the pad (reads the rotation at `0x800A083C`) |
+| B | `func_80017E3C` | copies the player's position (`0x800A0824`, VECTOR) and rotation (`0x800A0838`, SVECTOR) into the camera blocks `0x800650A0`/`0x80065098` |
+| C, D | `func_8003303C`, `func_8002CAD4` | copy the camera into two modules' own copies (`0x8009587C`, `0x8006E8B8`) |
+| E-H | `func_80030818`, `func_80031CC8`, `func_8003A760`, `func_8003596C` | logic; none projects a vertex or draws |
+| I | `func_8001FDE4` | **the renderer**: every projection in the frame and the one `DrawOTag`, 1.5 ms |
+| gate | `func_800149F4` | spins about 48 ms until the vblank counter is three past the last frame's |
+
+then a check of the player's cell for an area change (`0x800A078D` + `0xBD`/`0xBE`).
+**The renderer is one function, called with the camera as arguments**, which is
+what made frame pacing here much smaller than King's Field II's. It is also
+called by eight modal loops (doors, menus, the area load) with `a0 = a1 = 0`,
+which draws from the camera it last stored, followed by the same gate.
+
+Inside it, in order: `func_8001C184` (the camera block, below), `func_8001BFB8`
+(clear the ordering table), `func_8001E83C` (**the map walk**, 1,169 projections a
+frame at the start), `func_8001F218` (**the model walk**, below), `func_8001E230`
+(three small 3D pieces, 5 projections), `func_8001C050` (**the flip**:
+`DrawOTag`, `PutDrawEnv`, `PutDispEnv` and a `VSync`, so every picture presents
+through `VSync`).
+
+**The camera block** `func_8001C184` copies a non-null position into its store at
+`0x80095744` (x, y, z) and the map cell it lies in (x/2000, z/2000) into
+`0x8009575C`/`5E`, a non-null rotation into `0x80095754`, and builds its matrices
+(`0x800956A0`, and a pitch-only one at `0x800956C0`) from the store. Flipping
+either of the first two rotation halfwords by half a turn for the length of the
+renderer call took its projections from 27,161 to 2,740 and 2,540 a second: the
+renderer builds its view from that store and nothing else.
+
+**The model walk** `func_8001F218` runs five tables through the visible-cell map at
+`*(0x80095860)` (width, height, origin, then a byte per cell):
+
+| base | entries × stride | live when | position | submitter |
+|---|---|---|---|---|
+| `0x8006EDE0` | 190 × 44 | `+0 < 0x85` | cell at `+2`/`+4` | `func_8001EBB8` |
+| `0x8006C4B8` | 128 × 72 (objects) | `+6 == 1` | int32 at `+0x1C`, rotation at `+0x2C` | `func_8001E9A4` |
+| `0x8009505A` | `*0x80095090` × 24 | — | int32 at `+0x42`, `+0x4A` | `func_8001ED90` |
+| `0x8009D040` | 48 × 60 (creatures) | `+0 != 0xFF`, `+3 != 0xFF` | int32 at `+0x0C`, rotation at `+0x1C`, scale at `+0x24` | `func_8001EEDC` |
+| `0x8009DB88` | 8 × 68 | `+0 == 1` | cell at `+0x1C`/`+0x1E` | `func_8001F0C4` |
+
+The submitters take the position relative to the camera store, so a model's
+matrix is built from those fields at draw time.
+
+## Frame pacing
+
+King's Field II's frame pacing had to put the world on a tick clock of the port's
+own and gate every stage that held per-tick state, because its gate and its world
+were tangled together. **King's Field's are not**: the world is stages A–H, the
+picture is stage I, and the gate is a wait at the end. So `patches/GateRedraw.cs`
+**replaces the gate with the same wait, and redraws while it waits**: it polls the
+interrupts (so the vblank handler keeps counting), returns when the counter is
+three past the last frame's, exactly as the game would, and in between calls the
+renderer again whenever a frame is due and it would land clear of the next tick.
+**The logic never runs at any rate but its own**, so there is no tick clock to
+keep in step, nothing to gate, and no rate at which the game speeds up.
+
+Only the main loop's gate redraws (return address `0x800148D0`), and only after
+the renderer has run since the last gate. The modal loops keep the original
+wait; they draw at 20.
+
+Measured (`KF2_FPS_PROBE=1`):
+
+```
+KF2_FPS=60   60.0 drawn (40.0 redraws), 20.0 ticks/s, 45.7 ms spun per tick, presents 60
+KF2_FPS=144  140.0 drawn (120.0 redraws), 20.0 ticks/s, 41.0 ms spun per tick
+KF2_FPS=20   20 frames/s, the game untouched
+```
+
+144 draws 140 because a redraw is not placed within half a frame of the next tick:
+seven fit in a tick. The picture presents through the renderer's own `VSync` (in
+its flip), 60 a second at 60 fps; the host ceiling is set to twice the target so
+it never undercuts it. **60 is the default**; Video ▸ Frame pacing has the rate
+slider and the smoothing tick (`patches/settings/FrameRatePage.cs`).
+
+**What a redraw changes.** `KF2_FPS_PROBE=2` diffs guest RAM across 200 redraws:
+93 words in 40 runs. The double-buffer state (`0x80070E98`, `0x80090EBC`, written
+by the frame-begin and flip routines) moves every picture, as it must; the vblank
+counter, the sound tick's jmp_buf, private stack and save area, and the exception
+stack move because interrupts are delivered during the redraw's `VSync`. Three
+words (`0x8009522C`, `0x800597D4`, `0x800C2610`) move with no CPU store at all
+(`KF2_RAM_WATCH` saw none), so they are written by a DMA or an HLE path, not by
+the renderer. **The renderer steps no game state of its own**, which is the
+condition for redrawing it being safe.
+
+### The view is carried between ticks
+
+`patches/ViewCarry.cs`, around every main-loop render and every redraw: it writes
+`lerp(prev, cur, phase)` into the camera block's store, calls the renderer with
+null arguments so it draws from the store, and puts back afterwards what the
+game's own call would have left there (and the cell the camera block would have
+derived). `prev` and `cur` are the camera at the last two ticks, sampled on each
+tick's first picture; `phase` is the time since that picture over 50 ms. It
+interpolates rather than extrapolates, for King's Field II's reason (a damped turn
+overshoots), so the picture trails the game by one tick. The angles take the
+shortest way round their 12-bit circle; a step of more than 4000 units in a tick,
+or a gap of more than 250 ms since the last main-loop picture, starts again from
+the new camera. Measured walking: `60/60 renders carried, mean phase 0.33, move
+181 u/tick`.
+
+### Creatures and objects
+
+`patches/ObjectCarry.cs` does the same for the two tables that move in world
+units, the creatures and the objects, around the model walk: a slot live and of
+the same model at both ticks, and not moved further than 2000 units, is drawn at
+`lerp(prev, cur, phase)` for position and rotation and put back afterwards.
+Measured at the start of `KF/B1`: 3-4 live slots, 1.2-3.0 of them carried a
+picture. **Their animation (the model's pose) is still stepped at 20**; the
+creature entry's `+4` names the animated path, which is where that would start.
+
+## Scripted input reaches the game now
+
+`KF2_AUTOPAD` wrote `Controller.State`, and `BiosB.PadRead` (`B(16)`, how this
+game reads the pad) polls the host input first — which rewrote `State` from the
+keyboard before the game read it. In the title, where the game reads the pad many
+times a second, a press sometimes landed; in play, where stage A reads it once a
+tick, the player never moved. The script holds its buttons through
+`Controller.ScriptMask`, which the input poll ANDs into the keyboard's state
+(`0085`).
+
 ## What the enhancements measure
 
 In the first area, standing still at New Game (`KF2_*_PROBE=1`):
@@ -187,7 +312,8 @@ Not installed — each needs King's Field's own routine found first:
 
 | feature | what it needs in KF1 |
 |---|---|
-| `FramePacing` and the four smoothers, `LoopPacing`, `MenuPacing`, `LoadPacing`, `SpriteAnim`, `TintHold` | the main loop's stages and the frame gate (`func_800149F4`, above), the camera and the object tables |
+| `FramePacing`, `FrameSmoothing`, `ObjectSmoothing` | **done differently**: `GateRedraw`, `ViewCarry`, `ObjectCarry` (above) |
+| `AnimSmoothing`, `FluidSmoothing`, `LoopPacing`, `MenuPacing`, `LoadPacing`, `SpriteAnim`, `TintHold` | the creatures' pose, the scrolling textures, and the modal loops, which keep the game's 20 |
 | `PolyAssembler`, `TileWalk`, `ModelWalk`, `Stage13`, `CameraBlock` | KF1's renderer, from the map tiles to the model submitter |
 | `PerPixelLighting`, `EvenFog`, `Reflections`, `Murk`, `Waves`, `PlanarWalk`, `Retained*`, `Remaster.*` | the C# assemblers above (they record what these read) |
 | `CullCone`, `ViewClip`, `CullGrid`, `PrimBuffer` | KF1's cull and its primitive buffers |
@@ -210,6 +336,8 @@ is what gets through reliably:
 ```bash
 KF2_AUTOPAD=8:Start:200,9.5:Start:200,11:Start:200,12.5:Start:200,14:Start:200,15.5:Start:200,17:Cross:200,18.5:Cross:200
 ```
+
+In the area, Up walks forward (the D-pad walks and turns, as in King's Field II).
 
 That starts a New Game in `KF/B1` about 20 s after boot. With `KF2_LOG=sdk`, the
 read of `MIXB.DAT` (`CdRead … lba=2923`) is the last thing the area load does.

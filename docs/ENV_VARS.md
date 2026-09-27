@@ -15,7 +15,13 @@ the game polls `PAD_dr` hundreds of thousands of times a second.
 KF2_LOG=bios,cd,gpu,dma,sdk,spu,mdec  # or KF2_LOG=all; wired up in Program.cs
 KF2_CDTRACE=1                          # stack trace on first CD register access (patch 0002)
 KF2_AUTOPAD=8:Start:400,20:Circle:200  # scripted pad input: seconds:button:holdMs
-KF2_FPS=120                            # 60 (default), any number, or off; see "Any frame rate"
+KF2_FPS=120                            # King's Field: 60 (default), 20..360, or off (the game's own 20); see "Frame pacing" in KF1.md
+KF2_FPS_PROBE=2                        # King's Field: also diff guest RAM across 200 redraws, for state the renderer steps
+KF2_STAGE_PROBE=1                      # King's Field: the main loop's stages per second: calls, ms, projections, DrawOTag calls
+KF2_STAGE_PROBE=flip:2                 # also turn the renderer's camera halfword at 0x80065098+N by half a turn for its call
+KF2_STAGE_PROBE_FUNCS=8001E83C+8001F218  # measure these routines instead of the stages (up to 15)
+KF2_RAM_WATCH=8009522C,800597D4        # name the recompiled routine behind the first store to each word (0084)
+KF2_AUTOPAD_FROM=game                  # King's Field: start KF2_AUTOPAD's clock at GAME.EXE's load (OPEN.EXE's by default)
 KF2_TICKRATE=30                        # ticks a second the world runs at (20, and no longer a setting)
 KF2_FPS_GATE=80037C0C+8002A550+80040348+80046A60+8004910C+80033FBC+8002DC78  # what is ticked
 KF2_FPS_LOGIC=full                     # no gating; scale the movement deltas instead
