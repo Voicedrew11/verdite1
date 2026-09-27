@@ -453,6 +453,14 @@ Kf2.ObjectCarry.Configure(Environment.GetEnvironmentVariable("KF2_SMOOTH_OBJECTS
                           Environment.GetEnvironmentVariable("KF2_SMOOTH_OBJECTS_PROBE"));
 Kf2.ObjectCarry.Install();
 
+// Mouse look: Escape captures the pointer; the motion is spent into the player's
+// yaw and pitch at the end of stage A, and shown by the view before the tick.
+//
+//     KF2_MOUSE=0  KF2_MOUSE_TURN=1.0  KF2_MOUSE_LOOK=1.0  KF2_MOUSE_INVERTY=1
+//     KF2_MOUSE_BUTTONS=Square,Triangle,Cross  KF2_MOUSE_KEY=Escape  KF2_MOUSE_LEAD=0
+Kf2.MouseLook.Configure();
+Kf2.MouseLook.Install();
+
 // King's Field's main loop, stage by stage: calls, time, GTE projections and
 // DrawOTag calls per stage, for deciding what frame pacing may gate.
 //

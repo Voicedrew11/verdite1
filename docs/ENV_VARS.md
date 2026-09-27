@@ -211,6 +211,8 @@ KF2_ANALOG_TURN=1.0 KF2_ANALOG_MOVE=1.0 KF2_ANALOG_DEADZONE=0.15  # its sensitiv
 KF2_ANALOG_INVERTY=1 KF2_ANALOG_PROBE=1  # look-Y inversion, and the control-state report
 KF2_KEYS=stock                           # RecompOne's own key bindings; the port ships WASD
 KF2_MOUSE=0                              # mouse look off (it is on by default; Escape captures the pointer)
+KF2_MOUSE_SYNTH=30                       # King's Field: pretend the pointer is captured and moving 30 px right a tick (a test)
+KF2_VSYNC_OUTSIDE=free                   # King's Field: a VSync outside the paced renderer returns at once again (it waits for its vblanks by default)
 KF2_MOUSE_TURN=1.0 KF2_MOUSE_LOOK=1.0 KF2_MOUSE_INVERTY=1   # its sensitivities and look-Y
 KF2_MOUSE_BUTTONS=Square,Triangle,Cross  # left, right, middle, as pad buttons
 KF2_MOUSE_KEY=Escape                     # the key that captures and releases

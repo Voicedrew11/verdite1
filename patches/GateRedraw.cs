@@ -134,6 +134,9 @@ public static class GateRedraw
         if (gate == null) return false;
         const BindingFlags f = BindingFlags.Public | BindingFlags.Static;
         HookManager.AddReplace(_self, gate, typeof(GateRedraw).GetMethod(nameof(GateReplace), f)!);
+        foreach (var (ov, addr) in SdkAddr.VSync)
+            if (SymbolRegistry.Resolve(ov, null, addr) is { } vsync)
+                HookManager.AddPre(_self, vsync, typeof(GateRedraw).GetMethod(nameof(BeforeVSync), f)!);
         HookManager.Commit();
         bool ok = HookAttach.Installed(gate);
         Console.WriteLine($"[KF1] frame pacing: gate {(ok ? "hooked" : "NOT hooked")}");
@@ -222,6 +225,43 @@ public static class GateRedraw
     static readonly Dictionary<uint, int> _changed = new();
     static long _censusRedraws;
 
+    /// <summary>
+    /// A VSync the gate does not pace waits for its vblanks, as the hardware's does.
+    ///
+    /// The port's VSync returns at once (0021's non-blocking timeline), which is
+    /// right for the renderer's own call in the main loop -- the gate paces those
+    /// pictures -- and wrong for every other loop that times itself by VSync: the
+    /// menus' flip (<c>func_8002AC34</c>), a 75-vblank wait (<c>func_80032B5C</c>),
+    /// the CD file-system waits. Those ran at the host ceiling. So a VSync(0) or
+    /// VSync(n) outside a paced render waits until the vblank count is 1 or n past
+    /// the last VSync's, delivering interrupts as it waits. See "VSync outside the
+    /// renderer blocks" in docs/KF1.md.
+    /// </summary>
+    public static void BeforeVSync(CpuContext c, IMemory m)
+    {
+        int mode = (int)c.A0;
+        if (mode < 0 || mode == 1) return;             // queries, not waits
+        if (ViewCarry.InPacedRender || !_blockOutside) { _lastVSync = Interrupts.VBlankCount; return; }
+
+        int target = _lastVSync + Math.Max(1, mode);
+        int now = Interrupts.VBlankCount;
+        if (now - target > 8) target = now + 1;       // a long gap: wait for the next one only
+        while (Interrupts.VBlankCount < target)
+        {
+            var snap = c.Snapshot();
+            Interrupts.PollNow(c, m);
+            c.Restore(snap);
+            if (Interrupts.MsToNextVBlank > 2.0) Thread.Sleep(1);
+            else Thread.SpinWait(64);
+        }
+        _lastVSync = Interrupts.VBlankCount;
+        _blockedVSyncs++;
+    }
+
+    static int _lastVSync;
+    static long _blockedVSyncs;
+    static readonly bool _blockOutside = Environment.GetEnvironmentVariable("KF2_VSYNC_OUTSIDE") != "free";
+
     static void Redraw(CpuContext c, IMemory m)
     {
         if (_census && m is PSMemory pm)
@@ -280,9 +320,9 @@ public static class GateRedraw
         Console.WriteLine($"[KF1] fps: {_renders / secs:0.0} drawn ({_redraws / secs:0.0} redraws), " +
                           $"{_ticks / secs:0.0} ticks/s, {_spinMs / Math.Max(1, _ticks):0.0} ms spun per tick, " +
                           $"{_modalGates / secs:0.0} modal gates/s, target {TargetFps:0.#}, " +
-                          $"presents (VSync calls) {RecompOne.Runtime.Sdk.LibEtc.VSyncCalls - _vsyncMark}");
+                          $"presents (VSync calls) {RecompOne.Runtime.Sdk.LibEtc.VSyncCalls - _vsyncMark}, {_blockedVSyncs / secs:0.0} blocking VSyncs/s");
         _vsyncMark = RecompOne.Runtime.Sdk.LibEtc.VSyncCalls;
-        _renders = _redraws = _ticks = _modalGates = 0;
+        _renders = _redraws = _ticks = _modalGates = _blockedVSyncs = 0;
         _spinMs = 0;
         _windowStart = now;
     }

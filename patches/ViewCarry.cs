@@ -76,6 +76,10 @@ public static class ViewCarry
     /// carried, whether it is a tick's first, and how far across the tick it is.
     /// <see cref="ObjectCarry"/> reads these inside the call.</summary>
     public static bool Carrying { get; private set; }
+
+    /// <summary>True for the length of a main-loop render or a redraw: the
+    /// pictures <see cref="GateRedraw"/> paces, whose VSync must not block.</summary>
+    public static bool InPacedRender { get; private set; }
     public static bool TickRender { get; private set; }
     public static double Phase { get; private set; }
 
@@ -160,6 +164,7 @@ public static class ViewCarry
     {
         bool mainLoop = c.RA == MainLoopRenderReturn;
         GateRedraw.NoteRender(mainLoop);
+        InPacedRender = mainLoop || GateRedraw.InRedraw;
         _restore = false;
         Carrying = false;
         if (!Enabled || !GateRedraw.Redrawing) return;
@@ -193,6 +198,22 @@ public static class ViewCarry
             Roll = LerpAngle(_prev.Roll, _cur.Roll, phase),
         };
 
+        // The mouse leads the tick: its share of the last tick's turn is shown
+        // whole rather than interpolated, and the motion not yet spent is shown
+        // now. See MouseLook.
+        if (MouseLook.Captured && MouseLook.Lead)
+        {
+            var (turn, look) = MouseLook.Pending;
+            carried.Yaw = (short)(ushort)(carried.Yaw + (int)Math.Round(MouseLook.SpentYaw * (1.0 - phase)) + turn);
+            // Inside the look range only: a fall or a hit tips the view past it,
+            // and that is the game's to show.
+            if (Math.Abs((int)carried.Pitch) <= 0xBF)
+            {
+                int pitch = carried.Pitch + (int)Math.Round(MouseLook.SpentPitch * (1.0 - phase)) + look;
+                carried.Pitch = (short)Math.Clamp(pitch, -0xBF, 0xBF);
+            }
+        }
+
         Write(m, carried);
         c.A0 = 0;
         c.A1 = 0;
@@ -215,6 +236,7 @@ public static class ViewCarry
     {
         _renders++;
         Carrying = false;
+        InPacedRender = false;
         if (_restore)
         {
             // What the game's own call leaves in the store: its camera, not ours.

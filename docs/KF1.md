@@ -262,6 +262,44 @@ Measured at the start of `KF/B1`: 3-4 live slots, 1.2-3.0 of them carried a
 picture. **Their animation (the model's pose) is still stepped at 20**; the
 creature entry's `+4` names the animated path, which is where that would start.
 
+### VSync outside the renderer blocks
+
+The port's VSync returns at once (`0021`'s non-blocking timeline). That is right
+for the renderer's own `VSync` in the main loop, since the gate paces those
+pictures, and wrong for every other loop that times itself by `VSync` — and GAME
+has several: a second flip routine used by six menu-like callers
+(`func_8002AC34`: `DrawSync`, `VSync(0)`), a 75-vblank wait (`func_80032B5C`), a
+`0x4B00`-iteration poll (`func_80032BDC`), and `CdInitFileSystem`'s four. Those
+ran at the host ceiling. `GateRedraw.BeforeVSync` now makes a `VSync(0)` or
+`VSync(n)` outside a paced render wait until the vblank count is 1 or n past the
+last `VSync`'s, delivering interrupts while it waits — the hardware's behaviour.
+The renderer's own call inside the main loop or a redraw still returns at once
+(`ViewCarry.InPacedRender`). Measured: the title still reaches the game, and play
+is unchanged (`60.0 drawn, 20.0 ticks/s, 0.0 blocking VSyncs/s`).
+`KF2_VSYNC_OUTSIDE=free` is the comparison. **Whether a menu now runs at the
+speed it did on the console has not been checked by eye.**
+
+## Mouse look
+
+`patches/MouseLook.cs`. The player's rotation is an SVECTOR at `0x800A0838`:
+**pitch at `+0`**, which stage A holds inside ±`0xBF` (about 17° either side of
+level; its look velocity is `0x800A0848`), and **yaw at `+2`**, 12 bits to the
+circle, read signed by the walking code. Escape captures the pointer; the motion
+since the last tick is added to yaw and pitch at the end of stage A (pitch
+clamped where the game clamps it), so it lands before stage B copies the player
+into the camera and before the next tick walks, as the D-pad's turn does. The
+view does not wait for it: `ViewCarry` shows the mouse's share of the last tick's
+turn whole instead of interpolating it, and adds the motion not yet spent — King's
+Field II's "The mouse leads the tick" (`docs/INPUT.md`). The three buttons press
+Square, Triangle and Cross while the pointer is captured; **which of those King's
+Field uses to attack has not been checked**, so `KF2_MOUSE_BUTTONS` may need
+reordering. 0.15° a pixel at sensitivity 1, as KF2's.
+
+Measured with a synthetic source (`KF2_MOUSE_SYNTH=30`, 30 px right a tick): the
+carried yaw steps 51 units a tick (30 × 0.15° × 4096/360 = 51.2), so the game
+takes the written yaw and the camera turns with it. **Capture, the real mouse and
+the feel are the user's to judge.** There is no settings page for it yet.
+
 ## Scripted input reaches the game now
 
 `KF2_AUTOPAD` wrote `Controller.State`, and `BiosB.PadRead` (`B(16)`, how this
@@ -317,7 +355,8 @@ Not installed — each needs King's Field's own routine found first:
 | `PolyAssembler`, `TileWalk`, `ModelWalk`, `Stage13`, `CameraBlock` | KF1's renderer, from the map tiles to the model submitter |
 | `PerPixelLighting`, `EvenFog`, `Reflections`, `Murk`, `Waves`, `PlanarWalk`, `Retained*`, `Remaster.*` | the C# assemblers above (they record what these read) |
 | `CullCone`, `ViewClip`, `CullGrid`, `PrimBuffer` | KF1's cull and its primitive buffers |
-| `Analog`, `Mouse`, `MenuMouse` | the player's movement and camera words, and the menu layout |
+| `Mouse` | **done differently**: `MouseLook` (above) |
+| `Analog`, `MenuMouse` | the player's movement words for the sticks, and the menu layout |
 | `Map*`, `AutoReload`, `AutoStart`, `AgentBeacon`, `AgentServer`, `AreaWarp`, `HitGuard`, `MenuWorld`, `MessageText` | the game's state (area, HP, save slots, menus) |
 | `PositionalAudio` | the game's 3D sound routine |
 | `CardIcon` | reads KF2's icon out of `FDAT.T`; KF1's is probably `KF/TIM/ICO1.TIM` |
