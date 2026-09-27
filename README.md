@@ -8,13 +8,17 @@ Verdite2 is a PC port of King's Field (US) built atop of the [RecompOne](https:/
 
 ## Features
 
-- Widescreen support (16:9, 16:10, 21:9), with changed culling behaviour
+- Widescreen support (16:9, 16:10, 21:9), with changed culling behavior
 - Perspective-correct textures and corrected vertex wobbling
 - Anisotropic filtering
 - Ambient occlusion
+- Z-buffer
 - 24-bit colour
 - 60+ fps
 - Consistent game speed
+- Per-pixel lighting
+- Smooth fog
+- Enhanced audio quality
 - Automatic save reload after death
 - Keyboard and mouse support
 - Modern Twin-stick FPS controls
@@ -30,9 +34,7 @@ A dump of the North American PlayStation release (`SLUS-00158`) in `.cue` / `.bi
 
 ## Mods
 
-Community mods live in [Acranon/verdite2-mods](https://github.com/Acranon/verdite2-mods): a
-separate run key, jumping, quick save, gear comparison and more. Each one is switched on
-and off in the game's **Mods** panel; see that repo for installing.
+A collection of mods by [@Acranon](https://github.com/Acranon) can be found in [Acranon/verdite2-mods](https://github.com/Acranon/verdite2-mods).
 
 ## Credits
 
