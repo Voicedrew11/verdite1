@@ -58,6 +58,12 @@ Kf1.FramePacing.Configure(Environment.GetEnvironmentVariable("KF1_FPS"),
 Kf1.FramePacing.Install();
 Kf1.RateCensus.Install();
 
+// The camera carried between ticks, whenever pacing is on (KF1_SMOOTH=0 compares).
+// See "The camera carried" in docs/SMOOTHING.md.
+Kf1.ViewSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH"),
+                            Environment.GetEnvironmentVariable("KF1_SMOOTH_PROBE"));
+Kf1.ViewSmoothing.Install();
+
 // VSync calls outside the renderer wait a real vblank, as the console's did. On by
 // default; KF1_VBLANKPACING=0 compares against the runtime's clock. See "Menus wait
 // for a vblank" in docs/DEVELOPMENT.md.

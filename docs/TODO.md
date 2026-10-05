@@ -22,8 +22,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
 ## Phase 3: the enhancements
 
 - **Frame pacing** (2026-10-05): built and measured, off until judged
-  (`KF1_FPS`); menus wait a vblank under it. Nothing is carried between ticks
-  yet, so the picture changes 20 times a second at any rate.
+  (`KF1_FPS`); menus wait a vblank under it.
+- **The camera carried between ticks** (2026-10-05): built and measured, on
+  under pacing (`docs/SMOOTHING.md`). Creatures, objects and their animation are
+  not carried yet.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

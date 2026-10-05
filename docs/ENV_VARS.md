@@ -19,3 +19,5 @@ switch is added.
 | `KF1_VBLANKPACING` | on | `0`: menus' `VSync` calls on the runtime's clock, a comparison |
 | `KF1_VBLANKPACING_PROBE` | off | `1`: a line a second of held `VSync` calls |
 | `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
+| `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |
+| `KF1_SMOOTH_PROBE` | off | `1`: a view-smoothing line a second |

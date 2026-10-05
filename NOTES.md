@@ -38,6 +38,7 @@ in `docs/TODO.md`.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build, run and diagnose.
 - [docs/RECOMPILATION.md](docs/RECOMPILATION.md) — config, overlays, function maps, SDK addresses.
 - [docs/GAME_INTERNALS.md](docs/GAME_INTERNALS.md) — the game's own addresses and routines.
+- [docs/SMOOTHING.md](docs/SMOOTHING.md) — drawing between ticks: what is carried, and how.
 - [docs/ENV_VARS.md](docs/ENV_VARS.md) — every `KF1_*` switch.
 - [docs/TODO.md](docs/TODO.md) — next steps: the Phase 2 bring-up.
 
