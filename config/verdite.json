@@ -1,0 +1,6 @@
+{
+  "disc": "disc/KingsField1.cue",
+  "recompilerConfig": "config/kf1.json",
+  "funcmaps": "config/funcmaps",
+  "sdkOverlays": ["open", "game"]
+}

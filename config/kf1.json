@@ -1,0 +1,112 @@
+{
+  // King's Field (NTSC-J, SLPS-00017) -- the first King's Field, Japan only.
+  // From Software, 1994.
+  // Config schema: tools/RecompOne/RecompOne.Recompiler/Config/ConfigLoader.cs
+  // JSON comments and trailing commas are accepted by the loader.
+  //
+  // NUMBER BASES DIFFER between this file and the CLI:
+  //   here : "base" is a hex STRING; "size"/"skip"/"offset"/"lba" are decimal numbers.
+  //   CLI  : -size/-skip/-offset are HEX; -lba is decimal.
+  "game": {
+    "id": "SLPS-00017",
+    "name": "KingsField1",
+    "output": "../generated"
+  },
+
+  "cue": "../disc/KingsField1.cue",
+
+  // The disc has no SYSTEM.CNF, so the BIOS default PSX.EXE boots (fork 0090):
+  // a 2 KiB loader stub at 0x80010000 that runs OPEN.EXE, then GAME.EXE, in a loop.
+  "funcMap": "funcmaps/main.json",
+
+  // OPEN.EXE and GAME.EXE both load at 0x80012000, so they are overlays.
+  // Read as raw bytes: each needs "skip": 2048 past the PS-X EXE header, and
+  // "base" is the header's text address. Each entry point comes from its header
+  // and is declared, since the recompiler adds one only for the main executable.
+  // See "What is on the disc" in docs/RECOMPILATION.md.
+  "overlays": [
+    {
+      "name": "open",
+      "file": "OPEN.EXE",
+      "base": "0x80012000",
+      "skip": 2048,
+      "funcMap": "funcmaps/open.json",
+      "functions": [
+        { "address": "0x8001AA7C", "name": "open_entry" }
+      ]
+    },
+    {
+      "name": "game",
+      "file": "GAME.EXE",
+      "base": "0x80012000",
+      "skip": 2048,
+      "funcMap": "funcmaps/game.json",
+      "functions": [
+        { "address": "0x8003AC5C", "name": "game_entry" }
+      ]
+    }
+  ],
+
+  "stubs": [],
+  "ignored": [],
+
+  // PSY-Q entry points bound to the runtime's HLE by address: SdkPatches binds
+  // by name, and a linear sweep produces none. See "The SDK entry points" in
+  // docs/RECOMPILATION.md.
+  "patches": [
+    // ---- libetc
+    { "overlay": "open", "address": "0x800352C4", "target": "RecompOne.Runtime.Sdk.LibEtc.VSync", "mode": "replace" },
+    { "overlay": "game", "address": "0x800555E0", "target": "RecompOne.Runtime.Sdk.LibEtc.VSync", "mode": "replace" },
+
+    // ---- libcd
+    { "overlay": "open", "address": "0x8001C390", "target": "RecompOne.Runtime.Sdk.LibCd.CdInit", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001AB34", "target": "RecompOne.Runtime.Sdk.LibCd.CdSync", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001AB54", "target": "RecompOne.Runtime.Sdk.LibCd.CdReady", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001ACF8", "target": "RecompOne.Runtime.Sdk.LibCd.CdControl", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001AD5C", "target": "RecompOne.Runtime.Sdk.LibCd.CdControlF", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001ADB8", "target": "RecompOne.Runtime.Sdk.LibCd.CdControlB", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001AE34", "target": "RecompOne.Runtime.Sdk.LibCd.CdGetSector", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001AB74", "target": "RecompOne.Runtime.Sdk.LibCd.CdReadSync", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001AE54", "target": "RecompOne.Runtime.Sdk.LibCd.CdRead", "mode": "replace" },
+
+    { "overlay": "game", "address": "0x8003C570", "target": "RecompOne.Runtime.Sdk.LibCd.CdInit", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003AD14", "target": "RecompOne.Runtime.Sdk.LibCd.CdSync", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003AD34", "target": "RecompOne.Runtime.Sdk.LibCd.CdReady", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003AED8", "target": "RecompOne.Runtime.Sdk.LibCd.CdControl", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003AF3C", "target": "RecompOne.Runtime.Sdk.LibCd.CdControlF", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003AF98", "target": "RecompOne.Runtime.Sdk.LibCd.CdControlB", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003B014", "target": "RecompOne.Runtime.Sdk.LibCd.CdGetSector", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003AD54", "target": "RecompOne.Runtime.Sdk.LibCd.CdReadSync", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003B034", "target": "RecompOne.Runtime.Sdk.LibCd.CdRead", "mode": "replace" },
+
+    // ---- libgpu
+    { "overlay": "open", "address": "0x80030578", "target": "RecompOne.Runtime.Sdk.LibGpu.DrawSync", "mode": "replace" },
+    { "overlay": "open", "address": "0x800309D4", "target": "RecompOne.Runtime.Sdk.LibGpu.DrawOTag", "mode": "replace" },
+    { "overlay": "open", "address": "0x80030A2C", "target": "RecompOne.Runtime.Sdk.LibGpu.PutDrawEnv", "mode": "replace" },
+    { "overlay": "open", "address": "0x80030B4C", "target": "RecompOne.Runtime.Sdk.LibGpu.PutDispEnv", "mode": "replace" },
+
+    { "overlay": "game", "address": "0x80050894", "target": "RecompOne.Runtime.Sdk.LibGpu.DrawSync", "mode": "replace" },
+    { "overlay": "game", "address": "0x80050CF0", "target": "RecompOne.Runtime.Sdk.LibGpu.DrawOTag", "mode": "replace" },
+    { "overlay": "game", "address": "0x80050D48", "target": "RecompOne.Runtime.Sdk.LibGpu.PutDrawEnv", "mode": "replace" },
+    { "overlay": "game", "address": "0x80050E68", "target": "RecompOne.Runtime.Sdk.LibGpu.PutDispEnv", "mode": "replace" },
+
+    // ---- libcdstream
+    { "overlay": "open", "address": "0x8001D194", "target": "RecompOne.Runtime.Sdk.LibCdStream.StUnSetRing", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001D234", "target": "RecompOne.Runtime.Sdk.LibCdStream.StSetStream", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001D0EC", "target": "RecompOne.Runtime.Sdk.LibCdStream.StSetRing", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001D144", "target": "RecompOne.Runtime.Sdk.LibCdStream.StClearRing", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001D410", "target": "RecompOne.Runtime.Sdk.LibCdStream.StGetNext", "mode": "replace" },
+    { "overlay": "open", "address": "0x8001D308", "target": "RecompOne.Runtime.Sdk.LibCdStream.StFreeRing", "mode": "replace" },
+
+    { "overlay": "game", "address": "0x8003D374", "target": "RecompOne.Runtime.Sdk.LibCdStream.StUnSetRing", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003D414", "target": "RecompOne.Runtime.Sdk.LibCdStream.StSetStream", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003D2CC", "target": "RecompOne.Runtime.Sdk.LibCdStream.StSetRing", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003D324", "target": "RecompOne.Runtime.Sdk.LibCdStream.StClearRing", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003D5F0", "target": "RecompOne.Runtime.Sdk.LibCdStream.StGetNext", "mode": "replace" },
+    { "overlay": "game", "address": "0x8003D4E8", "target": "RecompOne.Runtime.Sdk.LibCdStream.StFreeRing", "mode": "replace" },
+
+    // ---- libapi
+    { "overlay": "open", "address": "0x8002FA00", "target": "RecompOne.Runtime.Sdk.LibApi.DMACallback", "mode": "replace" },
+    { "overlay": "game", "address": "0x8004FC2C", "target": "RecompOne.Runtime.Sdk.LibApi.DMACallback", "mode": "replace" },
+  ]
+}

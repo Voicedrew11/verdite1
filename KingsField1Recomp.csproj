@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <AssemblyName>KingsField1</AssemblyName>
+        <RootNamespace>KingsField1</RootNamespace>
+        <!--
+          QuickJit off, as in Verdite2: tier-up recompiles a method and MonoMod's
+          detour does not reliably follow it, so a committed hook can stop firing.
+          See "Build and run" in docs/DEVELOPMENT.md.
+        -->
+        <TieredCompilationQuickJit>false</TieredCompilationQuickJit>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="tools/RecompOne/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+    </ItemGroup>
+
+    <!--
+      generated/ and patches/ are picked up by the default globs (an explicit
+      Compile Include is NETSDK1022). Everything below is nested here but is not
+      this assembly's source: compiling it gives CS0579 from its obj/ files.
+      Verdite1.Launcher/ is the shipped executable, the opposite kind of project:
+      it builds without the disc and compiles this project's sources at first run
+      (docs/PACKAGING.md).
+    -->
+    <ItemGroup>
+        <Compile Remove="tools/**;mods/**;mcp/**;dist/**;scratch/**;Verdite1.Launcher/**;packaging/**" />
+        <EmbeddedResource Remove="tools/**;mods/**;mcp/**;dist/**;scratch/**;Verdite1.Launcher/**;packaging/**" />
+        <None Remove="tools/**;mods/**;mcp/**;dist/**;scratch/**;Verdite1.Launcher/**;packaging/**" />
+    </ItemGroup>
+
+    <!-- Verdite Core's C# compiles into this assembly as source (the remove above keeps RecompOne's own sources out). -->
+    <ItemGroup>
+        <Compile Include="tools/verdite-core/src/**/*.cs" />
+        <Using Include="Verdite.Core" />
+    </ItemGroup>
+
+</Project>

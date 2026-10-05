@@ -5,17 +5,16 @@ recompiled and running, following Verdite3's method but applied to this disc.
 
 ## Phase 2: bring-up
 
-- Use `tools/verdite-core/scripts/inspect_disc.py` and `extract_file.py` to find
-  the executables and their load bases. The earlier attempt (`kf1-port`) read no
-  `SYSTEM.CNF` on this disc, so the BIOS default `PSX.EXE` boots: check it, and
-  what the recompiler does without one.
-- Write `config/kf1.json`, declaring the overlays and their addresses.
-- Sweep a function map per executable into `config/funcmaps/`.
-- Identify the PSY-Q functions with the signature bank, and by hand where this
-  1994 library is older than the bank's.
-- Recompile.
-- Boot.
-- Reach gameplay.
+- ~~Find the executables and their load bases.~~ Done 2026-10-05: no
+  `SYSTEM.CNF`, so `PSX.EXE` boots (fork `0090`); see "What is on the disc" in
+  `docs/RECOMPILATION.md`.
+- ~~Write `config/kf1.json`; sweep the function maps; identify the PSY-Q
+  functions~~ (`VSync`, `PutDispEnv` and `DMACallback` by hand).
+- ~~Recompile. Boot.~~ 1632 functions, 42 bindings; OPEN.EXE plays the attract.
+- ~~Reach an area.~~ Three Starts reach GAME.EXE's first area, which runs at 20
+  frames a second once the interrupt poll delivers the vblanks (fork `0091`;
+  "The frame gate" in `docs/GAME_INTERNALS.md`). **Not looked at by eye.**
+- Walk, and change areas.
 - Save and load through the memory card.
 - Record the acceptance test.
 
