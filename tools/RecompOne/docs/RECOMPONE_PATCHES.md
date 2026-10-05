@@ -1685,6 +1685,14 @@ Four files in the directory have no entry below:
   with no fade and no added half is the program before.** **No recompile.**
   Measured in Verdite3's `WIDESCREEN.md` ("Render distance").
 
+- `0090-no-system-cnf.patch` — a disc with no `SYSTEM.CNF` could not be recompiled:
+  `SystemCfg.Parse` read it unconditionally. With none, the BIOS boots `PSX.EXE`
+  with TCB 4, EVENT 16 and the stack at `0x801FFF00`, the class's own defaults, so
+  `Parse` now returns them; `DiscProbe.SystemCfgBoot` answers `PSX.EXE` the same
+  way, so `--autoconfigure` names the boot file rather than guessing the first
+  executable. King's Field (`SLPS-00017`, Verdite1) has no `SYSTEM.CNF`. A disc
+  with one reads it as before. **Forces a recompile** only for such a disc.
+
 ## Retained contract additions under verification (2026-10-04)
 
 The depth-linear cue is curve 5 in `LinearDepthCue`, composed into the actual
