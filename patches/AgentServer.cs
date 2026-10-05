@@ -53,6 +53,7 @@ public static class AgentServer
         "press <button> [holdMs=150] - press a pad button; one press at a time, replaced by the next",
         "peek <addr> [bytes=16] - read guest memory, hex",
         "dump <file> - write the 2 MB of guest RAM to a file",
+        "poke <addr> <hex bytes> - write guest memory (a diagnostic: it moves the game's own state)",
     ];
 
     public static void Configure(string? spec)
@@ -172,7 +173,7 @@ public static class AgentServer
 
         switch (cmd.Name)
         {
-            case "state" or "press" or "help" or "peek" or "dump":
+            case "state" or "press" or "help" or "peek" or "dump" or "poke":
                 Enqueue(_fast, cmd);
                 break;
             default:
@@ -212,6 +213,7 @@ public static class AgentServer
         "help" => "{\"ok\":true,\"cmd\":\"help\",\"commands\":[" + string.Join(',', HelpCommands.Select(Q)) + "]}",
         "peek" => DoPeek(cmd.Arg1, cmd.Arg2),
         "dump" => DoDump(cmd.Arg1),
+        "poke" => DoPoke(cmd.Arg1, cmd.Arg2),
         _ => Err($"unknown command '{cmd.Name}'; try help"),
     };
 
@@ -239,6 +241,20 @@ public static class AgentServer
         var sb = new StringBuilder();
         for (int i = 0; i < n; i++) sb.Append(m.ReadU8(addr + (uint)i).ToString("x2"));
         return "{\"ok\":true,\"cmd\":\"peek\",\"addr\":" + Q($"0x{addr:X8}") + ",\"hex\":" + Q(sb.ToString()) + "}";
+    }
+
+    static string DoPoke(string addrArg, string hex)
+    {
+        var m = RecompOne.Runtime.Runtime.Mem;
+        if (m == null) return Err("not running");
+        if (!uint.TryParse(addrArg.Replace("0x", ""), System.Globalization.NumberStyles.HexNumber, null, out uint addr)
+            || hex.Length == 0 || hex.Length % 2 != 0 || hex.Length > 512)
+            return Err("poke <hex addr> <hex bytes>");
+        byte[] bytes;
+        try { bytes = Convert.FromHexString(hex); }
+        catch (FormatException) { return Err("poke <hex addr> <hex bytes>"); }
+        for (int i = 0; i < bytes.Length; i++) m.WriteU8(addr + (uint)i, bytes[i]);
+        return "{\"ok\":true,\"cmd\":\"poke\",\"addr\":" + Q($"0x{addr:X8}") + ",\"bytes\":" + bytes.Length + "}";
     }
 
     static string DoDump(string path)

@@ -59,6 +59,37 @@ carry their MIPS address in their name. The pid is the `dotnet` process, not a
 ~/.dotnet/tools/dotnet-stack report -p $(pgrep -f '^dotnet bin/Release/net10.0/KingsField1.dll')
 ```
 
+## The acceptance test
+
+What a change to the fork, the config or the maps must keep passing. Measured
+2026-10-05 against fork `8c4e137` and Verdite Core `91f4a4a`, all of it by
+program; **nothing has been looked at by eye**.
+
+1. The recompile reports `applied 42 patches, 0 reimplementations`.
+2. Boot from the cue: the log shows `open`, its table `0x800423C0`; three
+   Starts take the attract to a New Game, and the log shows `game`, its table
+   `0x800642F0`, and the area's reads ending at `lba=2923`.
+3. `KF1_AUTOSTART=new KF1_AGENT=1`: `[KF1] autostart: in area 1, HP 30/30`, and
+   the beacon's `loop` true.
+4. Walk: `press Up 1000` on the command channel moves `pos` about 4000 along the
+   facing.
+5. Change areas: standing on the exit cell (z 11, x 25) of area 1 (a `poke` of
+   the position to (51000, -11500, 23000) and a step) loads `KF/B3`; the beacon
+   reads `area` 3 and `loop` true again.
+6. Save: standing before a save point (a `poke` to (52850, -11500, 73500), yaw 0),
+   Circle, Circle: `carda.sav` gains `BISLPS-00017KF`, 5 blocks. A check:
+
+   ```bash
+   python3 -c "d=open('carda.sav','rb').read();print([d[i*128+10:i*128+30].split(b'\0')[0] for i in range(1,16) if d[i*128]==0x51])"
+   ```
+7. Load it from the in-game menu: Cross, Down x5, Circle, Circle, Right,
+   Circle; the position becomes the save's.
+8. No `unmapped call` anywhere in the log.
+
+**Cross opens the in-game menu and Circle examines**: a scripted Circle in front
+of a save point, or a run of them in the save screen, writes card A. Keep a copy
+of `carda.sav` before driving the menus.
+
 ## Driving the game without a person
 
 Three switches, all off unless set (see `docs/ENV_VARS.md`), Verdite3's harness
@@ -74,8 +105,11 @@ on this game's addresses:
 - **`KF1_SHELL=1`** (or a port), the command channel (`patches/AgentServer.cs`):
   TCP `127.0.0.1:27901` (Verdite2 uses 27900 and Verdite3 27903), one request a
   line, one JSON line back: `state`, `press <button> [ms]`, `peek <hex addr>
-  [bytes]`, `dump <file>` (the 2 MB of RAM, for diffing), `help`. Everything
-  runs on the game thread, from the vblank.
+  [bytes]`, `dump <file>` (the 2 MB of RAM, for diffing), `poke <hex addr> <hex
+  bytes>` (a diagnostic: it writes the game's own state), `help`. Everything
+  runs on the game thread, from the vblank. A poke of the position
+  (`0x800A0824`) can be lost to a stage that already holds the old one; check
+  `state` after it.
 - **`KF1_AUTOSTART=new`** (`patches/AutoStart.cs`): Start is pulsed through
   OPEN.EXE until GAME.EXE loads, then released; a Start that lands in the area
   opens the in-game menu. Measured: area 1 at HP 30/30, the loop turning, about

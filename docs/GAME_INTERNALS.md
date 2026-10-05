@@ -66,6 +66,54 @@ yet; the earlier `kf1-port` attempt measured stage I as the renderer (every
 projection and the one `DrawOTag`) and `0x800650A0`/`0x80065098` as the camera's
 position and rotation, which is to be confirmed here.
 
+## Saves, the menu and the title
+
+**Saving is at save points.** Stage A examines on Circle (`0x20` in its pad word,
+edge-triggered against the last frame's at `0x80057B30`) by calling
+`func_80034DE4(&pos, &rot)`, which finds the interaction object in the cell ahead
+of the player and dispatches on its kind through the jump table at `0x80012A7C`
+(84 kinds). The objects are the 44-byte records at `0x8006EDE0` (type at `+0`,
+cell x/z at `+2`/`+4`, position at `+8`/`+0xC`/`+0x10`); a type indexes 8-byte
+records at `0x8006E8E0` whose first byte is the kind. **Kind `0xE` is a save
+point** (type `0x74` in area 1, three of them, one at (52850, -12000, 75000)):
+its case calls `func_800222B4`, the save screen `func_800250C4`, and through
+`func_8002B648` the writer `func_8002B73C`. Circle, then Circle again, writes the
+save to card A slot 1 through BIOS `open`/`lseek`/`write`/`close` (B(32h), B(33h),
+B(35h), B(36h)).
+
+The save is `BISLPS-00017KF`, **5 blocks** (40960 bytes), its title block
+`SC`, icon flag `0x13` (three frames), title `<<  KING'S FIELD  >>` in full-width
+Shift-JIS. `func_8002B73C` also writes `BISLPS-00017KFTMP` (the strings are at
+`0x80056034` and `0x80056050`); GAME's set-up calls `func_8002C70C`, which checks
+the card with `_card_info` (A(ABh)) and creates and erases `KFTMP` to see that it
+can write, and shows a card message (`func_8001B7B0(2)`) when it cannot.
+
+**Loading is from the in-game menu.** Cross (`0x40`) opens it
+(`func_80036E38` from stage A, then `func_80022348`), seven items dispatched
+through the table at `0x800122C8`; **item 5 is Load** (`func_80024E64`, the load
+screen `func_8002552C`, the reader `func_8002BDE4`). Measured: from a New Game,
+Cross, Down five times, Circle, Circle, Right, Circle loads card A slot 1, and
+the player stands where the save was made.
+
+**OPEN.EXE's title has one way into GAME**: a Down before the Starts reads the
+same files and starts the same New Game, and OPEN.EXE has no card code at all.
+GAME hands one value back to OPEN when its main loop ends: it stores the exit
+flag `*0x800958F8` into `argv[1]`, which the boot stub passes to the next
+`OPEN.EXE` as `argv[0]`, and OPEN's main hands it to `func_800156BC`.
+
+## Changing areas
+
+After the frame gate the main loop reads the player's cell, z at `0x800A084A`
+and x at `0x800A084B` (each `/2000` of the position), and the byte of the area's
+cell grid at `0x8009A748 + z*100 + x`. **A cell reading `0x40` is an exit**: on
+entering one (the last cell, `0x800A084C`/`4D`, differs) it calls
+`func_80036AF0`, which runs the transition (`func_80036850`, `func_80036618`) and
+loads the next area inside GAME.EXE; a non-zero return instead sets the exit flag
+to `0xFE` and leaves the main loop. Area 1 has four exit cells (z, x): (2, 15),
+where a New Game starts, (11, 25), (35, 39) and (56, 29). Measured: standing on
+(11, 25) loads `KF/B3` (area 3) and keeps x and z, so the levels share one
+coordinate frame.
+
 ## The frame gate
 
 `func_800149F4` spins, with interrupts masked around each read, until the vblank

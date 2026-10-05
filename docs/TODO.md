@@ -14,9 +14,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
 - ~~Reach an area.~~ Three Starts reach GAME.EXE's first area, which runs at 20
   frames a second once the interrupt poll delivers the vblanks (fork `0091`;
   "The frame gate" in `docs/GAME_INTERNALS.md`). **Not looked at by eye.**
-- Walk, and change areas.
-- Save and load through the memory card.
-- Record the acceptance test.
+- ~~Walk, and change areas. Save and load through the memory card. Record the
+  acceptance test.~~ Done 2026-10-05, by program: see "The acceptance test" in
+  `docs/DEVELOPMENT.md`. **By eye, still to do**: the picture, the menus, the
+  save and load screens, the area transition.
 
 ## Phase 3: the enhancements
 
