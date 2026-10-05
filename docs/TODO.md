@@ -24,8 +24,9 @@ recompiled and running, following Verdite3's method but applied to this disc.
 - **Frame pacing** (2026-10-05): built and measured, off until judged
   (`KF1_FPS`); menus wait a vblank under it.
 - **The camera carried between ticks** (2026-10-05): built and measured, on
-  under pacing (`docs/SMOOTHING.md`). Creatures, objects and their animation are
-  not carried yet.
+  under pacing (`docs/SMOOTHING.md`). So are creatures, objects and their clip
+  times, measured on two animated objects; a walking creature is still to
+  measure.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

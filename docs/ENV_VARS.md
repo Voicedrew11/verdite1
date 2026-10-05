@@ -21,3 +21,6 @@ switch is added.
 | `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
 | `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |
 | `KF1_SMOOTH_PROBE` | off | `1`: a view-smoothing line a second |
+| `KF1_SMOOTH_MODELS` | on | `0`: creatures, objects and clips not carried under pacing |
+| `KF1_SMOOTH_MODELS_PROBE` | off | `1`: a model-smoothing line a second |
+| `KF1_SMOOTH_MODELS_DEBUG` | off | `1`: print each backward pose the probe counts |

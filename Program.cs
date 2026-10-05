@@ -64,6 +64,12 @@ Kf1.ViewSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH"),
                             Environment.GetEnvironmentVariable("KF1_SMOOTH_PROBE"));
 Kf1.ViewSmoothing.Install();
 
+// Creatures, objects and their clip times carried between ticks, whenever pacing
+// is on (KF1_SMOOTH_MODELS=0 compares). See docs/SMOOTHING.md.
+Kf1.ModelSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH_MODELS"),
+                             Environment.GetEnvironmentVariable("KF1_SMOOTH_MODELS_PROBE"));
+Kf1.ModelSmoothing.Install();
+
 // VSync calls outside the renderer wait a real vblank, as the console's did. On by
 // default; KF1_VBLANKPACING=0 compares against the runtime's clock. See "Menus wait
 // for a vblank" in docs/DEVELOPMENT.md.
