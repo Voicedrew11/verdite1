@@ -8,7 +8,7 @@ namespace Kf1;
 
 /// <summary>
 /// Creatures, objects and missiles carried between world ticks, with their clip
-/// times:
+/// times and the first-person arm's swing:
 ///
 ///     KF1_SMOOTH_MODELS=1        on whenever pacing is; 0 to compare
 ///     KF1_SMOOTH_MODELS_PROBE=1  a line a second: records carried, poses carried, snaps
@@ -66,6 +66,13 @@ public static class ModelSmoothing
     static readonly Sample[][] _cur = Tables.Select(t => new Sample[t.Name == "object" ? 128 : 64]).ToArray();
     static readonly Sample[][] _saved = Tables.Select(t => new Sample[t.Name == "object" ? 128 : 64]).ToArray();
     static readonly bool[][] _written = Tables.Select(t => new bool[t.Name == "object" ? 128 : 64]).ToArray();
+
+    // The first-person arm: func_8001F798 poses model 0x14, clip 0, at the s16 time
+    // 0x800A07F0 (-1 while it is not swinging) into the pose buffer 0x800A07F4.
+    const uint ArmTime = 0x800A07F0, ArmPose = 0x800A07F4;
+    const int ArmModel = 0x14;
+    static int _armPrev = -1, _armCur = -1;
+    static long _armCarried;
 
     // Pose buffer (record + 0x34) -> the carried clip time, for the frame being drawn.
     static readonly Dictionary<uint, double> _carriedTime = [];
@@ -128,6 +135,8 @@ public static class ModelSmoothing
                 Read(m, Tables[t], _cur[t]);
                 if (!_primed) Array.Copy(_cur[t], _prev[t], _cur[t].Length);
             }
+            _armPrev = _primed ? _armCur : -1;
+            _armCur = (short)m.ReadU16(ArmTime);
             _primed = true;
             _tick = tick;
         }
@@ -135,6 +144,12 @@ public static class ModelSmoothing
         double frac = FramePacing.TickFraction;
         _frameId++;
         for (int t = 0; t < Tables.Length; t++) Carry(m, Tables[t], t, frac);
+        if (_armPrev >= 0 && _armCur >= 0 && (short)m.ReadU16(ArmTime) == _armCur
+            && ClipTime(m, ArmModel, 0, _armPrev, _armCur, frac) is { } arm)
+        {
+            _carriedTime[ArmPose] = arm;
+            _armCarried++;
+        }
         _restore = true;
         if (_probe) Probe();
     }
@@ -314,9 +329,9 @@ public static class ModelSmoothing
         double dt = now - _probeAt;
         if (dt < 1.0) return;
         Console.WriteLine($"[KF1] model smoothing: {_frames / dt:0.0} frame(s)/s, {_carried / dt:0.0} moving record(s) carried/s, " +
-                          $"{_posed / dt:0.0} pose(s) carried/s, {_weighted / dt:0.0} weight(s) moved/s, {_repeated} repeated and {_backward} backward pose(s), {_snaps} snap(s)");
+                          $"{_posed / dt:0.0} pose(s) carried/s ({_armCarried / dt:0.0} of the arm), {_weighted / dt:0.0} weight(s) moved/s, {_repeated} repeated and {_backward} backward pose(s), {_snaps} snap(s)");
         Console.Out.Flush();
         _probeAt = now;
-        _frames = _carried = _posed = _weighted = _snaps = _backward = _repeated = 0;
+        _frames = _carried = _posed = _weighted = _snaps = _backward = _repeated = _armCarried = 0;
     }
 }

@@ -87,3 +87,18 @@ and 79-203 moving records carried a second; 0 snaps. The two objects restart
 their clip from time to time (1245 back to about 230 in a tick), drawn at the
 game's own time. **Not measured on a creature that walks or animates**: the one
 near the start is idle. **Not judged by eye.**
+
+### The arm
+
+The first-person arm is `func_8001F798`, called by the renderer after the model
+walk: model `0x14`, clip 0, posed into `0x800A07F4` at the `s16` time
+`0x800A07F0`, which is -1 while the arm is not swinging. **Triangle swings it**
+(Square does nothing in play, Cross opens the menu): the time runs from about
+1200 to 3000. Its time is carried like a creature's, with the same pose hook.
+Measured at `KF1_FPS=144`: one swing draws **86 carried poses**, 0 backward.
+
+`func_8001F8B0`, called by the renderer earlier, poses model `0x15` (record at
+`0x80055D74`: on at `+0`, clip `+1`, time `+2`, pose buffer `+0x18`) turned by
+the negated yaw of the renderer's own camera copy (`0x80095756`) every frame: a
+view-fixed model, likely the compass. It follows the carried camera with nothing
+more; its own clip is not carried.
