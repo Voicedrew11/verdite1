@@ -1,0 +1,977 @@
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -38,6 +38,18 @@
+     int _presentW, _presentH;
+     bool _presentNearest;
+ 
++    // Ambient occlusion: two full-screen passes between the finished render target
++    // and the present blit. Core profile only -- GLSL 120 has no textureless
++    // fullscreen conveniences worth the second copy of the shader, and that backend
++    // has never been available to test on.
++    uint _progAo, _progAoBlur;
++    uint _aoFbo, _aoTex, _aoBlurFbo, _aoBlurTex;
++    int _aoW, _aoH;
++    int _uAoOrigin, _uAoSize, _uAoTexSize, _uAoTexel, _uAoProjH, _uAoCentre;
++    int _uAoRadius, _uAoStrength, _uAoBias, _uAoMaxDepth, _uAoSamples;
++    int _uAoBOrigin, _uAoBSize, _uAoBTexSize, _uAoBTexel, _uAoBEdge;
++    int _uPresentAoOn;
++
+     uint _postProg, _postFbo, _postTex;
+     int _postW, _postH, _postVersion = -1;
+     int _uPostTexSize, _uPostOutputSize, _uPostTime, _uPostFrame;
+@@ -131,8 +143,48 @@
+         _uPresentOrigin = _gl.GetUniformLocation(_progPresent, "uOrigin");
+         _uPresentSize = _gl.GetUniformLocation(_progPresent, "uSize");
+         _uPresentTexSize = _gl.GetUniformLocation(_progPresent, "uTexSize");
++        _uPresentAoOn = _gl.GetUniformLocation(_progPresent, "uAoOn");
+         _gl.UseProgram(_progPresent);
+         _gl.Uniform1(_gl.GetUniformLocation(_progPresent, "uVram"), 0);
++        int uPresentAo = _gl.GetUniformLocation(_progPresent, "uAo");
++        if (uPresentAo >= 0) _gl.Uniform1(uPresentAo, 1);
++        if (_uPresentAoOn >= 0) _gl.Uniform1(_uPresentAoOn, 0f);
++
++        // Ambient occlusion. A failure here disables the pass and nothing else --
++        // the backend is perfectly usable without it, so it is deliberately not
++        // part of the early return above.
++        if (!_legacy)
++        {
++            _progAo = GlShaders.BuildFullscreen(_gl, fullVs, GlShaders.AoFs, "ao");
++            _progAoBlur = GlShaders.BuildFullscreen(_gl, fullVs, GlShaders.AoBlurFs, "aoblur");
++            if (_progAo != 0)
++            {
++                _uAoOrigin = _gl.GetUniformLocation(_progAo, "uOrigin");
++                _uAoSize = _gl.GetUniformLocation(_progAo, "uSize");
++                _uAoTexSize = _gl.GetUniformLocation(_progAo, "uTexSize");
++                _uAoTexel = _gl.GetUniformLocation(_progAo, "uTexel");
++                _uAoProjH = _gl.GetUniformLocation(_progAo, "uProjH");
++                _uAoCentre = _gl.GetUniformLocation(_progAo, "uCentre");
++                _uAoRadius = _gl.GetUniformLocation(_progAo, "uRadius");
++                _uAoStrength = _gl.GetUniformLocation(_progAo, "uStrength");
++                _uAoBias = _gl.GetUniformLocation(_progAo, "uBias");
++                _uAoMaxDepth = _gl.GetUniformLocation(_progAo, "uMaxDepth");
++                _uAoSamples = _gl.GetUniformLocation(_progAo, "uSamples");
++                _gl.UseProgram(_progAo);
++                _gl.Uniform1(_gl.GetUniformLocation(_progAo, "uDepth"), 0);
++            }
++            if (_progAoBlur != 0)
++            {
++                _uAoBOrigin = _gl.GetUniformLocation(_progAoBlur, "uOrigin");
++                _uAoBSize = _gl.GetUniformLocation(_progAoBlur, "uSize");
++                _uAoBTexSize = _gl.GetUniformLocation(_progAoBlur, "uTexSize");
++                _uAoBTexel = _gl.GetUniformLocation(_progAoBlur, "uTexel");
++                _uAoBEdge = _gl.GetUniformLocation(_progAoBlur, "uEdge");
++                _gl.UseProgram(_progAoBlur);
++                _gl.Uniform1(_gl.GetUniformLocation(_progAoBlur, "uAo"), 0);
++                _gl.Uniform1(_gl.GetUniformLocation(_progAoBlur, "uDepth"), 1);
++            }
++        }
+ 
+         _uPresent24Origin = _gl.GetUniformLocation(_progPresent24, "uOrigin");
+         _uPresent24Size = _gl.GetUniformLocation(_progPresent24, "uSize");
+@@ -485,19 +537,34 @@
+             (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
+         // 0 = painter's (2D, or a vertex missed). 1 = opaque 3D, test and write.
+         // 2 = semi-transparent 3D, test but leave Z so overlapping additives still
+-        // blend in table order.
++        // blend in table order. 3 = the occlusion pass's mask: an opaque primitive
++        // with no recovered depth stamps the far plane, so the HUD, the menus and
++        // any triangle the vertex map missed read as "no surface" rather than as
++        // the geometry standing behind them. Semi-transparent stays at 0 there,
++        // because a death fade or a damage flash is something you see the world
++        // *through* and must not erase its depth.
+         int zMode = 0;
+         if (a.HasGteZ && b.HasGteZ && c.HasGteZ)
+             zMode = f.SemiTrans ? 2 : 1;
++        else if (GteDepth.AmbientOcclusion && !f.SemiTrans)
++            zMode = 3;
+         Begin(f, 3, zMode);
+         bool dith = DitherOf(f);
+         _verts[_count++] = V(a, f, dith); _verts[_count++] = V(b, f, dith); _verts[_count++] = V(c, f, dith);
+     }
+ 
++    /// <summary>The zMode a primitive with no recovered depth takes: 3 (stamp the
++    /// far plane) while the occlusion pass is on and the primitive is opaque, 0 --
++    /// which is what everything did before this existed -- otherwise.</summary>
++    static int FarMask(in PrimFlags f) => GteDepth.AmbientOcclusion && !f.SemiTrans ? 3 : 0;
++
+     public void DrawRect(in HleRect r, in PrimFlags f)
+     {
+         ResolveReplacement(f, r.U, r.V, r.U + Math.Max(0, r.W - 1), r.V + Math.Max(0, r.H - 1));
+-        Begin(f, 6);
++        // A sprite never carries a recovered depth, so under the occlusion pass it
++        // is the mask (see DrawTri): opaque stamps the far plane, semi-transparent
++        // leaves the depth under it alone.
++        Begin(f, 6, FarMask(f));
+         var a = new HleVertex { X = r.X, Y = r.Y, R = r.R, G = r.G, B = r.B, U = r.U, V = r.V };
+         var b = new HleVertex { X = r.X + r.W, Y = r.Y, R = r.R, G = r.G, B = r.B, U = (short)(r.U + r.W), V = r.V };
+         var c = new HleVertex { X = r.X, Y = r.Y + r.H, R = r.R, G = r.G, B = r.B, U = r.U, V = (short)(r.V + r.H) };
+@@ -510,7 +577,7 @@
+     {
+         _pendingRepTex = 0;
+         _pendingRepClut = 0;
+-        Begin(f, 6);
++        Begin(f, 6, FarMask(f));
+         bool dith = _env.Dither;
+         float x1 = a.X, y1 = a.Y;
+         float x2 = b.X, y2 = b.Y;
+@@ -810,7 +877,7 @@
+         // — or after the setting was flipped — clears the attachment so last
+         // frame's depths cannot occlude this one. The clear is not gated on this
+         // batch's mode, so a 2D primitive arriving first cannot skip it.
+-        if (rt != null && GteDepth.ZBuffer && (rt.LastDrawFrame != _frame || rt.ZGen != GteDepth.Generation))
++        if (rt != null && GteDepth.DepthWanted && (rt.LastDrawFrame != _frame || rt.ZGen != GteDepth.Generation))
+         {
+             _gl.Disable(EnableCap.ScissorTest);
+             _gl.DepthMask(true);
+@@ -819,11 +886,29 @@
+             _gl.Enable(EnableCap.ScissorTest);
+             rt.ZGen = GteDepth.Generation;
+         }
+-        if (_kZMode != 0)
++        if (_kZMode == 3)
++        {
++            // The far-plane mask: write, never reject. GL_ALWAYS rather than
++            // GL_LEQUAL because the far plane loses every LEQUAL test against a
++            // surface already stamped there, and this has to overwrite one -- the
++            // HUD is drawn over the world, and the point of the mask is that the
++            // world's depth under it is gone.
++            if (rt != null) _lastZRt = rt;
++            _gl.Enable(EnableCap.DepthTest);
++            _gl.DepthFunc(DepthFunction.Always);
++            _gl.DepthMask(true);
++        }
++        else if (_kZMode != 0)
+         {
+             if (rt != null) { GteDepth.ZBatchRt++; _lastZRt = rt; } else GteDepth.ZBatchVram++;
+             _gl.Enable(EnableCap.DepthTest);
+-            _gl.DepthFunc(DepthFunction.Lequal);
++            // The two consumers of the attachment differ here and nowhere else.
++            // The Z-buffer rejects what the recovered depth says is behind; the
++            // occlusion pass wants the buffer filled and the ordering table left
++            // in sole charge of what is visible, which is GL_ALWAYS -- and under
++            // painter's order the last write at a pixel is then the nearest
++            // visible surface, which is exactly the depth the pass reads back.
++            _gl.DepthFunc(GteDepth.ZBuffer ? DepthFunction.Lequal : DepthFunction.Always);
+             _gl.DepthMask(_kZMode == 1);
+         }
+         else
+@@ -1159,6 +1244,18 @@
+         int fbH = h1x * presentScale;
+         EnsurePresentSize(fbW, fbH, GlVram.Scale == 1);
+ 
++        // Ambient occlusion, between the finished target and the present blit. It
++        // reads that target's depth attachment and writes only its own texture, so
++        // nothing the game can read back -- VRAM, the display buffers, the frame a
++        // menu restores -- carries the shading. Present is where it has to happen:
++        // the pass needs the *whole* frame's depth, and painter's order means that
++        // does not exist until the last primitive has been drawn.
++        bool aoOn = AoReady(src, rgb24);
++        if (aoOn)
++            RunAo(src!, dispX - src!.X, dispY - src.Y, w1x, h1x, fbW, fbH);
++        else if (GteDepth.AmbientOcclusion && !rgb24)
++            GteDepth.AoNoTarget++;
++
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _presentFbo);
+         _gl.Viewport(0, 0, (uint)fbW, (uint)fbH);
+         _gl.Disable(EnableCap.DepthTest);
+@@ -1168,6 +1265,15 @@
+ 
+         _gl.UseProgram(rgb24 ? _progPresent24 : _progPresent);
+         _gl.BindVertexArray(_presentVao);
++        if (!rgb24 && _uPresentAoOn >= 0)
++        {
++            _gl.Uniform1(_uPresentAoOn, aoOn ? 1f : 0f);
++            if (aoOn)
++            {
++                _gl.ActiveTexture(TextureUnit.Texture1);
++                _gl.BindTexture(TextureTarget.Texture2D, _aoBlurTex);
++            }
++        }
+         _gl.ActiveTexture(TextureUnit.Texture0);
+         _gl.BindTexture(TextureTarget.Texture2D, src?.Tex ?? _vram.Texture);
+         if (rgb24)
+@@ -1288,6 +1394,160 @@
+         return true;
+     }
+ 
++    /// <summary>
++    /// Whether an occlusion pass can run for this present. It needs the setting,
++    /// the two programs, and a render target — the VRAM fallback and an MDEC frame
++    /// have no depth attachment behind them and are left alone.
++    /// </summary>
++    bool AoReady(GlDisplayRt? src, bool rgb24) =>
++        GteDepth.AmbientOcclusion && !rgb24 && !_legacy
++        && _progAo != 0 && _progAoBlur != 0 && src is { Depth: not 0 };
++
++    /// <summary>
++    /// The two occlusion passes: the finished frame's depth attachment in, a
++    /// blurred occlusion factor in <see cref="_aoBlurTex"/> out, at exactly the
++    /// present framebuffer's size so the present can index it with its own uv.
++    ///
++    /// <paramref name="ox"/>/<paramref name="oy"/> and
++    /// <paramref name="sw"/>/<paramref name="sh"/> are the display area inside the
++    /// target in the game's own pixels — the same rectangle the present blit uses,
++    /// margin included — so both passes address one rectangle and cannot drift
++    /// apart.
++    /// </summary>
++    unsafe void RunAo(GlDisplayRt src, float ox, float oy, int sw, int sh, int fbW, int fbH)
++    {
++        EnsureAoSize(fbW, fbH);
++        if (_aoTex == 0 || _aoBlurTex == 0) return;
++
++        // The GTE's projection centre, as a fraction of the display area, so the
++        // shader needs no pixel arithmetic of its own.
++        //
++        // Follow one coordinate the whole way rather than trusting the shape of
++        // this. A vertex reaches the target at `ny + drawOff - rt.Y` and the prim
++        // shader's uPosBias is `-rt.Y`, so a display target's drawing offset *is*
++        // its own origin -- were it not, every polygon would already be landing in
++        // the wrong place. The two therefore cancel and the target's coordinate is
++        // simply `ny`, which the present samples at `(dispY - rt.Y) + uv*sh`. The
++        // margin is the one asymmetry: the target's column 0 sits `margin` to the
++        // left of the game's own.
++        //
++        // The version before this one recorded the drawing offset of the last
++        // depth-writing triangle and added it, which is right only when the buffer
++        // being drawn is the buffer being presented -- with two display buffers it
++        // is not, on alternate frames, and half the frames reconstructed with the
++        // projection centre a whole screen below the picture. It read
++        // `0.500,1.500`, which is why the probe prints this number.
++        float cx = (GteDepth.ProjCx + src.Margin - ox) / Math.Max(1, sw);
++        float cy = (GteDepth.ProjCy - oy) / Math.Max(1, sh);
++        GteDepth.AoCentreX = cx; GteDepth.AoCentreY = cy;
++        // One depth texel as a step in this pass's uv. The attachment is at the
++        // render scale, so this is not 1/size: at scale 4 the useful structure in
++        // the depth buffer is four times finer than the game's own pixels.
++        float tx = 1f / Math.Max(1, sw * GlVram.Scale);
++        float ty = 1f / Math.Max(1, sh * GlVram.Scale);
++
++        _gl.Disable(EnableCap.DepthTest);
++        _gl.Disable(EnableCap.Blend);
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.Disable(EnableCap.CullFace);
++        _gl.DepthMask(false);
++        _gl.BindVertexArray(_presentVao);
++
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _aoFbo);
++        _gl.Viewport(0, 0, (uint)fbW, (uint)fbH);
++        _gl.UseProgram(_progAo);
++        if (_uAoOrigin >= 0) _gl.Uniform2(_uAoOrigin, ox, oy);
++        if (_uAoSize >= 0) _gl.Uniform2(_uAoSize, (float)sw, sh);
++        if (_uAoTexSize >= 0) _gl.Uniform2(_uAoTexSize, (float)src.Wide1x, src.H);
++        if (_uAoTexel >= 0) _gl.Uniform2(_uAoTexel, tx, ty);
++        if (_uAoProjH >= 0) _gl.Uniform1(_uAoProjH, Math.Max(1f, GteDepth.ProjH));
++        if (_uAoCentre >= 0) _gl.Uniform2(_uAoCentre, cx, cy);
++        if (_uAoRadius >= 0) _gl.Uniform1(_uAoRadius, Math.Max(1f, GteDepth.AoRadius));
++        if (_uAoStrength >= 0) _gl.Uniform1(_uAoStrength, GteDepth.AoStrength);
++        if (_uAoBias >= 0) _gl.Uniform1(_uAoBias, GteDepth.AoBias);
++        if (_uAoMaxDepth >= 0) _gl.Uniform1(_uAoMaxDepth, GteDepth.AoMaxDepth);
++        if (_uAoSamples >= 0) _gl.Uniform1(_uAoSamples, Math.Clamp(GteDepth.AoSamples, 1, 64));
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
++        _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
++
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _aoBlurFbo);
++        _gl.Viewport(0, 0, (uint)fbW, (uint)fbH);
++        _gl.UseProgram(_progAoBlur);
++        if (_uAoBOrigin >= 0) _gl.Uniform2(_uAoBOrigin, ox, oy);
++        if (_uAoBSize >= 0) _gl.Uniform2(_uAoBSize, (float)sw, sh);
++        if (_uAoBTexSize >= 0) _gl.Uniform2(_uAoBTexSize, (float)src.Wide1x, src.H);
++        if (_uAoBTexel >= 0) _gl.Uniform2(_uAoBTexel, tx, ty);
++        // A twentieth of the depth: wide enough that a wall's own slope never
++        // splits the kernel, tight enough that a doorway's edge does.
++        if (_uAoBEdge >= 0) _gl.Uniform1(_uAoBEdge, 0.05f);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        _gl.BindTexture(TextureTarget.Texture2D, _aoTex);
++        _gl.ActiveTexture(TextureUnit.Texture1);
++        _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
++
++        GteDepth.AoPasses++;
++
++        // The census, on request and for one frame: the only reading that can tell
++        // a pass that shaded something from a pass that ran and returned white.
++        if (GteDepth.WantAoMap) CaptureAoMap(fbW, fbH);
++    }
++
++    unsafe void CaptureAoMap(int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        var buf = new byte[(long)w * h * 2];
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _aoBlurFbo);
++        _gl.PixelStore(PixelStoreParameter.PackAlignment, 1);
++        fixed (byte* p = buf)
++            _gl.ReadPixels(0, 0, (uint)w, (uint)h, PixelFormat.RG, PixelType.UnsignedByte, p);
++        _gl.PixelStore(PixelStoreParameter.PackAlignment, 4);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++        GteDepth.SetAoMap(buf, w, h);
++    }
++
++    unsafe void EnsureAoSize(int w, int h)
++    {
++        if (w == _aoW && h == _aoH && _aoTex != 0) return;
++        if (_aoTex == 0)
++        {
++            _aoTex = MakeAoTexture();
++            _aoBlurTex = MakeAoTexture();
++            _aoFbo = _gl.GenFramebuffer();
++            _aoBlurFbo = _gl.GenFramebuffer();
++        }
++        Resize(_aoTex, _aoFbo);
++        Resize(_aoBlurTex, _aoBlurFbo);
++        _aoW = w; _aoH = h;
++
++        void Resize(uint tex, uint fbo)
++        {
++            _gl.BindTexture(TextureTarget.Texture2D, tex);
++            // RG8: red is the occlusion the present multiplies by, green is the
++            // "there was a surface here" mask the census reads. See AoFs.
++            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.RG8, (uint)w, (uint)h, 0,
++                PixelFormat.RG, PixelType.UnsignedByte, null);
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
++            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++                TextureTarget.Texture2D, tex, 0);
++        }
++    }
++
++    uint MakeAoTexture()
++    {
++        uint t = _gl.GenTexture();
++        _gl.BindTexture(TextureTarget.Texture2D, t);
++        // Linear, so the present can read it at any output size without the 4x4
++        // blur's own footprint showing up as blocks.
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        return t;
++    }
++
+     unsafe void EnsurePresentSize(int w, int h, bool nearest)
+     {
+         if (w == _presentW && h == _presentH && nearest == _presentNearest) return;
+@@ -1306,6 +1566,10 @@
+         _vram.Dispose();
+         if (_vbo != 0) _gl.DeleteBuffer(_vbo);
+         if (_presentVbo != 0) _gl.DeleteBuffer(_presentVbo);
++        if (_aoTex != 0) _gl.DeleteTexture(_aoTex);
++        if (_aoBlurTex != 0) _gl.DeleteTexture(_aoBlurTex);
++        if (_aoFbo != 0) _gl.DeleteFramebuffer(_aoFbo);
++        if (_aoBlurFbo != 0) _gl.DeleteFramebuffer(_aoBlurFbo);
+         if (_vao != 0) _gl.DeleteVertexArray(_vao);
+         if (_presentVao != 0) _gl.DeleteVertexArray(_presentVao);
+         if (_progPrim != 0) _gl.DeleteProgram(_progPrim);
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -6,7 +6,14 @@
+ {
+     public int X, Y, W, H;
+     public int Margin;
+-    public uint Tex, Fbo, Depth;
++    public uint Tex, Fbo;
++    // A texture rather than a renderbuffer, because the ambient-occlusion pass
++    // reads the finished buffer back in a full-screen shader and a renderbuffer
++    // cannot be sampled. Nothing else changes: it is still the same
++    // DEPTH_COMPONENT24 attachment, still cleared at the head of a frame that
++    // draws to this target, and ReadPixels off the FBO (the KF2_ZBUFFER_PROBE=2
++    // census) reads it exactly as before.
++    public uint Depth;
+     public bool Dirty;
+     public long Stamp;
+     public long LastDrawFrame;
+@@ -42,7 +49,7 @@
+         return rx < X + W && X < rx + rw && ry < Y + H && Y < ry + rh;
+     }
+ 
+-    public void Create(GL gl)
++    public unsafe void Create(GL gl)
+     {
+         Tex = gl.GenTexture();
+         gl.BindTexture(TextureTarget.Texture2D, Tex);
+@@ -68,12 +75,21 @@
+         gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+             TextureTarget.Texture2D, Tex, 0);
+ 
+-        Depth = gl.GenRenderbuffer();
+-        gl.BindRenderbuffer(RenderbufferTarget.Renderbuffer, Depth);
+-        gl.RenderbufferStorage(RenderbufferTarget.Renderbuffer, InternalFormat.DepthComponent24,
+-            (uint)TexW, (uint)TexH);
+-        gl.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment,
+-            RenderbufferTarget.Renderbuffer, Depth);
++        Depth = gl.GenTexture();
++        gl.BindTexture(TextureTarget.Texture2D, Depth);
++        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        // Explicitly not a shadow sampler: with the compare mode left at whatever
++        // the driver defaults to, an ordinary sampler2D read of this texture is
++        // undefined rather than the stored depth.
++        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureCompareMode, (int)GLEnum.None);
++        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.DepthComponent24, (uint)TexW, (uint)TexH, 0,
++            PixelFormat.DepthComponent, PixelType.Float, null);
++        gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment,
++            TextureTarget.Texture2D, Depth, 0);
++        gl.BindTexture(TextureTarget.Texture2D, 0);
+ 
+         gl.ClearColor(0f, 0f, 0f, 0f);
+         gl.ClearDepth(1.0);
+@@ -86,7 +102,7 @@
+     {
+         if (Fbo != 0) gl.DeleteFramebuffer(Fbo);
+         if (Tex != 0) gl.DeleteTexture(Tex);
+-        if (Depth != 0) gl.DeleteRenderbuffer(Depth);
++        if (Depth != 0) gl.DeleteTexture(Depth);
+         Fbo = Tex = Depth = 0;
+     }
+ }
+\ No newline at end of file
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -18,13 +18,23 @@
+         #version 330 core
+         in vec2 vUv;
+         uniform sampler2D uVram;
++        uniform sampler2D uAo;
+         uniform vec2 uOrigin;
+         uniform vec2 uSize;
+         uniform vec2 uTexSize;
++        // 0 leaves the present bit-identical to what it has always been: the
++        // multiply is skipped, not multiplied by one, so a build with the pass
++        // switched off cannot round a colour by a least significant bit.
++        uniform float uAoOn;
+         out vec4 oColor;
+         void main() {
+             vec2 t = (uOrigin + vUv * uSize) / uTexSize;
+-            oColor = vec4(texture(uVram, t).rgb, 1.0);
++            vec3 c = texture(uVram, t).rgb;
++            // The occlusion texture is rendered at exactly this framebuffer's
++            // size, so it is indexed by the present's own uv and needs no
++            // geometry of its own.
++            if (uAoOn > 0.5) c *= texture(uAo, vUv).r;
++            oColor = vec4(c, 1.0);
+         }
+         """;
+ 
+@@ -56,6 +66,188 @@
+         }
+         """;
+ 
++    /// <summary>
++    /// Ambient occlusion, first pass: the finished frame's depth attachment in,
++    /// one occlusion factor per output pixel out.
++    ///
++    /// The depth texel holds the GTE's own view depth over 65536, so undoing the
++    /// game's projection gets a view position straight back out of it — the divide
++    /// was <c>screen = centre + IR * H / z</c>, so <c>view.xy = (screen - centre) *
++    /// z / H</c> with H and the centre published from <c>Gte.Rtp</c> rather than
++    /// assumed. That is what makes this the game's geometry rather than a
++    /// plausible-looking depth trick: the reconstructed normal is the surface's
++    /// own, to whatever precision the recovered SZ has.
++    ///
++    /// A texel at the far plane is one nothing wrote: 2D, or a triangle the vertex
++    /// map missed. It is neither shaded nor allowed to occlude, so the HUD, the
++    /// menus and the death fade come through untouched and a hole in the depth
++    /// buffer costs occlusion rather than inventing it.
++    /// </summary>
++    public const string AoFs = """
++        #version 330 core
++        in vec2 vUv;
++        out vec4 oColor;
++
++        uniform sampler2D uDepth;
++        // The display area inside the render target, and the target's size, both
++        // in the game's own 1x pixels -- the same three numbers the present shader
++        // is given, so the two passes address the same rectangle.
++        uniform vec2  uOrigin;
++        uniform vec2  uSize;
++        uniform vec2  uTexSize;
++        // One depth texel as a step in this pass's own uv, which is not 1/uSize:
++        // the target is rendered at the render scale and the fine structure of the
++        // depth buffer is at that scale, not the game's.
++        uniform vec2  uTexel;
++        // The GTE's projection: distance, and the screen centre the divide is
++        // offset by, expressed in this pass's uv so no pixel arithmetic has to be
++        // repeated here.
++        uniform float uProjH;
++        uniform vec2  uCentre;
++        uniform float uRadius;
++        uniform float uStrength;
++        uniform float uBias;
++        uniform float uMaxDepth;
++        uniform int   uSamples;
++
++        const float FAR = 65536.0;
++        const float GOLDEN = 2.39996323;
++
++        float depthAt(vec2 uv) {
++            return texture(uDepth, (uOrigin + clamp(uv, 0.0, 1.0) * uSize) / uTexSize).r;
++        }
++
++        // The view position of the point this pass's uv names, given its depth.
++        // Screen X and Y are in the game's own pixels measured from the projection
++        // centre, which is what uCentre and uSize turn a uv into.
++        vec3 viewAt(vec2 uv, float d) {
++            float z = d * FAR;
++            return vec3((uv - uCentre) * uSize * (z / uProjH), z);
++        }
++
++        // The neighbour on each axis that is nearer in depth, so a pixel on a
++        // silhouette takes its normal from the surface it belongs to instead of
++        // straddling the edge and coming out facing the camera.
++        vec3 nearer(vec3 p, vec3 a, vec3 b) {
++            return abs(a.z - p.z) < abs(b.z - p.z) ? a - p : p - b;
++        }
++
++        void main() {
++            // Red is the occlusion factor the present multiplies by. Green says
++            // whether there was a surface here at all -- it is not used to draw
++            // anything, it is what lets the census tell "the mask refused this
++            // pixel" from "the pass looked and found nothing to shade it with",
++            // which are the two ways a blank patch happens and are not the same
++            // bug. See KF2_AO_PROBE=2.
++            float d = depthAt(vUv);
++            // Nothing wrote here (2D, or a triangle with no recovered depth), or
++            // the fog has the picture: unoccluded, and the present multiplies by 1.
++            if (d >= 1.0 || d <= 0.0) { oColor = vec4(1.0, 0.0, 0.0, 1.0); return; }
++
++            vec3 p = viewAt(vUv, d);
++            if (p.z > uMaxDepth) { oColor = vec4(1.0, 0.0, 0.0, 1.0); return; }
++
++            vec2 sx = vec2(uTexel.x, 0.0), sy = vec2(0.0, uTexel.y);
++            float dl = depthAt(vUv - sx), dr = depthAt(vUv + sx);
++            float du = depthAt(vUv - sy), dd = depthAt(vUv + sy);
++            // A neighbour with no depth is not a position; fall back to this
++            // pixel's own so the difference is taken against the other side.
++            vec3 l = dl > 0.0 && dl < 1.0 ? viewAt(vUv - sx, dl) : p;
++            vec3 r = dr > 0.0 && dr < 1.0 ? viewAt(vUv + sx, dr) : p;
++            vec3 u = du > 0.0 && du < 1.0 ? viewAt(vUv - sy, du) : p;
++            vec3 b = dd > 0.0 && dd < 1.0 ? viewAt(vUv + sy, dd) : p;
++
++            vec3 n = cross(nearer(p, r, l), nearer(p, b, u));
++            if (dot(n, n) < 1e-12) { oColor = vec4(1.0, 1.0, 0.0, 1.0); return; }
++            n = normalize(n);
++            // The camera is at the origin looking down +Z, so a surface facing it
++            // has a negative dot with its own position.
++            if (dot(n, p) > 0.0) n = -n;
++
++            // The world radius as it projects at this depth, in uv. Clamped at the
++            // near end because a sphere a hand's width across fills the screen when
++            // the camera is inside it, and at the far end to a texel so the kernel
++            // never collapses onto the pixel it is shading.
++            float rPix = clamp(uRadius * uProjH / p.z, 1.5, 96.0);
++            vec2 rUv = rPix / uSize;
++
++            // A 4x4 interleaved rotation rather than a hash: the blur below is a
++            // 4x4 box, so a pattern with that period cancels exactly and leaves no
++            // residual grain, where noise leaves noise.
++            ivec2 px = ivec2(gl_FragCoord.xy) & 3;
++            float a0 = float((px.y << 2) | px.x) * (6.28318531 / 16.0);
++
++            float occ = 0.0;
++            for (int i = 0; i < uSamples; i++) {
++                float t = (float(i) + 0.5) / float(uSamples);
++                float ang = a0 + float(i) * GOLDEN;
++                vec2 off = vec2(cos(ang), sin(ang)) * sqrt(t) * rUv;
++
++                float sd = depthAt(vUv + off);
++                // The far plane is the absence of a surface, not a surface a long
++                // way off: it must not occlude, or every silhouette against the
++                // HUD would draw a dark halo.
++                if (sd >= 1.0 || sd <= 0.0) continue;
++
++                vec3 v = viewAt(vUv + off, sd) - p;
++                float len = length(v);
++                if (len < 1e-4) continue;
++                // Falls off past the radius instead of stopping at it, so a wall
++                // sliding out of range dims rather than switching off.
++                float range = uRadius / max(uRadius, len);
++                occ += max(0.0, dot(v / len, n) - uBias) * range;
++            }
++
++            float ao = 1.0 - uStrength * (occ / float(uSamples));
++            oColor = vec4(clamp(ao, 0.0, 1.0), 1.0, 0.0, 1.0);
++        }
++        """;
++
++    /// <summary>
++    /// Ambient occlusion, second pass: the 4x4 box that cancels the first pass's
++    /// 4x4 rotation exactly, weighted by depth so it does not carry a wall's
++    /// occlusion across a silhouette onto whatever is behind it.
++    /// </summary>
++    public const string AoBlurFs = """
++        #version 330 core
++        in vec2 vUv;
++        out vec4 oColor;
++
++        uniform sampler2D uAo;
++        uniform sampler2D uDepth;
++        uniform vec2  uOrigin;
++        uniform vec2  uSize;
++        uniform vec2  uTexSize;
++        uniform vec2  uTexel;
++        // How far apart two depths may be, as a fraction of the nearer one, and
++        // still be treated as the same surface. Relative rather than absolute
++        // because the recovered depth is a view depth: a step that is a crease at
++        // arm's length is a rounding error across a room.
++        uniform float uEdge;
++
++        float depthAt(vec2 uv) {
++            return texture(uDepth, (uOrigin + clamp(uv, 0.0, 1.0) * uSize) / uTexSize).r;
++        }
++
++        void main() {
++            float d = depthAt(vUv);
++            if (d >= 1.0 || d <= 0.0) { oColor = vec4(1.0, 0.0, 0.0, 1.0); return; }
++
++            float sum = 0.0, wsum = 0.0;
++            for (int y = -2; y <= 1; y++) {
++                for (int x = -2; x <= 1; x++) {
++                    vec2 uv = vUv + vec2(float(x), float(y)) * uTexel;
++                    float sd = depthAt(uv);
++                    if (sd >= 1.0 || sd <= 0.0) continue;
++                    if (abs(sd - d) > uEdge * d) continue;
++                    sum += texture(uAo, uv).r;
++                    wsum += 1.0;
++                }
++            }
++            oColor = vec4(wsum > 0.0 ? sum / wsum : texture(uAo, vUv).r, 1.0, 0.0, 1.0);
++        }
++        """;
++
+     public const string PrimVs = """
+         #version 330 core
+         layout(location = 0) in vec2  inPos;
+@@ -176,11 +368,16 @@
+ 
+         void main() {
+             // Written on every path so a 3D triangle's recovered SZ is the
+-            // window depth, and a 2D primitive (vDepth == 0, test off) keeps
+-            // the interpolated clip Z it has always had. Assigning this also
+-            // turns off early-Z, so a punch-through discard cannot occlude
+-            // whatever is behind the hole.
+-            gl_FragDepth = vDepth > 0.0 ? vDepth : gl_FragCoord.z;
++            // window depth. Everything that recovered none writes the *far*
++            // plane rather than the interpolated clip Z it used to, which is
++            // the ambient-occlusion pass's whole mask: 2D, and any triangle the
++            // vertex map missed, then say "no surface here" and are left alone
++            // instead of being shaded against the geometry standing behind
++            // them. The Z-buffer never saw the old value either -- a batch with
++            // no recovered depth does not test and does not write -- so this
++            // costs it nothing. Assigning this also turns off early-Z, so a
++            // punch-through discard cannot occlude whatever is behind the hole.
++            gl_FragDepth = vDepth > 0.0 ? vDepth : 1.0;
+             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
+ 
+             if (texMode == 4) {
+@@ -455,7 +652,7 @@
+         }
+ 
+         void main() {
+-            gl_FragDepth = vDepth > 0.0 ? vDepth : gl_FragCoord.z;
++            gl_FragDepth = vDepth > 0.0 ? vDepth : 1.0;
+             vec2 destUv = gl_FragCoord.xy / uDestSize;
+             vec4 dstTexel = texture2D(uDest, destUv);
+             if (uCheckMask > 0.5 && dstTexel.a >= 0.5) discard;
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -47,7 +47,11 @@
+         // depth into gl_Position.w, and one vertex left at 1 would tear the
+         // triangle's texture in half. The Z-buffer is the same rule for a different
+         // reason — a corner at ndc.z = 0 among two real depths would punch a hole.
+-        bool z = GteDepth.ZBuffer && a.HasZ && b.HasZ && c.HasZ;
++        // DepthWanted rather than ZBuffer: ambient occlusion reads the same
++        // attachment and so needs the same writes, and differs only in that
++        // nothing is ever rejected by them (GlCore.Flush leaves the func at
++        // GL_ALWAYS unless the Z-buffer is on as well).
++        bool z = GteDepth.DepthWanted && a.HasZ && b.HasZ && c.HasZ;
+ 
+         // **A depth-tested triangle gets a real clip W whether or not its texture
+         // is being corrected**, and that is a fix rather than tidiness. `vDepth` is
+@@ -65,7 +69,7 @@
+         // comparison rather than a picture anyone ships, and a depth buffer fed
+         // wrong depths is not a comparison of anything.
+         bool persp = z || (tex && a.HasW && b.HasW && c.HasW);
+-        if (GteDepth.ZBuffer) { if (z) GteDepth.ZTris++; else GteDepth.ZSkipped++; }
++        if (GteDepth.DepthWanted) { if (z) GteDepth.ZTris++; else GteDepth.ZSkipped++; }
+ 
+         var be = GpuHle.Backend!;
+         be.SetDrawEnv(CurEnv());
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -101,10 +101,15 @@
+         // recompiler emitted. PGXP wins whenever it is on -- that is what the
+         // switch means -- and everything below this block is shared.
+         bool pgxp = Pgxp.Pgxp.Enabled;
+-        if ((GteDepth.Active || pgxp) && (tex || GteDepth.Subpixel || GteDepth.ZBuffer))
++        // DepthWanted, not ZBuffer: ambient occlusion needs the same recovered
++        // depth on the same vertices and differs only in what is done with it
++        // downstream. Untextured geometry reaches this block through that term
++        // alone -- most of the architecture in this game is flat-shaded, so
++        // leaving it at ZBuffer meant a depth buffer holding only the textures.
++        if ((GteDepth.Active || pgxp) && (tex || GteDepth.Subpixel || GteDepth.DepthWanted))
+         {
+             bool wantW = tex && (pgxp ? Pgxp.Pgxp.TextureCorrection : GteDepth.Enabled);
+-            bool wantZ = GteDepth.ZBuffer;
++            bool wantZ = GteDepth.DepthWanted;
+             bool wantSub = GteDepth.Subpixel;
+ 
+             // The old screen-position table, kept only as a comparison: it answers
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -97,7 +97,7 @@
+     // accounting, and this table, which answers only when PositionFallback asks it
+     // to so that the two mechanisms can be compared in one build.
+ 
+-    static bool _enabled, _subpixel, _zbuffer;
++    static bool _enabled, _subpixel, _zbuffer, _ao;
+ 
+     /// <summary>
+     /// While false the depth is not served, so both renderers interpolate affinely
+@@ -195,6 +195,221 @@
+     public static float ZDropMax;
+ 
+     /// <summary>
++    /// Ambient occlusion. While false nothing below runs and the depth attachment
++    /// is written only when <see cref="ZBuffer"/> asks for it.
++    ///
++    /// On, every triangle whose corners all recovered a view depth *writes* that
++    /// depth — with the test left at <c>GL_ALWAYS</c> unless the Z-buffer is also
++    /// on, so nothing is ever rejected and the ordering table stays the whole of
++    /// occlusion. **Painter's order is what makes that a usable G-buffer**: the
++    /// table is walked back to front, so the last write at a pixel is the nearest
++    /// visible surface, which is exactly the depth a screen-space pass wants and
++    /// is arrived at without a depth test, a prepass or a second submission of the
++    /// frame's geometry. Everything without a recovered depth writes the far plane
++    /// instead of the interpolated clip Z it used to, so the 2D HUD, the menus and
++    /// any triangle the map missed read as "no surface here" and are left alone by
++    /// the pass — semi-transparent primitives write nothing at all, so a death fade
++    /// or a damage flash does not erase the world's depth underneath it.
++    ///
++    /// Safe to change at run time: <see cref="Generation"/> is bumped so the next
++    /// draw onto a target clears the attachment rather than shading against
++    /// whatever was left in it while the setting was off. GL backend only — the
++    /// software rasterizer keeps its own float-per-pixel buffer and has no
++    /// full-screen pass to run this in.
++    /// </summary>
++    public static bool AmbientOcclusion
++    {
++        get => _ao;
++        set
++        {
++            if (_ao == value) return;
++            _ao = value;
++            Generation++;
++            GteVertexMap.SetActive(Active);
++        }
++    }
++
++    /// <summary>Whether the depth attachment is worth writing at all. The two
++    /// consumers want the same numbers in the same buffer and differ only in what
++    /// is done with them — one rejects fragments, the other reads the finished
++    /// buffer back in a full-screen pass — so the write is shared and the test is
++    /// not.</summary>
++    public static bool DepthWanted => _zbuffer || _ao;
++
++    /// <summary>How far a sample may sit from the shaded point and still occlude
++    /// it, in GTE view-depth units, which are the game's own world units — a floor
++    /// tile is 2048 of them. This is the whole of the look: too small and only the
++    /// creases in a wall darken, too large and a corridor goes grey end to end.
++    ///
++    /// A quarter of a tile, which is the scale of the things it is meant to find —
++    /// the recess of a doorframe, the base of a pillar, the join of a wall and a
++    /// floor. Measured over one view in area 1, the share of the picture the pass
++    /// darkens goes 9.2% / 18.0% / 33.9% / 39.6% at 192 / 512 / 1024 / 2048, so by
++    /// a tile it is shading a third of everything in sight and has stopped being
++    /// contact shading. Nobody has looked at any of the four; this is the one whose
++    /// *scale* matches what the effect is for.</summary>
++    public static float AoRadius = 512f;
++
++    /// <summary>How dark a fully occluded pixel goes, 0 (nothing) to 1 (black).</summary>
++    public static float AoStrength = 0.8f;
++
++    /// <summary>The angular bias, as a cosine: a sample within this much of the
++    /// shaded surface's own plane is treated as part of that surface rather than as
++    /// something standing in front of it. It is what keeps a flat wall from
++    /// shading itself out of the recovered depth's own quantisation.</summary>
++    public static float AoBias = 0.08f;
++
++    /// <summary>Samples per pixel in the occlusion pass. Rotated by a 4x4
++    /// interleaved pattern and blurred by a 4x4 kernel that cancels it exactly, so
++    /// this buys smoothness rather than the absence of a visible grid.</summary>
++    public static int AoSamples = 16;
++
++    /// <summary>Beyond this view depth the pass returns unoccluded. The game's own
++    /// fog has taken the picture by then, and the projected radius of a world-unit
++    /// sphere has fallen under a pixel, so the samples would all land in the same
++    /// texel and produce nothing but noise.</summary>
++    public static float AoMaxDepth = 24000f;
++
++    /// <summary>The projection the GTE is actually using, published from
++    /// <c>Gte.Rtp</c>: the projection distance H and the screen-space centre
++    /// OFX/OFY the divide is offset by. The pass has to undo the game's own
++    /// projection to get a view position back out of a depth texel, and these are
++    /// that projection rather than an assumption about it — a wrong H tilts every
++    /// reconstructed normal and a wrong centre tilts them more towards the edges of
++    /// the picture, which is exactly the kind of error a screenshot cannot tell
++    /// from a look.</summary>
++    public static float ProjH = 320f, ProjCx = 160f, ProjCy = 120f;
++
++    // There was a ProjOffX/ProjOffY here -- the GP0 drawing offset of the last
++    // depth-writing triangle -- on the reasoning that the GTE's centre is in
++    // packet coordinates while the target holds VRAM ones, so the offset is the
++    // difference. It is not, and it made the reconstruction wrong on half the
++    // frames: the offset it recorded belonged to the buffer being *drawn*, while
++    // the pass runs against the buffer being *presented*, and with two display
++    // buffers those differ by a screen on alternate frames. The right answer is
++    // that a display target's own origin already is that offset -- if it were not,
++    // the prim shader's uPosBias of -rt.X/-rt.Y would put every polygon in the
++    // wrong place and the picture would be broken long before this pass ran. So
++    // the target answers, and nothing per-triangle is recorded at all.
++
++    /// <summary>Where the pass put the projection centre, as a fraction of the
++    /// display area, published so the probe can print it. It should be 0.5, 0.5 on
++    /// every frame; anything else is the display origin and the drawing offset
++    /// disagreeing, which is silent, intermittent (the two display buffers differ
++    /// by a screen) and shows up only as the shading being subtly wrong.</summary>
++    public static float AoCentreX = 0.5f, AoCentreY = 0.5f;
++
++    /// <summary>Vertices whose projection was read for <see cref="ProjH"/>. A rate
++    /// of zero with the setting on means the GTE is not projecting and the numbers
++    /// above are the defaults, not a reading.</summary>
++    public static long ProjSeen;
++
++    /// <summary>Full-screen occlusion passes run, and presents that had no target
++    /// to run one against (the VRAM fallback, or an MDEC frame).</summary>
++    public static long AoPasses, AoNoTarget;
++
++    /// <summary>KF2_AO_PROBE=1: the coverage, the projection and the pass count.</summary>
++    public static bool AoProbe;
++
++    public static void ResetAoCounters()
++    {
++        AoPasses = AoNoTarget = ProjSeen = 0;
++    }
++
++    /// <summary>KF2_AO_PROBE=2: read the blurred occlusion texture back after the
++    /// next pass and reduce it to <see cref="AoMap"/> and the three numbers below.
++    /// One frame, on request, for the same reason the depth map is.
++    ///
++    /// **It is the only counter that can tell the pass working from the pass
++    /// running.** Every other number here says the depth arrived and the two
++    /// draws were issued; a shader that returns white on every pixel produces
++    /// exactly the same report and exactly no shading, and this is a project where
++    /// nobody is allowed to go and look.</summary>
++    public static bool WantAoMap;
++
++    public const int AoMapCols = 32, AoMapRows = 16;
++
++    /// <summary>The mean occlusion factor in each cell of the finished frame, 1
++    /// being unshaded. Cells over the HUD and over anything the vertex map missed
++    /// read exactly 1, which is what the far-plane mask is for.</summary>
++    public static float[]? AoMap;
++
++    /// <summary>The share of each cell the pass found a surface in, from the mask
++    /// channel. It is the other half of reading <see cref="AoMap"/>: a cell at 1.00
++    /// occlusion with no surface under it is the mask doing its job, and the same
++    /// cell with a surface under it is the pass finding nothing to shade with —
++    /// which is a radius that is too small, or a reconstruction that is wrong.
++    /// Without this the two are indistinguishable and every blank patch is an
++    /// argument.</summary>
++    public static float[]? AoCoverage;
++
++    /// <summary>The darkest factor anywhere in the frame, the mean over the whole
++    /// frame, the share of pixels the pass actually darkened, and the share it
++    /// found a surface at all. The last is the denominator the third wants: 9% of
++    /// the picture shaded is a different claim when 60% of it carries a surface
++    /// than when 100% does.</summary>
++    public static float AoMin = 1f, AoMean = 1f, AoShadedPct, AoCoveragePct;
++
++    /// <summary>Two bytes a pixel: red the occlusion factor, green the mask.</summary>
++    public static void SetAoMap(ReadOnlySpan<byte> ao, int w, int h)
++    {
++        var map = AoMap ??= new float[AoMapCols * AoMapRows];
++        var cov = AoCoverage ??= new float[AoMapCols * AoMapRows];
++        Array.Fill(map, 1f);
++        Array.Fill(cov, 0f);
++        AoMin = 1f; AoMean = 1f; AoShadedPct = 0f; AoCoveragePct = 0f;
++        WantAoMap = false;
++        if (w <= 0 || h <= 0) return;
++
++        Span<int> cellN = stackalloc int[AoMapCols * AoMapRows];
++        Span<int> cellHit = stackalloc int[AoMapCols * AoMapRows];
++        Span<float> cellSum = stackalloc float[AoMapCols * AoMapRows];
++        double sum = 0;
++        long shaded = 0, covered = 0, n = 0;
++
++        for (int y = 0; y < h; y++)
++        {
++            // The readback is bottom-up, the picture is top-down.
++            int row = (h - 1 - y) * AoMapRows / h;
++            int rowBase = y * w * 2;
++            for (int x = 0; x < w; x++)
++            {
++                float v = ao[rowBase + x * 2] * (1f / 255f);
++                bool surface = ao[rowBase + x * 2 + 1] >= 128;
++                sum += v;
++                n++;
++                // A pixel is "shaded" once it is more than one 8-bit step from
++                // white, so the quantisation of the target is not counted as
++                // occlusion.
++                if (v < 254f / 255f) shaded++;
++                if (surface) covered++;
++                if (v < AoMin) AoMin = v;
++                int cell = row * AoMapCols + x * AoMapCols / w;
++                cellSum[cell] += v;
++                cellN[cell]++;
++                if (surface) cellHit[cell]++;
++            }
++        }
++
++        for (int i = 0; i < map.Length; i++)
++            if (cellN[i] > 0) { map[i] = cellSum[i] / cellN[i]; cov[i] = (float)cellHit[i] / cellN[i]; }
++        if (n > 0)
++        {
++            AoMean = (float)(sum / n);
++            AoShadedPct = 100f * shaded / n;
++            AoCoveragePct = 100f * covered / n;
++        }
++    }
++
++    /// <summary>Called from <c>Gte.Rtp</c> while the pass is on. Last writer wins,
++    /// which is right: a frame is projected under one H and one centre, and the
++    /// pass runs after the last vertex of it.</summary>
++    public static void NoteProjection(float h, float cx, float cy)
++    {
++        if (h > 0f) { ProjH = h; ProjCx = cx; ProjCy = cy; ProjSeen++; }
++    }
++
++    /// <summary>
+     /// True color (24-bit). While false the GL backend renders into an RGB5A1
+     /// display target and the fragment shader crushes every shaded pixel to five
+     /// bits per channel, exactly as the PlayStation's 15-bit VRAM does — which
+@@ -210,7 +425,7 @@
+ 
+     /// <summary>Nothing is recorded and every lookup misses while every consumer
+     /// is off, which is what makes this cost nothing when none of them is wanted.</summary>
+-    public static bool Active => _enabled || _subpixel || _zbuffer;
++    public static bool Active => _enabled || _subpixel || _zbuffer || _ao;
+ 
+     /// <summary>Consult the screen-position table below for vertices the exact map
+     /// could not answer for. Off by default — it is the guess this was all built to
+--- a/tools/RecompOne/RecompOne.Runtime/Hardware/Gte.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/Gte.cs
+@@ -382,6 +382,12 @@
+             // The probes measure what the GTE projected, not what either mechanism
+             // chose to keep, so this is counted whichever of the two is answering.
+             GteDepth.NoteProjected(SP[2].Fx, SP[2].Fy, clipped, sz > 0);
++            // The projection itself, for the ambient-occlusion pass: it has to undo
++            // this divide to get a view position back out of a depth texel, and H
++            // and the OFX/OFY centre are that projection rather than a guess at it.
++            // OFX/OFY are 16.16 here, as SX/SY are before the shift.
++            if (GteDepth.AmbientOcclusion)
++                GteDepth.NoteProjection(H, OFX * (1f / 65536f), OFY * (1f / 65536f));
+             if (GteDepth.PositionFallback)
+                 GteDepth.Record(nx, ny, sz, sx * (1f / 65536f), sy * (1f / 65536f), clipped);
+         }

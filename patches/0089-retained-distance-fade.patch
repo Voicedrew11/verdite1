@@ -1,0 +1,370 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+index 33168a8..3b0389a 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+@@ -433,6 +433,8 @@ public sealed partial class GlCore
+         if (_uwDither >= 0) _gl.Uniform1(_uwDither, _env.Dither ? 1 : 0);
+         if (_uwNeighbour >= 0) _gl.Uniform1(_uwNeighbour, NeighbourBlend.Mode);
+         if (_uwNbTile >= 0) _gl.Uniform1(_uwNbTile, NeighbourBlend.Tile);
++        // 0089. The main view only: the mirror's walk is the game's own.
++        SendFade(_uwFade, _uwFadeZ, mirror ? null : f);
+         // Fogged at each pixel's own depth: a face clipped at the eye has no corner
+         // whose screen-affine fog holds at the clip.
+         if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, RetainedScene.MainFogFromZ ? Math.Max(1f, f.View.H) : 0f);
+@@ -530,6 +532,7 @@ public sealed partial class GlCore
+         if (_uwPerPixel >= 0) _gl.Uniform1(_uwPerPixel, 1);
+         if (_uwDither >= 0) _gl.Uniform1(_uwDither, 0);
+         if (_uwNeighbour >= 0) _gl.Uniform1(_uwNeighbour, 0);
++        SendFade(_uwFade, _uwFadeZ, null);
+         if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, 0f);
+         if (_uwSwellOn >= 0) _gl.Uniform1(_uwSwellOn, 0);
+         if (_uwClipOn >= 0) _gl.Uniform1(_uwClipOn, 0);
+@@ -1267,6 +1270,7 @@ public sealed partial class GlCore
+         _uwnProjH = L("uProjH"); _uwnCentre = L("uCentre"); _uwnScale = L("uScale");
+         _uwnDepthCull = L("uDepthCull"); _uwnDepthStep = L("uDepthStep");
+         _uwnSwellOn = L("uSwellOn"); _uwnSwell = L("uSwell"); _uwnZSlice = L("uZSlice");
++        _uwnFade = L("uFade"); _uwnFadeZ = L("uFadeZ");
+         _gl.UseProgram(_progWorldNrm);
+         void Unit(string n, int v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         Unit("uVram", 0); Unit("uHalves", HalvesUnit); Unit("uFrameDepth", FrameDepthUnit); Unit("uVeilPass", 0);
+@@ -1323,6 +1327,7 @@ public sealed partial class GlCore
+             if (_uwnDepthCull >= 0) _gl.Uniform1(_uwnDepthCull, 1);
+             if (_uwnDepthStep >= 0) _gl.Uniform2(_uwnDepthStep, stepX, stepY);
+             if (_uwnZSlice >= 0) _gl.Uniform2(_uwnZSlice, 0f, 0f);
++            SendFade(_uwnFade, _uwnFadeZ, f);
+             SendWorldSwell(f, _uwnSwellOn, _uwnSwell);
+             if (RetainedScene.CullBack)
+             {
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+index 71fa86f..676f233 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+@@ -77,6 +77,7 @@ public sealed partial class GlCore
+         Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit); Unit("uHalves", HalvesUnit);
+         Unit("uRecords", RecordsUnit); Unit("uNbHalves", NbHalvesUnit);
+         _uwNeighbour = L("uNeighbour"); _uwNbTile = L("uNbTile");
++        _uwFade = L("uFade"); _uwFadeZ = L("uFadeZ");
+         void I(string n, int v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         void F(string n, float v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         int tw = L("uTexWindow");
+@@ -270,6 +271,19 @@ public sealed partial class GlCore
+     const int NbHalvesUnit = 22;
+     uint _nbHalvesTex;
+     int _nbHalvesGen = -1, _uwNeighbour = -1, _uwNbTile = -1;
++    // 0089. DistanceFade's uniforms, in the world program and its normal program.
++    int _uwFade = -1, _uwFadeZ = -1, _uwnFade = -1, _uwnFadeZ = -1;
++
++    /// <summary>0089. The frame's DistanceFade, or none.</summary>
++    void SendFade(int fade, int depth, RetainedScene.Frame? f)
++    {
++        if (fade >= 0)
++        {
++            if (f == null) _gl.Uniform4(fade, 0f, 0f, 0f, 0f);
++            else _gl.Uniform4(fade, (float)f.View.CamX, (float)f.View.CamZ, f.FadeEdge, f.FadeBand);
++        }
++        if (depth >= 0) _gl.Uniform1(depth, f?.FadeDepth ?? 0f);
++    }
+ 
+     unsafe void UploadNbHalves()
+     {
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 6e512cb..4aaca03 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -505,6 +505,8 @@ internal static class GlShaders
+         flat out float vM;
+         out vec2 vUv;
+         flat out uint vTex;
++        // 0089. The world program's; no packet is faded.
++        out vec2 vFadeXZ;
+ 
+         void main() {
+             vec2 p = (inPos + uPosBias) * uFbInv - 1.0;
+@@ -514,6 +516,7 @@ internal static class GlShaders
+             vM = inM;
+             vUv = inUv;
+             vTex = inTex;
++            vFadeXZ = vec2(0.0);
+         }
+         """;
+ 
+@@ -530,12 +533,14 @@ internal static class GlShaders
+     /// never reached falls back to the old cross product rather than to a wrong
+     /// normal.
+     /// </summary>
+-    public const string NormalFs = """
++    public static readonly string NormalFs = """
+         #version 330 core
+         in float vDepth;
+         flat in float vM;
+         in vec2 vUv;
+         flat in uint vTex;
++        // 0089. A world corner's X and Z, for DistanceFade (WorldNormalVs).
++        in vec2 vFadeXZ;
+         // 0067. Two outputs. The first is the occlusion pass's normal buffer and
+         // is blended (ONE, ONE_MINUS_SRC_ALPHA), so a translucent surface writes
+         // alpha 0 and leaves the opaque surface under it -- whose depth is the one
+@@ -563,6 +568,8 @@ internal static class GlShaders
+         // The map's water, one slice of view depth, (x, y]; y 0 is none.
+         uniform vec2 uZSlice;
+ 
++        //@distanceFade
++
+         vec4 vfetch(ivec2 c) { return texelFetch(uVram, c & ivec2(1023, 511), 0); }
+         int vu5(float f) { return int(floor(f * 31.0 + 0.5)); }
+         int vfetch16(ivec2 c) {
+@@ -600,6 +607,8 @@ internal static class GlShaders
+             float z = vDepth * 65536.0;
+             // Taken here, in uniform control flow, for a surface's texel below.
+             vec2 dUvx = dFdx(vUv), dUvy = dFdy(vUv);
++            // 0089. A pixel the colour pass dithers away by distance is no surface.
++            if (fadeDropped(distanceFade(vFadeXZ, z))) discard;
+             // A veil, a see-through 2D box: where it is see-through, both buffers
+             // are left as they are and its mark is added to the id (the draw blends
+             // it so); a texel without the semi-transparency bit is an overlay.
+@@ -665,7 +674,7 @@ internal static class GlShaders
+             oColor = opaque ? vec4(n * 0.5 + 0.5, 1.0) : vec4(0.0);
+             oSurface = vec4(octEncode(n), vDepth, id);
+         }
+-        """;
++        """.Replace("//@distanceFade", DistanceFade.Glsl);
+ 
+     /// <summary>
+     /// 0085. The retained map into the normal and surface buffers: <c>WorldVs</c>'s
+@@ -821,6 +830,9 @@ internal static class GlShaders
+         flat out float vM;
+         out vec2 vUv;
+         flat out uint vTex;
++        // 0089. As WorldVs's.
++        out vec2 vFadeXZ;
++        uniform vec4 uFade;
+ 
+         uniform mat3  uR;
+         uniform vec3  uCam;
+@@ -855,6 +867,7 @@ internal static class GlShaders
+         void main() {
+             uint flags = inFlags;
+             vec3 w = inWorld;
++            vFadeXZ = vec2(0.0);
+             if (uModel != 0) {
+                 uint m = uModelMat;
+                 if (uModelBlend != 0) {
+@@ -887,6 +900,7 @@ internal static class GlShaders
+                 return;
+             }
+             if (uSwellOn != 0 && (flags & 0x8000000u) != 0u) w.y += swellDy(w);
++            vFadeXZ = uModel != 0 && (uModelView != 0 || uModelSky != 0) ? uFade.xy : w.xz;
+             vec3 v = uR * (w - uCam) + uT;
+             if (uModel != 0 && uModelView != 0) v = modelEye(uint(inWorld.x));
+             float z = v.z;
+@@ -1552,6 +1566,10 @@ internal static class GlShaders
+         out vec2 vNbXZ;
+         noperspective out vec3 vNbDots;
+         uniform int uNeighbour;
++        // 0089. The corner's world X and Z, for DistanceFade in PrimFs; the camera's
++        // (uFade.xy) for the sky and a model placed in view space, which never fade.
++        out vec2 vFadeXZ;
++        uniform vec4 uFade;
+ 
+         uniform mat3  uR;
+         uniform vec3  uCam;
+@@ -1718,6 +1736,7 @@ internal static class GlShaders
+             vNb = uvec2(0u);
+             vNbXZ = vec2(0.0);
+             vNbDots = vec3(0.0);
++            vFadeXZ = vec2(0.0);
+             if (uDepthOnly == 0 && (inLight & 0x80000000u) != 0u) {
+                 recordLit(inLight, inColorF, inCue.x, inCue.y, inRgbc, color, cue, litDots);
+                 uint nbHid = (inFlags >> 13) & 0x3FFFu;
+@@ -1756,6 +1775,7 @@ internal static class GlShaders
+                 }
+             }
+             if (uSwellOn != 0 && (flags & 0x8000000u) != 0u) w.y += swellDy(w);
++            vFadeXZ = uModel != 0 && (uModelView != 0 || uModelSky != 0) ? uFade.xy : w.xz;
+             gl_ClipDistance[0] = (uPlaneY - uPlaneBias) - w.y;
+             if (uMirror != 0) w.y = 2.0 * uPlaneY - w.y;
+             vec3 v = uR * (w - uCam) + uT;
+@@ -1874,6 +1894,8 @@ internal static class GlShaders
+         flat out uvec2 vNb;
+         out vec2 vNbXZ;
+         noperspective out vec3 vNbDots;
++        // 0089. The world program's; no packet is faded.
++        out vec2 vFadeXZ;
+ 
+         uniform vec2 uVertexOffset;
+         uniform vec2 uPosBias;
+@@ -1910,6 +1932,7 @@ internal static class GlShaders
+             vNb = uvec2(0u);
+             vNbXZ = vec2(0.0);
+             vNbDots = vec3(0.0);
++            vFadeXZ = vec2(0.0);
+             vDither = (inTexpage >> 10) & 1;
+             vRepClut = (inTexpage >> 12) & 1;
+ 
+@@ -1956,6 +1979,8 @@ internal static class GlShaders
+         flat in uvec2 vNb;
+         in vec2 vNbXZ;
+         noperspective in vec3 vNbDots;
++        // 0089. DistanceFade's world X and Z (WorldVs).
++        in vec2 vFadeXZ;
+ 
+         layout(location = 0, index = 0) out vec4 FragColor;
+         layout(location = 0, index = 1) out vec4 BlendColor;
+@@ -2347,6 +2372,7 @@ internal static class GlShaders
+         // The depth cue's weight, 0..4096, from the raw MAC0 through the curve.
+         //@linearDepthCue
+         //@neighbourBlend
++        //@distanceFade
+ 
+         // 0088. A pixel some neighbour of whose half lights or fogs otherwise: its lit
+         // colour (when the light blends) and its cue weight from the records around
+@@ -2497,11 +2523,9 @@ internal static class GlShaders
+                 if (lz > cz) { gCueScale = cz / lz; gCueZ = cz; }
+             }
+             // 0072, amended. A half fading in or out of a reflection: an ordered
+-            // dither, so it needs no blending and keeps its depth.
+-            if (vFade < 1.0) {
+-                ivec2 fp = ivec2(gl_FragCoord.xy) & 3;
+-                if ((float(ditherTbl[fp.y * 4 + fp.x] + 4) + 0.5) / 8.0 > vFade) discard;
+-            }
++            // dither, so it needs no blending and keeps its depth. 0089: times the
++            // main view's DistanceFade, 1 where it is off.
++            if (fadeDropped(vFade * distanceFade(vFadeXZ, vDepth * 65536.0))) discard;
+             if (uPlainZ > 0.0 && vDepth > 0.0)
+                 gPlain = smoothstep(uPlainZ - 2048.0, uPlainZ, vDepth * 65536.0);
+             if (uMaskOn != 0) {
+@@ -2719,7 +2743,8 @@ internal static class GlShaders
+             FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
+             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
+         }
+-        """.Replace("//@linearDepthCue", LinearDepthCue.Glsl).Replace("//@neighbourBlend", NeighbourBlend.Glsl);
++        """.Replace("//@linearDepthCue", LinearDepthCue.Glsl).Replace("//@neighbourBlend", NeighbourBlend.Glsl)
++            .Replace("//@distanceFade", DistanceFade.Glsl);
+     
+     public const string FullscreenVs120 = """
+         #version 120
+diff --git a/RecompOne.Runtime/Gpu/DistanceFade.cs b/RecompOne.Runtime/Gpu/DistanceFade.cs
+new file mode 100644
+index 0000000..0702fe8
+--- /dev/null
++++ b/RecompOne.Runtime/Gpu/DistanceFade.cs
+@@ -0,0 +1,70 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0089. The main view's map and models faded out by **horizontal** distance from the
++/// camera, per pixel, through the world program's ordered dither (0072's
++/// <c>vFade</c>): no blending, and a pixel that is drawn keeps its depth. Turning on
++/// the spot fades nothing, and a model and the ground under it fade together, since
++/// both are weighed by their world X and Z.
++///
++/// <para>The weight is <c>clamp((edge - d) / band, 0, 1)</c>, d the distance from the
++/// camera's X and Z; band 0 is no distance fade. Past <c>depth</c> - 2048 of view depth
++/// the weight falls to 0 by <c>depth</c> as well, so nothing reaches the depth the
++/// world program's 16 bits stop at (65,536, where every surface is the far plane).
++/// Depth 0 is no limit.</para>
++///
++/// <para>The port sets a frame's fade with <see cref="RetainedScene.SetFade"/>; the
++/// main view and its normal pass take it, the reflections and the arm never do. A frame
++/// with no fade draws what it drew before. The sky's models (<c>uModelSky</c>) and a
++/// model placed in view space (<c>uModelView</c>, the arm) stand at the camera for it.
++/// </para>
++/// </summary>
++public static class DistanceFade
++{
++    /// <summary>The view depth over which the depth limit fades a pixel out.</summary>
++    public const float DepthBand = 2048f;
++
++    /// <summary>A depth limit that fades out before the world program's 65,536.</summary>
++    public const float DepthLimit = 65024f;
++
++    /// <summary>The CPU reference: <see cref="Glsl"/>'s <c>distanceFade</c>.</summary>
++    public static float Weight(float dx, float dz, float z, float edge, float band, float depth)
++    {
++        float k = 1f;
++        if (band > 0f) k = Math.Clamp((edge - MathF.Sqrt(dx * dx + dz * dz)) / band, 0f, 1f);
++        if (depth > 0f) k = Math.Min(k, Math.Clamp((depth - z) / DepthBand, 0f, 1f));
++        return k;
++    }
++
++    /// <summary>The CPU reference: whether <see cref="Glsl"/>'s <c>fadeDropped</c> drops
++    /// a pixel at <paramref name="x"/>, <paramref name="y"/> at weight
++    /// <paramref name="fade"/>.</summary>
++    public static bool Dropped(float fade, int x, int y) =>
++        fade < 1f && (Order[(y & 3) * 4 + (x & 3)] + 4 + 0.5f) / 8f > fade;
++
++    static readonly int[] Order = [-4, 0, -3, 1, 2, -2, 3, -1, -3, 1, -4, 0, 3, -1, 2, -2];
++
++    /// <summary>For PrimFs and NormalFs: the camera's X and Z, the edge and the band in
++    /// <c>uFade</c>, the depth limit in <c>uFadeZ</c>; all 0 is off. <c>fadeDropped</c> is
++    /// PrimFs's ordered dither, the crosshatch's table.</summary>
++    public const string Glsl = """
++        uniform vec4  uFade;
++        uniform float uFadeZ;
++        float distanceFade(vec2 xz, float z) {
++            float k = 1.0;
++            if (uFade.w > 0.0) k = clamp((uFade.z - length(xz - uFade.xy)) / uFade.w, 0.0, 1.0);
++            if (uFadeZ > 0.0) k = min(k, clamp((uFadeZ - z) / 2048.0, 0.0, 1.0));
++            return k;
++        }
++        const int fadeOrder[16] = int[16](
++            -4,  0, -3,  1,
++             2, -2,  3, -1,
++            -3,  1, -4,  0,
++             3, -1,  2, -2 );
++        bool fadeDropped(float fade) {
++            if (fade >= 1.0) return false;
++            ivec2 fp = ivec2(gl_FragCoord.xy) & 3;
++            return (float(fadeOrder[fp.y * 4 + fp.x] + 4) + 0.5) / 8.0 > fade;
++        }
++        """;
++}
+diff --git a/RecompOne.Runtime/Gpu/RetainedScene.cs b/RecompOne.Runtime/Gpu/RetainedScene.cs
+index 6c54d78..ab6ea04 100644
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -529,8 +529,12 @@ public static class RetainedScene
+         /// tile walk drew, unless the port weighs them (<see cref="CurrentHalves"/>).</summary>
+         public readonly byte[] Halves = new byte[HalvesW * HalvesH];
+         /// <summary>0085. The halves the frame's own walk drew, 255 each: the main
+-        /// view's gate, which nothing grows or fades.</summary>
++        /// view's gate, which nothing grows or fades. 0089: the port may add halves
++        /// past the walk's reach (<see cref="CurrentMainHalves"/>).</summary>
+         public readonly byte[] MainHalves = new byte[HalvesW * HalvesH];
++        /// <summary>0089. The main view's <see cref="DistanceFade"/>: its edge and band
++        /// in world units from the camera's X and Z, and its depth limit; all 0 is none.</summary>
++        public float FadeEdge, FadeBand, FadeDepth;
+         /// <summary>0085. The swell this frame was walked with: per wave, its
+         /// wavenumber along X and Z, its height and its phase; and whether it is on.</summary>
+         public readonly float[] Swell = new float[12];
+@@ -623,6 +627,7 @@ public static class RetainedScene
+         MirrorSerial = 0;
+         Array.Clear(f.Halves);
+         Array.Clear(f.MainHalves);
++        f.FadeEdge = f.FadeBand = f.FadeDepth = 0f;
+     }
+ 
+     // ---- 0085: the mirror ----------------------------------------------------------
+@@ -694,6 +699,22 @@ public static class RetainedScene
+     /// <c>vFade</c>). Empty outside a frame.</summary>
+     public static Span<byte> CurrentHalves => Current.Serial == _serial ? Current.Halves : Span<byte>.Empty;
+ 
++    /// <summary>0089. The current frame's main-view gate, for a port that draws halves
++    /// past the walk's reach: 255 is drawn, and a half written here is neither
++    /// reflected nor noted for the mirror. Empty outside a frame.</summary>
++    public static Span<byte> CurrentMainHalves => Current.Serial == _serial ? Current.MainHalves : Span<byte>.Empty;
++
++    /// <summary>0089. The current frame's <see cref="DistanceFade"/>: <paramref name="edge"/>
++    /// and <paramref name="band"/> in world units of horizontal distance from the camera
++    /// (band 0 none), <paramref name="depth"/> the view depth everything is gone by (0
++    /// none).</summary>
++    public static void SetFade(float edge, float band, float depth)
++    {
++        var f = Current;
++        if (f.Serial != _serial) return;
++        f.FadeEdge = edge; f.FadeBand = band; f.FadeDepth = depth;
++    }
++
+     /// <summary>One model's triangles, in world space, to the current frame.</summary>
+     public static void AddDynamic(ReadOnlySpan<Vertex> tris)
+     {

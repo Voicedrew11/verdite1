@@ -1,0 +1,576 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Config/ViewConfig.cs b/tools/RecompOne/RecompOne.Runtime/Config/ViewConfig.cs
+index 3c65dea..12bd752 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Config/ViewConfig.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Config/ViewConfig.cs
+@@ -107,6 +107,16 @@ public class ViewConfig
+         set => SetBool("Fullscreen", value);
+     }
+ 
++    /// <summary>How <see cref="Fullscreen"/> covers the screen: a borderless window
++    /// the size of the monitor rather than GLFW's fullscreen mode. Kept beside it,
++    /// not instead of it, so F11 and the menu bar still toggle "covers the
++    /// screen" and an existing config reads as it did.</summary>
++    public bool Borderless
++    {
++        get => GetBool("Borderless");
++        set => SetBool("Borderless", value);
++    }
++
+     public int RenderScale
+     {
+         get
+diff --git a/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs b/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs
+index 45556b1..6aba76f 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs
+@@ -149,7 +149,7 @@ public static class Profiler
+     public static readonly int GlFlush = Register("GlCore.Flush (GL batch submit)", ProfileGroup.Runtime);
+     public static readonly int DrawOTag = Register("LibGpu.DrawOTag (packet walk)", ProfileGroup.Runtime);
+     public static readonly int Throttle = Register("FrameClock.Throttle (host ceiling)", ProfileGroup.Wait);
+-    public static readonly int VSyncWait = Register("FrameClock.WaitRefresh (Wayland vsync on the CPU)", ProfileGroup.Wait);
++    public static readonly int VSyncWait = Register("VSync wait (Wayland: the CPU grid; Windows: the display's vblank)", ProfileGroup.Wait);
+     public static readonly int Ticks = Register("CD, card and pad ticks", ProfileGroup.Runtime);
+     public static readonly int Self = Register("profiler (its own reporting)", ProfileGroup.Runtime);
+     public static readonly int Ao = Register("GlCore ambient occlusion pass", ProfileGroup.Runtime);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/Assets/languages.json b/tools/RecompOne/RecompOne.Runtime/Host/Window/Assets/languages.json
+index d685f0b..92132c3 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/Assets/languages.json
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/Assets/languages.json
+@@ -596,6 +596,38 @@
+       "zh-CN": "全屏模式",
+       "fr-FR": "Plein écran"
+     },
++    "settings.display.mode": {
++      "en": "Display mode",
++      "pt-BR": "Modo de exibição",
++      "es-419": "Modo de pantalla",
++      "ja-JP": "表示モード",
++      "zh-CN": "窗口模式",
++      "fr-FR": "Mode d'affichage"
++    },
++    "settings.display.mode.windowed": {
++      "en": "Windowed",
++      "pt-BR": "Janela",
++      "es-419": "Ventana",
++      "ja-JP": "ウィンドウ",
++      "zh-CN": "窗口化",
++      "fr-FR": "Fenêtré"
++    },
++    "settings.display.mode.borderless": {
++      "en": "Borderless",
++      "pt-BR": "Sem bordas",
++      "es-419": "Sin bordes",
++      "ja-JP": "ボーダーレス",
++      "zh-CN": "无边框",
++      "fr-FR": "Sans bordure"
++    },
++    "settings.display.mode_hint": {
++      "en": "Borderless covers the screen as a window the desktop presents, so VSync there cannot tear",
++      "pt-BR": "Sem bordas cobre a tela como uma janela apresentada pela área de trabalho, então o VSync nele não causa tearing",
++      "es-419": "Sin bordes cubre la pantalla como una ventana que presenta el escritorio, así que el VSync ahí no produce tearing",
++      "ja-JP": "ボーダーレスはデスクトップが表示するウィンドウとして画面を覆うため、VSync でティアリングが起きません",
++      "zh-CN": "无边框以桌面合成的窗口覆盖屏幕，因此垂直同步不会产生画面撕裂",
++      "fr-FR": "Sans bordure couvre l'écran avec une fenêtre présentée par le bureau, donc la V-Sync n'y provoque pas de déchirement"
++    },
+     "settings.display.vsync": {
+       "en": "VSync",
+       "pt-BR": "VSync",
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+index 090ad11..7337a3a 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -153,7 +153,9 @@ public static class HostWindow
+                     VSync = false,
+                     UpdatesPerSecond = 0,
+                     FramesPerSecond = 0,
+-                    WindowState = ConfigManager.View.Fullscreen ? WindowState.Fullscreen : WindowState.Normal,
++                    WindowState = ConfigManager.View.Fullscreen && !ConfigManager.View.Borderless
++                        ? WindowState.Fullscreen
++                        : WindowState.Normal,
+                     API = api
+                 };
+                 _window = Silk.NET.Windowing.Window.Create(options);
+@@ -164,8 +166,10 @@ public static class HostWindow
+                 _window.Load += OnLoad;
+                 _window.Render += OnRender;
+                 _window.Closing += OnClosing;
++                _window.Move += OnMove;
+                 HintAppId(AppId);
+                 _window.Initialize();
++                if (ConfigManager.View.Fullscreen && ConfigManager.View.Borderless) SetFullscreen(true);
+                 Console.WriteLine($"[Host] gl context {api.Version.MajorVersion}.{api.Version.MinorVersion} {api.Profile}");
+                 return;
+             }
+@@ -375,12 +379,101 @@ public static class HostWindow
+         // 0045. What OnRender does not claim for itself is Silk's own swap, which
+         // is where the thread waits on the driver.
+         var render = Profiler.Begin(Profiler.HostRender);
+-        _window.DoRender();
++        RenderFrame();
+         Profiler.End(render);
+         GlDebug.Poll(_gl);
+         FrameClock.MarkPresent();
++        _presentedAt = _pumpClock.Elapsed.TotalMilliseconds;
+     }
+ 
++    // ---- how VSync is kept off Wayland (0066) -----------------------------------
++    //
++    // On Windows, in a window the compositor presents -- windowed, or the
++    // borderless display mode -- the interval stays 0, the frame is composed and
++    // flushed, and the swap waits for the display's own vertical blank (VBlankWait,
++    // the kernel's vblank event). On an integrated Radeon the interval fell into
++    // stretches of 30-55 fps, because its swap blocks until the flip it queues;
++    // this held 99-100% of frame intervals within a millisecond of 16.7 in four
++    // alternating runs. It cannot tear there, since the compositor takes whole
++    // frames. GLFW's fullscreen bypasses the compositor, where a flip at interval 0
++    // is not held to the blank and it does tear (seen in play), so fullscreen keeps
++    // the interval. Waiting for the blank and then swapping at interval 1 does not
++    // help: it locks at 30, one refresh in the wait and one in the swap.
++    //
++    // Elsewhere VSync is the swap interval, and its swap is deferred to the next present. A blocking swap
++    // waits for the GPU to finish the frame and then for the flip, and this port
++    // presents from inside the game's own VSync on the game's own thread, so the
++    // frame's heaviest GPU work -- the occlusion pass and the composite, issued at
++    // present -- could not overlap the next frame's game code the way it does with
++    // VSync off: with SSAO on High, 56.0 fps swapped at once against 60.0 deferred,
++    // alternating, in both rounds. One refresh of latency.
++    //
++    // KF2_SWAP=interval takes the deferred interval in a composed window too,
++    // KF2_SWAP=immediate the interval swapped where it was composed, and
++    // KF2_SWAP=vblank the vblank wait in fullscreen as well (it tears there).
++
++    private enum SwapMode { Silk, Deferred, VBlank }
++
++    private static readonly string SwapAsked =
++        (Environment.GetEnvironmentVariable("KF2_SWAP") ?? "").Trim().ToLowerInvariant();
++
++    private static SwapMode _swapMode = SwapMode.Silk;
++    private static bool _swapPending;
++    private static bool _vblankFailed;
++
++    /// <summary>Compose the window's frame and put it on the screen the way the
++    /// swap mode says.</summary>
++    private static void RenderFrame()
++    {
++        if (_swapMode == SwapMode.VBlank)
++        {
++            _window!.DoRender();
++            // Read again: the settings window is drawn inside DoRender and can turn
++            // VSync over, and Silk has then swapped this frame itself or not at all.
++            if (_swapMode != SwapMode.VBlank) return;
++            _gl?.Flush();
++            var wait = Profiler.Begin(Profiler.VSyncWait);
++            var waited = VBlankWait.Wait();
++            Profiler.End(wait);
++            _window.GLContext?.SwapBuffers();
++            if (waited) return;
++            // A wait that fails returns at once, which is no VSync at all.
++            Console.Error.WriteLine("[Host] the vblank wait failed; VSync falls back to the swap interval");
++            _vblankFailed = true;
++            ApplySwapInterval();
++            return;
++        }
++
++        var deferred = _swapMode == SwapMode.Deferred;
++        if (deferred) SwapPending();
++        _window!.DoRender();
++        if (_swapMode != SwapMode.Deferred) return;
++        _gl?.Flush();
++        _swapPending = true;
++    }
++
++    /// <summary>Put the frame that is waiting on the screen, if one is.</summary>
++    private static void SwapPending()
++    {
++        if (!_swapPending) return;
++        _swapPending = false;
++        _window!.GLContext?.SwapBuffers();
++    }
++
++    /// <summary>Take the swap from Silk, or hand it back with anything waiting shown
++    /// first.</summary>
++    private static void SetSwapMode(SwapMode mode)
++    {
++        if (_window == null) return;
++        if (mode != SwapMode.Deferred) SwapPending();
++        _swapMode = mode;
++        _window.ShouldSwapAutomatically = mode == SwapMode.Silk;
++    }
++
++    /// <summary>The vblank of the monitor the window is on now.</summary>
++    private static bool OpenVBlank() =>
++        _window?.Native?.Win32 is { } w32 && VBlankWait.Open(w32.HDC);
++
+     public static bool Ready => !_headless && _window != null;
+     
+     public static void PumpEvents()
+@@ -425,7 +518,7 @@ public static class HostWindow
+         
+         try
+         {
+-            _window.DoRender();
++            RenderFrame();
+         }
+         catch (NotImplementedException) //doesnt fucking work
+         {
+@@ -451,7 +544,7 @@ public static class HostWindow
+             Environment.Exit(0);
+         }
+ 
+-        _window.DoRender();
++        RenderFrame();
+     }
+ 
+     static readonly System.Diagnostics.Stopwatch _pumpClock = System.Diagnostics.Stopwatch.StartNew();
+@@ -479,13 +572,27 @@ public static class HostWindow
+ 
+         // Keep drawing while the game is stuck outside its frame loop, so the UI
+         // stays live rather than going grey -- but at display rate, not at the
+-        // rate the game happens to poll the pad. Present() stamps this too, so a
+-        // game that is running normally never renders twice in a frame.
++        // rate the game happens to poll the pad.
++        //
++        // Only once the game has stopped presenting, measured from where the last
++        // Present *ended*. Measured from its start, a frame of 16 ms or more --
++        // every frame, once the swap waits for a 60 Hz vblank -- read as stuck,
++        // and the pad read drew and swapped a second time: two blocking swaps a
++        // frame, 30 fps and 22 ms in "buffer swap + driver" with VSync on.
++        //
++        // A deferred swap is not left waiting that long: a game that has stopped
++        // presenting for two refreshes gets its last frame on the screen now.
++        if (_swapPending && now - _presentedAt >= SwapStaleMs) SwapPending();
++        if (now - _presentedAt < KeepAliveAfterMs) return;
+         if (now - _renderedAt < 16.0) return;
+         _renderedAt = now;
+-        _window.DoRender();
++        RenderFrame();
+     }
+ 
++    const double KeepAliveAfterMs = 250.0;
++    const double SwapStaleMs = 34.0;
++    static double _presentedAt = double.NegativeInfinity;
++
+     public static void Shutdown()
+     {
+         if (!_headless && _window != null && !_window.IsClosing)
+@@ -493,13 +600,54 @@ public static class HostWindow
+         InputManager.Shutdown();
+     }
+ 
++    /// <summary>Cover the screen or not, the way <c>ConfigManager.View.Borderless</c>
++    /// says: GLFW's fullscreen, or a borderless window the size of the monitor.</summary>
+     public static void SetFullscreen(bool on)
+     {
+         if (_window == null) return;
+-        _window.WindowState = on ? WindowState.Fullscreen : WindowState.Normal;
++        var borderless = on && ConfigManager.View.Borderless;
++
++        if (!borderless && _borderlessActive)
++        {
++            _window.WindowBorder = WindowBorder.Resizable;
++            _window.Position = _windowedPosition;
++            _window.Size = _windowedSize;
++            _borderlessActive = false;
++        }
++
++        if (borderless)
++        {
++            if (_window.WindowState != WindowState.Normal) _window.WindowState = WindowState.Normal;
++            if (!_borderlessActive)
++            {
++                _windowedPosition = _window.Position;
++                _windowedSize = _window.Size;
++            }
++
++            // The monitor the window is on, whole: taskbar included, as a game
++            // expects. The compositor still presents it, which is the point -- it
++            // never tears, so VSync can be held on the display's own blank.
++            if (_window.Monitor?.Bounds is { } bounds)
++            {
++                _window.WindowBorder = WindowBorder.Hidden;
++                _window.Position = bounds.Origin;
++                _window.Size = bounds.Size;
++                _borderlessActive = true;
++            }
++        }
++        else
++        {
++            _window.WindowState = on ? WindowState.Fullscreen : WindowState.Normal;
++        }
++
+         if (on) SetAutoIconify(false);
++        ApplySwapInterval();
+     }
+ 
++    private static bool _borderlessActive;
++    private static Vector2D<int> _windowedPosition = new(100, 100);
++    private static Vector2D<int> _windowedSize = new(1280, 720);
++
+     private static unsafe void SetAutoIconify(bool on)
+     {
+         try
+@@ -605,7 +753,7 @@ public static class HostWindow
+             }
+ 
+             InputManager.Poll();
+-            _window.DoRender();
++            RenderFrame();
+         });
+ 
+         if (!closing) return;
+@@ -746,10 +894,48 @@ public static class HostWindow
+         var interval = vsync && !wayland ? 1 : 0;
+         _cpuVSync = vsync && wayland;
+         FrameClock.VSync = vsync && !wayland;
++
++        // 0066. The display's own vblank on Windows, the deferred interval elsewhere.
++        var mode = SwapMode.Silk;
++        if (interval == 1)
++        {
++            // Composed: windowed or borderless, where the compositor presents the
++            // window and never tears. GLFW's fullscreen bypasses it.
++            var composed = _window.WindowState != WindowState.Fullscreen;
++            var vblank = SwapAsked == "vblank" || (composed && SwapAsked is not ("interval" or "immediate"));
++            if (vblank && !_vblankFailed && OperatingSystem.IsWindows() && OpenVBlank())
++            {
++                mode = SwapMode.VBlank;
++                interval = 0;
++            }
++            else if (SwapAsked != "immediate")
++            {
++                mode = SwapMode.Deferred;
++            }
++        }
++
++        if (mode != SwapMode.VBlank) VBlankWait.Close();
++
++        // Silk applies its own VSync lazily, inside the first DoRender after the
++        // property is set, so a Silk left at the options' false wrote interval 0
++        // over this one before the first frame: VSync on read back as
++        // wglGetSwapIntervalEXT 0 on Windows, and tore, until the setting was
++        // toggled in play. Silk is told the same thing, so it re-applies ours.
++        _window.VSync = interval != 0;
+         SetSwapInterval(interval);
++        SetSwapMode(mode);
+ 
+         Console.WriteLine($"[Host] swap interval: {interval}" +
+-                          (_cpuVSync ? $" (Wayland: vsync held on the CPU at {RefreshHz()} hz)" : ""));
++                          (_cpuVSync ? $" (Wayland: vsync held on the CPU at {RefreshHz()} hz)" : "") +
++                          (mode == SwapMode.Deferred ? " (swap deferred to the next present)" : "") +
++                          (mode == SwapMode.VBlank ? " (swap after the display's own vblank)" : ""));
++    }
++
++    /// <summary>The window moved, perhaps to another monitor: wait for that one's
++    /// vblank from now on.</summary>
++    private static void OnMove(Vector2D<int> _)
++    {
++        if (_swapMode == SwapMode.VBlank && !OpenVBlank()) ApplySwapInterval();
+     }
+ 
+     private static bool _cpuVSync;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
+index 625a4a5..13f495a 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
+@@ -13,14 +13,25 @@ internal sealed class DisplaySettingsSection : ISettingsSection
+ 
+     public void Draw()
+     {
+-        var fullscreen = ConfigManager.View.Fullscreen;
+-        if (ImGui.Checkbox(Localization.T("settings.display.fullscreen"), ref fullscreen))
++        // Windowed, fullscreen, borderless: Fullscreen says "covers the screen" and
++        // Borderless how, so F11 and the menu bar's toggle keep their meaning.
++        var modes = new[]
+         {
+-            ConfigManager.View.Fullscreen = fullscreen;
+-            HostWindow.SetFullscreen(fullscreen);
++            Localization.T("settings.display.mode.windowed"),
++            Localization.T("settings.display.fullscreen"),
++            Localization.T("settings.display.mode.borderless")
++        };
++        var mode = !ConfigManager.View.Fullscreen ? 0 : ConfigManager.View.Borderless ? 2 : 1;
++        if (ImGui.Combo(Localization.T("settings.display.mode"), ref mode, modes, modes.Length))
++        {
++            ConfigManager.View.Fullscreen = mode != 0;
++            if (mode != 0) ConfigManager.View.Borderless = mode == 2;
++            HostWindow.SetFullscreen(mode != 0);
+             ConfigManager.SaveView(PanelManager.Panels);
+         }
+ 
++        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("settings.display.mode_hint"));
++
+         var vsync = ConfigManager.View.VSync;
+         if (ImGui.Checkbox(Localization.T("settings.display.vsync"), ref vsync))
+         {
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/VBlankWait.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/VBlankWait.cs
+new file mode 100644
+index 0000000..17df147
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/VBlankWait.cs
+@@ -0,0 +1,89 @@
++using System.Runtime.InteropServices;
++
++namespace RecompOne.Runtime.Host.Window;
++
++/// <summary>
++/// The display's own vertical blank on Windows, from the kernel's graphics
++/// interface: a wait that returns when the monitor the window is on starts its
++/// blank, whatever the GL driver's swap interval does.
++/// </summary>
++internal static class VBlankWait
++{
++    [StructLayout(LayoutKind.Sequential)]
++    private struct OpenAdapterFromHdc
++    {
++        public nint Hdc;
++        public uint Adapter;
++        public uint LuidLow;
++        public int LuidHigh;
++        public uint VidPnSourceId;
++    }
++
++    [StructLayout(LayoutKind.Sequential)]
++    private struct WaitForVerticalBlankEvent
++    {
++        public uint Adapter;
++        public uint Device;
++        public uint VidPnSourceId;
++    }
++
++    [StructLayout(LayoutKind.Sequential)]
++    private struct CloseAdapter
++    {
++        public uint Adapter;
++    }
++
++    [DllImport("gdi32.dll")]
++    private static extern int D3DKMTOpenAdapterFromHdc(ref OpenAdapterFromHdc args);
++
++    [DllImport("gdi32.dll")]
++    private static extern int D3DKMTWaitForVerticalBlankEvent(ref WaitForVerticalBlankEvent args);
++
++    [DllImport("gdi32.dll")]
++    private static extern int D3DKMTCloseAdapter(ref CloseAdapter args);
++
++    private static uint _adapter;
++    private static uint _source;
++    private static bool _open;
++
++    /// <summary>Open the adapter behind <paramref name="hdc"/>. False off Windows
++    /// or when the kernel refuses, and the caller keeps the driver's vsync.</summary>
++    public static bool Open(nint hdc)
++    {
++        Close();
++        if (!OperatingSystem.IsWindows() || hdc == 0) return false;
++        try
++        {
++            var args = new OpenAdapterFromHdc { Hdc = hdc };
++            if (D3DKMTOpenAdapterFromHdc(ref args) != 0) return false;
++            _adapter = args.Adapter;
++            _source = args.VidPnSourceId;
++            _open = true;
++            return true;
++        }
++        catch (Exception e)
++        {
++            Console.Error.WriteLine($"[Host] vblank wait unavailable: {e.Message}");
++            return false;
++        }
++    }
++
++    public static bool IsOpen => _open;
++
++    /// <summary>Block until the next vertical blank. False if the wait failed, in
++    /// which case nothing was waited for.</summary>
++    public static bool Wait()
++    {
++        if (!_open) return false;
++        var args = new WaitForVerticalBlankEvent { Adapter = _adapter, VidPnSourceId = _source };
++        return D3DKMTWaitForVerticalBlankEvent(ref args) == 0;
++    }
++
++    public static void Close()
++    {
++        if (!_open) return;
++        _open = false;
++        var args = new CloseAdapter { Adapter = _adapter };
++        try { D3DKMTCloseAdapter(ref args); } catch { }
++    }
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+index 7337a3a..dde6d36 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -605,7 +605,11 @@ public static class HostWindow
+     public static void SetFullscreen(bool on)
+     {
+         if (_window == null) return;
+-        var borderless = on && ConfigManager.View.Borderless;
++        // Windows only, where the vblank wait needs a composed window. Wayland lets
++        // no client place itself, and an X11 window manager fits an undecorated
++        // one to the work area, so elsewhere a monitor-sized window never covers
++        // the screen; there Borderless is the window manager's fullscreen.
++        var borderless = on && ConfigManager.View.Borderless && OperatingSystem.IsWindows();
+ 
+         if (!borderless && _borderlessActive)
+         {
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+index dde6d36..c5711b2 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -631,11 +631,15 @@ public static class HostWindow
+             // The monitor the window is on, whole: taskbar included, as a game
+             // expects. The compositor still presents it, which is the point -- it
+             // never tears, so VSync can be held on the display's own blank.
+-            if (_window.Monitor?.Bounds is { } bounds)
++            if (MonitorRect() is { } bounds)
+             {
+                 _window.WindowBorder = WindowBorder.Hidden;
+                 _window.Position = bounds.Origin;
+-                _window.Size = bounds.Size;
++                // One row past the bottom. A window exactly the monitor's size is
++                // promoted off the compositor to a flip of its own, and at interval 0
++                // that tears; one that overhangs still covers the screen, taskbar and
++                // all, and stays composed.
++                _window.Size = bounds.Size + new Vector2D<int>(0, 1);
+                 _borderlessActive = true;
+             }
+         }
+@@ -648,6 +652,37 @@ public static class HostWindow
+         ApplySwapInterval();
+     }
+ 
++    /// <summary>The whole of the monitor the window is on. Silk's <c>IMonitor.Bounds</c>
++    /// is <c>glfwGetMonitorWorkarea</c>, the screen less the taskbar, and a window that
++    /// size is not one the shell treats as covering the screen: measured 1920x1128 on a
++    /// 1920x1200 monitor, under the taskbar. The monitor is found by that work area,
++    /// then sized from its origin and its current mode.</summary>
++    private static unsafe Rectangle<int>? MonitorRect()
++    {
++        if (_window?.Monitor?.Bounds is not { } work) return null;
++        try
++        {
++            var glfw = Silk.NET.GLFW.Glfw.GetApi();
++            var monitors = glfw.GetMonitors(out var count);
++            for (var i = 0; i < count; i++)
++            {
++                glfw.GetMonitorWorkarea(monitors[i], out var wx, out var wy, out var ww, out var wh);
++                if (wx != work.Origin.X || wy != work.Origin.Y || ww != work.Size.X || wh != work.Size.Y)
++                    continue;
++                var mode = glfw.GetVideoMode(monitors[i]);
++                if (mode == null) break;
++                glfw.GetMonitorPos(monitors[i], out var x, out var y);
++                return new Rectangle<int>(x, y, mode->Width, mode->Height);
++            }
++        }
++        catch (Exception e)
++        {
++            Console.WriteLine($"[Host] cant read the monitor's size: {e.Message}");
++        }
++
++        return work;
++    }
++
+     private static bool _borderlessActive;
+     private static Vector2D<int> _windowedPosition = new(100, 100);
+     private static Vector2D<int> _windowedSize = new(1280, 720);

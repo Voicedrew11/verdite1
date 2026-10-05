@@ -1,0 +1,706 @@
+diff --git a/RecompOne.Runtime/Gpu/Gpu.cs b/RecompOne.Runtime/Gpu/Gpu.cs
+index 1167448..d9e6d8e 100644
+--- a/RecompOne.Runtime/Gpu/Gpu.cs
++++ b/RecompOne.Runtime/Gpu/Gpu.cs
+@@ -32,6 +32,12 @@ public sealed partial class Gpu
+     int _dmaDir;
+ 
+     readonly List<uint> _fifo = new(16);
++
++    // The guest address each word of the command was read out of, word for word
++    // alongside _fifo, or 0 for a word that was written straight to GP0 and never
++    // lived in memory. A vertex's depth is keyed on that address, so this is what
++    // reunites a packet coordinate with the GTE call that produced it.
++    readonly List<uint> _fifoSrc = new(16);
+     int _need;
+     bool _polyline;
+ 
+@@ -115,17 +121,23 @@ public sealed partial class Gpu
+         return (uint)(lo | (hi << 16));
+     }
+ 
+-    public void WriteGp0(uint word)
++    public void WriteGp0(uint word) => WriteGp0(word, 0u);
++
++    /// <summary><paramref name="srcAddr"/> is the guest address the word came from --
++    /// DrawOTag and the DMA both read the command stream out of memory -- or 0 when
++    /// it was written to the register directly and has no address.</summary>
++    public void WriteGp0(uint word, uint srcAddr)
+     {
+         if (_loadImage) { StoreImageHalfword((ushort)word); StoreImageHalfword((ushort)(word >> 16)); return; }
+         if (_polyline)
+         {
+-            if ((word & 0xF000F000u) == 0x50005000u) { _polyline = false; ExecutePolyline(); _fifo.Clear(); }
+-            else _fifo.Add(word);
++            if ((word & 0xF000F000u) == 0x50005000u) { _polyline = false; ExecutePolyline(); ClearFifo(); }
++            else { _fifo.Add(word); _fifoSrc.Add(srcAddr); }
+             return;
+         }
+ 
+         _fifo.Add(word);
++        _fifoSrc.Add(srcAddr);
+         if (_fifo.Count == 1)
+         {
+             _need = CommandLength(word);
+@@ -133,9 +145,11 @@ public sealed partial class Gpu
+             if (_need == LenImageLoad) _need = 3;
+         }
+ 
+-        if (_fifo.Count >= _need) { Execute(); if (!_loadImage) _fifo.Clear(); }
++        if (_fifo.Count >= _need) { Execute(); if (!_loadImage) ClearFifo(); }
+     }
+ 
++    void ClearFifo() { _fifo.Clear(); _fifoSrc.Clear(); }
++
+     public void WriteGp1(uint word)
+     {
+         uint op = (word >> 24) & 0xFF;
+@@ -151,7 +165,7 @@ public sealed partial class Gpu
+                 GpuHle.NotifyDisplay(_dispVramX, _dispVramY, DisplayWidth, DisplayHeight);
+                 return;
+             case 0x00: Reset(); break;
+-            case 0x01: _fifo.Clear(); _polyline = false; _loadImage = false; break;
++            case 0x01: ClearFifo(); _polyline = false; _loadImage = false; break;
+             case 0x02: break;
+             case 0x03: _displayDisabled = (p & 1) != 0; break;
+             case 0x04: _dmaDir = (int)(p & 3); break;
+@@ -179,7 +193,7 @@ public sealed partial class Gpu
+ 
+     void Reset()
+     {
+-        _fifo.Clear();
++        ClearFifo();
+         _polyline = _loadImage = _readImage = false;
+         _displayDisabled = true;
+         _dmaDir = 0;
+diff --git a/RecompOne.Runtime/Gpu/GpuCommands.cs b/RecompOne.Runtime/Gpu/GpuCommands.cs
+index 280fb23..f7ea4ca 100644
+--- a/RecompOne.Runtime/Gpu/GpuCommands.cs
++++ b/RecompOne.Runtime/Gpu/GpuCommands.cs
+@@ -138,7 +138,7 @@ public sealed partial class Gpu
+         _loadPx = 0;
+         _loadImage = true;
+         HleLoadBegin();
+-        _fifo.Clear();
++        ClearFifo();
+     }
+ 
+     void StoreImageHalfword(ushort value)
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index cdae420..f478b51 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -42,6 +42,7 @@ public sealed partial class Gpu
+         int n = quad ? 4 : 3;
+ 
+         Span<Vert> v = stackalloc Vert[4];
++        Span<int> vwAt = stackalloc int[4];
+         int idx = 1;
+         int clut = 0;
+         int cr = (int)(cmd & 0xFF), cg = (int)((cmd >> 8) & 0xFF), cb = (int)((cmd >> 16) & 0xFF);
+@@ -55,6 +56,7 @@ public sealed partial class Gpu
+             }
+             v[i].R = cr; v[i].G = cg; v[i].B = cb;
+ 
++            vwAt[i] = idx;
+             uint vw = _fifo[idx++];
+             int rawX = CoordX(vw), rawY = CoordY(vw);
+             v[i].X = _drawOffsetX + rawX;
+@@ -71,28 +73,43 @@ public sealed partial class Gpu
+             }
+         }
+ 
+-        // Asked for before the draw offset is baked in as far as the key is
+-        // concerned, and before the prim event, so a mod is free to move X
+-        // afterwards -- widescreen does -- and the depth and the fraction stay
+-        // attached to the vertex. The whole primitive is bound at once: two
+-        // vertices that share a pixel keep their own samples, and a leftover
+-        // far Z is dropped rather than tearing the texture.
++        // Bound before the prim event, so a mod is free to move X afterwards --
++        // widescreen does -- and the depth and the fraction stay attached to the
++        // vertex. Each vertex is asked for by the address its coordinate word was
++        // read out of, which is the vertex itself and not merely the pixel it landed
++        // on, so nothing has to be picked between and a miss is simply affine.
+         if (GteDepth.Active && (tex || GteDepth.Subpixel))
+         {
+-            Span<GteDepth.Attr> a = stackalloc GteDepth.Attr[4];
+-            for (int i = 0; i < n; i++)
++            bool wantW = tex && GteDepth.Enabled;
++            bool wantSub = GteDepth.Subpixel;
++
++            // The old screen-position table, kept only as a comparison: it answers
++            // for whatever last projected to this pixel, which is what the exact map
++            // exists to stop doing. Off unless KF2_PERSPECTIVE_FALLBACK asks for it.
++            if (GteDepth.PositionFallback)
+             {
+-                a[i].X = v[i].X - _drawOffsetX;
+-                a[i].Y = v[i].Y - _drawOffsetY;
++                Span<GteDepth.Attr> a = stackalloc GteDepth.Attr[4];
++                for (int i = 0; i < n; i++)
++                {
++                    a[i].X = v[i].X - _drawOffsetX;
++                    a[i].Y = v[i].Y - _drawOffsetY;
++                }
++                GteDepth.Apply(a[..n], wantW, wantSub);
++                for (int i = 0; i < n; i++)
++                {
++                    v[i].W = a[i].Z; v[i].HasW = a[i].HasW;
++                    v[i].Fx = a[i].Fx; v[i].Fy = a[i].Fy; v[i].HasSub = a[i].HasSub;
++                }
+             }
+-            GteDepth.Apply(a[..n], tex && GteDepth.Enabled, GteDepth.Subpixel);
++
+             for (int i = 0; i < n; i++)
+             {
+-                v[i].W = a[i].Z;
+-                v[i].HasW = a[i].HasW;
+-                v[i].Fx = a[i].Fx;
+-                v[i].Fy = a[i].Fy;
+-                v[i].HasSub = a[i].HasSub;
++                if (!GteVertexMap.TryGet(_fifoSrc[vwAt[i]], _fifo[vwAt[i]], out var a)) continue;
++                v[i].W = a.Z;
++                v[i].HasW = wantW && a.Z > 0f;
++                v[i].Fx = wantSub ? a.Fx : 0f;
++                v[i].Fy = wantSub ? a.Fy : 0f;
++                v[i].HasSub = wantSub;
+             }
+         }
+ 
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+index e724bd7..0e6b971 100644
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -90,23 +90,46 @@ namespace RecompOne.Runtime;
+ /// </summary>
+ public static class GteDepth
+ {
++    // Screen position turned out not to be an identity at all, and everything below
++    // that picks between samples is a heuristic standing in for one. GteVertexMap
++    // has the real thing -- the address of the word the coordinate lives at -- and
++    // it serves both halves now. What is left here is the pair of switches, the
++    // accounting, and this table, which answers only when PositionFallback asks it
++    // to so that the two mechanisms can be compared in one build.
++
++    static bool _enabled, _subpixel;
++
+     /// <summary>
+     /// While false the depth is not served, so both renderers interpolate affinely
+     /// exactly as they did before this existed. Safe to change at run time: the
+-    /// table simply starts or stops being consulted for it.
++    /// map simply starts or stops being consulted for it.
+     /// </summary>
+-    public static bool Enabled;
++    public static bool Enabled
++    {
++        get => _enabled;
++        set { _enabled = value; GteVertexMap.SetActive(Active); }
++    }
+ 
+     /// <summary>
+     /// While false the recovered fraction is not served, so every vertex snaps to
+     /// the whole pixel the GTE truncated it to, exactly as the console does. Also
+     /// safe to change at run time.
+     /// </summary>
+-    public static bool Subpixel;
++    public static bool Subpixel
++    {
++        get => _subpixel;
++        set { _subpixel = value; GteVertexMap.SetActive(Active); }
++    }
+ 
+     /// <summary>Nothing is recorded and every lookup misses while both halves are
+-    /// off, which is what makes the table cost nothing when neither is wanted.</summary>
+-    public static bool Active => Enabled || Subpixel;
++    /// off, which is what makes this cost nothing when neither is wanted.</summary>
++    public static bool Active => _enabled || _subpixel;
++
++    /// <summary>Consult the screen-position table below for vertices the exact map
++    /// could not answer for. Off by default — it is the guess this was all built to
++    /// stop making, and it is kept only so the two can be measured against each
++    /// other. Wired to KF2_PERSPECTIVE_FALLBACK.</summary>
++    public static bool PositionFallback;
+ 
+     const int Bits = 14;
+     const int Size = 1 << Bits;
+@@ -209,6 +232,26 @@ public static class GteDepth
+     /// GTE's true 16.16 position. <paramref name="z"/> is SZ3, the same quantity
+     /// the divider used, so it is proportional to view-space W.
+     /// <paramref name="clipped"/> is a vertex that saturated at ±1024.</summary>
++    /// <summary>Called from <c>Gte.Rtp</c> for every vertex it projects, whether the
++    /// fallback table is filling or not: this is the accounting the two probes read,
++    /// and it has to describe what the GTE did rather than what one of the two
++    /// mechanisms happened to keep.</summary>
++    public static void NoteProjected(float fx, float fy, bool clipped, bool valid)
++    {
++        if (!valid) return;
++
++        Recorded++;
++        if (clipped) { Saturated++; return; }
++
++        if (Probe)
++        {
++            float d = MathF.Sqrt(fx * fx + fy * fy);
++            Offset += d;
++            if (d > OffsetMax) OffsetMax = d;
++            OffsetCount++;
++        }
++    }
++
+     public static void Record(int x, int y, int z, float trueX, float trueY, bool clipped)
+     {
+         if (!Active || z <= 0) return;
+@@ -223,16 +266,6 @@ public static class GteDepth
+             fy = trueY - y;
+         }
+ 
+-        if (clipped) Saturated++;
+-
+-        if (Probe && !clipped)
+-        {
+-            float d = MathF.Sqrt(fx * fx + fy * fy);
+-            Offset += d;
+-            if (d > OffsetMax) OffsetMax = d;
+-            OffsetCount++;
+-        }
+-
+         int key = KeyOf(x, y);
+         int bucket = Bucket(key);
+         long now = ++_seq;
+@@ -268,7 +301,6 @@ public static class GteDepth
+         else dest = oldestAny;
+ 
+         _slots[dest] = new Slot { Key = key, Seq = now, Z = z, Fx = fx, Fy = fy };
+-        Recorded++;
+     }
+ 
+     /// <summary>The depth and sub-pixel position last projected to this screen
+diff --git a/RecompOne.Runtime/Gpu/GteVertexMap.cs b/RecompOne.Runtime/Gpu/GteVertexMap.cs
+new file mode 100644
+index 0000000..047ee5f
+--- /dev/null
++++ b/RecompOne.Runtime/Gpu/GteVertexMap.cs
+@@ -0,0 +1,245 @@
++using RecompOne.Runtime.Memory;
++
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// The GTE's per-vertex depth and sub-pixel position, carried to the GPU by the one
++/// thing that identifies a vertex exactly: <b>the address of the word its screen
++/// coordinate lives at</b>.
++///
++/// <see cref="GteDepth"/> keyed the same two numbers on the screen position, because
++/// that is what visibly survives into a GP0 packet. But a screen position is not a
++/// vertex. Two vertices land on one pixel constantly — a distant wall behind a near
++/// column — and every off-screen vertex collapses onto the ±1024 clamp, so the answer
++/// was *a* depth for that pixel rather than *this* vertex's depth, and everything
++/// built on top of it (four samples per key, a geometric-mean pick per primitive, an
++/// outlier veto) was a heuristic guessing which. W is the denominator of the
++/// perspective divide, so a wrong guess does not degrade the texture, it detonates
++/// it; and the same wrong guess hands a vertex another vertex's fraction, which is a
++/// corner that jumps a pixel for no reason the player can see.
++///
++/// There is an exact identity available, and it survives the whole way:
++///
++///   * A screen coordinate leaves the GTE only through <c>swc2</c> of SXY0/1/2 —
++///     the recompilation contains no <c>mfc2</c> of those registers at all — which
++///     emits as <c>m.WriteU32(addr, Gte.StoreWord(14))</c>. The destination address
++///     is in hand at the store.
++///   * King's Field projects a whole vertex list into an 8-byte-per-vertex scratch
++///     array first and assembles polygons later, and the assembler copies each
++///     coordinate into the packet as a whole 32-bit word — <c>lw</c> immediately
++///     followed by <c>sw</c>, into the <c>xy0..xy3</c> fields of a POLY_GT3/GT4.
++///   * The packet reaches the GPU by <c>DrawOTag</c> or by DMA, both of which read
++///     each word out of guest memory at an address they know.
++///
++/// So: record the attributes at the address the GTE stores to, follow them across the
++/// copy, and look them up at the address the GPU read the word from. Three exact
++/// hops, no search, nothing to pick between.
++///
++/// The copy is followed with a small <b>pending ring</b> rather than by tainting
++/// registers, which would mean instrumenting every instruction the recompiler emits.
++/// A GTE store and a load from a mapped address both publish (value, attributes) into
++/// the ring; a store whose value matches an entry takes its attributes. That is the
++/// <c>lw</c>/<c>sw</c> pair exactly, and the ring is searched newest-first preferring
++/// an entry that has not already been matched, so three <c>swc2</c>s of three
++/// identical clamped coordinates still bind in the order they were stored.
++///
++/// A lookup verifies the stored word against the word the GPU is actually drawing, so
++/// an entry that was overwritten — by a half-word write, by a packet being rebuilt,
++/// by anything at all — cannot answer with someone else's depth. A vertex the map
++/// does not know is a miss, and a miss is the affine interpolation the console did,
++/// which is what makes this safe to leave on.
++///
++/// Cost: everything is behind <see cref="Active"/>, and then behind a one-bit test in
++/// a presence bitmap of one bit per RAM word (64 KB for the retail 2 MB). The
++/// attribute array is allocated on first use and touched only on a bitmap hit.
++/// </summary>
++public static class GteVertexMap
++{
++    /// <summary>What a vertex carries: the view depth SZ3 the GTE divided by, and the
++    /// [0, 1) fraction of a pixel it truncated off the screen position. The fraction
++    /// is zero for a vertex that saturated at ±1024, where the packet coordinate is
++    /// the whole position the GPU must keep.</summary>
++    public struct Attr
++    {
++        public float Z, Fx, Fy;
++        public bool Clipped;
++    }
++
++    struct Entry
++    {
++        public uint Value;      // the packed XY word this attribute belongs to
++        public uint Seq;
++        public float Z, Fx, Fy;
++        public bool Clipped;
++    }
++
++    struct Pending
++    {
++        public uint Value;
++        public uint Tick;
++        public float Z, Fx, Fy;
++        public bool Clipped;
++        public bool Matched;
++        // Straight out of the GTE rather than copied from another address. Only the
++        // counters care, but the difference between the two is the whole picture of
++        // whether the association is being followed or only started.
++        public bool Root;
++        // A packed (0, 0) is a real coordinate, so a slot needs saying-so of its own
++        // rather than a zero value standing in for "never used".
++        public bool Live;
++    }
++
++    /// <summary>Nothing is recorded, followed or looked up while this is false, so the
++    /// map costs one predictable branch on the memory path when neither perspective
++    /// correction nor sub-pixel positioning wants it. <see cref="GteDepth"/> owns it.</summary>
++    public static bool Active;
++
++    // A vertex word copied more than this many RAM writes after it was read is not
++    // the copy we were following. Generous: the lw/sw pairs this exists for are
++    // adjacent instructions, and an entry that ages out simply stops answering.
++    const uint PendingMaxAge = 64;
++
++    // An attribute older than this has to be from a packet that was built and never
++    // rebuilt, which the value check would almost certainly catch anyway. Roughly a
++    // frame of stores.
++    const uint EntryMaxAge = 1u << 20;
++
++    const int PendingCount = 8;
++
++    static readonly Pending[] _pending = new Pending[PendingCount];
++    static int _pendingHead;
++
++    static Entry[]? _map;
++    static ulong[]? _mark;
++    static uint _ramMask;
++    static uint _tick;
++
++    /// <summary>Vertices whose attributes were recorded straight from a GTE store,
++    /// and words that carried them on to another address — the two halves of the
++    /// association. <see cref="Hits"/> and <see cref="Misses"/> are the GPU end:
++    /// vertex words that found their own attributes, and those that did not and so
++    /// stayed affine.</summary>
++    public static long Roots, Propagated, Hits, Misses;
++
++    public static void ResetCounters() => Roots = Propagated = Hits = Misses = 0;
++
++    /// <summary>Called when either half of the feature is switched on or off. The
++    /// arrays are allocated on the first switch-on and then kept, since turning the
++    /// setting off and on again in the menu is not a reason to hand 10 MB back.</summary>
++    public static void SetActive(bool on)
++    {
++        if (on && _map == null)
++        {
++            uint ram = Runtime.Mode == RunMode.Devkit ? MemoryMap.DevkitRamSize : MemoryMap.RetailRamSize;
++            _ramMask = ram - 1;
++            _map = new Entry[ram >> 2];
++            _mark = new ulong[(ram >> 2) / 64];
++        }
++        // Switching off stops the stores being watched, so every address the game
++        // wrote in the meantime is still marked and still holds what it meant
++        // before. Switching on again forgets the lot rather than trusting an
++        // address whose word happens to have come back around.
++        else if (on && !Active && _mark != null)
++        {
++            Array.Clear(_mark);
++        }
++        Active = on && _map != null;
++    }
++
++    static int Index(uint phys) => (int)((phys & _ramMask) >> 2);
++
++    static bool Marked(int i) => (_mark![i >> 6] & (1UL << (i & 63))) != 0;
++
++    static void Mark(int i) => _mark![i >> 6] |= 1UL << (i & 63);
++
++    static void Unmark(int i) => _mark![i >> 6] &= ~(1UL << (i & 63));
++
++    /// <summary>Offer a value and the attributes that belong to it, for whichever
++    /// store copies it next. Called from <c>Gte.Read</c> as a screen coordinate
++    /// leaves the GTE, and from a load of a word this map already knows.</summary>
++    public static void Publish(uint value, float z, float fx, float fy, bool clipped) =>
++        Publish(value, z, fx, fy, clipped, true);
++
++    static void Publish(uint value, float z, float fx, float fy, bool clipped, bool root)
++    {
++        _pending[_pendingHead] = new Pending
++        {
++            Value = value, Tick = _tick, Z = z, Fx = fx, Fy = fy, Clipped = clipped,
++            Matched = false, Root = root, Live = true,
++        };
++        _pendingHead = (_pendingHead + 1) % PendingCount;
++    }
++
++    /// <summary>A guest word store. If it is carrying a value someone published, the
++    /// destination inherits the attributes; if it is not, whatever the destination
++    /// used to hold is no longer true and is dropped.</summary>
++    public static void NoteWrite(uint phys, uint value)
++    {
++        _tick++;
++
++        int found = -1;
++        for (int k = 1; k <= PendingCount; k++)
++        {
++            int i = (_pendingHead - k + PendingCount) % PendingCount;
++            ref var p = ref _pending[i];
++            if (!p.Live || p.Value != value) continue;
++            if (_tick - p.Tick > PendingMaxAge) continue;
++            // Newest wins, but an entry nothing has taken yet wins over one that has
++            // already been copied somewhere -- three coordinates stored in a row bind
++            // in order even when they clamped onto the same pixel.
++            if (found < 0) found = i;
++            if (!p.Matched) { found = i; break; }
++        }
++
++        int idx = Index(phys);
++
++        if (found < 0)
++        {
++            if (Marked(idx)) Unmark(idx);
++            return;
++        }
++
++        ref var src = ref _pending[found];
++        src.Matched = true;
++        _map![idx] = new Entry
++        {
++            Value = value, Seq = _tick, Z = src.Z, Fx = src.Fx, Fy = src.Fy, Clipped = src.Clipped,
++        };
++        Mark(idx);
++        if (src.Root) Roots++; else Propagated++;
++    }
++
++    /// <summary>A guest word load. A word this map knows is offered to the next store,
++    /// which is how a coordinate follows a <c>lw</c>/<c>sw</c> from the game's vertex
++    /// scratch array into the primitive packet.</summary>
++    public static void NoteRead(uint phys, uint value)
++    {
++        int idx = Index(phys);
++        if (!Marked(idx)) return;
++
++        ref var e = ref _map![idx];
++        if (e.Value != value || _tick - e.Seq > EntryMaxAge) return;
++
++        Publish(value, e.Z, e.Fx, e.Fy, e.Clipped, false);
++    }
++
++    /// <summary>The attributes of the vertex whose coordinate the GPU just read out of
++    /// <paramref name="phys"/>. <paramref name="word"/> is the word it read, and it
++    /// has to match the one the attributes were recorded for — that is what makes a
++    /// stale or overwritten entry a miss instead of a lie.</summary>
++    public static bool TryGet(uint phys, uint word, out Attr a)
++    {
++        a = default;
++        if (!Active || phys == 0) { Misses++; return false; }
++
++        int idx = Index(phys);
++        if (!Marked(idx)) { Misses++; return false; }
++
++        ref var e = ref _map![idx];
++        if (e.Value != word || _tick - e.Seq > EntryMaxAge) { Misses++; return false; }
++
++        a.Z = e.Z; a.Fx = e.Fx; a.Fy = e.Fy; a.Clipped = e.Clipped;
++        Hits++;
++        return true;
++    }
++}
+diff --git a/RecompOne.Runtime/Hardware/Gte.cs b/RecompOne.Runtime/Hardware/Gte.cs
+index d07c3ec..6b3ac27 100644
+--- a/RecompOne.Runtime/Hardware/Gte.cs
++++ b/RecompOne.Runtime/Hardware/Gte.cs
+@@ -8,6 +8,13 @@ public static class Gte
+     static int IR0, IR1, IR2, IR3;
+     static readonly short[] SX = new short[3];
+     static readonly short[] SY = new short[3];
++
++    // What the GTE knows about a projected vertex and then throws away: the view
++    // depth it divided by, and the fraction of a pixel the shift down to SX/SY
++    // truncated. One per screen-coordinate FIFO slot, shifted with SX and SY, so a
++    // read of SXY0/1/2 can hand out the numbers that belong to *that* slot.
++    struct Projected { public float Z, Fx, Fy; public bool Clipped, Valid; }
++    static readonly Projected[] SP = new Projected[3];
+     static readonly ushort[] SZ = new ushort[4];
+     static readonly uint[] RGB = new uint[3];
+     static uint RES1;
+@@ -188,6 +195,22 @@ public static class Gte
+         SX[0] = SX[1]; SX[1] = SX[2]; SX[2] = (short)nx;
+         SY[0] = SY[1]; SY[1] = SY[2]; SY[2] = (short)ny;
+ 
++        // The depth and the truncated fraction travel with the coordinate, in the
++        // same FIFO, so that whichever slot the game stores later carries its own
++        // numbers rather than the newest ones. sx and sy are 16.16 and the shift
++        // above floors them, so trueX - nx is exactly what SX2 lost -- and it is
++        // only meaningful when the coordinate did not clamp.
++        SP[0] = SP[1]; SP[1] = SP[2];
++        bool clipped = rx != nx || ry != ny;
++        SP[2] = new Projected
++        {
++            Z = sz,
++            Fx = clipped ? 0f : (sx & 0xFFFF) * (1f / 65536f),
++            Fy = clipped ? 0f : (sy & 0xFFFF) * (1f / 65536f),
++            Clipped = clipped,
++            Valid = sz > 0,
++        };
++
+         // The one place the screen position, the depth that made it and the true
+         // 16.16 coordinate are all in hand. GteDepth keys on the (possibly
+         // clamped) packet position because that is what survives into the GP0
+@@ -199,7 +222,13 @@ public static class Gte
+         // sx and sy are 16.16 and the shift above floors them, so trueX - nx is
+         // the fraction SX2 lost when the coordinate did not clamp.
+         if (GteDepth.Active)
+-            GteDepth.Record(nx, ny, sz, sx * (1f / 65536f), sy * (1f / 65536f), rx != nx || ry != ny);
++        {
++            // The probes measure what the GTE projected, not what either mechanism
++            // chose to keep, so this is counted whichever of the two is answering.
++            GteDepth.NoteProjected(SP[2].Fx, SP[2].Fy, clipped, sz > 0);
++            if (GteDepth.PositionFallback)
++                GteDepth.Record(nx, ny, sz, sx * (1f / 65536f), sy * (1f / 65536f), clipped);
++        }
+ 
+         if (last)
+         {
+@@ -332,8 +361,25 @@ public static class Gte
+         MatVec(mat, t0, t1, t2, vx, vy, vz, sf, lm);
+     }
+ 
++    // A screen coordinate can only leave the GTE through one of these registers, and
++    // it leaves as a whole word, so this is the one place an address-keyed map can
++    // pick the attributes up. Both `swc2 $14, off(base)` (which is StoreWord, and so
++    // comes through here) and `mfc2 rt, $14` are covered: the value is offered to the
++    // store that copies it, and GteVertexMap ties it to the address it lands at.
++    static void PublishSxy(int reg, uint value)
++    {
++        ref readonly var p = ref SP[reg == 15 ? 2 : reg - 12];
++        if (!p.Valid) return;
++        GteVertexMap.Publish(value, p.Z, p.Fx, p.Fy, p.Clipped);
++    }
++
+     public static uint Read(int reg)
+     {
++        if (GteVertexMap.Active && (uint)(reg - 12) <= 3u)
++            PublishSxy(reg, reg == 12 ? (uint)((ushort)SX[0] | (SY[0] << 16))
++                         : reg == 13 ? (uint)((ushort)SX[1] | (SY[1] << 16))
++                                     : (uint)((ushort)SX[2] | (SY[2] << 16)));
++
+         switch (reg)
+         {
+             case 0: return (uint)((ushort)V[0] | (V[1] << 16));
+@@ -392,12 +438,18 @@ public static class Gte
+             case 9: IR1 = (short)val; break;
+             case 10: IR2 = (short)val; break;
+             case 11: IR3 = (short)val; break;
+-            case 12: SX[0] = (short)val; SY[0] = (short)(val >> 16); break;
+-            case 13: SX[1] = (short)val; SY[1] = (short)(val >> 16); break;
+-            case 14: SX[2] = (short)val; SY[2] = (short)(val >> 16); break;
++            // A coordinate the game loads back in is not one this GTE projected --
++            // NormalClip hands all three vertices of a polygon back for the cross
++            // product -- so the slot's depth and fraction stop being about it. They
++            // are dropped rather than left to be published against a value that
++            // happens to match.
++            case 12: SX[0] = (short)val; SY[0] = (short)(val >> 16); SP[0] = default; break;
++            case 13: SX[1] = (short)val; SY[1] = (short)(val >> 16); SP[1] = default; break;
++            case 14: SX[2] = (short)val; SY[2] = (short)(val >> 16); SP[2] = default; break;
+             case 15:
+                 SX[0] = SX[1]; SY[0] = SY[1]; SX[1] = SX[2]; SY[1] = SY[2];
+                 SX[2] = (short)val; SY[2] = (short)(val >> 16);
++                SP[0] = SP[1]; SP[1] = SP[2]; SP[2] = default;
+                 break;
+             case 16: SZ[0] = (ushort)val; break;
+             case 17: SZ[1] = (ushort)val; break;
+diff --git a/RecompOne.Runtime/Memory/Dma.cs b/RecompOne.Runtime/Memory/Dma.cs
+index f9aa684..778c6ec 100644
+--- a/RecompOne.Runtime/Memory/Dma.cs
++++ b/RecompOne.Runtime/Memory/Dma.cs
+@@ -78,7 +78,10 @@ public sealed class Dma
+                 uint header = _mem.ReadU32(addr);
+                 uint count = header >> 24;
+                 for (uint i = 0; i < count; i++)
+-                    _gpu.WriteGp0(_mem.ReadU32(addr + 4u + i * 4u));
++                {
++                    uint src = addr + 4u + i * 4u;
++                    _gpu.WriteGp0(_mem.ReadU32(src), src);
++                }
+                 uint next = header & 0xFFFFFFu;
+                 if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
+                 addr = next & 0x1FFFFCu;
+@@ -88,7 +91,10 @@ public sealed class Dma
+         {
+             uint words = WordCount(bcr);
+             for (uint i = 0; i < words; i++)
+-                _gpu.WriteGp0(_mem.ReadU32(madr + i * 4u));
++            {
++                uint src = madr + i * 4u;
++                _gpu.WriteGp0(_mem.ReadU32(src), src);
++            }
+         }
+         else
+         {
+diff --git a/RecompOne.Runtime/Memory/PSMemory.cs b/RecompOne.Runtime/Memory/PSMemory.cs
+index 2ea31ed..19e9dfe 100644
+--- a/RecompOne.Runtime/Memory/PSMemory.cs
++++ b/RecompOne.Runtime/Memory/PSMemory.cs
+@@ -142,7 +142,14 @@ public sealed class PSMemory : IMemory
+         if (IsSpu(phys)) return (uint)(_spu.ReadReg16(phys) | (_spu.ReadReg16(phys + 2) << 16));
+         if (Timers.InRange(phys) && _timers.TryRead(phys, out uint tv)) return tv;
+         var s = Resolve(address, 4);
+-        return (uint)(s[0] | (s[1] << 8) | (s[2] << 16) | (s[3] << 24));
++        uint word = (uint)(s[0] | (s[1] << 8) | (s[2] << 16) | (s[3] << 24));
++        // A word carrying a projected screen coordinate is offered to whichever store
++        // copies it next, which is how a vertex's depth follows the game's lw/sw out
++        // of its transform cache and into the primitive packet. Off entirely unless
++        // perspective correction or sub-pixel positioning is on, and then it is one
++        // bit of a presence bitmap.
++        if (GteVertexMap.Active && phys < MemoryMap.RamWindow) GteVertexMap.NoteRead(phys, word);
++        return word;
+     }
+ 
+     public void WriteU8(uint address, byte value)
+@@ -194,6 +201,10 @@ public sealed class PSMemory : IMemory
+         if (IsSpu(phys)) { _spu.WriteReg16(phys, (ushort)value); _spu.WriteReg16(phys + 2, (ushort)(value >> 16)); return; }
+         if (_timers.TryWrite(phys, value)) return;
+         var s = Resolve(address, 4);
++        // The other half of the association: a store carrying a value the GTE (or an
++        // earlier load) published binds the destination address to that vertex, and a
++        // store carrying anything else drops whatever the destination used to mean.
++        if (GteVertexMap.Active && phys < MemoryMap.RamWindow) GteVertexMap.NoteWrite(phys, value);
+         if (_frozenCount > 0 && phys < MemoryMap.RamWindow)
+         {
+             uint b = phys % (uint)_ram.Length;
+diff --git a/RecompOne.Runtime/sdk/LibGpu.cs b/RecompOne.Runtime/sdk/LibGpu.cs
+index 98bbfe5..3ba1824 100644
+--- a/RecompOne.Runtime/sdk/LibGpu.cs
++++ b/RecompOne.Runtime/sdk/LibGpu.cs
+@@ -30,7 +30,10 @@ public static class LibGpu
+             uint header = m.ReadU32(addr);
+             uint count = header >> 24;
+             for (uint i = 0; i < count; i++)
+-                gpu.WriteGp0(m.ReadU32(addr + 4u + i * 4u));
++            {
++                uint src = addr + 4u + i * 4u;
++                gpu.WriteGp0(m.ReadU32(src), src);
++            }
+             uint next = header & 0xFFFFFFu;
+             if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
+             addr = next & 0x1FFFFCu;

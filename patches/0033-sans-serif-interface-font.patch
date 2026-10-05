@@ -1,0 +1,299 @@
+diff --git a/RecompOne.Runtime/Host/Window/FontSet.cs b/RecompOne.Runtime/Host/Window/FontSet.cs
+new file mode 100644
+index 0000000..b21ca1a
+--- /dev/null
++++ b/RecompOne.Runtime/Host/Window/FontSet.cs
+@@ -0,0 +1,154 @@
++using System.Reflection;
++using System.Runtime.InteropServices;
++using ImGuiNET;
++
++namespace RecompOne.Runtime.Host.Window;
++
++/// <summary>
++/// The interface's fonts: a scalable sans for the text, Font Awesome merged over
++/// it for the icons.
++///
++/// This is upstream's own replacement for <c>Icons</c> (RecompOne aaf7be0,
++/// "improved font to use noto-sans"), back-ported because this port's pin
++/// predates it. ImGui's built-in font is ProggyClean, a 13px bitmap: it is pixel
++/// art, it does not scale — every size other than 13 is a stretched bitmap — and
++/// it looks like a debug overlay laid over a game rather than the game's own
++/// settings window.
++///
++/// One deviation from upstream: **the CJK font is not carried.** Upstream also
++/// embeds NotoSansCJK-Regular.otf, 16.5 MB, for the Japanese and Chinese ranges.
++/// The runtime ships three languages — en, pt-BR and es-419 — and every string in
++/// <c>languages.json</c> is Latin, so those ranges would cost 16 MB in the
++/// assembly and in every release artifact to render nothing anyone can select.
++/// The Cyrillic, Greek and Vietnamese ranges are kept, since those are Noto Sans's
++/// own coverage and cost only atlas space: they are what a file path or a mod name
++/// with a non-Latin character falls back to instead of a row of boxes.
++/// </summary>
++public static class FontSet
++{
++    const string IconResource = "RecompOne.Runtime.Host.Window.Assets.fa-solid-900.ttf";
++    const string BaseFontResource = "RecompOne.Runtime.Host.Window.Assets.NotoSans-Regular.ttf";
++    const ushort RangeMin = 0xE005;
++    const ushort RangeMax = 0xF8FF;
++
++    public const string Gear = "";
++    public const string Ellipsis = "";
++    public const string Folder = "";
++    public const string FolderOpen = "";
++    public const string Rotate = "";
++    public const string Trash = "";
++    public const string Check = "";
++    public const string Xmark = "";
++    public const string Play = "";
++    public const string Pause = "";
++    public const string Warning = "";
++    public const string Circle = "";
++    public const string Puzzle = "";
++    public const string Download = "";
++    public const string Info = "";
++
++    // ImGui keeps both the font bytes and the range array for the life of the
++    // atlas, so neither can be a temporary: the ranges are pinned and the font
++    // data is copied to unmanaged memory.
++    static readonly List<GCHandle> _pinned = [];
++    static readonly List<IntPtr> _unmanaged = [];
++
++    public static bool Loaded { get; private set; }
++
++    public static unsafe void Load(float sizePixels)
++    {
++        try
++        {
++            var io = ImGui.GetIO();
++
++            var baseCfg = ImGuiNative.ImFontConfig_ImFontConfig();
++            baseCfg->SizePixels = sizePixels;
++            baseCfg->FontDataOwnedByAtlas = 0;
++
++            var baseRange = BuildRange(io.Fonts.GetGlyphRangesDefault(),
++                                       io.Fonts.GetGlyphRangesCyrillic(),
++                                       io.Fonts.GetGlyphRangesGreek(),
++                                       io.Fonts.GetGlyphRangesVietnamese());
++
++            // A missing resource falls back to the bitmap font rather than to no
++            // text at all, which is the same shape as the icon font's own miss.
++            var baseData = LoadResource(BaseFontResource);
++            if (baseData != null)
++                io.Fonts.AddFontFromMemoryTTF(Pin(baseData), baseData.Length, sizePixels, baseCfg, baseRange);
++            else
++                io.Fonts.AddFontDefault(baseCfg);
++
++            var iconData = LoadResource(IconResource);
++            if (iconData != null)
++            {
++                var iconCfg = ImGuiNative.ImFontConfig_ImFontConfig();
++                iconCfg->MergeMode = 1;
++                iconCfg->PixelSnapH = 1;
++                iconCfg->FontDataOwnedByAtlas = 0;
++                iconCfg->GlyphMinAdvanceX = sizePixels;
++                iconCfg->GlyphOffset = new System.Numerics.Vector2(0f, 1f);
++
++                var iconRange = GCHandle.Alloc(new ushort[] { RangeMin, RangeMax, 0 }, GCHandleType.Pinned);
++                _pinned.Add(iconRange);
++                io.Fonts.AddFontFromMemoryTTF(Pin(iconData), iconData.Length, sizePixels, iconCfg,
++                                              iconRange.AddrOfPinnedObject());
++            }
++
++            io.Fonts.Build();
++            Loaded = true;
++        }
++        catch (Exception e)
++        {
++            Console.Error.WriteLine($"[fonts] failed to load fonts: {e.Message}");
++        }
++    }
++
++    static byte[]? LoadResource(string name)
++    {
++        var asm = Assembly.GetExecutingAssembly();
++        using var s = asm.GetManifestResourceStream(name);
++        if (s == null)
++        {
++            Console.Error.WriteLine($"[fonts] {name} not found");
++            return null;
++        }
++
++        var bytes = new byte[s.Length];
++        s.ReadExactly(bytes);
++        return bytes;
++    }
++
++    static IntPtr Pin(byte[] bytes)
++    {
++        var ptr = Marshal.AllocHGlobal(bytes.Length);
++        Marshal.Copy(bytes, 0, ptr, bytes.Length);
++        _unmanaged.Add(ptr);
++        return ptr;
++    }
++
++    /// <summary>Concatenate several of ImGui's own range arrays into one, since a
++    /// font is added with a single range list and the base face wants four.</summary>
++    static unsafe IntPtr BuildRange(params IntPtr[] ranges)
++    {
++        var merged = new List<ushort>();
++        foreach (var range in ranges)
++        {
++            var cursor = (ushort*)range;
++            while (cursor[0] != 0 || cursor[1] != 0)
++            {
++                merged.Add(cursor[0]);
++                merged.Add(cursor[1]);
++                cursor += 2;
++            }
++        }
++        merged.Add(0);
++
++        var handle = GCHandle.Alloc(merged.ToArray(), GCHandleType.Pinned);
++        _pinned.Add(handle);
++        return handle.AddrOfPinnedObject();
++    }
++
++    public static string With(string icon, string label) => Loaded ? $"{icon}  {label}" : label;
++
++    public static string Or(string icon, string fallback) => Loaded ? icon : fallback;
++}
+diff --git a/RecompOne.Runtime/Host/Window/Icons.cs b/RecompOne.Runtime/Host/Window/Icons.cs
+deleted file mode 100644
+index ac71cd1..0000000
+--- a/RecompOne.Runtime/Host/Window/Icons.cs
++++ /dev/null
+@@ -1,78 +0,0 @@
+-using System.Reflection;
+-using System.Runtime.InteropServices;
+-using ImGuiNET;
+-
+-namespace RecompOne.Runtime.Host.Window;
+-public static class Icons
+-{
+-    const string Resource = "RecompOne.Runtime.Host.Window.Assets.fa-solid-900.ttf";
+-    const ushort RangeMin = 0xE005;
+-    const ushort RangeMax = 0xF8FF;
+-
+-    public const string Gear = "";
+-    public const string Ellipsis = "";
+-    public const string Folder = "";
+-    public const string FolderOpen = "";
+-    public const string Rotate = "";
+-    public const string Trash = "";
+-    public const string Check = "";
+-    public const string Xmark = "";
+-    public const string Play = "";
+-    public const string Pause = "";
+-    public const string Warning = "";
+-    public const string Circle = "";
+-    public const string Puzzle = "";
+-    public const string Download = "";
+-    public const string Info = ""; //need to pull the rest later?
+-
+-    static GCHandle _range;
+-    static IntPtr _data;
+-
+-    public static bool Loaded { get; private set; }
+-    
+-    public static unsafe void Load(float sizePixels)
+-    {
+-        try
+-        {
+-            var asm = Assembly.GetExecutingAssembly();
+-            using var s = asm.GetManifestResourceStream(Resource);
+-            if (s == null)
+-            {
+-                Console.Error.WriteLine($"[Icons] {Resource} not found, icons disabled");
+-                return;
+-            }
+-
+-            var bytes = new byte[s.Length];
+-            s.ReadExactly(bytes);
+-
+-            //note to self: imgui keep both pointers alive until the atlas is destroyed, so they cannot be temporaries
+-            _data = Marshal.AllocHGlobal(bytes.Length);
+-            Marshal.Copy(bytes, 0, _data, bytes.Length);
+-            _range = GCHandle.Alloc(new ushort[] { RangeMin, RangeMax, 0 }, GCHandleType.Pinned);
+-
+-            var cfg = ImGuiNative.ImFontConfig_ImFontConfig();
+-            cfg->MergeMode = 1;
+-            cfg->PixelSnapH = 1;
+-            cfg->FontDataOwnedByAtlas = 0;
+-            cfg->GlyphMinAdvanceX = sizePixels;
+-            cfg->GlyphOffset = new System.Numerics.Vector2(0f, 1f);
+-
+-            var baseCfg = ImGuiNative.ImFontConfig_ImFontConfig();
+-            baseCfg->SizePixels = sizePixels;
+-
+-            var io = ImGui.GetIO();
+-            io.Fonts.AddFontDefault(baseCfg);
+-            io.Fonts.AddFontFromMemoryTTF(_data, bytes.Length, sizePixels, cfg, _range.AddrOfPinnedObject());
+-            io.Fonts.Build();
+-            Loaded = true;
+-        }
+-        catch (Exception e)
+-        {
+-            Console.Error.WriteLine($"[Icons] failed to load icon font: {e.Message}");
+-        }
+-    }
+-    
+-    public static string With(string icon, string label) => Loaded ? $"{icon}  {label}" : label;
+-
+-    public static string Or(string icon, string fallback) => Loaded ? icon : fallback;
+-}
+diff --git a/RecompOne.Runtime/Host/Window/Popups/ModsPopup.cs b/RecompOne.Runtime/Host/Window/Popups/ModsPopup.cs
+index 43c7162..a91d61a 100644
+--- a/RecompOne.Runtime/Host/Window/Popups/ModsPopup.cs
++++ b/RecompOne.Runtime/Host/Window/Popups/ModsPopup.cs
+@@ -35,7 +35,7 @@ public sealed class ModsPopup : Popup
+             ImGui.TextDisabled($"-  {Localization.T("mods.active", active)}");
+         }
+ 
+-        var folder = Icons.Or(Icons.FolderOpen, "...");
++        var folder = FontSet.Or(FontSet.FolderOpen, "...");
+         float folderWidth = ImGui.CalcTextSize(folder).X + ImGui.GetStyle().FramePadding.X * 2f;
+         ImGui.SameLine(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - folderWidth);
+         if (ImGui.SmallButton(folder)) OpenFolder();
+@@ -240,7 +240,7 @@ public sealed class ModsPopup : Popup
+         var col = active ? style.Colors[(int)ImGuiCol.CheckMark]
+             : style.Colors[(int)(hovered ? ImGuiCol.Text : ImGuiCol.TextDisabled)];
+ 
+-        Glyph(pos, Icons.Gear, ImGui.ColorConvertFloat4ToU32(col));
++        Glyph(pos, FontSet.Gear, ImGui.ColorConvertFloat4ToU32(col));
+         return clicked;
+     }
+ 
+@@ -258,7 +258,7 @@ public sealed class ModsPopup : Popup
+         bool hovered = ImGui.IsItemHovered();
+ 
+         var style = ImGui.GetStyle();
+-        Glyph(pos, Icons.Ellipsis, ImGui.ColorConvertFloat4ToU32(style.Colors[(int)(hovered ? ImGuiCol.Text : ImGuiCol.TextDisabled)]));
++        Glyph(pos, FontSet.Ellipsis, ImGui.ColorConvertFloat4ToU32(style.Colors[(int)(hovered ? ImGuiCol.Text : ImGuiCol.TextDisabled)]));
+         return clicked;
+     }
+ 
+diff --git a/RecompOne.Runtime/RecompOne.Runtime.csproj b/RecompOne.Runtime/RecompOne.Runtime.csproj
+index 2aa51cc..d6226e1 100644
+--- a/RecompOne.Runtime/RecompOne.Runtime.csproj
++++ b/RecompOne.Runtime/RecompOne.Runtime.csproj
+@@ -17,6 +17,7 @@
+       <EmbeddedResource Include="Bios\Fonts\font1.raw" />
+       <EmbeddedResource Include="Bios\Fonts\font2.raw" />
+       <EmbeddedResource Include="Host\Window\Assets\fa-solid-900.ttf" />
++      <EmbeddedResource Include="Host\Window\Assets\NotoSans-Regular.ttf" />
+       <EmbeddedResource Include="Host\Window\Assets\languages.json" />
+     </ItemGroup>
+ 
+diff --git a/RecompOne.Runtime/Host/Window/HostWindow.cs b/RecompOne.Runtime/Host/Window/HostWindow.cs
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -472,7 +472,7 @@
+         io.FontGlobalScale = Config.ConfigManager.View.UiScale;
+         unsafe { io.NativePtr->IniFilename = null; }
+ 
+-        Icons.Load(13f * _dpiScale);
++        FontSet.Load(16f * _dpiScale);
+         Localization.Load();
+         Theme.Load();
+ 

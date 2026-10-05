@@ -1,0 +1,2735 @@
+diff --git a/RecompOne.Recompiler/CodeGen/EntryWriter.cs b/RecompOne.Recompiler/CodeGen/EntryWriter.cs
+index bb32049..76e96ae 100644
+--- a/RecompOne.Recompiler/CodeGen/EntryWriter.cs
++++ b/RecompOne.Recompiler/CodeGen/EntryWriter.cs
+@@ -22,7 +22,7 @@ public static class EntryWriter
+         entry.AppendLine("    {");
+         entry.AppendLine($"        RecompOne.Runtime.Runtime.Initialize(title ?? \"{className}\");");
+         entry.AppendLine("        RecompOne.Runtime.Runtime.WaitForValidDisc();");
+-        entry.AppendLine("        using var fs = CueFs.Open(cuePath ?? RecompOne.Runtime.Runtime.CdPath);");
++        entry.AppendLine("        using var fs = DiscFs.Open(cuePath ?? RecompOne.Runtime.Runtime.CdPath);");
+         entry.AppendLine("        var cd = new CdController(fs, m);");
+         entry.AppendLine("        m.SetCd(cd);");
+         foreach (var name in overlays)
+diff --git a/RecompOne.Recompiler/CodeGen/OverlayWriter.cs b/RecompOne.Recompiler/CodeGen/OverlayWriter.cs
+index bf6dec1..14104c5 100644
+--- a/RecompOne.Recompiler/CodeGen/OverlayWriter.cs
++++ b/RecompOne.Recompiler/CodeGen/OverlayWriter.cs
+@@ -15,7 +15,7 @@ public static class OverlayWriter
+ {
+     record OverlayResult(string Name, List<MipsFunction> Functions, int LbaStart, uint Base, uint Size, MipsInstruction[] Instructions);
+ 
+-    public static void Write(RecompOneConfig config, CueFs fs, string outDir)
++    public static void Write(RecompOneConfig config, DiscFs fs, string outDir)
+     {
+         string className = SafeIdentifier(config.Game.Name);
+ 
+@@ -130,7 +130,7 @@ public static class OverlayWriter
+ 
+     public sealed record OverlayAnalysis(List<MipsFunction> Functions, MipsInstruction[] Instructions, FunctionInfo ElfInfo, byte[] DiscBin, int Lba, uint Base);
+ 
+-    public static OverlayAnalysis? AnalyzeOverlay(RecompOneConfig config, OverlayConfig overlayConfig, CueFs fs)
++    public static OverlayAnalysis? AnalyzeOverlay(RecompOneConfig config, OverlayConfig overlayConfig, DiscFs fs)
+     {
+         {
+             bool noSymbols = overlayConfig.Elf == null && overlayConfig.Map == null && overlayConfig.FuncMap == null;
+@@ -364,7 +364,7 @@ public static class OverlayWriter
+ 
+     static string SafeFuncName(string s) => Regex.Replace(s, @"[^A-Za-z0-9_]", "_");
+ 
+-    static (byte[]? data, int lba) ResolveOverlay(CueFs fs, Config.OverlayConfig cfg)
++    static (byte[]? data, int lba) ResolveOverlay(DiscFs fs, Config.OverlayConfig cfg)
+     {
+         try
+         {
+diff --git a/RecompOne.Recompiler/Program.cs b/RecompOne.Recompiler/Program.cs
+index e344fe5..fd2f46d 100644
+--- a/RecompOne.Recompiler/Program.cs
++++ b/RecompOne.Recompiler/Program.cs
+@@ -48,7 +48,7 @@ if (!File.Exists(cuePath))
+ Console.WriteLine($"[RecompOne] Game: {config.Game.Name} ({config.Game.Id})");
+ Console.WriteLine($"[RecompOne] Disc file: {cuePath}");
+ 
+-var fs = CueFs.Open(cuePath);
++var fs = DiscFs.Open(cuePath);
+ string outDir = Path.GetFullPath(Path.Combine(configDir, config.Game.Output));
+ Directory.CreateDirectory(outDir);
+ 
+@@ -187,7 +187,7 @@ static int GenerateFromLinearSweep(string discPath, string? discFile, string bas
+ 
+     Console.WriteLine($"[RecompOne] sweeping {discFile ?? $"lba {lba}"} from {discPath}");
+ 
+-    var fs = CueFs.Open(discPath);
++    var fs = DiscFs.Open(discPath);
+     var analysis = OverlayWriter.AnalyzeOverlay(new RecompOneConfig(), overlay, fs);
+     if (analysis == null)
+     {
+diff --git a/RecompOne.Recompiler/Psx/Parser.cs b/RecompOne.Recompiler/Psx/Parser.cs
+index 6591288..d989d7a 100644
+--- a/RecompOne.Recompiler/Psx/Parser.cs
++++ b/RecompOne.Recompiler/Psx/Parser.cs
+@@ -6,7 +6,7 @@ public static class Parser
+ {
+     private static readonly byte[] Magic = "PS-X EXE"u8.ToArray();
+ 
+-    public static PsxExe ParseExe(CueFs fs, string cdPath)
++    public static PsxExe ParseExe(DiscFs fs, string cdPath)
+     {
+         var data = fs.ReadFile(cdPath);
+         if (!data.AsSpan(0, 8).SequenceEqual(Magic))
+@@ -38,7 +38,7 @@ public static class Parser
+         return exe;
+     }
+ 
+-    public static PsxExe ParseBin(CueFs fs, string cdPath)
++    public static PsxExe ParseBin(DiscFs fs, string cdPath)
+     {
+         var code = fs.ReadFile(cdPath);
+         return new PsxExe { TextSize = (uint)code.Length, Code = code };
+diff --git a/RecompOne.Recompiler/Psx/SystemCfg.cs b/RecompOne.Recompiler/Psx/SystemCfg.cs
+index b9326bd..876c807 100644
+--- a/RecompOne.Recompiler/Psx/SystemCfg.cs
++++ b/RecompOne.Recompiler/Psx/SystemCfg.cs
+@@ -10,7 +10,7 @@ public sealed class SystemCfg
+     public int Event = 16;
+     public uint Stack = 0x801FFF00;
+ 
+-    public static SystemCfg Parse(CueFs fs)
++    public static SystemCfg Parse(DiscFs fs)
+     {
+         var cfg = new SystemCfg();
+         var text = Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF"));
+diff --git a/RecompOne.Runtime/Bios/BiosA.cs b/RecompOne.Runtime/Bios/BiosA.cs
+index b716435..b5fe1a2 100644
+--- a/RecompOne.Runtime/Bios/BiosA.cs
++++ b/RecompOne.Runtime/Bios/BiosA.cs
+@@ -14,7 +14,7 @@ public static class BiosA
+     static uint _randSeed = 1;
+     static uint _strtokPtr = 0;
+ 
+-    static CueFs? _fs;
++    static DiscFs? _fs;
+     static CdController? _cd;
+     static readonly Dictionary<uint, (string name, byte[] data, int offset)> _openFiles = new();
+     static readonly Dictionary<uint, (MemoryCard card, int[] chain, int size, int pos)> _cardFiles = new();
+@@ -90,7 +90,7 @@ public static class BiosA
+     static uint _confNumEvCB = 16, _confNumTCB = 4, _confStack = 0;
+     public static uint LastErrno = 0;
+ 
+-    public static void SetFs(CueFs fs) => _fs = fs;
++    public static void SetFs(DiscFs fs) => _fs = fs;
+     public static void SetCd(CdController cd) => _cd = cd;
+ 
+     //as in https://problemkaputt.de/psxspx-kernel-bios.htm
+diff --git a/RecompOne.Runtime/Cdrom/CdController.cs b/RecompOne.Runtime/Cdrom/CdController.cs
+index 3ba9fda..93f1450 100644
+--- a/RecompOne.Runtime/Cdrom/CdController.cs
++++ b/RecompOne.Runtime/Cdrom/CdController.cs
+@@ -6,7 +6,7 @@ namespace RecompOne.Runtime.Cdrom;
+ 
+ public sealed class CdController
+ {
+-    private readonly CueFs _fs;
++    private readonly DiscFs _fs;
+     private readonly IMemory _m;
+ 
+     private byte _index;
+@@ -157,7 +157,7 @@ public sealed class CdController
+         _ => $"0x{cmd:X2}"
+     };
+ 
+-    public CdController(CueFs fs, IMemory m)
++    public CdController(DiscFs fs, IMemory m)
+     {
+         _fs = fs;
+         _m = m;
+@@ -471,7 +471,7 @@ public sealed class CdController
+         }
+     }
+ 
+-    public CueFs Fs => _fs;
++    public DiscFs Fs => _fs;
+     public byte DriveStatusByte() => DriveStatus();
+ 
+     public byte[] ReadSectorData(int lba)
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdBitReader.cs b/RecompOne.Runtime/Cdrom/Chd/ChdBitReader.cs
+new file mode 100644
+index 0000000..ea1d084
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdBitReader.cs
+@@ -0,0 +1,59 @@
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++internal sealed class ChdBitReader
++{
++    private readonly byte[] _buffer;
++    private int _position;
++    private ulong _accumulator;
++    private int _available;
++
++    public ChdBitReader(byte[] buffer)
++    {
++        _buffer = buffer;
++        _position = 0;
++    }
++
++    public bool Overflow { get; private set; }
++
++    public uint Peek(int count)
++    {
++        if (count == 0) return 0;
++        Fill(count);
++        return (uint)((_accumulator >> (_available - count)) & Mask(count));
++    }
++
++    public void Remove(int count)
++    {
++        if (count == 0) return;
++        _available -= count;
++        _accumulator &= Mask(_available);
++    }
++
++    public uint Read(int count)
++    {
++        uint value = Peek(count);
++        Remove(count);
++        return value;
++    }
++
++    private void Fill(int count)
++    {
++        while (_available < count)
++        {
++            byte next;
++            if (_position < _buffer.Length)
++            {
++                next = _buffer[_position++];
++            }
++            else
++            {
++                next = 0;
++                Overflow = true;
++            }
++            _accumulator = (_accumulator << 8) | next;
++            _available += 8;
++        }
++    }
++
++    private static ulong Mask(int bits) => bits >= 64 ? ulong.MaxValue : (1UL << bits) - 1;
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdCodecSet.cs b/RecompOne.Runtime/Cdrom/Chd/ChdCodecSet.cs
+new file mode 100644
+index 0000000..d44937d
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdCodecSet.cs
+@@ -0,0 +1,99 @@
++using System.IO.Compression;
++
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++internal sealed class ChdCodecSet
++{
++    public const int SectorData = 2352;
++    public const int SubcodeData = 96;
++    public const int FrameSize = SectorData + SubcodeData;
++
++    private static readonly byte[] SyncHeader =
++        [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00];
++
++    private readonly uint[] _compressors;
++    private readonly int _frames;
++    private readonly byte[] _scratch;
++
++    public ChdCodecSet(ChdHeader header)
++    {
++        _compressors = header.Compressors;
++        _frames = (int)(header.HunkBytes / FrameSize);
++        _scratch = new byte[header.HunkBytes];
++    }
++
++    public void Decompress(int slot, byte[] source, byte[] dest)
++    {
++        uint codec = _compressors[slot];
++
++        if (codec == ChdBig.Tag("cdzl")) { DecompressCd(source, dest, Zlib); return; }
++        if (codec == ChdBig.Tag("cdlz")) { DecompressCd(source, dest, Lzma); return; }
++        if (codec == ChdBig.Tag("cdfl")) { DecompressCdFlac(source, dest); return; }
++        if (codec == ChdBig.Tag("zlib")) { Zlib(source, 0, source.Length, dest, 0, dest.Length); return; }
++        if (codec == ChdBig.Tag("lzma")) { Lzma(source, 0, source.Length, dest, 0, dest.Length); return; }
++
++        throw new NotSupportedException($"chd codec {TagName(codec)} its not supported"); //most should use lzma i believe so shouldnt be a problem
++    }
++
++    private delegate void Decoder(byte[] src, int srcOffset, int srcLength, byte[] dst, int dstOffset, int dstLength);
++
++    private void DecompressCd(byte[] source, byte[] dest, Decoder baseDecoder)
++    {
++        int eccBytes = (_frames + 7) / 8;
++        int lengthBytes = source.Length < 0x10000 ? 2 : 3;
++        int headerBytes = eccBytes + lengthBytes;
++
++        int baseLength = (source[eccBytes] << 8) | source[eccBytes + 1];
++        if (lengthBytes > 2) baseLength = (baseLength << 8) | source[eccBytes + 2];
++
++        int dataBytes = _frames * SectorData;
++        int subBytes = _frames * SubcodeData;
++
++        baseDecoder(source, headerBytes, baseLength, _scratch, 0, dataBytes);
++        Zlib(source, headerBytes + baseLength, source.Length - headerBytes - baseLength, _scratch, dataBytes, subBytes);
++
++        Reassemble(dest, source, eccBytes);
++    }
++
++    private void DecompressCdFlac(byte[] source, byte[] dest)
++    {
++        int dataBytes = _frames * SectorData;
++        int subBytes = _frames * SubcodeData;
++
++        int consumed = ChdFlac.Decode(source, 0, _scratch, 0, dataBytes);
++        Zlib(source, consumed, source.Length - consumed, _scratch, dataBytes, subBytes);
++
++        Reassemble(dest, source, 0);
++    }
++
++    private void Reassemble(byte[] dest, byte[] source, int eccBytes)
++    {
++        int dataBytes = _frames * SectorData;
++
++        for (int frame = 0; frame < _frames; frame++)
++        {
++            int sector = frame * FrameSize;
++            Array.Copy(_scratch, frame * SectorData, dest, sector, SectorData);
++            Array.Copy(_scratch, dataBytes + frame * SubcodeData, dest, sector + SectorData, SubcodeData);
++
++            if (eccBytes > 0 && (source[frame / 8] & (1 << (frame % 8))) != 0)
++            {
++                Array.Copy(SyncHeader, 0, dest, sector, SyncHeader.Length);
++                ChdEcc.Generate(dest, sector);
++            }
++        }
++    }
++
++    private static void Zlib(byte[] src, int srcOffset, int srcLength, byte[] dst, int dstOffset, int dstLength)
++    {
++        using var input = new MemoryStream(src, srcOffset, srcLength, writable: false);
++        using var deflate = new DeflateStream(input, CompressionMode.Decompress);
++        deflate.ReadExactly(dst, dstOffset, dstLength);
++    }
++
++    private static void Lzma(byte[] src, int srcOffset, int srcLength, byte[] dst, int dstOffset, int dstLength)
++        => ChdLzma.Decode(src, srcOffset, srcLength, dst, dstOffset, dstLength);
++
++    private static string TagName(uint tag) =>
++        new([(char)(tag >> 24), (char)((tag >> 16) & 0xFF), (char)((tag >> 8) & 0xFF), (char)(tag & 0xFF)]);
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdEcc.cs b/RecompOne.Runtime/Cdrom/Chd/ChdEcc.cs
+new file mode 100644
+index 0000000..f606d54
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdEcc.cs
+@@ -0,0 +1,104 @@
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++internal static class ChdEcc
++{
++    private const int SyncBytes = 12;
++    private const int ModeOffset = 0x00F;
++    private const int POffset = 0x81C;
++    private const int PNumBytes = 86;
++    private const int PComponents = 24;
++    private const int QOffset = POffset + 2 * PNumBytes;
++    private const int QNumBytes = 52;
++    private const int QComponents = 43;
++
++    private const int Polynomial = 0x11D;
++
++    private static readonly byte[] Low = BuildLow();
++    private static readonly byte[] High = BuildHigh();
++    private static readonly ushort[,] POffsets = BuildOffsets(PNumBytes, PComponents, 43, 1);
++    private static readonly ushort[,] QOffsets = BuildOffsets(QNumBytes, QComponents, 44, 43);
++
++    public static void Generate(byte[] sector, int start)
++    {
++        for (int i = 0; i < PNumBytes; i++)
++            Compute(sector, start, POffsets, i, PComponents, start + POffset + i, start + POffset + PNumBytes + i);
++
++        for (int i = 0; i < QNumBytes; i++)
++            Compute(sector, start, QOffsets, i, QComponents, start + QOffset + i, start + QOffset + QNumBytes + i);
++    }
++
++    private static void Compute(byte[] sector, int start, ushort[,] offsets, int row, int components, int dest1, int dest2)
++    {
++        byte value1 = 0;
++        byte value2 = 0;
++
++        for (int i = 0; i < components; i++)
++        {
++            byte source = SourceByte(sector, start, offsets[row, i]);
++            value1 ^= source;
++            value2 ^= source;
++            value1 = Low[value1];
++        }
++
++        value1 = High[Low[value1] ^ value2];
++        value2 ^= value1;
++
++        sector[dest1] = value1;
++        sector[dest2] = value2;
++    }
++
++    private static byte SourceByte(byte[] sector, int start, int offset)
++    {
++        if (sector[start + ModeOffset] == 2 && offset < 4) return 0;
++        return sector[start + SyncBytes + offset];
++    }
++
++    private static byte[] BuildLow()
++    {
++        var table = new byte[256];
++        for (int i = 0; i < 256; i++)
++            table[i] = (byte)((i << 1) ^ ((i & 0x80) != 0 ? Polynomial & 0xFF : 0));
++        return table;
++    }
++
++    private static byte[] BuildHigh()
++    {
++        byte inverse = 0;
++        for (int x = 1; x < 256; x++)
++            if (Multiply(3, (byte)x) == 1) { inverse = (byte)x; break; }
++
++        var table = new byte[256];
++        for (int i = 0; i < 256; i++)
++            table[i] = Multiply((byte)i, inverse);
++        return table;
++    }
++
++    private static byte Multiply(byte a, byte b) //this is a bit convoluted
++    {
++        int result = 0;
++        int value = a;
++        while (b != 0)
++        {
++            if ((b & 1) != 0) result ^= value; 
++            value <<= 1;
++            if ((value & 0x100) != 0) value ^= Polynomial;
++            b >>= 1;
++        }
++        return (byte)result;
++    }
++
++    private static ushort[,] BuildOffsets(int rows, int components, int step, int rowStep)
++    {
++        var table = new ushort[rows, components];
++        int modulus = 43 * 26;
++        for (int i = 0; i < rows; i++)
++        {
++            for (int j = 0; j < components; j++)
++            {
++                int index = rowStep == 1 ? (i / 2) + (j * step) : ((i / 2) * rowStep + (j * step)) % modulus;
++                table[i, j] = (ushort)(index * 2 + (i & 1));
++            }
++        }
++        return table;
++    }
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdFile.cs b/RecompOne.Runtime/Cdrom/Chd/ChdFile.cs
+new file mode 100644
+index 0000000..47fd56a
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdFile.cs
+@@ -0,0 +1,174 @@
++using System.Text;
++
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++public sealed class ChdMetadataEntry
++{
++    public uint Tag { get; init; }
++    public byte[] Data { get; init; } = [];
++    public string Text => Encoding.ASCII.GetString(Data).TrimEnd('\0');
++}
++
++public sealed class ChdFile : IDisposable
++{
++    public static ReadOnlySpan<byte> Magic => "MComprHD"u8;
++
++    private const int MetadataHeaderSize = 16;
++    private const int HunkCacheSize = 8;
++
++    private readonly FileStream _stream;
++    private readonly ChdHeader _header;
++    private readonly ChdMapEntry[] _map;
++    private readonly List<ChdMetadataEntry> _metadata = [];
++    private readonly ChdCodecSet _codecs;
++    private readonly object _gate = new();
++
++    private readonly int[] _cacheIndex = new int[HunkCacheSize];
++    private readonly byte[][] _cacheData = new byte[HunkCacheSize][];
++    private int _cacheCursor;
++
++    private ChdFile(FileStream stream, ChdHeader header, ChdMapEntry[] map)
++    {
++        _stream = stream;
++        _header = header;
++        _map = map;
++        _codecs = new ChdCodecSet(header);
++        for (int i = 0; i < HunkCacheSize; i++)
++        {
++            _cacheIndex[i] = -1;
++            _cacheData[i] = new byte[header.HunkBytes];
++        }
++    }
++
++    public static ChdFile Open(string path)
++    {
++        var stream = File.OpenRead(path);
++        try
++        {
++            var raw = new byte[ChdHeader.V5Length];
++            stream.ReadExactly(raw, 0, 16);
++            if (!raw.AsSpan(0, 8).SequenceEqual(Magic))
++                throw new InvalidDataException("not a chd file");
++
++            uint headerLength = ChdBig.U32(raw, 8);
++            uint version = ChdBig.U32(raw, 12);
++            if (version != 5)
++                throw new NotSupportedException($"chd version {version} is not supported, only v5 is supported currently");
++            if (headerLength != ChdHeader.V5Length)
++                throw new InvalidDataException($"unexpected chd v5 header length {headerLength}");
++
++            stream.Seek(0, SeekOrigin.Begin);
++            stream.ReadExactly(raw, 0, ChdHeader.V5Length);
++
++            var header = ChdHeader.ReadV5(raw);
++            var map = ChdMap.Read(stream, header);
++            var chd = new ChdFile(stream, header, map);
++            chd.ReadMetadata();
++            return chd;
++        }
++        catch
++        {
++            stream.Dispose();
++            throw;
++        }
++    }
++
++    public uint HunkBytes => _header.HunkBytes;
++
++    public uint UnitBytes => _header.UnitBytes;
++
++    public ulong LogicalBytes => _header.LogicalBytes;
++
++    public uint HunkCount => _header.HunkCount;
++
++    public IReadOnlyList<ChdMetadataEntry> Metadata => _metadata;
++
++    public byte[] ReadHunk(int index)
++    {
++        lock (_gate)
++        {
++            for (int i = 0; i < HunkCacheSize; i++)
++                if (_cacheIndex[i] == index) return _cacheData[i];
++
++            int slot = _cacheCursor;
++            _cacheCursor = (_cacheCursor + 1) % HunkCacheSize;
++            var dest = _cacheData[slot];
++            _cacheIndex[slot] = -1;
++            DecodeHunk(index, dest);
++            _cacheIndex[slot] = index;
++            return dest;
++        }
++    }
++
++    private void DecodeHunk(int index, byte[] dest)
++    {
++        if (index < 0 || index >= _map.Length)
++        {
++            Array.Clear(dest);
++            return;
++        }
++
++        var entry = _map[index];
++        switch (entry.Compression)
++        {
++            case ChdCompression.Type0:
++            case ChdCompression.Type1:
++            case ChdCompression.Type2:
++            case ChdCompression.Type3:
++            {
++                var source = ReadRaw((long)entry.Offset, (int)entry.Length);
++                _codecs.Decompress((int)entry.Compression, source, dest);
++                break;
++            }
++
++            case ChdCompression.None:
++            {
++                _stream.Seek((long)entry.Offset, SeekOrigin.Begin);
++                _stream.ReadExactly(dest, 0, dest.Length);
++                break;
++            }
++
++            case ChdCompression.Self:
++            {
++                DecodeHunk((int)entry.Offset, dest);
++                break;
++            }
++
++            default:
++                Array.Clear(dest);
++                break;
++        }
++    }
++
++    private byte[] ReadRaw(long offset, int length)
++    {
++        var buffer = new byte[length];
++        _stream.Seek(offset, SeekOrigin.Begin);
++        _stream.ReadExactly(buffer, 0, length);
++        return buffer;
++    }
++
++    private void ReadMetadata()
++    {
++        ulong offset = _header.MetaOffset;
++        var head = new byte[MetadataHeaderSize];
++
++        while (offset != 0 && offset < (ulong)_stream.Length)
++        {
++            _stream.Seek((long)offset, SeekOrigin.Begin);
++            _stream.ReadExactly(head, 0, MetadataHeaderSize);
++
++            uint tag = ChdBig.U32(head, 0);
++            uint length = ChdBig.U32(head, 4) & 0x00FFFFFF;
++            ulong next = ChdBig.U64(head, 8);
++
++            var data = new byte[length];
++            _stream.ReadExactly(data, 0, (int)length);
++            _metadata.Add(new ChdMetadataEntry { Tag = tag, Data = data });
++
++            offset = next;
++        }
++    }
++
++    public void Dispose() => _stream.Dispose();
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdFlac.cs b/RecompOne.Runtime/Cdrom/Chd/ChdFlac.cs
+new file mode 100644
+index 0000000..bff2a43
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdFlac.cs
+@@ -0,0 +1,295 @@
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++//this uses raw flac stream?
++internal static class ChdFlac
++{
++    private const int Channels = 2;
++    private const int BitsPerSample = 16;
++
++    public static int Decode(byte[] src, int srcOffset, byte[] dst, int dstOffset, int length)
++    {
++        var reader = new BitReader(src, srcOffset);
++        int written = 0;
++
++        var left = new int[65536];
++        var right = new int[65536];
++
++        while (written < length)
++        {
++            int blockSize = ReadFrame(reader, left, right);
++            for (int i = 0; i < blockSize && written < length; i++)
++            {
++                dst[dstOffset + written++] = (byte)(left[i] >> 8);
++                if (written < length) dst[dstOffset + written++] = (byte)left[i];
++                if (written < length) dst[dstOffset + written++] = (byte)(right[i] >> 8);
++                if (written < length) dst[dstOffset + written++] = (byte)right[i];
++            }
++            reader.AlignToByte();
++            reader.Skip(16);
++        }
++
++        return reader.BytePosition - srcOffset;
++    }
++
++    //rdd a
++    private static int ReadFrame(BitReader reader, int[] left, int[] right)
++    {
++        uint sync = reader.Read(14);
++        if (sync != 0x3FFE) throw new InvalidDataException("flac sync lost");
++
++        reader.Skip(1);
++        int blockingStrategy = (int)reader.Read(1);
++
++        int blockSizeCode = (int)reader.Read(4);
++        int sampleRateCode = (int)reader.Read(4);
++        int channelAssignment = (int)reader.Read(4);
++        reader.Skip(3);
++        reader.Skip(1);
++
++        ReadUtf8(reader, blockingStrategy != 0);
++
++        int blockSize = blockSizeCode switch
++        {
++            1 => 192,
++            >= 2 and <= 5 => 576 << (blockSizeCode - 2),
++            6 => (int)reader.Read(8) + 1,
++            7 => (int)reader.Read(16) + 1,
++            >= 8 and <= 15 => 256 << (blockSizeCode - 8),
++            _ => throw new InvalidDataException("flac reserved block size"),
++        };
++
++        if (sampleRateCode == 12) reader.Skip(8);
++        else if (sampleRateCode is 13 or 14) reader.Skip(16);
++
++        reader.Skip(8);
++
++        int leftBits = BitsPerSample + (channelAssignment == 9 ? 1 : 0);
++        int rightBits = BitsPerSample + (channelAssignment is 8 or 10 ? 1 : 0);
++
++        ReadSubframe(reader, left, blockSize, leftBits);
++        ReadSubframe(reader, right, blockSize, rightBits);
++
++        switch (channelAssignment)
++        {
++            case 8:
++                for (int i = 0; i < blockSize; i++) right[i] = left[i] - right[i];
++                break;
++            case 9:
++                for (int i = 0; i < blockSize; i++) left[i] += right[i];
++                break;
++            case 10:
++                for (int i = 0; i < blockSize; i++)
++                {
++                    int side = right[i];
++                    int mid = (left[i] << 1) | (side & 1);
++                    left[i] = (mid + side) >> 1;
++                    right[i] = (mid - side) >> 1;
++                }
++                break;
++        }
++
++        return blockSize;
++    }
++
++    private static void ReadSubframe(BitReader reader, int[] output, int blockSize, int bits)
++    {
++        reader.Skip(1);
++        int type = (int)reader.Read(6);
++
++        int wasted = 0;
++        if (reader.Read(1) != 0)
++        {
++            wasted = 1;
++            while (reader.Read(1) == 0) wasted++;
++        }
++        bits -= wasted;
++
++        if (type == 0)
++        {
++            int value = reader.ReadSigned(bits);
++            for (int i = 0; i < blockSize; i++) output[i] = value;
++        }
++        else if (type == 1)
++        {
++            for (int i = 0; i < blockSize; i++) output[i] = reader.ReadSigned(bits);
++        }
++        else if (type is >= 8 and <= 12)
++        {
++            int order = type - 8;
++            for (int i = 0; i < order; i++) output[i] = reader.ReadSigned(bits);
++            ReadResidual(reader, output, blockSize, order);
++            RestoreFixed(output, blockSize, order);
++        }
++        else if (type >= 32)
++        {
++            int order = type - 31;
++            for (int i = 0; i < order; i++) output[i] = reader.ReadSigned(bits);
++
++            int precision = (int)reader.Read(4) + 1;
++            int shift = reader.ReadSigned(5);
++            var coefficients = new int[order];
++            for (int i = 0; i < order; i++) coefficients[i] = reader.ReadSigned(precision);
++
++            ReadResidual(reader, output, blockSize, order);
++            RestoreLpc(output, blockSize, order, coefficients, shift);
++        }
++        else
++        {
++            throw new InvalidDataException("flac reserved subframe type err");
++        }
++
++        if (wasted > 0)
++            for (int i = 0; i < blockSize; i++) output[i] <<= wasted;
++    }
++
++    private static void ReadResidual(BitReader reader, int[] output, int blockSize, int order)
++    {
++        int method = (int)reader.Read(2);
++        if (method > 1) throw new InvalidDataException("flac reserved residual method err");
++
++        int paramBits = method == 0 ? 4 : 5;
++        int escape = method == 0 ? 0x0F : 0x1F;
++
++        int partitionOrder = (int)reader.Read(4);
++        int partitions = 1 << partitionOrder;
++        int partitionSamples = blockSize >> partitionOrder;
++
++        int index = order;
++        for (int partition = 0; partition < partitions; partition++)
++        {
++            int count = partition == 0 ? partitionSamples - order : partitionSamples;
++            int parameter = (int)reader.Read(paramBits);
++
++            if (parameter == escape)
++            {
++                int raw = (int)reader.Read(5);
++                for (int i = 0; i < count; i++)
++                    output[index++] = raw == 0 ? 0 : reader.ReadSigned(raw);
++            }
++            else
++            {
++                for (int i = 0; i < count; i++)
++                    output[index++] = reader.ReadRice(parameter);
++            }
++        }
++    }
++
++    private static void RestoreFixed(int[] data, int blockSize, int order)
++    {
++        switch (order)
++        {
++            case 0:
++                break;
++            case 1:
++                for (int i = 1; i < blockSize; i++) data[i] += data[i - 1];
++                break;
++            case 2:
++                for (int i = 2; i < blockSize; i++) data[i] += 2 * data[i - 1] - data[i - 2];
++                break;
++            case 3:
++                for (int i = 3; i < blockSize; i++)
++                    data[i] += 3 * data[i - 1] - 3 * data[i - 2] + data[i - 3];
++                break;
++            case 4:
++                for (int i = 4; i < blockSize; i++)
++                    data[i] += 4 * data[i - 1] - 6 * data[i - 2] + 4 * data[i - 3] - data[i - 4];
++                break;
++        }
++    }
++
++    private static void RestoreLpc(int[] data, int blockSize, int order, int[] coefficients, int shift)
++    {
++        for (int i = order; i < blockSize; i++)
++        {
++            long sum = 0;
++            for (int j = 0; j < order; j++)
++                sum += (long)coefficients[j] * data[i - 1 - j];
++            data[i] += (int)(sum >> shift);
++        }
++    }
++
++    private static void ReadUtf8(BitReader reader, bool wide)
++    {
++        uint first = reader.Read(8);
++        int extra = 0;
++        if ((first & 0x80) != 0)
++        {
++            byte mask = 0x40;
++            while ((first & mask) != 0)
++            {
++                extra++;
++                mask >>= 1;
++            }
++        }
++        for (int i = 0; i < extra; i++) reader.Skip(8);
++        if (wide && extra == 0) { }
++    }
++
++    private sealed class BitReader
++    {
++        private readonly byte[] _data;
++        private int _position;
++        private ulong _accumulator;
++        private int _available;
++
++        public BitReader(byte[] data, int offset)
++        {
++            _data = data;
++            _position = offset;
++        }
++
++        public int BytePosition => _position - (_available >> 3);
++
++        public uint Read(int count)
++        {
++            if (count == 0) return 0;
++            Fill(count);
++            uint value = (uint)((_accumulator >> (_available - count)) & ((1UL << count) - 1));
++            _available -= count;
++            _accumulator &= _available >= 64 ? ulong.MaxValue : (1UL << _available) - 1;
++            return value;
++        }
++
++        public int ReadSigned(int count)
++        {
++            if (count == 0) return 0;
++            uint raw = Read(count);
++            int sign = 1 << (count - 1);
++            return (int)raw >= sign ? (int)raw - (sign << 1) : (int)raw;
++        }
++
++        public int ReadRice(int parameter)
++        {
++            int quotient = 0;
++            while (Read(1) == 0) quotient++;
++            int value = (quotient << parameter) | (parameter > 0 ? (int)Read(parameter) : 0);
++            return (value & 1) != 0 ? -((value >> 1) + 1) : value >> 1;
++        }
++
++        public void Skip(int count)
++        {
++            while (count > 32)
++            {
++                Read(32);
++                count -= 32;
++            }
++            Read(count);
++        }
++
++        public void AlignToByte()
++        {
++            int extra = _available & 7;
++            if (extra != 0) Read(extra);
++        }
++
++        private void Fill(int count)
++        {
++            while (_available < count)
++            {
++                byte next = _position < _data.Length ? _data[_position++] : (byte)0;
++                _accumulator = (_accumulator << 8) | next;
++                _available += 8;
++            }
++        }
++    }
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdHeader.cs b/RecompOne.Runtime/Cdrom/Chd/ChdHeader.cs
+new file mode 100644
+index 0000000..f31f7a1
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdHeader.cs
+@@ -0,0 +1,84 @@
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++//according to ref
++internal enum ChdCompression
++{
++    Type0 = 0,
++    Type1 = 1,
++    Type2 = 2,
++    Type3 = 3,
++    None = 4,
++    Self = 5,
++    Parent = 6,
++    RleSmall = 7,
++    RleLarge = 8,
++    Self0 = 9,
++    Self1 = 10,
++    ParentSelf = 11,
++    Parent0 = 12,
++    Parent1 = 13,
++}
++
++internal readonly record struct ChdMapEntry(ChdCompression Compression, uint Length, ulong Offset, ushort Crc);
++
++internal sealed class ChdHeader
++{
++    public const int V5Length = 0x7C;
++
++    public int Version { get; init; }
++    public uint[] Compressors { get; init; } = new uint[4];
++    public ulong LogicalBytes { get; init; }
++    public ulong MapOffset { get; init; }
++    public ulong MetaOffset { get; init; }
++    public uint HunkBytes { get; init; }
++    public uint UnitBytes { get; init; }
++
++    public uint HunkCount => (uint)((LogicalBytes + HunkBytes - 1) / HunkBytes);
++
++    public bool IsCompressed => Compressors[0] != 0;
++
++    public static ChdHeader ReadV5(ReadOnlySpan<byte> raw)
++    {
++        var compressors = new uint[4];
++        for (int i = 0; i < 4; i++)
++            compressors[i] = ChdBig.U32(raw, 0x10 + i * 4);
++
++        return new ChdHeader
++        {
++            Version = 5,
++            Compressors = compressors,
++            LogicalBytes = ChdBig.U64(raw, 0x20),
++            MapOffset = ChdBig.U64(raw, 0x28),
++            MetaOffset = ChdBig.U64(raw, 0x30),
++            HunkBytes = ChdBig.U32(raw, 0x38),
++            UnitBytes = ChdBig.U32(raw, 0x3C),
++        };
++    }
++}
++
++internal static class ChdBig
++{
++    public static ushort U16(ReadOnlySpan<byte> b, int o) => (ushort)((b[o] << 8) | b[o + 1]);
++
++    public static uint U24(ReadOnlySpan<byte> b, int o) => (uint)((b[o] << 16) | (b[o + 1] << 8) | b[o + 2]);
++
++    public static uint U32(ReadOnlySpan<byte> b, int o) =>
++        ((uint)b[o] << 24) | ((uint)b[o + 1] << 16) | ((uint)b[o + 2] << 8) | b[o + 3];
++
++    public static ulong U48(ReadOnlySpan<byte> b, int o)
++    {
++        ulong value = 0;
++        for (int i = 0; i < 6; i++) value = (value << 8) | b[o + i];
++        return value;
++    }
++
++    public static ulong U64(ReadOnlySpan<byte> b, int o)
++    {
++        ulong value = 0;
++        for (int i = 0; i < 8; i++) value = (value << 8) | b[o + i];
++        return value;
++    }
++
++    public static uint Tag(string s) =>
++        ((uint)s[0] << 24) | ((uint)s[1] << 16) | ((uint)s[2] << 8) | s[3];
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdHuffman.cs b/RecompOne.Runtime/Cdrom/Chd/ChdHuffman.cs
+new file mode 100644
+index 0000000..c76ea0d
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdHuffman.cs
+@@ -0,0 +1,111 @@
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++internal sealed class ChdHuffman
++{
++    private const int MaxCodeLength = 32;
++
++    private readonly int _numCodes;
++    private readonly int _maxBits;
++    private readonly byte[] _lengths;
++    private readonly int[] _firstCode = new int[MaxCodeLength + 1];
++    private readonly int[] _firstIndex = new int[MaxCodeLength + 1];
++    private readonly int[] _counts = new int[MaxCodeLength + 1];
++    private int[] _symbols = [];
++
++    private ChdHuffman(int numCodes, int maxBits)
++    {
++        _numCodes = numCodes;
++        _maxBits = maxBits;
++        _lengths = new byte[numCodes];
++    }
++
++    public static ChdHuffman ImportRle(ChdBitReader reader, int numCodes, int maxBits)
++    {
++        var huffman = new ChdHuffman(numCodes, maxBits);
++        huffman.ReadRleLengths(reader);
++        huffman.AssignCanonicalCodes();
++        return huffman;
++    }
++
++    public int DecodeOne(ChdBitReader reader)
++    {
++        int code = 0;
++        for (int length = 1; length <= _maxBits; length++)
++        {
++            code = (code << 1) | (int)reader.Read(1);
++            int offset = code - _firstCode[length];
++            if (_counts[length] > 0 && offset >= 0 && offset < _counts[length])
++                return _symbols[_firstIndex[length] + offset];
++        }
++        throw new InvalidDataException("chd huffman code not found");
++    }
++
++    private void ReadRleLengths(ChdBitReader reader)
++    {
++        int numBits = _maxBits >= 16 ? 5 : _maxBits >= 8 ? 4 : 3;
++
++        for (int current = 0; current < _numCodes;)
++        {
++            int nodeBits = (int)reader.Read(numBits);
++            if (nodeBits != 1)
++            {
++                _lengths[current++] = (byte)nodeBits;
++                continue;
++            }
++
++            nodeBits = (int)reader.Read(numBits);
++            if (nodeBits == 1)
++            {
++                _lengths[current++] = (byte)nodeBits;
++                continue;
++            }
++
++            int repeat = (int)reader.Read(numBits) + 3;
++            if (repeat + current > _numCodes)
++                throw new InvalidDataException("chd huffman rle has overflown");
++            while (repeat-- > 0)
++                _lengths[current++] = (byte)nodeBits;
++        }
++    }
++
++    private void AssignCanonicalCodes()
++    {
++        var histogram = new int[MaxCodeLength + 1];
++        foreach (var length in _lengths)
++        {
++            if (length > _maxBits)
++                throw new InvalidDataException("chd huffman length exceds maxbits");
++            if (length <= MaxCodeLength)
++                histogram[length]++;
++        }
++
++        int start = 0;
++        for (int length = MaxCodeLength; length > 0; length--)
++        {
++            int next = (start + histogram[length]) >> 1;
++            if (length != 1 && next * 2 != start + histogram[length])
++                throw new InvalidDataException("chd huffman tree is not consistent"); //is this possible?
++            int total = histogram[length];
++            histogram[length] = start;
++            _firstCode[length] = start;
++            _counts[length] = total;
++            start = next;
++        }
++
++        int index = 0;
++        for (int length = 1; length <= MaxCodeLength; length++)
++        {
++            _firstIndex[length] = index;
++            index += _counts[length];
++        }
++
++        _symbols = new int[index];
++        var cursor = new int[MaxCodeLength + 1];
++        for (int symbol = 0; symbol < _numCodes; symbol++)
++        {
++            int length = _lengths[symbol];
++            if (length == 0) continue;
++            _symbols[_firstIndex[length] + cursor[length]++] = symbol;
++        }
++    }
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdLzma.cs b/RecompOne.Runtime/Cdrom/Chd/ChdLzma.cs
+new file mode 100644
+index 0000000..f2b8de6
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdLzma.cs
+@@ -0,0 +1,311 @@
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++//basically 7zip
++internal static class ChdLzma
++{
++    private const int Lc = 3;
++    private const int Lp = 0;
++    private const int Pb = 2;
++
++    private const int NumStates = 12;
++    private const int NumPosBitsMax = 4;
++    private const int NumTopBits = 24;
++    private const uint TopValue = 1u << NumTopBits;
++    private const int NumBitModelTotalBits = 11;
++    private const uint BitModelTotal = 1u << NumBitModelTotalBits;
++    private const int NumMoveBits = 5;
++    private const int NumLenToPosStates = 4;
++    private const int NumAlignBits = 4;
++    private const int EndPosModelIndex = 14;
++    private const int NumFullDistances = 1 << (EndPosModelIndex >> 1);
++    private const int MatchMinLen = 2;
++
++    public static void Decode(byte[] src, int srcOffset, int srcLength, byte[] dst, int dstOffset, int dstLength)
++        => new Decoder(src, srcOffset, srcLength, dst, dstOffset, dstLength).Run();
++
++    private sealed class Decoder
++    {
++        private readonly byte[] _src;
++        private readonly int _srcEnd;
++        private int _srcPos;
++
++        private readonly byte[] _dst;
++        private readonly int _dstStart;
++        private readonly int _dstEnd;
++        private int _dstPos;
++
++        private uint _range;
++        private uint _code;
++
++        private readonly ushort[] _isMatch = NewProbs(NumStates << NumPosBitsMax);
++        private readonly ushort[] _isRep = NewProbs(NumStates);
++        private readonly ushort[] _isRepG0 = NewProbs(NumStates);
++        private readonly ushort[] _isRepG1 = NewProbs(NumStates);
++        private readonly ushort[] _isRepG2 = NewProbs(NumStates);
++        private readonly ushort[] _isRep0Long = NewProbs(NumStates << NumPosBitsMax);
++        private readonly ushort[] _posSlot = NewProbs(NumLenToPosStates << 6);
++        private readonly ushort[] _specPos = NewProbs(NumFullDistances - EndPosModelIndex);
++        private readonly ushort[] _align = NewProbs(1 << NumAlignBits);
++        private readonly ushort[] _literal = NewProbs(0x300 << (Lc + Lp));
++
++        private readonly LenDecoder _lenDecoder = new();
++        private readonly LenDecoder _repLenDecoder = new();
++
++        public Decoder(byte[] src, int srcOffset, int srcLength, byte[] dst, int dstOffset, int dstLength)
++        {
++            _src = src;
++            _srcPos = srcOffset;
++            _srcEnd = srcOffset + srcLength;
++            _dst = dst;
++            _dstStart = dstOffset;
++            _dstPos = dstOffset;
++            _dstEnd = dstOffset + dstLength;
++        }
++
++        public void Run()
++        {
++            InitRange();
++
++            uint rep0 = 0, rep1 = 0, rep2 = 0, rep3 = 0;
++            uint state = 0;
++            byte previous = 0;
++
++            while (_dstPos < _dstEnd)
++            {
++                uint posState = (uint)(_dstPos - _dstStart) & ((1u << Pb) - 1);
++
++                if (DecodeBit(_isMatch, (state << NumPosBitsMax) + posState) == 0)
++                {
++                    uint literalIndex = ((uint)(_dstPos - _dstStart) & ((1u << Lp) - 1)) << Lc;
++                    literalIndex += (uint)previous >> (8 - Lc);
++                    literalIndex *= 0x300;
++
++                    previous = state < 7
++                        ? DecodeLiteral(literalIndex)
++                        : DecodeMatchedLiteral(literalIndex, PeekBack(rep0));
++
++                    _dst[_dstPos++] = previous;
++                    state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
++                    continue;
++                }
++
++                uint len;
++
++                if (DecodeBit(_isRep, state) != 0)
++                {
++                    if (DecodeBit(_isRepG0, state) == 0)
++                    {
++                        if (DecodeBit(_isRep0Long, (state << NumPosBitsMax) + posState) == 0)
++                        {
++                            state = state < 7 ? 9u : 11u;
++                            previous = PeekBack(rep0);
++                            _dst[_dstPos++] = previous;
++                            continue;
++                        }
++                    }
++                    else
++                    {
++                        uint distance;
++                        if (DecodeBit(_isRepG1, state) == 0)
++                        {
++                            distance = rep1;
++                        }
++                        else
++                        {
++                            if (DecodeBit(_isRepG2, state) == 0)
++                            {
++                                distance = rep2;
++                            }
++                            else
++                            {
++                                distance = rep3;
++                                rep3 = rep2;
++                            }
++                            rep2 = rep1;
++                        }
++                        rep1 = rep0;
++                        rep0 = distance;
++                    }
++
++                    len = _repLenDecoder.Decode(this, posState) + MatchMinLen;
++                    state = state < 7 ? 8u : 11u;
++                }
++                else
++                {
++                    rep3 = rep2;
++                    rep2 = rep1;
++                    rep1 = rep0;
++
++                    len = _lenDecoder.Decode(this, posState);
++                    state = state < 7 ? 7u : 10u;
++                    rep0 = DecodeDistance(len);
++                    len += MatchMinLen;
++                }
++
++                for (uint i = 0; i < len && _dstPos < _dstEnd; i++)
++                {
++                    previous = PeekBack(rep0);
++                    _dst[_dstPos++] = previous;
++                }
++            }
++        }
++
++        private byte PeekBack(uint distance)
++        {
++            long index = _dstPos - (long)distance - 1;
++            return index < _dstStart ? (byte)0 : _dst[index];
++        }
++
++        private uint DecodeDistance(uint len)
++        {
++            uint lenState = len < NumLenToPosStates ? len : NumLenToPosStates - 1;
++            uint posSlot = BitTreeDecode(_posSlot, lenState << 6, 6);
++            if (posSlot < 4) return posSlot;
++
++            int numDirectBits = (int)((posSlot >> 1) - 1);
++            uint distance = (2 | (posSlot & 1)) << numDirectBits;
++
++            if (posSlot < EndPosModelIndex)
++                distance += BitTreeReverseDecode(_specPos, (int)(distance - posSlot - 1), numDirectBits);
++            else
++            {
++                distance += DecodeDirectBits(numDirectBits - NumAlignBits) << NumAlignBits;
++                distance += BitTreeReverseDecode(_align, 0, NumAlignBits);
++            }
++
++            return distance;
++        }
++
++        private byte DecodeLiteral(uint index)
++        {
++            uint symbol = 1;
++            do symbol = (symbol << 1) | DecodeBit(_literal, index + symbol);
++            while (symbol < 0x100);
++            return (byte)symbol;
++        }
++
++        private byte DecodeMatchedLiteral(uint index, byte matchByte)
++        {
++            uint symbol = 1;
++            do
++            {
++                uint matchBit = (uint)(matchByte >> 7) & 1;
++                matchByte <<= 1;
++                uint bit = DecodeBit(_literal, index + ((1 + matchBit) << 8) + symbol);
++                symbol = (symbol << 1) | bit;
++                if (matchBit != bit)
++                {
++                    while (symbol < 0x100)
++                        symbol = (symbol << 1) | DecodeBit(_literal, index + symbol);
++                    break;
++                }
++            }
++            while (symbol < 0x100);
++            return (byte)symbol;
++        }
++
++        private void InitRange()
++        {
++            _code = 0;
++            _range = 0xFFFFFFFF;
++            NextByte();
++            for (int i = 0; i < 4; i++)
++                _code = (_code << 8) | NextByte();
++        }
++
++        private byte NextByte() => _srcPos < _srcEnd ? _src[_srcPos++] : (byte)0;
++
++        internal uint DecodeBit(ushort[] probs, uint index)
++        {
++            ushort prob = probs[index];
++            uint bound = (_range >> NumBitModelTotalBits) * prob;
++            uint result;
++
++            if (_code < bound)
++            {
++                _range = bound;
++                probs[index] = (ushort)(prob + ((BitModelTotal - prob) >> NumMoveBits));
++                result = 0;
++            }
++            else
++            {
++                _range -= bound;
++                _code -= bound;
++                probs[index] = (ushort)(prob - (prob >> NumMoveBits));
++                result = 1;
++            }
++
++            if (_range < TopValue)
++            {
++                _range <<= 8;
++                _code = (_code << 8) | NextByte();
++            }
++
++            return result;
++        }
++
++        private uint DecodeDirectBits(int count)
++        {
++            uint result = 0;
++            for (int i = count; i > 0; i--)
++            {
++                _range >>= 1;
++                uint bit = (_code - _range) >> 31;
++                if (bit == 0) _code -= _range;
++                result = (result << 1) | (1 - bit);
++
++                if (_range < TopValue)
++                {
++                    _range <<= 8;
++                    _code = (_code << 8) | NextByte();
++                }
++            }
++            return result;
++        }
++
++        internal uint BitTreeDecode(ushort[] probs, uint offset, int levels)
++        {
++            uint m = 1;
++            for (int i = 0; i < levels; i++)
++                m = (m << 1) + DecodeBit(probs, offset + m);
++            return m - ((uint)1 << levels);
++        }
++
++        private uint BitTreeReverseDecode(ushort[] probs, int offset, int levels)
++        {
++            uint m = 1;
++            uint symbol = 0;
++            for (int i = 0; i < levels; i++)
++            {
++                uint bit = DecodeBit(probs, (uint)offset + m);
++                m = (m << 1) + bit;
++                symbol |= bit << i;
++            }
++            return symbol;
++        }
++
++        private static ushort[] NewProbs(int size)
++        {
++            var probs = new ushort[size];
++            Array.Fill(probs, (ushort)(BitModelTotal >> 1));
++            return probs;
++        }
++
++        private sealed class LenDecoder
++        {
++            private readonly ushort[] _choice = NewProbs(2);
++            private readonly ushort[] _low = NewProbs(1 << (NumPosBitsMax + 3));
++            private readonly ushort[] _mid = NewProbs(1 << (NumPosBitsMax + 3));
++            private readonly ushort[] _high = NewProbs(1 << 8);
++
++            public uint Decode(Decoder decoder, uint posState)
++            {
++                if (decoder.DecodeBit(_choice, 0) == 0)
++                    return decoder.BitTreeDecode(_low, posState << 3, 3);
++                if (decoder.DecodeBit(_choice, 1) == 0)
++                    return 8 + decoder.BitTreeDecode(_mid, posState << 3, 3);
++                return 16 + decoder.BitTreeDecode(_high, 0, 8);
++            }
++        }
++    }
++}
+diff --git a/RecompOne.Runtime/Cdrom/Chd/ChdMap.cs b/RecompOne.Runtime/Cdrom/Chd/ChdMap.cs
+new file mode 100644
+index 0000000..8f68bfa
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Chd/ChdMap.cs
+@@ -0,0 +1,147 @@
++namespace RecompOne.Runtime.Cdrom.Chd;
++
++internal static class ChdMap
++{
++    private const int EntrySize = 12;
++
++    public static ChdMapEntry[] Read(Stream stream, ChdHeader header)
++    {
++        return header.IsCompressed ? ReadCompressed(stream, header) : ReadUncompressed(stream, header);
++    }
++
++    private static ChdMapEntry[] ReadUncompressed(Stream stream, ChdHeader header)
++    {
++        uint count = header.HunkCount;
++        var raw = new byte[count * 4];
++        stream.Seek((long)header.MapOffset, SeekOrigin.Begin);
++        stream.ReadExactly(raw);
++
++        var entries = new ChdMapEntry[count];
++        for (uint i = 0; i < count; i++)
++        {
++            ulong offset = (ulong)ChdBig.U32(raw, (int)(i * 4)) * header.HunkBytes;
++            entries[i] = new ChdMapEntry(ChdCompression.None, header.HunkBytes, offset, 0);
++        }
++        return entries;
++    }
++
++    private static ChdMapEntry[] ReadCompressed(Stream stream, ChdHeader header)
++    {
++        var head = new byte[16];
++        stream.Seek((long)header.MapOffset, SeekOrigin.Begin);
++        stream.ReadExactly(head);
++
++        uint mapBytes = ChdBig.U32(head, 0);
++        ulong firstOffset = ChdBig.U48(head, 4);
++        int lengthBits = head[12];
++        int selfBits = head[13];
++        int parentBits = head[14];
++
++        var compressed = new byte[mapBytes];
++        stream.Seek((long)header.MapOffset + 16, SeekOrigin.Begin);
++        stream.ReadExactly(compressed);
++
++        var reader = new ChdBitReader(compressed);
++        var huffman = ChdHuffman.ImportRle(reader, 16, 8);
++
++        uint count = header.HunkCount;
++        var types = new ChdCompression[count];
++
++        int repeat = 0;
++        var last = ChdCompression.Type0;
++        for (uint i = 0; i < count; i++)
++        {
++            if (repeat > 0)
++            {
++                types[i] = last;
++                repeat--;
++                continue;
++            }
++
++            var value = (ChdCompression)huffman.DecodeOne(reader);
++            if (value == ChdCompression.RleSmall)
++            {
++                types[i] = last;
++                repeat = 2 + huffman.DecodeOne(reader);
++            }
++            else if (value == ChdCompression.RleLarge)
++            {
++                types[i] = last;
++                repeat = 2 + 16 + (huffman.DecodeOne(reader) << 4);
++                repeat += huffman.DecodeOne(reader);
++            }
++            else
++            {
++                types[i] = last = value;
++            }
++        }
++
++        var entries = new ChdMapEntry[count];
++        ulong current = firstOffset;
++        uint lastSelf = 0;
++        ulong lastParent = 0;
++
++        for (uint i = 0; i < count; i++)
++        {
++            var type = types[i];
++            ulong offset = current;
++            uint length = 0;
++            ushort crc = 0;
++
++            switch (type)
++            {
++                case ChdCompression.Type0:
++                case ChdCompression.Type1:
++                case ChdCompression.Type2:
++                case ChdCompression.Type3:
++                    length = reader.Read(lengthBits);
++                    current += length;
++                    crc = (ushort)reader.Read(16);
++                    break;
++
++                case ChdCompression.None:
++                    length = header.HunkBytes;
++                    current += length;
++                    crc = (ushort)reader.Read(16);
++                    break;
++
++                case ChdCompression.Self:
++                    lastSelf = reader.Read(selfBits);
++                    offset = lastSelf;
++                    break;
++
++                case ChdCompression.Parent:
++                    offset = reader.Read(parentBits);
++                    lastParent = offset;
++                    break;
++
++                case ChdCompression.Self1:
++                    lastSelf++;
++                    goto case ChdCompression.Self0;
++
++                case ChdCompression.Self0:
++                    type = ChdCompression.Self;
++                    offset = lastSelf;
++                    break;
++
++                case ChdCompression.ParentSelf:
++                    type = ChdCompression.Parent;
++                    lastParent = offset = (ulong)i * header.HunkBytes / header.UnitBytes;
++                    break;
++
++                case ChdCompression.Parent1:
++                    lastParent += header.HunkBytes / header.UnitBytes;
++                    goto case ChdCompression.Parent0;
++
++                case ChdCompression.Parent0:
++                    type = ChdCompression.Parent;
++                    offset = lastParent;
++                    break;
++            }
++
++            entries[i] = new ChdMapEntry(type, length, offset, crc);
++        }
++
++        return entries;
++    }
++}
+diff --git a/RecompOne.Runtime/Cdrom/CueBin.cs b/RecompOne.Runtime/Cdrom/CueBin.cs
+deleted file mode 100644
+index adb02c5..0000000
+--- a/RecompOne.Runtime/Cdrom/CueBin.cs
++++ /dev/null
+@@ -1,163 +0,0 @@
+-namespace RecompOne.Runtime.Cdrom;
+-
+-public sealed class CueBin : IDisposable
+-{
+-    private record Track(string BinPath, int Number, string Mode, int SectorSize, int DataOffset, long FileOffset, int StartLba);
+-
+-    private readonly List<Track> _tracks = [];
+-    private readonly Dictionary<string, FileStream> _files = [];
+-    private readonly object _ioGate = new();
+-
+-    private CueBin() {}
+-
+-    public static CueBin Open(string cuePath)
+-    {
+-        var cb = new CueBin();
+-        cb.Parse(cuePath);
+-        return cb;
+-    }
+-
+-    private void Parse(string cuePath)
+-    {
+-        string dir = Path.GetDirectoryName(Path.GetFullPath(cuePath)) ?? "";
+-        string? currentFile = null;
+-        int trackNum = 0;
+-        string mode = "MODE2/2352";
+-        long fileBaseSectors = 0;
+-
+-        foreach (var raw in File.ReadLines(cuePath))
+-        {
+-            var line = raw.Trim();
+-            if (line.StartsWith("FILE ", StringComparison.OrdinalIgnoreCase))
+-            {
+-                int a = line.IndexOf('"') + 1;
+-                int b = line.LastIndexOf('"');
+-                if (currentFile != null && File.Exists(currentFile))
+-                    fileBaseSectors += new FileInfo(currentFile).Length / 2352;
+-                currentFile = Path.Combine(dir, line[a..b]);
+-            }
+-            else if (line.StartsWith("TRACK ", StringComparison.OrdinalIgnoreCase))
+-            {
+-                var p = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+-                trackNum = int.Parse(p[1]);
+-                mode = p[2];
+-            }
+-            else if (line.StartsWith("INDEX 01 ", StringComparison.OrdinalIgnoreCase))
+-            {
+-                long sectorsWithinFile = MsfToSectors(line[9..].Trim());
+-                int ss = GetSectorSize(mode);
+-                int startLba = (int)(fileBaseSectors + sectorsWithinFile);
+-                _tracks.Add(new Track(currentFile!, trackNum, mode, ss, GetDataOffset(mode), sectorsWithinFile * ss, startLba));
+-            }
+-        }
+-    }
+-
+-    //crrct trak
+-    public int FirstTrack => _tracks.Count > 0 ? _tracks.Min(t => t.Number) : 1;
+-    public int LastTrack => _tracks.Count > 0 ? _tracks.Max(t => t.Number) : 1;
+-    public bool HasTracks => _tracks.Count > 0;
+-
+-    public bool TrackStartLba(int track, out int lba)
+-    {
+-        var t = _tracks.Find(x => x.Number == track);
+-        if (t == null) { lba = 0; return false; }
+-        lba = t.StartLba;
+-        return true;
+-    }
+-
+-    public int LeadoutLba
+-    {
+-        get
+-        {
+-            long total = 0;
+-            var seen = new HashSet<string>();
+-            foreach (var t in _tracks)
+-                if (seen.Add(t.BinPath) && File.Exists(t.BinPath))
+-                    total += new FileInfo(t.BinPath).Length / 2352;
+-            return (int)total;
+-        }
+-    }
+-
+-    public int DataSectors { get { var t = DataTrack(); return DataTrackSectors(t, GetStream(t.BinPath)); } }
+-
+-    public byte[] ReadSector(int lba) => ReadSectorData(lba, 2048);
+-
+-    private int _lastOobLba = int.MinValue;
+-
+-    public byte[] ReadSectorData(int lba, int size)
+-    {
+-        var t = DataTrack();
+-        var stream = GetStream(t.BinPath);
+-        int offset = t.SectorSize == 2352
+-            ? size switch { >= 2340 => 12, >= 2329 => 16, _ => 24 }
+-            : t.DataOffset;
+-        long pos = t.FileOffset + (long)lba * t.SectorSize + offset;
+-        var buf = new byte[size];
+-        if (lba < 0) return buf;
+-        int want = Math.Min(size, t.SectorSize - offset);
+-        lock (_ioGate)
+-        {
+-            int dataSectors = DataTrackSectors(t, stream);
+-            if (lba >= dataSectors || pos >= stream.Length)
+-            {
+-                if (lba != _lastOobLba)
+-                {
+-                    _lastOobLba = lba;
+-                    Console.WriteLine($"[CueBin] there was read outside data track: lba={lba}, was this intended?");
+-                }
+-                return buf;
+-            }
+-            int avail = (int)Math.Min(want, stream.Length - pos);
+-            stream.Seek(pos, SeekOrigin.Begin);
+-            stream.ReadExactly(buf, 0, avail);
+-        }
+-        return buf;
+-    }
+-
+-    private Track DataTrack() => _tracks.Find(t => !t.Mode.Equals("AUDIO", StringComparison.OrdinalIgnoreCase)) ?? throw new InvalidOperationException("no data track was found in cue sheet");
+-
+-    private int DataTrackSectors(Track dt, FileStream stream)
+-    {
+-        int next = int.MaxValue;
+-        foreach (var t in _tracks)
+-            if (t.StartLba > dt.StartLba && t.StartLba < next) next = t.StartLba;
+-        return next != int.MaxValue ? next - dt.StartLba : (int)((stream.Length - dt.FileOffset) / dt.SectorSize);
+-    }
+-
+-    private FileStream GetStream(string path)
+-    {
+-        lock (_ioGate)
+-        {
+-            if (!_files.TryGetValue(path, out var s))
+-                _files[path] = s = File.OpenRead(path);
+-            return s;
+-        }
+-    }
+-
+-    private static long MsfToSectors(string msf)
+-    {
+-        var p = msf.Split(':');
+-        return long.Parse(p[0]) * 60 * 75 + long.Parse(p[1]) * 75 + long.Parse(p[2]);
+-    }
+-
+-    private static int GetSectorSize(string mode) => mode switch
+-    {
+-        "MODE1/2048" => 2048,
+-        "MODE2/2336" => 2336,
+-        _ => 2352,
+-    };
+-
+-    private static int GetDataOffset(string mode) => mode switch
+-    {
+-        "MODE1/2352" => 16,
+-        "MODE2/2352" => 24,
+-        "MODE2/2336" => 8,
+-        _ => 0,
+-    };
+-
+-    public void Dispose()
+-    {
+-        foreach (var s in _files.Values) s.Dispose();
+-        _files.Clear();
+-    }
+-}
+diff --git a/RecompOne.Runtime/Cdrom/CueFs.cs b/RecompOne.Runtime/Cdrom/CueFs.cs
+deleted file mode 100644
+index a40d0b6..0000000
+--- a/RecompOne.Runtime/Cdrom/CueFs.cs
++++ /dev/null
+@@ -1,169 +0,0 @@
+-namespace RecompOne.Runtime.Cdrom;
+-
+-//it it
+-public sealed class CueFs : IDisposable
+-{
+-    private record Entry(int Lba, uint Size, bool IsDir, string Name);
+-
+-    private readonly CueBin _bin;
+-
+-    private CueFs(CueBin bin) => _bin = bin;
+-
+-    public static CueFs Open(string cuePath) => new(CueBin.Open(cuePath));
+-
+-    public byte[] ReadFile(string path)
+-    {
+-        path = path.TrimStart('/', '\\');
+-        var parts = path.Split('/', '\\');
+-        var dir = Root();
+-        for (int i = 0; i < parts.Length - 1; i++)
+-            dir = Find(dir, StripVersion(parts[i]), true);
+-        var file = Find(dir, StripVersion(parts[^1]), false);
+-        return ReadExtent(file.Lba, (int)file.Size);
+-    }
+-
+-    private static string StripVersion(string name)
+-    {
+-        int semi = name.IndexOf(';');
+-        return semi >= 0 ? name[..semi] : name;
+-    }
+-
+-    public bool Exists(string path)
+-    {
+-        try { ReadFile(path); return true; }
+-        catch { return false; }
+-    }
+-
+-    public string? FindFile(string name) => Search(Root(), "", name.ToUpperInvariant());
+-
+-    public bool Locate(string name, out int lba, out uint size)
+-    {
+-        lba = 0;
+-        size = 0;
+-        var entry = LocateEntry(name);
+-        if (entry == null) return false;
+-        lba = entry.Lba;
+-        size = entry.Size;
+-        return true;
+-    }
+-
+-    private Entry? LocateEntry(string name)
+-    {
+-        name = name.TrimStart('/', '\\');
+-        try
+-        {
+-            var parts = name.Split('/', '\\');
+-            var dir = Root();
+-            for (int i = 0; i < parts.Length - 1; i++)
+-                dir = Find(dir, StripVersion(parts[i]), true);
+-            return Find(dir, StripVersion(parts[^1]), false);
+-        }
+-        catch (FileNotFoundException) { }
+-
+-        int slash = name.LastIndexOfAny(['/', '\\']);
+-        var basename = slash >= 0 ? name[(slash + 1)..] : name;
+-        return SearchEntry(Root(), StripVersion(basename).ToUpperInvariant());
+-    }
+-
+-    private Entry? SearchEntry(Entry dir, string name)
+-    {
+-        foreach (var e in Entries(dir))
+-        {
+-            if (e.IsDir)
+-            {
+-                var found = SearchEntry(e, name);
+-                if (found != null) return found;
+-            }
+-            else if (e.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+-                return e;
+-        }
+-        return null;
+-    }
+-
+-    public int FirstTrack => _bin.FirstTrack;
+-    public int LastTrack => _bin.LastTrack;
+-    public bool HasTracks => _bin.HasTracks;
+-    public int LeadoutLba => _bin.LeadoutLba;
+-    public int DataSectors => _bin.DataSectors;
+-    public bool TrackStartLba(int track, out int lba) => _bin.TrackStartLba(track, out lba);
+-
+-    public byte[] ReadSector(int lba) => _bin.ReadSector(lba);
+-
+-    public byte[] ReadSectorData(int lba, int size) => _bin.ReadSectorData(lba, size);
+-
+-    public byte[] ReadSectors(int lba, int size) => ReadExtent(lba, size);
+-
+-    private string? Search(Entry dir, string basePath, string name)
+-    {
+-        foreach (var e in Entries(dir))
+-        {
+-            if (e.IsDir)
+-            {
+-                var p = basePath.Length > 0 ? basePath + "/" + e.Name : e.Name;
+-                var found = Search(e, p, name);
+-                if (found != null) return found;
+-            }
+-            else if (e.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+-                return basePath.Length > 0 ? basePath + "/" + e.Name : e.Name;
+-        }
+-        return null;
+-    }
+-
+-    private Entry Root()
+-    {
+-        var pvd = _bin.ReadSector(16);
+-        return ParseEntry(pvd, 156);
+-    }
+-
+-    private Entry Find(Entry dir, string name, bool wantDir)
+-    {
+-        string upper = name.ToUpperInvariant();
+-        foreach (var e in Entries(dir))
+-            if (e.IsDir == wantDir && e.Name.Equals(upper, StringComparison.OrdinalIgnoreCase))
+-                return e;
+-        throw new FileNotFoundException($"{(wantDir ? "directory" : "File")} not found: {name}");
+-    }
+-
+-    private IEnumerable<Entry> Entries(Entry dir)
+-    {
+-        var data = ReadExtent(dir.Lba, (int)dir.Size);
+-        int i = 0;
+-        while (i < data.Length)
+-        {
+-            byte len = data[i];
+-            if (len == 0) { i = (i / 2048 + 1) * 2048; continue; }
+-            var e = ParseEntry(data, i);
+-            if (e.Name is not ("\x00" or "\x01"))
+-                yield return e;
+-            i += len;
+-        }
+-    }
+-
+-    private byte[] ReadExtent(int lba, int size)
+-    {
+-        var result = new byte[size];
+-        int done = 0;
+-        int cur = lba;
+-        while (done < size)
+-        {
+-            var sector = _bin.ReadSector(cur++);
+-            int n = Math.Min(2048, size - done);
+-            sector.AsSpan(0, n).CopyTo(result.AsSpan(done));
+-            done += n;
+-        }
+-        return result;
+-    }
+-
+-    private static Entry ParseEntry(byte[] data, int off)
+-    {
+-        int lba = BitConverter.ToInt32(data, off + 2);
+-        uint size = BitConverter.ToUInt32(data, off + 10);
+-        bool isDir = (data[off + 25] & 0x02) != 0;
+-        int nameLen = data[off + 32];
+-        string raw = System.Text.Encoding.ASCII.GetString(data, off + 33, nameLen);
+-        int semi = raw.IndexOf(';');
+-        return new Entry(lba, size, isDir, semi >= 0 ? raw[..semi] : raw);
+-    }
+-
+-    public void Dispose() => _bin.Dispose();
+-}
+diff --git a/RecompOne.Runtime/Cdrom/Disc/ChdImage.cs b/RecompOne.Runtime/Cdrom/Disc/ChdImage.cs
+new file mode 100644
+index 0000000..848bbc8
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Disc/ChdImage.cs
+@@ -0,0 +1,157 @@
++using RecompOne.Runtime.Cdrom.Chd;
++
++namespace RecompOne.Runtime.Cdrom;
++
++public sealed class ChdImage : IDiscImage
++{
++    private const int SectorData = 2352;
++    private const int FrameSize = 2448;
++    private const int TrackPadding = 4;
++
++    private sealed record Track(int Number, DiscTrackKind Kind, int DiscBase, int Pregap, int ChdFrame, int Frames)
++    {
++        public int ReportedLba => DiscBase + Pregap;
++    }
++
++    private readonly ChdFile _chd;
++    private readonly List<Track> _tracks = [];
++    private readonly int _framesPerHunk;
++    private int _lastOobLba = int.MinValue;
++
++    private ChdImage(ChdFile chd)
++    {
++        _chd = chd;
++        _framesPerHunk = (int)(chd.HunkBytes / FrameSize);
++        if (_framesPerHunk <= 0)
++            throw new InvalidDataException("chd hunk size is not a multiple of the cd frame size");
++        ParseTracks();
++    }
++
++    public static ChdImage Open(string path) => new(ChdFile.Open(path));
++
++    public string Format => "chd";
++
++    public int FirstTrack => _tracks.Count > 0 ? _tracks.Min(t => t.Number) : 1;
++
++    public int LastTrack => _tracks.Count > 0 ? _tracks.Max(t => t.Number) : 1;
++
++    public bool HasTracks => _tracks.Count > 0;
++
++    public IReadOnlyList<DiscTrack> Tracks => _tracks
++        .Select(t => new DiscTrack(t.Number, t.Kind, t.ReportedLba, SectorData))
++        .ToList();
++
++    public int LeadoutLba => _tracks.Count > 0 ? _tracks[^1].DiscBase + _tracks[^1].Frames : 0;
++
++    public int DataSectors
++    {
++        get
++        {
++            var t = DataTrack();
++            if (t == null) return 0;
++            int next = int.MaxValue;
++            foreach (var other in _tracks)
++                if (other.ReportedLba > t.ReportedLba && other.ReportedLba < next) next = other.ReportedLba;
++            return next != int.MaxValue ? next - t.ReportedLba : t.Frames;
++        }
++    }
++
++    public bool TrackStartLba(int track, out int lba)
++    {
++        var t = _tracks.Find(x => x.Number == track);
++        if (t == null)
++        {
++            lba = 0;
++            return false;
++        }
++        lba = t.ReportedLba;
++        return true;
++    }
++
++    public byte[] ReadSectorData(int lba, int size)
++    {
++        var buf = new byte[size];
++        if (lba < 0) return buf;
++
++        var track = DataTrack();
++        if (track == null) return buf;
++
++        if (lba >= DataSectors)
++        {
++            if (lba != _lastOobLba)
++            {
++                _lastOobLba = lba;
++                Console.WriteLine($"[DiscImage] read outside data track: lba={lba}");
++            }
++            return buf;
++        }
++
++        int offset = size switch { >= 2340 => 12, >= 2329 => 16, _ => 24 };
++        int frame = track.ChdFrame + (lba - track.DiscBase);
++        int hunk = frame / _framesPerHunk;
++        int indexInHunk = frame % _framesPerHunk;
++
++        var hunkData = _chd.ReadHunk(hunk);
++        int start = indexInHunk * FrameSize + offset;
++        int want = Math.Min(size, SectorData - offset);
++        Array.Copy(hunkData, start, buf, 0, want);
++        return buf;
++    }
++
++    private Track? DataTrack() => _tracks.Find(t => t.Kind == DiscTrackKind.Data);
++
++    private void ParseTracks()
++    {
++        uint cht2 = ChdBig.Tag("CHT2");
++        uint chtr = ChdBig.Tag("CHTR");
++        uint chcd = ChdBig.Tag("CHCD");
++
++        int discLba = 0;
++        int chdFrame = 0;
++
++        foreach (var entry in _chd.Metadata)
++        {
++            if (entry.Tag != cht2 && entry.Tag != chtr && entry.Tag != chcd) continue;
++
++            var text = entry.Text;
++            int number = ParseInt(text, "TRACK:");
++            int frames = ParseInt(text, "FRAMES:");
++            int pregap = ParseInt(text, "PREGAP:");
++            string type = ParseWord(text, "TYPE:");
++            if (number <= 0 || frames <= 0) continue;
++
++            var kind = type.StartsWith("AUDIO", StringComparison.OrdinalIgnoreCase)
++                ? DiscTrackKind.Audio
++                : DiscTrackKind.Data;
++
++            _tracks.Add(new Track(number, kind, discLba, pregap, chdFrame, frames));
++
++            discLba += frames;
++            chdFrame += (frames + TrackPadding - 1) / TrackPadding * TrackPadding;
++        }
++
++        _tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
++    }
++
++    private static int ParseInt(string text, string key)
++    {
++        int i = text.IndexOf(key, StringComparison.Ordinal);
++        if (i < 0) return 0;
++        i += key.Length;
++        int j = i;
++        while (j < text.Length && char.IsDigit(text[j])) j++;
++        return j > i && int.TryParse(text.AsSpan(i, j - i), out int value) ? value : 0;
++    }
++
++    private static string ParseWord(string text, string key)
++    {
++        int i = text.IndexOf(key, StringComparison.Ordinal);
++        if (i < 0) return "";
++        i += key.Length;
++        int j = i;
++        while (j < text.Length && !char.IsWhiteSpace(text[j])) j++;
++        return text[i..j];
++    }
++
++    public void Dispose() => _chd.Dispose();
++}
+diff --git a/RecompOne.Runtime/Cdrom/Disc/CueBinImage.cs b/RecompOne.Runtime/Cdrom/Disc/CueBinImage.cs
+new file mode 100644
+index 0000000..bba145c
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Disc/CueBinImage.cs
+@@ -0,0 +1,202 @@
++namespace RecompOne.Runtime.Cdrom;
++
++public sealed class CueBinImage : IDiscImage
++{
++    private sealed record Track(
++        string BinPath,
++        int Number,
++        string Mode,
++        int SectorSize,
++        int DataOffset,
++        long FileOffset,
++        int StartLba);
++
++    private readonly List<Track> _tracks = [];
++    private readonly Dictionary<string, FileStream> _files = [];
++    private readonly object _ioGate = new();
++    private int _lastOobLba = int.MinValue;
++
++    private CueBinImage() { }
++
++    public static CueBinImage Open(string cuePath)
++    {
++        var image = new CueBinImage();
++        image.Parse(cuePath);
++        return image;
++    }
++
++    public string Format => "cue/bin";
++
++    public int FirstTrack => _tracks.Count > 0 ? _tracks.Min(t => t.Number) : 1;
++
++    public int LastTrack => _tracks.Count > 0 ? _tracks.Max(t => t.Number) : 1;
++
++    public bool HasTracks => _tracks.Count > 0;
++
++    public IReadOnlyList<DiscTrack> Tracks => _tracks
++        .Select(t => new DiscTrack(t.Number, KindOf(t.Mode), t.StartLba, t.SectorSize))
++        .ToList();
++
++    public int LeadoutLba
++    {
++        get
++        {
++            long total = 0;
++            var seen = new HashSet<string>();
++            foreach (var t in _tracks)
++                if (seen.Add(t.BinPath) && File.Exists(t.BinPath))
++                    total += new FileInfo(t.BinPath).Length / 2352;
++            return (int)total;
++        }
++    }
++
++    public int DataSectors
++    {
++        get
++        {
++            var t = DataTrack();
++            return DataTrackSectors(t, GetStream(t.BinPath));
++        }
++    }
++
++    public bool TrackStartLba(int track, out int lba)
++    {
++        var t = _tracks.Find(x => x.Number == track);
++        if (t == null)
++        {
++            lba = 0;
++            return false;
++        }
++        lba = t.StartLba;
++        return true;
++    }
++
++    public byte[] ReadSectorData(int lba, int size)
++    {
++        var t = DataTrack();
++        var stream = GetStream(t.BinPath);
++        int offset = t.SectorSize == 2352
++            ? size switch { >= 2340 => 12, >= 2329 => 16, _ => 24 }
++            : t.DataOffset;
++        long pos = t.FileOffset + (long)lba * t.SectorSize + offset;
++        var buf = new byte[size];
++        if (lba < 0) return buf;
++        int want = Math.Min(size, t.SectorSize - offset);
++        lock (_ioGate)
++        {
++            int dataSectors = DataTrackSectors(t, stream);
++            if (lba >= dataSectors || pos >= stream.Length)
++            {
++                if (lba != _lastOobLba)
++                {
++                    _lastOobLba = lba;
++                    Console.WriteLine($"[DiscImage] read outside data track: lba={lba}");
++                }
++                return buf;
++            }
++            int avail = (int)Math.Min(want, stream.Length - pos);
++            stream.Seek(pos, SeekOrigin.Begin);
++            stream.ReadExactly(buf, 0, avail);
++        }
++        return buf;
++    }
++
++    private void Parse(string cuePath)
++    {
++        string dir = Path.GetDirectoryName(Path.GetFullPath(cuePath)) ?? "";
++        string? currentFile = null;
++        int trackNum = 0;
++        string mode = "MODE2/2352";
++        long fileBaseSectors = 0;
++
++        foreach (var raw in File.ReadLines(cuePath))
++        {
++            var line = raw.Trim();
++            if (line.StartsWith("FILE ", StringComparison.OrdinalIgnoreCase))
++            {
++                int a = line.IndexOf('"') + 1;
++                int b = line.LastIndexOf('"');
++                if (currentFile != null && File.Exists(currentFile))
++                    fileBaseSectors += new FileInfo(currentFile).Length / 2352;
++                currentFile = Path.Combine(dir, line[a..b]);
++            }
++            else if (line.StartsWith("TRACK ", StringComparison.OrdinalIgnoreCase))
++            {
++                var p = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
++                trackNum = int.Parse(p[1]);
++                mode = p[2];
++            }
++            else if (line.StartsWith("INDEX 01 ", StringComparison.OrdinalIgnoreCase))
++            {
++                long sectorsWithinFile = MsfToSectors(line[9..].Trim());
++                int sectorSize = GetSectorSize(mode);
++                int startLba = (int)(fileBaseSectors + sectorsWithinFile);
++                _tracks.Add(new Track(
++                    currentFile!,
++                    trackNum,
++                    mode,
++                    sectorSize,
++                    GetDataOffset(mode),
++                    sectorsWithinFile * sectorSize,
++                    startLba));
++            }
++        }
++    }
++
++    private Track DataTrack() =>
++        _tracks.Find(t => KindOf(t.Mode) == DiscTrackKind.Data)
++        ?? throw new InvalidOperationException("no data track was found in cue sheet");
++
++    private int DataTrackSectors(Track dataTrack, FileStream stream)
++    {
++        int next = int.MaxValue;
++        foreach (var t in _tracks)
++            if (t.StartLba > dataTrack.StartLba && t.StartLba < next) next = t.StartLba;
++        return next != int.MaxValue
++            ? next - dataTrack.StartLba
++            : (int)((stream.Length - dataTrack.FileOffset) / dataTrack.SectorSize);
++    }
++
++    private FileStream GetStream(string path)
++    {
++        lock (_ioGate)
++        {
++            if (!_files.TryGetValue(path, out var s))
++                _files[path] = s = File.OpenRead(path);
++            return s;
++        }
++    }
++
++    private static DiscTrackKind KindOf(string mode) =>
++        mode.Equals("AUDIO", StringComparison.OrdinalIgnoreCase) ? DiscTrackKind.Audio : DiscTrackKind.Data;
++
++    private static long MsfToSectors(string msf)
++    {
++        var p = msf.Split(':');
++        return long.Parse(p[0]) * 60 * 75 + long.Parse(p[1]) * 75 + long.Parse(p[2]);
++    }
++
++    private static int GetSectorSize(string mode) => mode switch
++    {
++        "MODE1/2048" => 2048,
++        "MODE2/2336" => 2336,
++        _ => 2352,
++    };
++
++    private static int GetDataOffset(string mode) => mode switch
++    {
++        "MODE1/2352" => 16,
++        "MODE2/2352" => 24,
++        "MODE2/2336" => 8,
++        _ => 0,
++    };
++
++    public void Dispose()
++    {
++        lock (_ioGate)
++        {
++            foreach (var s in _files.Values) s.Dispose();
++            _files.Clear();
++        }
++    }
++}
+diff --git a/RecompOne.Runtime/Cdrom/Disc/DiscImage.cs b/RecompOne.Runtime/Cdrom/Disc/DiscImage.cs
+new file mode 100644
+index 0000000..0d790cf
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Disc/DiscImage.cs
+@@ -0,0 +1,50 @@
++using RecompOne.Runtime.Cdrom.Chd;
++
++namespace RecompOne.Runtime.Cdrom;
++
++public static class DiscImage
++{
++    public static IDiscImage Open(string path)
++    {
++        if (string.IsNullOrWhiteSpace(path))
++            throw new ArgumentException("disc path i empty", nameof(path));
++        if (!File.Exists(path))
++            throw new FileNotFoundException($"disc image not found: {path}", path);
++
++        return Detect(path) switch
++        {
++            DiscFormat.Chd => ChdImage.Open(path),
++            DiscFormat.CueBin => CueBinImage.Open(path),
++            _ => throw new NotSupportedException($"unsupported disc format: {path}"),
++        };
++    }
++
++    public static DiscFormat Detect(string path)
++    {
++        var ext = Path.GetExtension(path);
++        if (ext.Equals(".chd", StringComparison.OrdinalIgnoreCase)) return DiscFormat.Chd;
++        if (ext.Equals(".cue", StringComparison.OrdinalIgnoreCase)) return DiscFormat.CueBin;
++        return HasChdMagic(path) ? DiscFormat.Chd : DiscFormat.Unknown;
++    }
++
++    private static bool HasChdMagic(string path)
++    {
++        try
++        {
++            using var s = File.OpenRead(path);
++            Span<byte> magic = stackalloc byte[8];
++            return s.Read(magic) == 8 && magic.SequenceEqual(ChdFile.Magic);
++        }
++        catch
++        {
++            return false;
++        }
++    }
++}
++
++public enum DiscFormat
++{
++    Unknown,
++    CueBin,
++    Chd,
++}
+diff --git a/RecompOne.Runtime/Cdrom/Disc/IDiscImage.cs b/RecompOne.Runtime/Cdrom/Disc/IDiscImage.cs
+new file mode 100644
+index 0000000..b219e82
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/Disc/IDiscImage.cs
+@@ -0,0 +1,32 @@
++namespace RecompOne.Runtime.Cdrom;
++
++public enum DiscTrackKind
++{
++    Data,
++    Audio,
++}
++
++public readonly record struct DiscTrack(int Number, DiscTrackKind Kind, int StartLba, int SectorSize);
++
++public interface IDiscImage : IDisposable
++{
++    string Format { get; }
++
++    int FirstTrack { get; }
++
++    int LastTrack { get; }
++
++    bool HasTracks { get; }
++
++    int LeadoutLba { get; }
++
++    int DataSectors { get; }
++
++    IReadOnlyList<DiscTrack> Tracks { get; }
++
++    bool TrackStartLba(int track, out int lba);
++
++    byte[] ReadSectorData(int lba, int size);
++
++    byte[] ReadSector(int lba) => ReadSectorData(lba, 2048);
++}
+diff --git a/RecompOne.Runtime/Cdrom/DiscFs.cs b/RecompOne.Runtime/Cdrom/DiscFs.cs
+new file mode 100644
+index 0000000..9a6e80b
+--- /dev/null
++++ b/RecompOne.Runtime/Cdrom/DiscFs.cs
+@@ -0,0 +1,193 @@
++namespace RecompOne.Runtime.Cdrom;
++
++//better disc handling
++public sealed class DiscFs : IDisposable
++{
++    private record Entry(int Lba, uint Size, bool IsDir, string Name);
++
++    private readonly IDiscImage _image;
++
++    private DiscFs(IDiscImage image) => _image = image;
++
++    public static DiscFs Open(string path) => new(DiscImage.Open(path));
++
++    public static DiscFs FromImage(IDiscImage image) => new(image);
++
++    public IDiscImage Image => _image;
++
++    public string Format => _image.Format;
++
++    public int FirstTrack => _image.FirstTrack;
++
++    public int LastTrack => _image.LastTrack;
++
++    public bool HasTracks => _image.HasTracks;
++
++    public int LeadoutLba => _image.LeadoutLba;
++
++    public int DataSectors => _image.DataSectors;
++
++    public IReadOnlyList<DiscTrack> Tracks => _image.Tracks;
++
++    public bool TrackStartLba(int track, out int lba) => _image.TrackStartLba(track, out lba);
++
++    public byte[] ReadSector(int lba) => _image.ReadSectorData(lba, 2048);
++
++    public byte[] ReadSectorData(int lba, int size) => _image.ReadSectorData(lba, size);
++
++    public byte[] ReadSectors(int lba, int size) => ReadExtent(lba, size);
++
++    public byte[] ReadFile(string path)
++    {
++        path = path.TrimStart('/', '\\');
++        var parts = path.Split('/', '\\');
++        var dir = Root();
++        for (int i = 0; i < parts.Length - 1; i++)
++            dir = Find(dir, StripVersion(parts[i]), true);
++        var file = Find(dir, StripVersion(parts[^1]), false);
++        return ReadExtent(file.Lba, (int)file.Size);
++    }
++
++    public bool Exists(string path)
++    {
++        try
++        {
++            ReadFile(path);
++            return true;
++        }
++        catch
++        {
++            return false;
++        }
++    }
++
++    public string? FindFile(string name) => Search(Root(), "", name.ToUpperInvariant());
++
++    public bool Locate(string name, out int lba, out uint size)
++    {
++        lba = 0;
++        size = 0;
++        var entry = LocateEntry(name);
++        if (entry == null) return false;
++        lba = entry.Lba;
++        size = entry.Size;
++        return true;
++    }
++
++    private Entry? LocateEntry(string name)
++    {
++        name = name.TrimStart('/', '\\');
++        try
++        {
++            var parts = name.Split('/', '\\');
++            var dir = Root();
++            for (int i = 0; i < parts.Length - 1; i++)
++                dir = Find(dir, StripVersion(parts[i]), true);
++            return Find(dir, StripVersion(parts[^1]), false);
++        }
++        catch (FileNotFoundException) { }
++
++        int slash = name.LastIndexOfAny(['/', '\\']);
++        var basename = slash >= 0 ? name[(slash + 1)..] : name;
++        return SearchEntry(Root(), StripVersion(basename).ToUpperInvariant());
++    }
++
++    private Entry? SearchEntry(Entry dir, string name)
++    {
++        foreach (var e in Entries(dir))
++        {
++            if (e.IsDir)
++            {
++                var found = SearchEntry(e, name);
++                if (found != null) return found;
++            }
++            else if (e.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
++                return e;
++        }
++        return null;
++    }
++
++    private string? Search(Entry dir, string basePath, string name)
++    {
++        foreach (var e in Entries(dir))
++        {
++            if (e.IsDir)
++            {
++                var p = basePath.Length > 0 ? basePath + "/" + e.Name : e.Name;
++                var found = Search(e, p, name);
++                if (found != null) return found;
++            }
++            else if (e.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
++                return basePath.Length > 0 ? basePath + "/" + e.Name : e.Name;
++        }
++        return null;
++    }
++
++    private Entry Root()
++    {
++        var pvd = ReadSector(16);
++        return ParseEntry(pvd, 156);
++    }
++
++    private Entry Find(Entry dir, string name, bool wantDir)
++    {
++        string upper = name.ToUpperInvariant();
++        foreach (var e in Entries(dir))
++            if (e.IsDir == wantDir && e.Name.Equals(upper, StringComparison.OrdinalIgnoreCase))
++                return e;
++        throw new FileNotFoundException($"{(wantDir ? "directory" : "file")} not found: {name}");
++    }
++
++    private IEnumerable<Entry> Entries(Entry dir)
++    {
++        var data = ReadExtent(dir.Lba, (int)dir.Size);
++        int i = 0;
++        while (i < data.Length)
++        {
++            byte len = data[i];
++            if (len == 0)
++            {
++                i = (i / 2048 + 1) * 2048;
++                continue;
++            }
++            var e = ParseEntry(data, i);
++            if (e.Name is not ("\x00" or "\x01"))
++                yield return e;
++            i += len;
++        }
++    }
++
++    private byte[] ReadExtent(int lba, int size)
++    {
++        var result = new byte[size];
++        int done = 0;
++        int cur = lba;
++        while (done < size)
++        {
++            var sector = ReadSector(cur++);
++            int n = Math.Min(2048, size - done);
++            sector.AsSpan(0, n).CopyTo(result.AsSpan(done));
++            done += n;
++        }
++        return result;
++    }
++
++    private static string StripVersion(string name)
++    {
++        int semi = name.IndexOf(';');
++        return semi >= 0 ? name[..semi] : name;
++    }
++
++    private static Entry ParseEntry(byte[] data, int off)
++    {
++        int lba = BitConverter.ToInt32(data, off + 2);
++        uint size = BitConverter.ToUInt32(data, off + 10);
++        bool isDir = (data[off + 25] & 0x02) != 0;
++        int nameLen = data[off + 32];
++        string raw = System.Text.Encoding.ASCII.GetString(data, off + 33, nameLen);
++        int semi = raw.IndexOf(';');
++        return new Entry(lba, size, isDir, semi >= 0 ? raw[..semi] : raw);
++    }
++
++    public void Dispose() => _image.Dispose();
++}
+diff --git a/RecompOne.Runtime/Host/Window/Popups/DiscPickerPopup.cs b/RecompOne.Runtime/Host/Window/Popups/DiscPickerPopup.cs
+index ba2b39e..4c5de5c 100644
+--- a/RecompOne.Runtime/Host/Window/Popups/DiscPickerPopup.cs
++++ b/RecompOne.Runtime/Host/Window/Popups/DiscPickerPopup.cs
+@@ -58,7 +58,7 @@ public sealed class DiscPickerPopup : Popup
+             if (_path.Length > 0 && File.Exists(_path)) directory = Path.GetDirectoryName(Path.GetFullPath(_path));
+             else if (_path.Length > 0 && Directory.Exists(_path)) directory = Path.GetFullPath(_path);
+ 
+-            using var dialog = new NativeFileDialog().SelectFile().AddFilter(Localization.T("disc.filter"), "cue");
++            using var dialog = new NativeFileDialog().SelectFile().AddFilter(Localization.T("disc.filter"), "cue,chd");
+             if (dialog.Open(out string? picked, directory) == DialogResult.Okay && !string.IsNullOrWhiteSpace(picked))
+             {
+                 _path = picked;
+diff --git a/RecompOne.Runtime/Host/Window/Settings/Sections/PathsSettingsSection.cs b/RecompOne.Runtime/Host/Window/Settings/Sections/PathsSettingsSection.cs
+index 763bcf9..4d386ce 100644
+--- a/RecompOne.Runtime/Host/Window/Settings/Sections/PathsSettingsSection.cs
++++ b/RecompOne.Runtime/Host/Window/Settings/Sections/PathsSettingsSection.cs
+@@ -19,7 +19,7 @@ internal sealed class PathsSettingsSection : ISettingsSection
+ 
+         ImGui.SeparatorText(Localization.T("settings.paths.disc"));
+ 
+-        if (PathRow("##disc", game.CdPath, "cue", false, out string disc))
++        if (PathRow("##disc", game.CdPath, "cue,chd", false, out string disc))
+         {
+             var problem = Runtime.ValidateDisc(disc);
+             if (problem != null)
+diff --git a/RecompOne.Runtime/Memory/Dma.cs b/RecompOne.Runtime/Memory/Dma.cs
+index 778c6ec..e694ebb 100644
+--- a/RecompOne.Runtime/Memory/Dma.cs
++++ b/RecompOne.Runtime/Memory/Dma.cs
+@@ -72,7 +72,7 @@ public sealed class Dma
+         uint sync = (chcr >> 9) & 3u;
+         if (sync == 2)
+         {
+-            uint addr = madr & 0x1FFFFCu;
++            uint addr = madr & Runtime.RamWordMask;
+             for (int guard = 0; guard < 0x100000; guard++)
+             {
+                 uint header = _mem.ReadU32(addr);
+@@ -84,7 +84,7 @@ public sealed class Dma
+                 }
+                 uint next = header & 0xFFFFFFu;
+                 if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
+-                addr = next & 0x1FFFFCu;
++                addr = next & Runtime.RamWordMask;
+             }
+         }
+         else if ((chcr & 1u) != 0)
+diff --git a/RecompOne.Runtime/Memory/PSMemory.cs b/RecompOne.Runtime/Memory/PSMemory.cs
+index bc8f9a5..841eea0 100644
+--- a/RecompOne.Runtime/Memory/PSMemory.cs
++++ b/RecompOne.Runtime/Memory/PSMemory.cs
+@@ -6,7 +6,7 @@ namespace RecompOne.Runtime.Memory;
+ 
+ public sealed class PSMemory : IMemory
+ {
+-    private readonly byte[] _ram = new byte[Runtime.Mode == RunMode.Devkit ? MemoryMap.DevkitRamSize : MemoryMap.RetailRamSize]; //should i make it able to increase psx mem?
++    private readonly byte[] _ram;
+     private readonly byte[] _scratchpad = new byte[MemoryMap.ScratchpadSize];
+     private readonly byte[] _hwregs = new byte[MemoryMap.HwRegsSize];
+     private readonly byte[] _bios = new byte[MemoryMap.BiosSize];
+@@ -22,17 +22,27 @@ public sealed class PSMemory : IMemory
+     internal byte[] RamBuffer => _ram;
+     
+     //memory can be frozen for debuging reasons
+-    private readonly bool[] _frozen = new bool[Runtime.Mode == RunMode.Devkit ? MemoryMap.DevkitRamSize : MemoryMap.RetailRamSize];
++    private readonly bool[] _frozen;
+     private int _frozenCount;
+ 
+-    public PSMemory()
++    public PSMemory(uint ramSize = 0)
+     {
++        uint size = ramSize != 0 ? ramSize
++            : (Runtime.Mode == RunMode.Devkit ? MemoryMap.DevkitRamSize : MemoryMap.RetailRamSize);
++        if (size < MemoryMap.RetailRamSize) size = MemoryMap.RetailRamSize;
++        if (size > MemoryMap.RamWindow) size = MemoryMap.RamWindow;
++        if ((size & (size - 1)) != 0) throw new ArgumentException("ram size must be a power of two", nameof(ramSize));
++
++        _ram = new byte[size];
++        _frozen = new bool[size];
++        Runtime.RamSize = size;
++
+         // PGXP shadows one PgxpValue per RAM word, so it has to be sized from the
+-        // same array the guest sees. Upstream sizes it from its ctor's ramSize
+-        // argument; this pin has no such argument -- the RAM is a field initializer
+-        // -- so the length is read back off it here. A stale entry cannot lie: every
+-        // lookup checks the word it stored against the word the GPU is drawing, so a
+-        // DMA or BIOS write that PGXP never saw is refused rather than believed.
++        // same array the guest sees -- which is now a ctor argument rather than a
++        // fixed 2 MB, so it is read back off the array rather than off MemoryMap.
++        // A stale entry cannot lie: every lookup checks the word it stored against
++        // the word the GPU is drawing, so a DMA or BIOS write that PGXP never saw
++        // is refused rather than believed.
+         Pgxp.PgxpMemory.Init((uint)_ram.Length);
+ 
+         _dma = new Dma(this, _gpu, _spu, _mdec, () => Runtime.DispatchIrq(3));
+diff --git a/RecompOne.Runtime/Runtime.cs b/RecompOne.Runtime/Runtime.cs
+index 5d28e2f..4abed95 100644
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -19,6 +19,9 @@ public static class Runtime
+ 
+     public static RunMode Mode { get; private set; } = RunMode.Retail;
+     public static void SetMode(RunMode mode) => Mode = mode; //devkit vs retail, devkits reads from sim and has more ram
++
++    public static uint RamSize { get; internal set; } = MemoryMap.RetailRamSize;
++    public static uint RamWordMask => (RamSize - 1) & ~3u;
+     public static string CdPath => Config.ConfigManager.Game.CdPath;
+ 
+     public static Func<string, string?>? DiscValidator;
+diff --git a/RecompOne.Runtime/sdk/LibGpu.cs b/RecompOne.Runtime/sdk/LibGpu.cs
+index 95e1c99..3a4de9c 100644
+--- a/RecompOne.Runtime/sdk/LibGpu.cs
++++ b/RecompOne.Runtime/sdk/LibGpu.cs
+@@ -17,9 +17,9 @@ public static class LibGpu
+ 
+         if (Log.SdkOn) Log.Sdk($"DrawOTag ot=0x{c.A0:X8}");
+ 
+-        uint addr = c.A0 & 0x1FFFFCu;
++        uint addr = c.A0 & Runtime.RamWordMask;
+         bool custom = GpuPrims.Any && GpuPrims.OtLength > 0;
+-        uint otBase = GpuPrims.OtBase & 0x1FFFFCu;
++        uint otBase = GpuPrims.OtBase & Runtime.RamWordMask;
+         uint otEnd = otBase + (uint)GpuPrims.OtLength * 4u;
+ 
+         for (int guard = 0; guard < 0x100000; guard++)
+@@ -42,7 +42,7 @@ public static class LibGpu
+             }
+             uint next = header & 0xFFFFFFu;
+             if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
+-            addr = next & 0x1FFFFCu;
++            addr = next & Runtime.RamWordMask;
+         }
+ 
+         // The length is only known once the walk ends, so it is published for the

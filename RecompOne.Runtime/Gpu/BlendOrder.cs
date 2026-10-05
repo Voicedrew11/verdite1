@@ -1,0 +1,167 @@
+using RecompOne.Runtime.Memory;
+
+namespace RecompOne.Runtime;
+
+/// <summary>
+/// 0079. Translucent surfaces drawn after the opaque ones the depth buffer tests.
+///
+/// A blended polygon is depth-tested and writes no depth (<c>GlCore</c>'s zMode 2),
+/// so anything opaque drawn after it lands on top wherever it passes the test, and
+/// the test cannot stop it: the only depth at that pixel is what lies behind the
+/// translucent surface. The ordering table does draw opaque geometry after a
+/// translucent surface it lies behind. The game links the map tiles 240 entries
+/// back and a creature or object below the camera at its own small bias, so a fish
+/// under the water sorts in front of the water; and a floor tile under the water can
+/// sort nearer than the water tile above it. Both paint over the water.
+///
+/// So the walk holds a blended packet the depth buffer tests and moves it past
+/// every opaque packet the depth buffer tests, which is the usual rule for a depth
+/// buffer: opaque first, then translucent in order. Moving a translucent packet
+/// past an opaque one is exact whichever is nearer: the depth test decides what the
+/// opaque one covers, and the translucent one then blends over what is behind it
+/// and is rejected by what is in front. Anything else is a barrier: the queue is
+/// drawn, in table order, before it (2D, anything with no depth record, a blended
+/// packet the port calls solid, a non-polygon command). So a translucent packet
+/// is never moved past anything the depth buffer does not order.
+///
+/// Only while the Z-buffer tests and the assemblers' records are the depth source
+/// (<see cref="GtePacketDepth.Active"/>), since the record is how a packet is known
+/// to be tested. Nothing here writes guest memory.
+/// </summary>
+public static class BlendOrder
+{
+    /// <summary>The port's switch.</summary>
+    public static bool Enabled = true;
+
+    /// <summary>Whether the next walk reorders.</summary>
+    public static bool Active => Enabled && GteDepth.ZBuffer && GtePacketDepth.Active;
+
+    public enum Kind { Barrier, Opaque, Deferred }
+
+    public struct Entry
+    {
+        public uint Addr;
+        public int Count, OtEntry, OtSlot;
+    }
+
+    static Entry[] _queue = new Entry[256];
+    static int _queued;
+
+    public static int Queued => _queued;
+
+    /// <summary>A packet: a polygon with a depth record, opaque or blended, or anything else.</summary>
+    public static Kind Classify(IMemory m, uint addr, int count, out bool model)
+    {
+        model = false;
+        uint cmd = m.ReadU32(addr + 4u);
+        uint op = cmd >> 24;
+        if (op < 0x20u || op >= 0x40u) return Kind.Barrier;
+        int tex = (op & 4u) != 0 ? 1 : 0, g = (op & 0x10u) != 0 ? 1 : 0;
+        int n = (op & 8u) != 0 ? 4 : 3;
+        int per = 1 + tex + g;
+        if (count != 2 + tex + (n - 1) * per) return Kind.Barrier;
+
+        uint xy0 = m.ReadU32(addr + 8u), xyLast = m.ReadU32(addr + 4u + (uint)(1 + (n - 1) * per) * 4u);
+        if (!GtePacketDepth.Peek(addr + 4u, cmd, xy0, xyLast, out var r)) return Kind.Barrier;
+        if (r.Z0 <= 0f || r.Z1 <= 0f || r.Z2 <= 0f || (n == 4 && r.Z3 <= 0f)) return Kind.Barrier;
+        model = r.Model;
+        if ((op & 2u) == 0) return Kind.Opaque;
+        return r.Solid ? Kind.Barrier : Kind.Deferred;
+    }
+
+    public static void Defer(uint addr, int count, int otEntry, int otSlot)
+    {
+        if (_queued == _queue.Length) Array.Resize(ref _queue, _queue.Length * 2);
+        _queue[_queued++] = new Entry { Addr = addr, Count = count, OtEntry = otEntry, OtSlot = otSlot };
+        Deferred++;
+    }
+
+    /// <summary>The held packets in table order, and the queue emptied. Valid until the next <see cref="Defer"/>.</summary>
+    public static ReadOnlySpan<Entry> Take()
+    {
+        var held = new ReadOnlySpan<Entry>(_queue, 0, _queued);
+        if (_queued > 0) Flushes++;
+        _queued = 0;
+        return held;
+    }
+
+    public static void Clear() => _queued = 0;
+
+    /// <summary>Running totals; never reset. <see cref="Passed"/> is opaque packets a held one was moved past.</summary>
+    public static long Deferred, Flushes, Passed, Walks;
+
+    // ---- the probe: what reached the GPU in which order ------------------------
+
+    /// <summary>KF2_BLENDORDER_PROBE. Samples every recorded packet, in the order it is
+    /// sent, on a 4-pixel grid, and counts opaque samples drawn after a translucent
+    /// surface they lie behind: what paints over the water.</summary>
+    public static bool Probe;
+
+    const int Cell = 4, GridX0 = -256, GridY0 = -64, GridW = 256, GridH = 96;
+    static readonly float[] _nearest = new float[GridW * GridH], _opaque = new float[GridW * GridH];
+
+    /// <summary>Opaque samples drawn over a translucent surface nearer than them, by source; never reset.</summary>
+    public static long OverModel, OverTile, OpaqueSamples, TranslucentSamples;
+
+    public static void ProbeBegin()
+    {
+        Array.Fill(_nearest, float.MaxValue);
+        Array.Fill(_opaque, float.MaxValue);
+    }
+
+    /// <summary>A packet as it is sent: sample its triangles at the grid's cell centres.</summary>
+    public static void ProbePacket(IMemory m, uint addr, int count)
+    {
+        if (GteDepth.OtSlot == 0) return;
+        var kind = Classify(m, addr, count, out bool model);
+        if (kind == Kind.Barrier) return;
+        uint cmd = m.ReadU32(addr + 4u);
+        uint op = cmd >> 24;
+        int tex = (op & 4u) != 0 ? 1 : 0, g = (op & 0x10u) != 0 ? 1 : 0;
+        int n = (op & 8u) != 0 ? 4 : 3;
+        int per = 1 + tex + g;
+        uint xy0 = m.ReadU32(addr + 8u), xyLast = m.ReadU32(addr + 4u + (uint)(1 + (n - 1) * per) * 4u);
+        GtePacketDepth.Peek(addr + 4u, cmd, xy0, xyLast, out var r);
+
+        Span<float> x = stackalloc float[4], y = stackalloc float[4], z = stackalloc float[4];
+        z[0] = r.Z0; z[1] = r.Z1; z[2] = r.Z2; z[3] = r.Z3;
+        for (int i = 0; i < n; i++)
+        {
+            uint w = m.ReadU32(addr + 4u + (uint)(1 + i * per) * 4u);
+            x[i] = (short)w; y[i] = (short)(w >> 16);
+        }
+        bool opaque = kind == Kind.Opaque;
+        Sample(x, y, z, 0, 1, 2, opaque, model);
+        if (n == 4) Sample(x, y, z, 1, 3, 2, opaque, model);
+    }
+
+    static void Sample(Span<float> x, Span<float> y, Span<float> z, int a, int b, int c, bool opaque, bool model)
+    {
+        float area = (x[b] - x[a]) * (y[c] - y[a]) - (y[b] - y[a]) * (x[c] - x[a]);
+        if (MathF.Abs(area) < 1e-3f) return;
+        int cx0 = Math.Max(0, (int)MathF.Floor((MathF.Min(x[a], MathF.Min(x[b], x[c])) - GridX0) / Cell));
+        int cx1 = Math.Min(GridW - 1, (int)MathF.Floor((MathF.Max(x[a], MathF.Max(x[b], x[c])) - GridX0) / Cell));
+        int cy0 = Math.Max(0, (int)MathF.Floor((MathF.Min(y[a], MathF.Min(y[b], y[c])) - GridY0) / Cell));
+        int cy1 = Math.Min(GridH - 1, (int)MathF.Floor((MathF.Max(y[a], MathF.Max(y[b], y[c])) - GridY0) / Cell));
+        for (int cy = cy0; cy <= cy1; cy++)
+        for (int cx = cx0; cx <= cx1; cx++)
+        {
+            float px = GridX0 + cx * Cell + Cell * 0.5f, py = GridY0 + cy * Cell + Cell * 0.5f;
+            float w0 = ((x[b] - px) * (y[c] - py) - (y[b] - py) * (x[c] - px)) / area;
+            float w1 = ((x[c] - px) * (y[a] - py) - (y[c] - py) * (x[a] - px)) / area;
+            float w2 = 1f - w0 - w1;
+            if (w0 < 0f || w1 < 0f || w2 < 0f) continue;
+            // 1/z is what is linear in screen space.
+            float depth = 1f / (w0 / z[a] + w1 / z[b] + w2 / z[c]);
+            int i = cy * GridW + cx;
+            // Hidden by opaque geometry already drawn: the depth test drops it.
+            if (depth > _opaque[i]) continue;
+            ref float near = ref _nearest[i];
+            if (!opaque) { TranslucentSamples++; if (depth < near) near = depth; continue; }
+            OpaqueSamples++;
+            _opaque[i] = depth;
+            // Behind by more than the depth test's own tolerance could forgive.
+            if (depth > near + 8f + near * 0.01f) { if (model) OverModel++; else OverTile++; }
+        }
+    }
+}

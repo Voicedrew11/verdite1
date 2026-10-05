@@ -1,0 +1,321 @@
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -237,6 +237,161 @@
+ 
+     public static void ResetZCounters() => ZTris = ZSkipped = ZRejects = 0;
+ 
++    /// <summary>A census of the frame's <i>large</i> polygons, in the order the
++    /// ordering table submitted them, with the depth each one recovered. It exists
++    /// to answer one question a rate cannot: when a depth-tested surface disappears,
++    /// which earlier primitive claimed to be in front of it. The table is walked
++    /// back to front, so an earlier entry is one the game itself sorted as farther
++    /// away — an early entry holding a near depth over a wide area is a recovered
++    /// depth that disagrees with the game's own sort, and that is what a hole in
++    /// the picture looks like from here.
++    ///
++    /// Off unless <see cref="TriCensus"/> is set, and capped, so it costs a compare
++    /// per polygon while nobody is asking. Small polygons are counted and not kept:
++    /// a surface that hides half the view is never a small one.</summary>
++    public static bool TriCensus;
++
++    /// <summary>The ordering-table entry currently being emitted, counted from the
++    /// head — which is the <i>far</i> end, since <c>DrawOTag</c> walks back to
++    /// front. -1 outside a walk.
++    ///
++    /// This is the game's own opinion of a primitive's depth, and it is the only
++    /// thing in the port that can contradict a recovered SZ. The two normally
++    /// agree, because the entry is <c>OTZ</c> and <c>OTZ</c> is the average of the
++    /// same SZs. Where they disagree, the game overrode depth on purpose — a
++    /// skybox is a small box drawn around the camera, so it projects <i>near</i>
++    /// and is linked at the far end of the table to keep it behind everything.
++    /// Believing its SZ puts the sky in front of the world.</summary>
++    public static int OtEntry = -1;
++
++    /// <summary>How many entries the last completed walk had, so an entry can be
++    /// read back as the OTZ the game linked at: <c>otz = OtLength - 1 - OtEntry</c>.
++    /// Published one walk late, which is what makes it free.</summary>
++    public static int OtLength;
++
++    /// <summary>One large polygon: where it landed, what depth it recovered, and
++    /// whether it depth-tested at all. <see cref="MinZ"/> is the nearest of its
++    /// corners, so "entirely in front of" is <c>MaxZ &lt; other.MinZ</c>.</summary>
++    public struct BigTri
++    {
++        public int Order;
++        /// <summary>The ordering-table entry it was linked at. See <see cref="OtEntry"/>.</summary>
++        public int Ot;
++        public float MinZ, MaxZ;
++        public int X0, Y0, X1, Y1;
++        public bool Tested, Tex, Semi;
++        /// <summary>A corner the GTE saturated at ±1024. The packet then carries a
++        /// screen position that is not the projection of the vertex, so the depth
++        /// ramp across the polygon is compressed — the visible part of it reads
++        /// nearer than the surface is. That is a depth the console never had, and
++        /// the reason this flag is worth a column.</summary>
++        public bool Clamped;
++        public int R, G, B;
++
++        public long Area => (long)(X1 - X0 + 1) * (Y1 - Y0 + 1);
++        public bool Overlaps(in BigTri o) => X0 <= o.X1 && o.X0 <= X1 && Y0 <= o.Y1 && o.Y0 <= Y1;
++    }
++
++    /// <summary>Big enough to be worth a line of its own, in pixels of the 320x240
++    /// the game draws — a fiftieth of the picture. Only the *printed* lines are
++    /// filtered by it; every polygon is kept, because the surface that vanishes is
++    /// usually a crowd of small ones and the thing standing in front of them is the
++    /// only large one in the pair.</summary>
++    public const long CensusBigArea = 1500;
++
++    const int CensusMax = 2048;
++
++    static readonly BigTri[] _census = new BigTri[CensusMax];
++    static int _censusCount, _censusOrder, _censusDropped;
++
++    /// <summary>The polygons kept this frame, in submission order.</summary>
++    public static ReadOnlySpan<BigTri> Census => _census.AsSpan(0, _censusCount);
++
++    /// <summary>Polygons that were large enough but arrived after the table filled.</summary>
++    public static int CensusDropped => _censusDropped;
++
++    /// <summary>Every polygon submitted this frame, large or not — the denominator
++    /// the kept ones are a fraction of.</summary>
++    public static int CensusSubmitted => _censusOrder;
++
++    /// <summary>Called once per polygon from the rasterizer's common path, with the
++    /// vertex positions already relative to the draw area. Cheap and unconditional
++    /// on the caller's side: the size test is here.</summary>
++    public static void NoteTri(int x0, int y0, int x1, int y1, float minZ, float maxZ,
++                               bool tested, bool tex, bool semi, bool clamped, int r, int g, int b)
++    {
++        int order = _censusOrder++;
++        if (_censusCount >= CensusMax) { _censusDropped++; return; }
++
++        _census[_censusCount++] = new BigTri
++        {
++            Order = order, Ot = OtEntry, MinZ = minZ, MaxZ = maxZ,
++            X0 = x0, Y0 = y0, X1 = x1, Y1 = y1,
++            Tested = tested, Tex = tex, Semi = semi, Clamped = clamped, R = r, G = g, B = b,
++        };
++    }
++
++    /// <summary>Ask the hardware backend to read its depth attachment back at the
++    /// next <c>Present</c> and reduce it to <see cref="DepthMap"/>. One frame, on
++    /// request: a full-resolution readback is a pipeline stall, and this exists to
++    /// be looked at every couple of seconds, not every frame.</summary>
++    public static bool WantDepthMap;
++
++    public const int DepthMapCols = 32, DepthMapRows = 16;
++
++    /// <summary>The nearest depth in each cell of the finished frame, as SZ rather
++    /// than as a [0,1) window value — the same units the census prints — with
++    /// <see cref="DepthMapEmpty"/> for a cell nothing wrote. This is the occlusion
++    /// the frame actually ended up with, which no amount of reasoning about
++    /// submission order can substitute for.</summary>
++    public static float[]? DepthMap;
++
++    public const float DepthMapEmpty = 65536f;
++
++    /// <summary>Depth-testing batches by where they were drawn: a display render
++    /// target, which has a depth attachment, or the VRAM framebuffer, which has
++    /// none — and where OpenGL therefore passes every depth test silently. If the
++    /// second number is the large one, the hardware Z-buffer is not running at all
++    /// and whatever changed in the picture changed for some other reason.</summary>
++    public static long ZBatchRt, ZBatchVram;
++
++    /// <summary>Display targets thrown away and rebuilt while the Z-buffer was on.
++    /// Each one drops a depth attachment, so anything already tested into it stops
++    /// occluding. A steady count per frame means the depth buffer is being reset
++    /// underneath the frame that is using it.</summary>
++    public static long ZRtRecreated;
++
++    /// <summary>Called by the backend with the raw depth attachment. Reduces to the
++    /// grid by taking the nearest sample in each cell, since occlusion is decided
++    /// by the nearest thing there.</summary>
++    public static void SetDepthMap(ReadOnlySpan<float> depth, int w, int h)
++    {
++        var map = DepthMap ??= new float[DepthMapCols * DepthMapRows];
++        Array.Fill(map, DepthMapEmpty);
++        if (w <= 0 || h <= 0) return;
++
++        for (int y = 0; y < h; y++)
++        {
++            // The readback is bottom-up, the picture is top-down.
++            int row = (h - 1 - y) * DepthMapRows / h;
++            int rowBase = y * w;
++            for (int x = 0; x < w; x++)
++            {
++                float d = depth[rowBase + x];
++                if (d >= 1f) continue;
++                int cell = row * DepthMapCols + x * DepthMapCols / w;
++                float sz = d * 65536f;
++                if (sz < map[cell]) map[cell] = sz;
++            }
++        }
++        WantDepthMap = false;
++    }
++
++    /// <summary>Start a new frame's census. The reporter calls this after it has
++    /// read the frame it wanted, so a window that reports every two seconds still
++    /// prints one whole frame rather than a smear of several.</summary>
++    public static void ResetCensus() { _censusCount = 0; _censusOrder = 0; _censusDropped = 0; }
++
+     /// <summary>While false <see cref="Offset"/> and <see cref="OffsetMax"/> are not
+     /// accumulated, so measuring the wobble costs nothing when nobody is asking.
+     /// It is a separate switch from the counters above because the two probes
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -19,7 +19,7 @@
+     struct Vert
+     {
+         public int X, Y, R, G, B, U, V;
+-        public float W; public bool HasW, HasZ;
++        public float W; public bool HasW, HasZ, Clamped;
+         public float Fx, Fy; public bool HasSub;
+     }
+ 
+@@ -123,6 +123,7 @@
+                 v[i].Fx = wantSub ? a.Fx : 0f;
+                 v[i].Fy = wantSub ? a.Fy : 0f;
+                 v[i].HasSub = wantSub;
++                v[i].Clamped = a.Clipped;
+             }
+         }
+ 
+@@ -140,6 +141,33 @@
+             for (int i = 0; i < n; i++) { v[i].X = e.X[i]; v[i].Y = e.Y[i]; }
+         }
+ 
++        // The census is taken here rather than in either renderer because this is
++        // the one place both of them pass through, and it is taken after the prim
++        // event so it reports where the polygon was actually drawn. Bbox is clamped
++        // to the draw area: a surface is only occluding what it covers on screen.
++        if (GteDepth.TriCensus && GteDepth.ZBuffer)
++        {
++            int x0 = int.MaxValue, y0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue;
++            float minZ = float.MaxValue, maxZ = 0f;
++            bool tested = true, clamped = false;
++            for (int i = 0; i < n; i++)
++            {
++                if (v[i].Clamped) clamped = true;
++                if (v[i].X < x0) x0 = v[i].X;
++                if (v[i].Y < y0) y0 = v[i].Y;
++                if (v[i].X > x1) x1 = v[i].X;
++                if (v[i].Y > y1) y1 = v[i].Y;
++                if (v[i].HasZ) { if (v[i].W < minZ) minZ = v[i].W; if (v[i].W > maxZ) maxZ = v[i].W; }
++                else tested = false;
++            }
++            x0 = Math.Max(x0, _drawAreaLeft); y0 = Math.Max(y0, _drawAreaTop);
++            x1 = Math.Min(x1, _drawAreaRight); y1 = Math.Min(y1, _drawAreaBottom);
++            if (x1 >= x0 && y1 >= y0)
++                GteDepth.NoteTri(x0 - _drawAreaLeft, y0 - _drawAreaTop, x1 - _drawAreaLeft, y1 - _drawAreaTop,
++                                 tested ? minZ : 0f, tested ? maxZ : 0f, tested, tex, semi, clamped,
++                                 v[0].R, v[0].G, v[0].B);
++        }
++
+         if (HleOn)
+         {
+             HleTri(v[0], v[1], v[2], tex, gouraud, semi, raw, clut);
+diff --git a/RecompOne.Runtime/sdk/LibGpu.cs b/RecompOne.Runtime/sdk/LibGpu.cs
+--- a/RecompOne.Runtime/sdk/LibGpu.cs
++++ b/RecompOne.Runtime/sdk/LibGpu.cs
+@@ -24,6 +24,12 @@
+ 
+         for (int guard = 0; guard < 0x100000; guard++)
+         {
++            // Where in the table this primitive was linked, counted from the head —
++            // which is the far end, since the walk goes back to front. It is the
++            // game's own opinion of the primitive's depth, and the only thing that
++            // can contradict a recovered SZ. See GteDepth.OtEntry.
++            GteDepth.OtEntry = guard;
++
+             if (custom && addr >= otBase && addr < otEnd)
+                 gpu.EmitCustomOrder((int)((addr - otBase) >> 2));
+ 
+@@ -39,6 +45,11 @@
+             addr = next & 0x1FFFFCu;
+         }
+ 
++        // The length is only known once the walk ends, so it is published for the
++        // next one. An entry is readable as an OTZ against it: the walk starts at
++        // the far end, so otz = length - 1 - entry.
++        if (GteDepth.OtEntry >= 0) GteDepth.OtLength = GteDepth.OtEntry + 1;
++        GteDepth.OtEntry = -1;
+         if (custom) GpuPrims.Clear();
+     }
+ 
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -44,6 +44,10 @@
+     int _kImage = -1;
+     int _kBlend, _kSetMask, _kCheckMask;
+     int _kZMode;
++    // The last render target a depth-testing batch was drawn to, for the diagnostic
++    // readback: it is the only unambiguous answer to "which depth buffer is this
++    // frame's". Diagnostic only — nothing else reads it.
++    GlDisplayRt? _lastZRt;
+     int _kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY;
+     int _kClipX0, _kClipY0, _kClipX1, _kClipY1;
+     uint _kRepTex, _kRepClut;
+@@ -217,6 +221,12 @@
+         {
+             if (old.Dirty) Writeback(old);
+             old.Destroy(_gl);
++            if (old == _lastZRt) _lastZRt = null;
++            // A target thrown away takes its depth attachment with it, so anything
++            // already depth-tested into it stops occluding what comes next. Worth
++            // counting: if this happens inside a frame the Z-buffer is being reset
++            // halfway through one.
++            if (GteDepth.ZBuffer) GteDepth.ZRtRecreated++;
+         }
+ 
+         var fresh = new GlDisplayRt { X = fbX, Y = fbY, W = fbW, H = fbH, Margin = GpuHle.WideMargin(fbW), Stamp = ++_rtStamp, LastDrawFrame = _frame };
+@@ -606,6 +616,7 @@
+         }
+         if (_kZMode != 0)
+         {
++            if (rt != null) { GteDepth.ZBatchRt++; _lastZRt = rt; } else GteDepth.ZBatchVram++;
+             _gl.Enable(EnableCap.DepthTest);
+             _gl.DepthFunc(DepthFunction.Lequal);
+             _gl.DepthMask(_kZMode == 1);
+@@ -759,6 +770,26 @@
+         else _gl.Uniform1(loc, GlVram.Scale);
+     }
+ 
++    /// <summary>Read the finished frame's depth attachment back and hand it to
++    /// GteDepth to reduce. Diagnostic only, one frame when asked: it stalls the
++    /// pipeline, and it is the only way to see what the Z-buffer actually decided
++    /// rather than what the submission order suggests it should have.</summary>
++    unsafe void CaptureDepthMap(GlDisplayRt rt)
++    {
++        int w = rt.TexW, h = rt.TexH;
++        if (w <= 0 || h <= 0) return;
++
++        var buf = new float[(long)w * h];
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, rt.Fbo);
++        _gl.PixelStore(PixelStoreParameter.PackAlignment, 4);
++        fixed (float* p = buf)
++            _gl.ReadPixels(0, 0, (uint)w, (uint)h, PixelFormat.DepthComponent, PixelType.Float, p);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++
++        GteDepth.SetDepthMap(buf, w, h);
++    }
++
+     void RebindTarget(GlDisplayRt? rt)
+     {
+         if (rt == null)
+@@ -805,6 +836,11 @@
+         // presented (with two buffers that is last frame's) and not the most
+         // recently drawn (a full-screen fill stamps LastDrawFrame too, so that can
+         // be a buffer which was just cleared).
++        // A target that has since been destroyed has Fbo 0, which is the *default*
++        // framebuffer — reading that would report an empty depth buffer rather than
++        // no answer. Leave the request standing and try the next frame instead.
++        if (GteDepth.WantDepthMap && _lastZRt is { Fbo: not 0 }) CaptureDepthMap(_lastZRt);
++
+         int w1x = src != null ? w + src.Margin * 2 : w;
+         int h1x = h;
+         float aspect = src is { Margin: > 0 } ? GpuHle.WideAspect : src != null ? GpuHle.SourceAspect : GpuHle.OutputAspect;

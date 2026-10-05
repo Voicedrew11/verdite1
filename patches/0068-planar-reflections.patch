@@ -1,0 +1,1092 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index c67ec1a..6a69ab6 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -82,6 +82,11 @@ public sealed class GlCore : IGpuBackend
+     int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps, _uSsrReflect, _uSsrF0;
+     int _uSsrDqa, _uSsrDqb, _uSsrFogCurve;
+     int _uPresentSsrOn;
++    // 0068. The planar texture the reflection pass reads first, and the clip plane
++    // the prim program discards the water's underside with while drawing into one.
++    int _uSsrPlanarOn, _uSsrPlanarPlane, _uSsrPlanarTol, _uSsrRipple, _uSsrCompare;
++    int _uClipOn, _uClipPlane, _uClipCentre, _uClipH;
++    int _clipOnSent = -1;
+ 
+     uint _postProg, _postFbo, _postTex;
+     int _postW, _postH, _postVersion = -1;
+@@ -213,6 +218,11 @@ public sealed class GlCore : IGpuBackend
+         _uLcmB = _gl.GetUniformLocation(_progPrim, "uLcmB");
+         GteLightMap.Supported = !_legacy && _uLightBk >= 0;
+         _rtsTrueColor = GteDepth.TrueColor;
++        _uClipOn = _gl.GetUniformLocation(_progPrim, "uClipOn");
++        _uClipPlane = _gl.GetUniformLocation(_progPrim, "uClipPlane");
++        _uClipCentre = _gl.GetUniformLocation(_progPrim, "uClipCentre");
++        _uClipH = _gl.GetUniformLocation(_progPrim, "uClipH");
++        _clipOnSent = -1;
+         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
+         _uRepClutCount = _gl.GetUniformLocation(_progPrim, "uRepClutCount");
+ 
+@@ -335,11 +345,24 @@ public sealed class GlCore : IGpuBackend
+                 _uSsrDqa = _gl.GetUniformLocation(_progSsr, "uDqa");
+                 _uSsrDqb = _gl.GetUniformLocation(_progSsr, "uDqb");
+                 _uSsrFogCurve = _gl.GetUniformLocation(_progSsr, "uFogCurve");
++                _uSsrPlanarOn = _gl.GetUniformLocation(_progSsr, "uPlanarOn");
++                _uSsrPlanarPlane = _gl.GetUniformLocation(_progSsr, "uPlanarPlane");
++                _uSsrPlanarTol = _gl.GetUniformLocation(_progSsr, "uPlanarTol");
++                _uSsrRipple = _gl.GetUniformLocation(_progSsr, "uRipple");
++                _uSsrCompare = _gl.GetUniformLocation(_progSsr, "uCompare");
+                 _gl.UseProgram(_progSsr);
+                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uDepth"), 0);
+                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uSurface"), 1);
+                 _gl.Uniform1(_gl.GetUniformLocation(_progSsr, "uColor"), 2);
++                int uPlanar = _gl.GetUniformLocation(_progSsr, "uPlanar");
++                if (uPlanar >= 0) _gl.Uniform1(uPlanar, 3);
++                int uPlanarDepth = _gl.GetUniformLocation(_progSsr, "uPlanarDepth");
++                if (uPlanarDepth >= 0) _gl.Uniform1(uPlanarDepth, 4);
++                if (_uSsrPlanarOn >= 0) _gl.Uniform1(_uSsrPlanarOn, 0);
+             }
++            // 0068. Only this backend can draw into a planar texture; the port walks
++            // nothing mirrored without it.
++            PlanarReflections.Supported = _progSsr != 0 && _uClipOn >= 0 && _uSsrPlanarOn >= 0;
+         }
+ 
+         _uPresent24Origin = _gl.GetUniformLocation(_progPresent24, "uOrigin");
+@@ -430,6 +453,68 @@ public sealed class GlCore : IGpuBackend
+     // aspect moves the margin, and PresentDisplay destroys idle ones -- so the
+     // cache would hand back a destroyed target. Left uncached.
+     GlDisplayRt? Classify()
++    {
++        var rt = ClassifyDisplay();
++        return rt != null && PlanarReflections.Capturing ? EnsurePlanar(rt) : rt;
++    }
++
++    /// <summary>0068. The planar texture of the target the game is drawing into,
++    /// made at its size and cleared the first time a capture reaches it. It takes
++    /// the capture's two planes with it, so the pass that reads it later reads the
++    /// planes it was drawn with.</summary>
++    GlDisplayRt EnsurePlanar(GlDisplayRt rt)
++    {
++        var p = rt.Planar;
++        if (p == null || p.W != rt.W || p.H != rt.H || p.Margin != rt.Margin || p.CreatedScale != GlVram.Scale)
++        {
++            if (p != null)
++            {
++                if (_kTarget == p) Flush(FlushReason.Target);
++                p.Destroy(_gl);
++            }
++            p = new GlDisplayRt { X = rt.X, Y = rt.Y, W = rt.W, H = rt.H, Margin = rt.Margin, IsPlanar = true };
++            p.Create(_gl);
++            // Never written back to VRAM and never presented, only sampled -- and
++            // sampled off the pixel grid when the water bends it.
++            _gl.BindTexture(TextureTarget.Texture2D, p.Tex);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
++            _gl.BindTexture(TextureTarget.Texture2D, 0);
++            rt.Planar = p;
++            rt.PlanarSerial = -1;
++        }
++        if (rt.PlanarSerial != PlanarReflections.Serial)
++        {
++            Flush(FlushReason.Target);
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, p.Fbo);
++            _gl.Disable(EnableCap.ScissorTest);
++            _gl.ColorMask(true, true, true, true);
++            _gl.ClearColor(0f, 0f, 0f, 0f);
++            _gl.ClearDepth(1.0);
++            _gl.DepthMask(true);
++            _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++            p.LastDrawFrame = _frame;
++            p.ZGen = GteDepth.Generation;
++            rt.PlanarSerial = PlanarReflections.Serial;
++            rt.PlanarFrame = _frame;
++            PlanarReflections.ViewPlane.CopyTo(rt.PlanarPlane, 0);
++            PlanarReflections.ClipPlane.CopyTo(p.ClipPlane, 0);
++            PlanarReflections.Cleared++;
++        }
++        return p;
++    }
++
++    /// <summary>0068. A capture with no display target has nowhere to go: drawn
++    /// through, it would land in VRAM over whatever the game keeps there.</summary>
++    bool PlanarDrop()
++    {
++        if (!PlanarReflections.Capturing || ClassifyDisplay() != null) return false;
++        PlanarReflections.Dropped++;
++        return true;
++    }
++
++    GlDisplayRt? ClassifyDisplay()
+     {
+         int clipX = _env.ClipX0, clipY = _env.ClipY0;
+         int clipW = _env.ClipX1 - _env.ClipX0 + 1, clipH = _env.ClipY1 - _env.ClipY0 + 1;
+@@ -762,6 +847,7 @@ public sealed class GlCore : IGpuBackend
+ 
+     public void DrawTri(in HleVertex a, in HleVertex b, in HleVertex c, in PrimFlags f)
+     {
++        if (PlanarReflections.Capturing && PlanarDrop()) return;
+         ResolveReplacement(f,
+             (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
+             (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
+@@ -794,7 +880,7 @@ public sealed class GlCore : IGpuBackend
+         // so reaches the surface buffer and nothing else.
+         // A 2D primitive (no corner the GTE projected) is kept too, as Overlay, so
+         // the reflection pass can tell the HUD from the scene under it.
+-        if (_kTarget != null && AoGeometry.Active)
++        if (_kTarget != null && AoGeometry.Active && !_kTarget.IsPlanar)
+         {
+             byte m = SurfaceMaterial.None;
+             if (zMode == 1 || zMode == 4 || zMode == 2)
+@@ -811,6 +897,15 @@ public sealed class GlCore : IGpuBackend
+                                       Math.Max(a.X, Math.Max(b.X, c.X)), Math.Max(a.Y, Math.Max(b.Y, c.Y))))
+                 m = SurfaceMaterial.Overlay;
+             if (m == SurfaceMaterial.Overlay) SurfaceMaterial.Overlays++;
++            // 0068. The plane a planar reflection mirrors in is found here, from
++            // the water the frame actually drew.
++            if (m == SurfaceMaterial.Water && PlanarReflections.Enabled)
++            {
++                float ox = _kTarget.X + GteDepth.ProjCx, oy = _kTarget.Y + GteDepth.ProjCy;
++                PlanarReflections.NoteWater(a.X - ox, a.Y - oy, a.Z, b.X - ox, b.Y - oy, b.Z, c.X - ox, c.Y - oy, c.Z,
++                    -GteDepth.ProjCx - _kTarget.Margin, -GteDepth.ProjCy,
++                    _kTarget.W - GteDepth.ProjCx + _kTarget.Margin, _kTarget.H - GteDepth.ProjCy);
++            }
+             if (m != SurfaceMaterial.None)
+             {
+                 _kTarget.Geo.Frame(_frame, GteDepth.Generation);
+@@ -897,6 +992,7 @@ public sealed class GlCore : IGpuBackend
+ 
+     public void DrawRect(in HleRect r, in PrimFlags f)
+     {
++        if (PlanarReflections.Capturing && PlanarDrop()) return;
+         ResolveReplacement(f, r.U, r.V, r.U + Math.Max(0, r.W - 1), r.V + Math.Max(0, r.H - 1));
+         // A sprite never carries a recovered depth, so under the occlusion pass it
+         // is the mask (see DrawTri): opaque stamps the far plane, semi-transparent
+@@ -909,7 +1005,7 @@ public sealed class GlCore : IGpuBackend
+         _verts[_count++] = V(a, f, false); _verts[_count++] = V(b, f, false); _verts[_count++] = V(c, f, false);
+         _verts[_count++] = V(b, f, false); _verts[_count++] = V(d, f, false); _verts[_count++] = V(c, f, false);
+         // 0067. A sprite is 2D: the HUD's, as far as the reflection pass is concerned.
+-        if (GteDepth.Reflections && _kTarget != null && AoGeometry.Active
++        if (GteDepth.Reflections && _kTarget is { IsPlanar: false } && AoGeometry.Active
+             && !CoversTarget(r.X, r.Y, r.X + r.W, r.Y + r.H))
+         {
+             float m = SurfaceMaterial.Overlay;
+@@ -922,6 +1018,7 @@ public sealed class GlCore : IGpuBackend
+ 
+     public void DrawLine(in HleVertex a, in HleVertex b, in PrimFlags f)
+     {
++        if (PlanarReflections.Capturing && PlanarDrop()) return;
+         _pendingRepTex = 0;
+         _pendingRepClut = 0;
+         Begin(f, 6, FarMask(f));
+@@ -1361,14 +1458,14 @@ public sealed class GlCore : IGpuBackend
+             // surface already stamped there, and this has to overwrite one -- the
+             // HUD is drawn over the world, and the point of the mask is that the
+             // world's depth under it is gone.
+-            if (rt != null) _lastZRt = rt;
++            if (rt is { IsPlanar: false }) _lastZRt = rt;
+             _gl.Enable(EnableCap.DepthTest);
+             _gl.DepthFunc(DepthFunction.Always);
+             _gl.DepthMask(true);
+         }
+         else if (_kZMode != 0)
+         {
+-            if (rt != null) { GteDepth.ZBatchRt++; _lastZRt = rt; } else GteDepth.ZBatchVram++;
++            if (rt != null) { GteDepth.ZBatchRt++; if (!rt.IsPlanar) _lastZRt = rt; } else GteDepth.ZBatchVram++;
+             _gl.Enable(EnableCap.DepthTest);
+             // The two consumers of the attachment differ here and nowhere else.
+             // The Z-buffer rejects what the recovered depth says is behind; the
+@@ -1469,6 +1566,21 @@ public sealed class GlCore : IGpuBackend
+             _gl.Uniform2(_uFbInv, 2f / VramShadow.Width, 2f / VramShadow.Height);
+         }
+         if (_uTrueColor >= 0) _gl.Uniform1(_uTrueColor, GteDepth.TrueColor ? 1f : 0f);
++        // 0068. Drawing into a planar texture: nothing on the camera's side of the
++        // water, which from under it is the pool's own floor and walls.
++        int clipOn = rt is { IsPlanar: true } ? 1 : 0;
++        if (_uClipOn >= 0 && (clipOn != 0 || _clipOnSent != 0))
++        {
++            if (clipOn != _clipOnSent) _gl.Uniform1(_uClipOn, clipOn);
++            _clipOnSent = clipOn;
++            if (clipOn != 0)
++            {
++                var cp = rt!.ClipPlane;
++                _gl.Uniform4(_uClipPlane, cp[0], cp[1], cp[2], cp[3]);
++                _gl.Uniform2(_uClipCentre, GteDepth.ProjCx + rt.Margin, GteDepth.ProjCy);
++                _gl.Uniform1(_uClipH, Math.Max(1f, GteDepth.ProjH));
++            }
++        }
+         // A plain uniform the next batch reads: unlike true color, changing the
+         // anisotropy rebuilds nothing.
+         GteDepth.AnisotropyLive = _uAniso >= 0;
+@@ -2310,6 +2422,24 @@ public sealed class GlCore : IGpuBackend
+             if (_uSsrReflect >= 0) _gl.Uniform1(_uSsrReflect, SurfaceMaterial.Count, r);
+         fixed (float* f0 = SurfaceMaterial.F0)
+             if (_uSsrF0 >= 0) _gl.Uniform1(_uSsrF0, SurfaceMaterial.Count, f0);
++        // 0068. The planar texture, when this target's picture and its capture are
++        // the same frame's; otherwise the march alone, as before.
++        var planar = src.Planar;
++        bool planarOn = PlanarReflections.Enabled && planar is { Tex: not 0 } && src.PlanarFrame == src.LastDrawFrame;
++        if (_uSsrPlanarOn >= 0) _gl.Uniform1(_uSsrPlanarOn, planarOn ? 1 : 0);
++        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, planarOn && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
++        if (planarOn)
++        {
++            var pp = src.PlanarPlane;
++            if (_uSsrPlanarPlane >= 0) _gl.Uniform4(_uSsrPlanarPlane, pp[0], pp[1], pp[2], pp[3]);
++            if (_uSsrPlanarTol >= 0) _gl.Uniform1(_uSsrPlanarTol, Math.Max(1f, PlanarReflections.Tolerance));
++            if (_uSsrRipple >= 0) _gl.Uniform1(_uSsrRipple, Math.Max(0f, PlanarReflections.Ripple));
++            _gl.ActiveTexture(TextureUnit.Texture4);
++            _gl.BindTexture(TextureTarget.Texture2D, planar!.Depth);
++            _gl.ActiveTexture(TextureUnit.Texture3);
++            _gl.BindTexture(TextureTarget.Texture2D, planar.Tex);
++            PlanarReflections.Read++;
++        }
+         _gl.ActiveTexture(TextureUnit.Texture2);
+         _gl.BindTexture(TextureTarget.Texture2D, src.Tex);
+         _gl.ActiveTexture(TextureUnit.Texture1);
+@@ -2318,6 +2448,16 @@ public sealed class GlCore : IGpuBackend
+         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
+         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+         ScreenReflections.Passes++;
++        if (planarOn)
++        {
++            // The next capture draws into these; leave nothing bound that a prim
++            // batch could read back while writing it.
++            _gl.ActiveTexture(TextureUnit.Texture4);
++            _gl.BindTexture(TextureTarget.Texture2D, 0);
++            _gl.ActiveTexture(TextureUnit.Texture3);
++            _gl.BindTexture(TextureTarget.Texture2D, 0);
++            _gl.ActiveTexture(TextureUnit.Texture0);
++        }
+ 
+         if (ScreenReflections.WantMap && _ssrInfo) CaptureSsrMap(w, h);
+     }
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+index 87c85fd..51830c0 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -25,6 +25,18 @@ public sealed class GlDisplayRt
+     // octahedral normal, a depth and a material. Only while reflections are on.
+     public uint Surface;
+     public readonly AoGeometry Geo = new();
++    // 0068. The scene from the camera mirrored in the water, drawn at this target's
++    // size so the reflection pass indexes it exactly as it indexes this one. Its
++    // own depth attachment is what says a texel was drawn. Serial and frame say
++    // which capture it holds and whether this target's picture is that frame's;
++    // the plane is the one the capture mirrored in, in that frame's view space.
++    public GlDisplayRt? Planar;
++    public bool IsPlanar;
++    public int PlanarSerial = -1;
++    public long PlanarFrame = -1;
++    public readonly float[] PlanarPlane = new float[4];
++    public readonly float[] ClipPlane = new float[4];
++    public int CreatedScale;
+     public bool Dirty;
+     public long Stamp;
+     public long LastDrawFrame;
+@@ -62,6 +74,7 @@ public sealed class GlDisplayRt
+ 
+     public unsafe void Create(GL gl)
+     {
++        CreatedScale = GlVram.Scale;
+         Tex = gl.GenTexture();
+         gl.BindTexture(TextureTarget.Texture2D, Tex);
+         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
+@@ -117,6 +130,8 @@ public sealed class GlDisplayRt
+         if (NormalFbo != 0) gl.DeleteFramebuffer(NormalFbo);
+         if (Normal != 0) gl.DeleteTexture(Normal);
+         if (Surface != 0) gl.DeleteTexture(Surface);
++        Planar?.Destroy(gl);
++        Planar = null;
+         Fbo = Tex = Depth = Normal = NormalFbo = Surface = 0;
+     }
+ }
+\ No newline at end of file
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 7179061..fa79881 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -523,8 +523,11 @@ internal static class GlShaders
+         in vec2 vUv;
+         layout(location = 0) out vec4 oColor;
+         // The probe's: alpha 1/255 no hit, 2/255 a surface, 3/255 the sky, 4/255 a
+-        // surface under the HUD, refused, on every reflective pixel; plus 8/255 when
+-        // the ray passed behind something on the way. Written to nothing unless the probe attached it.
++        // surface under the HUD, refused, 5/255 the planar texture, on every
++        // reflective pixel; plus 8/255 when the ray passed behind something on the
++        // way, and 16/255 on a planar pixel whose march found a surface too, with
++        // green and blue the two colours' differences (see uCompare). Written to
++        // nothing unless the probe attached it.
+         layout(location = 1) out vec4 oInfo;
+ 
+         uniform sampler2D uDepth;
+@@ -548,6 +551,20 @@ internal static class GlShaders
+         uniform float uDqa;
+         uniform float uDqb;
+         uniform int   uFogCurve;
++        // 0068. The scene drawn from the camera mirrored in the water, at this
++        // target's own size, and its depth, which is what says a texel was drawn.
++        // The plane is this frame's, in this view: dot(xyz, p) + w is a surface's
++        // height above the water in world units (negative is above, Y being down).
++        uniform sampler2D uPlanar;
++        uniform sampler2D uPlanarDepth;
++        uniform int   uPlanarOn;
++        uniform vec4  uPlanarPlane;
++        uniform float uPlanarTol;
++        uniform float uRipple;
++        // The probe's check on the mirror: march a planar pixel as well, and where
++        // both found a surface, write how far apart their brightness is, against
++        // the planar texture read unmirrored as the control.
++        uniform int   uCompare;
+ 
+         const float FAR = 65536.0;
+         const float OVERLAY = 3.0;
+@@ -578,6 +595,36 @@ internal static class GlShaders
+             return normalize(n);
+         }
+ 
++        float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
++
++        // 0068. The planar reflection at this pixel, when the surface lies on the
++        // mirrored plane and something above the water was drawn where it looks:
++        // the mirrored image of display row y is row 2*centre - y. The water's own
++        // brightness gradient bends the lookup, so the reflection moves with the
++        // scrolling texture rather than lying on it like glass. The colour was
++        // fogged by the mirrored camera, whose distance to it is the length of the
++        // path through the mirror, so it needs no correction here.
++        bool planarAt(vec3 p, out vec3 c) {
++            c = vec3(0.0);
++            if (uPlanarOn == 0) return false;
++            if (abs(dot(uPlanarPlane.xyz, p) + uPlanarPlane.w) > uPlanarTol) return false;
++            vec2 muv = vec2(vUv.x, 2.0 * uCentre.y - vUv.y);
++            if (uRipple > 0.0) {
++                vec2 px = 1.0 / uSize;
++                float l0 = luma(texture(uColor, tc(vUv)).rgb);
++                float lx = luma(texture(uColor, tc(vUv + vec2(px.x, 0.0))).rgb);
++                float ly = luma(texture(uColor, tc(vUv + vec2(0.0, px.y))).rgb);
++                muv += vec2(lx - l0, ly - l0) * uRipple * px;
++            }
++            muv = clamp(muv, vec2(0.0), vec2(1.0));
++            vec3 pc = texture(uPlanar, tc(muv)).rgb;
++            // Nothing drawn: the capture cleared to black with the far plane, and an
++            // opaque surface writes a depth whatever its colour.
++            if (texture(uPlanarDepth, tc(muv)).r >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) return false;
++            c = pc;
++            return true;
++        }
++
+         // Fades a reflection out as its source nears the picture's edge, where the
+         // march loses the surface it would have hit a few pixels further on.
+         float edgeFade(vec2 uv) {
+@@ -615,6 +662,15 @@ internal static class GlShaders
+             // reflectivity at a grazing angle.
+             float w = f0 + (max(refl, f0) - f0) * pow(1.0 - cosv, 5.0);
+ 
++            vec3 pc;
++            bool planarHit = planarAt(p, pc);
++            if (planarHit && uCompare == 0) {
++                oInfo.a += 4.0 / 255.0;
++                w = clamp(w, 0.0, 1.0);
++                oColor = vec4(pc * w, w);
++                return;
++            }
++
+             // The same 4x4 interleaved pattern the occlusion pass uses, as a start
+             // offset along the ray, so step banding becomes a fine grain.
+             ivec2 px = ivec2(gl_FragCoord.xy) & 3;
+@@ -666,6 +722,21 @@ internal static class GlShaders
+                 }
+                 tPrev = t;
+             }
++            if (planarHit) {
++                oInfo.a += 4.0 / 255.0;
++                if (hit && !overlayAt(huv) && edgeFade(huv) > 0.99) {
++                    vec3 sc = texture(uColor, tc(huv)).rgb;
++                    float zHit = viewAt(huv, depthAt(huv) * FAR).z;
++                    float zImage = p.z * (length(p) + ht) / length(p);
++                    sc *= clamp(fogKeep(zImage) / max(fogKeep(zHit), 1e-3), 0.0, 1.0);
++                    oInfo.b = abs(luma(pc) - luma(sc));
++                    oInfo.g = abs(luma(texture(uPlanar, tc(vUv)).rgb) - luma(sc));
++                    oInfo.a += 16.0 / 255.0;
++                }
++                w = clamp(w, 0.0, 1.0);
++                oColor = vec4(pc * w, w);
++                return;
++            }
+             if (passed) oInfo.a += 8.0 / 255.0;
+ 
+             vec3 c;
+@@ -827,6 +898,14 @@ internal static class GlShaders
+         uniform vec4  uFluidRect[8];
+         uniform float uFluidOff[8];
+         uniform float uFluidN;
++        // 0068. Drawing a planar reflection: the water's plane in the mirrored
++        // camera's view space, kept where dot(xyz, p) + w >= 0, and the projection
++        // to take a fragment back to that space with (the GTE's centre, in the
++        // target's own pixels, and H).
++        uniform int   uClipOn;
++        uniform vec4  uClipPlane;
++        uniform vec2  uClipCentre;
++        uniform float uClipH;
+ 
+         const int ditherTbl[16] = int[16](
+             -4,  0, -3,  1,
+@@ -988,6 +1067,11 @@ internal static class GlShaders
+             // 0051. The tolerance is on the test only; GlCore draws the true depth first.
+             float dz = uDepthBias + uDepthSlope * max(abs(dFdx(vDepth)), abs(dFdy(vDepth)));
+             gl_FragDepth = vDepth > 0.0 ? max(vDepth - dz, 0.0) : 1.0;
++            if (uClipOn != 0 && vDepth > 0.0) {
++                float cz = vDepth * 65536.0;
++                vec3 cp = vec3((gl_FragCoord.xy / float(uScale) - uClipCentre) * (cz / uClipH), cz);
++                if (dot(uClipPlane.xyz, cp) + uClipPlane.w < 0.0) discard;
++            }
+             ivec3 c8in = shade8();
+             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
+ 
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs
+index 5645565..2f093cb 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/ScreenReflections.cs
+@@ -92,15 +92,22 @@ public static class ScreenReflections
+     /// found, so a miss is still counted.</summary>
+     public static void SetMap(byte[] rgba, byte[] info, int w, int h)
+     {
+-        long n = (long)w * h, refl = 0, hit = 0, sky = 0, under = 0, passed = 0;
++        long n = (long)w * h, refl = 0, hit = 0, sky = 0, under = 0, passed = 0, planar = 0;
+         double wsum = 0, skyR = 0, skyG = 0, skyB = 0, hitL = 0, keepSum = 0;
+-        long fogged = 0;
++        long fogged = 0, compared = 0;
++        double mirrorDiff = 0, controlDiff = 0;
+         for (long i = 0; i < n; i++)
+         {
+             int k = info[i * 4 + 3];
+             if (k == 0) continue;
+             refl++;
+             if ((k & 8) != 0) passed++;
++            if ((k & 16) != 0)
++            {
++                compared++;
++                mirrorDiff += info[i * 4 + 2] / 255.0;
++                controlDiff += info[i * 4 + 1] / 255.0;
++            }
+             k &= 7;
+             if (k == 2)
+             {
+@@ -118,6 +125,7 @@ public static class ScreenReflections
+                 skyR += rgba[i * 4] / a; skyG += rgba[i * 4 + 1] / a; skyB += rgba[i * 4 + 2] / a;
+             }
+             else if (k == 4) under++;
++            else if (k == 5) planar++;
+             wsum += rgba[i * 4 + 3] / 255.0;
+         }
+         ReflectivePct = n == 0 ? 0f : 100f * refl / n;
+@@ -125,6 +133,10 @@ public static class ScreenReflections
+         SkyPct = refl == 0 ? 0f : 100f * sky / refl;
+         OverlayPct = refl == 0 ? 0f : 100f * under / refl;
+         PassedPct = refl == 0 ? 0f : 100f * passed / refl;
++        PlanarReflections.PlanarPct = refl == 0 ? 0f : 100f * planar / refl;
++        PlanarReflections.ComparedPct = planar == 0 ? 0f : 100f * compared / planar;
++        PlanarReflections.MirrorDiff = compared == 0 ? 0f : (float)(mirrorDiff / compared * 255);
++        PlanarReflections.ControlDiff = compared == 0 ? 0f : (float)(controlDiff / compared * 255);
+         SkyColour = sky == 0 ? "none" : $"{skyR / sky * 255:F0},{skyG / sky * 255:F0},{skyB / sky * 255:F0}";
+         HitLuma = hit == 0 ? 0f : (float)(hitL / hit * 255);
+         HitKeep = hit == 0 ? 1f : (float)(keepSum / hit);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+new file mode 100644
+index 0000000..24a4624
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+@@ -0,0 +1,196 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0068. Planar reflections: the scene drawn a second time from a camera mirrored
++/// in the water's plane, into a texture of the render target's own, which the
++/// reflection pass reads in place of its screen-space march wherever the surface
++/// lies on that plane.
++///
++/// <para>The runtime cannot draw the scene twice: the geometry arrives as GP0 words
++/// and nothing here knows the camera. The port can, because it owns the walks that
++/// enumerate the world (<c>patches/TileWalk.cs</c>, <c>patches/ModelWalk.cs</c>):
++/// it re-runs them under the mirrored camera into an ordering table of its own and
++/// hands that table to <c>LibGpu.DrawOTag</c> while <see cref="Capturing"/> is set.
++/// Everything the backend does to a primitive is unchanged; only the target is
++/// swapped for the current one's planar texture, and fragments on the camera's side
++/// of the water are discarded.</para>
++///
++/// <para>A mirror is a reflection, and a reflection turns every winding round, so
++/// the port does not mirror the world: it moves the camera. With the world's Y
++/// flipped about the plane, the view matrix <c>R</c> becomes <c>M R M</c> -- the
++/// same yaw, the pitch and roll negated -- composed with a flip of the camera's own
++/// Y. The game renders the first half as an ordinary camera, so its culling, its
++/// clipper and its winding tests stay right, and the flip is done where the pass
++/// samples: the mirrored image of screen row <c>y</c> is row <c>2*OFY - y</c>.</para>
++///
++/// <para>The plane is found in the picture. Every triangle the reflection pass
++/// classifies as water (<see cref="SurfaceMaterial"/>) is taken back to world space
++/// with the camera the port published, and the heights are binned by screen area;
++/// the port reads the heaviest bin once a frame, so the plane follows whatever
++/// water is on screen, one frame late.</para>
++/// </summary>
++public static class PlanarReflections
++{
++    /// <summary>The port's switch. Needs <see cref="ScreenReflections.Enabled"/>:
++    /// the pass that reads the planar texture is the reflection pass.</summary>
++    public static bool Enabled;
++
++    /// <summary>Set by the GL core backend when its prim program has the clip plane;
++    /// nothing else can draw into a planar texture, so the port walks nothing
++    /// without it.</summary>
++    public static bool Supported;
++
++    /// <summary>Set by the port around its own <c>DrawOTag</c> of the mirrored
++    /// table. Every primitive drawn meanwhile goes to the current target's planar
++    /// texture.</summary>
++    public static bool Capturing;
++
++    /// <summary>Bumped by the port before each capture; the backend clears a
++    /// target's planar texture the first time it sees a new one.</summary>
++    public static int Serial;
++
++    /// <summary>The water's plane in the mirrored camera's view space, as a
++    /// fragment test: a view position <c>p</c> is kept while
++    /// <c>dot(xyz, p) + w &gt;= 0</c>, which is above the water.</summary>
++    public static readonly float[] ClipPlane = new float[4];
++
++    /// <summary>The same plane in the real camera's view space, as a signed
++    /// distance, for the reflection pass to tell which surfaces lie on it.</summary>
++    public static readonly float[] ViewPlane = new float[4];
++
++    /// <summary>How far a surface may lie off the plane, in world units, and still
++    /// take the planar reflection rather than the march.</summary>
++    public static float Tolerance = 48f;
++
++    /// <summary>How far the water's own texture bends the reflection, in the game's
++    /// pixels per unit of brightness change across a pixel; 0 is a flat mirror.</summary>
++    public static float Ripple = 4f;
++
++    /// <summary>The probe's switch.</summary>
++    public static bool Probe;
++
++    /// <summary>Captures started, targets cleared for one, primitives refused for
++    /// want of a target, and reflection passes that read a planar texture.</summary>
++    public static long Captures, Cleared, Dropped, Read;
++
++    public static void ResetCounters() => Captures = Cleared = Dropped = Read = 0;
++
++    // ---- the real camera, for finding the water ------------------------------
++
++    // Row 1 of R transposed (world Y from a view position) and the camera's Y.
++    static float _ry0, _ry1, _ry2, _camY;
++    static bool _camera;
++
++    /// <summary>The camera the frame is being drawn with: <paramref name="r"/> is
++    /// the GTE rotation, world to view, row-major at the GTE's 4096 scale, and
++    /// <paramref name="camY"/> its world Y. Published by the port before the frame's
++    /// <c>DrawOTag</c>.</summary>
++    public static void SetCamera(ReadOnlySpan<short> r, float camY)
++    {
++        _ry0 = r[1] / 4096f;
++        _ry1 = r[4] / 4096f;
++        _ry2 = r[7] / 4096f;
++        _camY = camY;
++        _camera = true;
++    }
++
++    public static void ClearCamera() => _camera = false;
++
++    const int Bins = 16;
++    // A bin is a 16-unit band of world Y: its key, the area in it, and the
++    // area-weighted sum of the heights, so the plane is their mean rather than the
++    // band's edge.
++    static readonly int[] _key = new int[Bins];
++    static readonly double[] _weight = new double[Bins], _sum = new double[Bins];
++    static int _bins;
++
++    /// <summary>Water triangles binned, and those refused as not level.</summary>
++    public static long WaterTris, WaterTilted;
++
++    /// <summary>One water triangle, as the backend drew it: target coordinates
++    /// relative to the GTE's centre, the view depth, and the picture's own
++    /// rectangle in the same coordinates. The walks submit water past the edge of
++    /// the picture as well, and a pool nobody can see is no reason to walk the
++    /// world twice, so only what lands inside the rectangle counts.</summary>
++    public static void NoteWater(float x0, float y0, float z0, float x1, float y1, float z1,
++                                 float x2, float y2, float z2,
++                                 float left, float top, float right, float bottom)
++    {
++        if (!_camera || z0 <= 0f || z1 <= 0f || z2 <= 0f) return;
++        if (Math.Max(x0, Math.Max(x1, x2)) < left || Math.Min(x0, Math.Min(x1, x2)) > right
++            || Math.Max(y0, Math.Max(y1, y2)) < top || Math.Min(y0, Math.Min(y1, y2)) > bottom)
++            return;
++        float h = Math.Max(1f, GteDepth.ProjH);
++        float w0 = WorldY(x0, y0, z0, h), w1 = WorldY(x1, y1, z1, h), w2 = WorldY(x2, y2, z2, h);
++        float lo = Math.Min(w0, Math.Min(w1, w2)), hi = Math.Max(w0, Math.Max(w1, w2));
++        // A waterfall is water too, and has no plane to mirror in.
++        if (hi - lo > 64f) { WaterTilted++; return; }
++        // The area on screen, near enough for a weight: the corners pulled into
++        // the rectangle.
++        float cx0 = Math.Clamp(x0, left, right), cy0 = Math.Clamp(y0, top, bottom);
++        float cx1 = Math.Clamp(x1, left, right), cy1 = Math.Clamp(y1, top, bottom);
++        float cx2 = Math.Clamp(x2, left, right), cy2 = Math.Clamp(y2, top, bottom);
++        double area = Math.Abs((cx1 - cx0) * (cy2 - cy0) - (cy1 - cy0) * (cx2 - cx0)) * 0.5;
++        if (area <= 0.0) return;
++        float y = (w0 + w1 + w2) / 3f;
++        int key = (int)MathF.Round(y / 16f);
++        int i = 0;
++        while (i < _bins && _key[i] != key) i++;
++        if (i == _bins)
++        {
++            if (_bins == Bins) return;
++            _key[i] = key;
++            _weight[i] = _sum[i] = 0.0;
++            _bins++;
++        }
++        _weight[i] += area;
++        _sum[i] += area * y;
++        WaterTris++;
++    }
++
++    static float WorldY(float sx, float sy, float z, float h)
++        => _ry0 * sx * z / h + _ry1 * sy * z / h + _ry2 * z + _camY;
++
++    static float _plane;
++    static bool _hasPlane;
++
++    /// <summary>The plane to mirror in, from the water drawn since the last call,
++    /// and the bins emptied. The previous plane is kept while its own bin is still
++    /// most of the heaviest, so two pools of one area cannot trade places frame by
++    /// frame.</summary>
++    public static bool TakePlane(out float worldY, out double area)
++    {
++        worldY = 0f;
++        area = 0.0;
++        int best = -1;
++        for (int i = 0; i < _bins; i++)
++            if (best < 0 || _weight[i] > _weight[best]) best = i;
++        if (best < 0) { _bins = 0; _hasPlane = false; return false; }
++
++        int keep = -1;
++        if (_hasPlane)
++        {
++            int prev = (int)MathF.Round(_plane / 16f);
++            for (int i = 0; i < _bins; i++)
++                if (Math.Abs(_key[i] - prev) <= 1 && _weight[i] >= 0.6 * _weight[best]) { keep = i; break; }
++        }
++        int pick = keep >= 0 ? keep : best;
++        _plane = (float)(_sum[pick] / _weight[pick]);
++        _hasPlane = true;
++        worldY = _plane;
++        area = _weight[pick];
++        _bins = 0;
++        return true;
++    }
++
++    /// <summary>The last readback's share of reflective pixels that took the planar
++    /// texture, from <see cref="ScreenReflections.SetMap"/>.</summary>
++    public static float PlanarPct;
++
++    /// <summary>The check on the mirror, from the same readback: the share of planar
++    /// pixels whose march found an on-screen surface too, the mean brightness
++    /// difference between the two (0..255), and the same against the planar
++    /// texture read unmirrored. A mirror sampled in the right place reads well
++    /// under its control; one sampled in the wrong place reads like it.</summary>
++    public static float ComparedPct, MirrorDiff, ControlDiff;
++}
+
+Amended: the plane at the water's rest height while a port moves the water (the swell).
+
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+index 9cd845e..b20a164 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+@@ -82,23 +82,29 @@ public static class PlanarReflections
+ 
+     // ---- the real camera, for finding the water ------------------------------
+ 
+-    // Row 1 of R transposed (world Y from a view position) and the camera's Y.
+-    static float _ry0, _ry1, _ry2, _camY;
++    // R transposed (world axes from a view position) and the camera's position.
++    static float _rx0, _rx1, _rx2, _ry0, _ry1, _ry2, _rz0, _rz1, _rz2, _camX, _camY, _camZ;
+     static bool _camera;
+ 
+     /// <summary>The camera the frame is being drawn with: <paramref name="r"/> is
+     /// the GTE rotation, world to view, row-major at the GTE's 4096 scale, and
+-    /// <paramref name="camY"/> its world Y. Published by the port before the frame's
++    /// the rest its world position. Published by the port before the frame's
+     /// <c>DrawOTag</c>.</summary>
+-    public static void SetCamera(ReadOnlySpan<short> r, float camY)
++    public static void SetCamera(ReadOnlySpan<short> r, float camX, float camY, float camZ)
+     {
+-        _ry0 = r[1] / 4096f;
+-        _ry1 = r[4] / 4096f;
+-        _ry2 = r[7] / 4096f;
+-        _camY = camY;
++        _rx0 = r[0] / 4096f; _rx1 = r[3] / 4096f; _rx2 = r[6] / 4096f;
++        _ry0 = r[1] / 4096f; _ry1 = r[4] / 4096f; _ry2 = r[7] / 4096f;
++        _rz0 = r[2] / 4096f; _rz1 = r[5] / 4096f; _rz2 = r[8] / 4096f;
++        _camX = camX; _camY = camY; _camZ = camZ;
+         _camera = true;
+     }
+ 
++    /// <summary>Where the water rests at a world X and Z, given the height it was
++    /// drawn at, or NaN for water the port does not move. Set by a port that moves
++    /// the water's vertices itself (a swell): a moved triangle is neither level nor
++    /// at the height to mirror in, and the rest height is both.</summary>
++    public static Func<float, float, float, float>? RestHeight;
++
+     public static void ClearCamera() => _camera = false;
+ 
+     const int Bins = 16;
+@@ -109,8 +115,9 @@ public static class PlanarReflections
+     static readonly double[] _weight = new double[Bins], _sum = new double[Bins];
+     static int _bins;
+ 
+-    /// <summary>Water triangles binned, and those refused as not level.</summary>
+-    public static long WaterTris, WaterTilted;
++    /// <summary>Water triangles binned, those refused as not level, and those binned
++    /// at the height <see cref="RestHeight"/> gave.</summary>
++    public static long WaterTris, WaterTilted, WaterRested;
+ 
+     /// <summary>One water triangle, as the backend drew it: target coordinates
+     /// relative to the GTE's centre, the view depth, and the picture's own
+@@ -128,8 +135,17 @@ public static class PlanarReflections
+         float h = Math.Max(1f, GteDepth.ProjH);
+         float w0 = WorldY(x0, y0, z0, h), w1 = WorldY(x1, y1, z1, h), w2 = WorldY(x2, y2, z2, h);
+         float lo = Math.Min(w0, Math.Min(w1, w2)), hi = Math.Max(w0, Math.Max(w1, w2));
++        float y = (w0 + w1 + w2) / 3f;
++        float rest = float.NaN;
++        if (RestHeight is { } restAt)
++        {
++            float sx = (x0 + x1 + x2) / 3f, sy = (y0 + y1 + y2) / 3f, sz = (z0 + z1 + z2) / 3f;
++            rest = restAt(_rx0 * sx * sz / h + _rx1 * sy * sz / h + _rx2 * sz + _camX,
++                          _rz0 * sx * sz / h + _rz1 * sy * sz / h + _rz2 * sz + _camZ, y);
++        }
++        if (!float.IsNaN(rest)) { y = rest; WaterRested++; }
+         // A waterfall is water too, and has no plane to mirror in.
+-        if (hi - lo > 64f) { WaterTilted++; return; }
++        else if (hi - lo > 64f) { WaterTilted++; return; }
+         // The area on screen, near enough for a weight: the corners pulled into
+         // the rectangle.
+         float cx0 = Math.Clamp(x0, left, right), cy0 = Math.Clamp(y0, top, bottom);
+@@ -137,7 +153,6 @@ public static class PlanarReflections
+         float cx2 = Math.Clamp(x2, left, right), cy2 = Math.Clamp(y2, top, bottom);
+         double area = Math.Abs((cx1 - cx0) * (cy2 - cy0) - (cy1 - cy0) * (cx2 - cx0)) * 0.5;
+         if (area <= 0.0) return;
+-        float y = (w0 + w1 + w2) / 3f;
+         int key = (int)MathF.Round(y / 16f);
+         int i = 0;
+         while (i < _bins && _key[i] != key) i++;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 2919b43..3dc9eaf 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -92,7 +92,7 @@ public sealed partial class GlCore : IGpuBackend
+     // 0068. The planar texture the reflection pass reads first, and the clip plane
+     // the prim program discards the water's underside with while drawing into one.
+     int _uSsrPlanarOn, _uSsrPlanarPlane, _uSsrPlanarTol, _uSsrRipple, _uSsrCompare;
+-    int _uClipOn, _uClipPlane, _uClipCentre, _uClipH;
++    int _uClipOn, _uClipPlane, _uClipCentre, _uClipH, _uClipLevel, _uClipDq;
+     int _clipOnSent = -1;
+     // 0071. Authored lights.
+     int _uLightN, _uLightPos, _uLightCol, _uLightDir, _uLightCentre, _uLightH;
+@@ -244,6 +244,8 @@ public sealed partial class GlCore : IGpuBackend
+         _uClipPlane = _gl.GetUniformLocation(_progPrim, "uClipPlane");
+         _uClipCentre = _gl.GetUniformLocation(_progPrim, "uClipCentre");
+         _uClipH = _gl.GetUniformLocation(_progPrim, "uClipH");
++        _uClipLevel = _gl.GetUniformLocation(_progPrim, "uClipLevel");
++        _uClipDq = _gl.GetUniformLocation(_progPrim, "uClipDq");
+         _clipOnSent = -1;
+         _uLightN = _gl.GetUniformLocation(_progPrim, "uLightN");
+         _uLightPos = _gl.GetUniformLocation(_progPrim, "uLightPos");
+@@ -589,6 +591,8 @@ public sealed partial class GlCore : IGpuBackend
+             rt.PlanarFrame = _frame;
+             PlanarReflections.ViewPlane.CopyTo(rt.PlanarPlane, 0);
+             PlanarReflections.ClipPlane.CopyTo(p.ClipPlane, 0);
++            if (PlanarReflections.LevelFog) PlanarReflections.LevelAxis.CopyTo(p.LevelAxis, 0);
++            else Array.Clear(p.LevelAxis);
+             PlanarReflections.Cleared++;
+         }
+         return p;
+@@ -1758,6 +1762,9 @@ public sealed partial class GlCore : IGpuBackend
+                 _gl.Uniform4(_uClipPlane, cp[0], cp[1], cp[2], cp[3]);
+                 _gl.Uniform2(_uClipCentre, GteDepth.ProjCx + rt.Margin, GteDepth.ProjCy);
+                 _gl.Uniform1(_uClipH, Math.Max(1f, GteDepth.ProjH));
++                var la = rt.LevelAxis;
++                if (_uClipLevel >= 0) _gl.Uniform3(_uClipLevel, la[0], la[1], la[2]);
++                if (_uClipDq >= 0) _gl.Uniform2(_uClipDq, (float)GteDepth.ProjDqa, GteDepth.ProjDqb / 4096f);
+             }
+         }
+         // 0071. The light list, sent when the port publishes a new one. Not into
+@@ -2883,6 +2890,11 @@ public sealed partial class GlCore : IGpuBackend
+             _gl.BindTexture(TextureTarget.Texture2D, planar.Tex);
+             PlanarReflections.Read++;
+         }
++        if (planarOn && PlanarReflections.WantFogCensus)
++        {
++            PlanarReflections.WantFogCensus = false;
++            PlanarReflections.FogCensus = LevelFogCensus(planar!);
++        }
+         // 0072. The retained scene's planes and cubemap, drawn for this target.
+         BindRetainedForSsr();
+         if (_retPlanar != null && _retPlaneN > 0) planar = _retPlanar;
+@@ -2918,6 +2930,47 @@ public sealed partial class GlCore : IGpuBackend
+         if (ScreenReflections.WantMap && _ssrInfo) CaptureSsrMap(w, h);
+     }
+ 
++    /// <summary>0068, amended. A planar texture read back, its drawn texels binned
++    /// by the depth they are fogged at (the larger of their own and the level
++    /// one), from 9 tiles: a texel still lit past the fog's black is the pop-in.
++    /// Diagnostic only; it stalls the pipeline.</summary>
++    unsafe string LevelFogCensus(GlDisplayRt rt)
++    {
++        int w = rt.TexW, h = rt.TexH;
++        var col = new byte[(long)w * h * 4];
++        var dep = new float[(long)w * h];
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, rt.Fbo);
++        _gl.PixelStore(PixelStoreParameter.PackAlignment, 4);
++        fixed (byte* p = col) _gl.ReadPixels(0, 0, (uint)w, (uint)h, PixelFormat.Rgba, PixelType.UnsignedByte, p);
++        fixed (float* p = dep) _gl.ReadPixels(0, 0, (uint)w, (uint)h, PixelFormat.DepthComponent, PixelType.Float, p);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++
++        const int B = 18;
++        var la = PlanarReflections.LevelAxis;
++        float sc = GlVram.Scale, cx = GteDepth.ProjCx + rt.Margin, cy = GteDepth.ProjCy, hh = Math.Max(1f, GteDepth.ProjH);
++        var n = new long[B]; var lit = new long[B]; var max = new int[B];
++        for (int y = 0; y < h; y++)
++            for (int x = 0; x < w; x++)
++            {
++                long i = (long)y * w + x;
++                float d = dep[i];
++                if (d >= 1f || d <= 0f) continue;
++                float z = d * 65536f;
++                float px = ((x + 0.5f) / sc - cx) * z / hh, py = ((y + 0.5f) / sc - cy) * z / hh;
++                float lz = Math.Max(z, la[0] * px + la[1] * py + la[2] * z);
++                int b = Math.Min((int)(lz / 2048f), B - 1);
++                int l = (col[i * 4] * 299 + col[i * 4 + 1] * 587 + col[i * 4 + 2] * 114) / 1000;
++                n[b]++;
++                if (l > 8) lit[b]++;
++                if (l > max[b]) max[b] = l;
++            }
++        var sb = new System.Text.StringBuilder();
++        for (int b = 9; b < B; b++)
++            if (n[b] > 0) sb.Append($" {b}t {n[b]}/{lit[b]} max {max[b]};");
++        return sb.ToString();
++    }
++
+     const int ColorMipUnit = 7, PlanarMipUnit = 8, SsrDepthUnit = 4;
+ 
+     /// <summary>A target's colour, shrunk to half size and mipped, bound on
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+index 2145c67..be906ba 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -36,6 +36,7 @@ public sealed class GlDisplayRt
+     public long PlanarFrame = -1;
+     public readonly float[] PlanarPlane = new float[4];
+     public readonly float[] ClipPlane = new float[4];
++    public readonly float[] LevelAxis = new float[3];
+     // 0072. The retained scene's frame this target's picture was drawn under.
+     public int RetainedSerial;
+     public int CreatedScale;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 4ffa372..8ba9d18 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -1507,6 +1507,10 @@ internal static class GlShaders
+         uniform vec4  uClipPlane;
+         uniform vec2  uClipCentre;
+         uniform float uClipH;
++        // 0068, amended. The view's level forward in that space, and the frame's
++        // DQA and DQB / 4096. See cueWeight().
++        uniform vec3  uClipLevel;
++        uniform vec2  uClipDq;
+         // 0072. Drawing one plane of a retained planar reflection: kept only where
+         // the presented frame's own surface (its surface buffer, the target's size
+         // in 1x pixels) lies within uMaskTol of the plane, in that frame's view.
+@@ -1808,14 +1812,35 @@ internal static class GlShaders
+             return sum;
+         }
+ 
++        // 0068, amended. In a planar capture, the fragment's depth over the depth
++        // it is fogged at; 1 everywhere else.
++        float gCueScale = 1.0;
++        float gCueZ = 0.0;
++
++        // The raw depth cue at the depth a level camera would see this fragment at.
++        // MAC0 / 4096 is DQA * H/SZ / 4096 + DQB / 4096, so the part past DQB scales
++        // as SZ does. A curve-4 corner holds a weight (EvenFog's blend): taken back
++        // through the knee, or at the frame's DQA where the knee left it 0.
++        float levelCue(float raw, uint curve) {
++            if (curve == 4u) {
++                float wv = clamp(raw, 0.0, 4096.0);
++                float q = min(uClipH * 65536.0 / max(gCueZ, 1.0), 131071.0);
++                raw = wv <= 0.0 ? min(uClipDq.x * q / 4096.0 + uClipDq.y, 0.0)
++                    : wv < 2800.0 ? wv : (wv + 5600.0) / 3.0;
++            }
++            return uClipDq.y + (raw - uClipDq.y) * gCueScale;
++        }
++
+         // The depth cue's weight, 0..4096, from the raw MAC0 through the curve.
+         float cueWeight() {
+             uint curve = (vLight >> 24) & 7u;
+-            float ir0 = clamp(vFog, 0.0, 4096.0);
++            bool level = gCueScale < 1.0 && curve != 0u;
++            float raw = level ? levelCue(vFog, curve) : vFog;
++            float ir0 = clamp(raw, 0.0, 4096.0);
+             float w = curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
+                  : curve == 2u ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
+                  : curve == 3u ? ir0 * 0.5
+-                 : curve == 4u ? vFog
++                 : curve == 4u ? (level ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0) : vFog)
+                  : 0.0;
+             // 0074. The authored curve over the game's.
+             if (uAtmosOn != 0 && uAtmosShape != vec2(1.0) && w > 0.0)
+@@ -1823,8 +1848,21 @@ internal static class GlShaders
+             return w;
+         }
+ 
++        // The knee's keep at the frame's DQA, for a colour with no record.
++        float frameKeep(float z) {
++            float q = min(uClipH * 65536.0 / max(z, 1.0), 131071.0);
++            float ir0 = clamp(uClipDq.x * q / 4096.0 + uClipDq.y, 0.0, 4096.0);
++            return clamp(1.0 - (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0) / 4096.0, 0.0, 1.0);
++        }
++        // A colour the GTE fogged at this fragment's depth, fogged at the level one.
++        vec3 levelColour(vec3 c) {
++            if (gCueScale >= 1.0) return c;
++            float k0 = frameKeep(gCueZ);
++            return k0 > 0.0 ? c * clamp(frameKeep(gCueZ / gCueScale) / k0, 0.0, 1.0) : c;
++        }
++
+         ivec3 shade8(vec3 extra) {
+-            if (vLight == 0u) return ivec3(vColor.rgb * 255.0 + 0.5);
++            if (vLight == 0u) return ivec3(levelColour(vColor.rgb) * 255.0 + 0.5);
+             uint mode = vLight >> 24;
+             vec3 lit = vLit;
+             if ((mode & 0x80u) != 0u) {
+@@ -1842,7 +1880,7 @@ internal static class GlShaders
+             // 0083. Past the distance, the corner colours the game lit, with the
+             // glow a material adds before the cue still added.
+             if (gPlain > 0.0) {
+-                vec3 gc = vColor.rgb * 255.0 + 0.5;
++                vec3 gc = levelColour(vColor.rgb) * 255.0 + 0.5;
+                 if (uEmitOn != 0)
+                     gc += floor(vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u)) * extra * (1.0 - w / 4096.0));
+                 pp = mix(pp, clamp(floor(gc), 0.0, 255.0), gPlain);
+@@ -1881,6 +1919,12 @@ internal static class GlShaders
+                 float cz = vDepth * 65536.0;
+                 vec3 cp = vec3((gl_FragCoord.xy / float(uScale) - uClipCentre) * (cz / uClipH), cz);
+                 if (dot(uClipPlane.xyz, cp) + uClipPlane.w < 0.0) discard;
++                // The game's map is culled by a level cone and fogged by view depth,
++                // so the cone's far edge is black only to a level camera. The
++                // mirrored one looks up by the eye's pitch and saw it lit: fog at the
++                // larger of the two depths, which is the game's fog looking level.
++                float lz = dot(uClipLevel, cp);
++                if (lz > cz) { gCueScale = cz / lz; gCueZ = cz; }
+             }
+             // 0072, amended. A half fading in or out of a reflection: an ordered
+             // dither, so it needs no blending and keeps its depth.
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+index b20a164..8f63892 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/PlanarReflections.cs
+@@ -63,6 +63,17 @@ public static class PlanarReflections
+     /// distance, for the reflection pass to tell which surfaces lie on it.</summary>
+     public static readonly float[] ViewPlane = new float[4];
+ 
++    /// <summary>The view's forward with its world height taken out, in the
++    /// mirrored camera's view space. The game fogs by view depth and culls its
++    /// map by a level cone, so the cone's far edge is black only while the
++    /// camera looks level; from a mirrored camera looking up it reflected lit.
++    /// A capture fogs a fragment at the larger of its own depth and its depth
++    /// along this axis. Zero leaves the game's fog alone.</summary>
++    public static readonly float[] LevelAxis = new float[3];
++
++    /// <summary>The switch for <see cref="LevelAxis"/>: <c>KF2_PLANAR_FOG=0</c> is the comparison.</summary>
++    public static bool LevelFog = true;
++
+     /// <summary>How far a surface may lie off the plane, in world units, and still
+     /// take the planar reflection rather than the march.</summary>
+     public static float Tolerance = 48f;
+@@ -213,4 +224,9 @@ public static class PlanarReflections
+     /// texture read unmirrored. A mirror sampled in the right place reads well
+     /// under its control; one sampled in the wrong place reads like it.</summary>
+     public static float ComparedPct, MirrorDiff, ControlDiff;
++
++    /// <summary>The probe's fog check: asked for by the port, filled by the next
++    /// reflection pass that reads a planar texture.</summary>
++    public static bool WantFogCensus;
++    public static string? FogCensus;
+ }
+
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 8ba9d18..f609b62 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -842,10 +842,15 @@ internal static class GlShaders
+         // scrolling texture rather than lying on it like glass. The colour was
+         // fogged by the mirrored camera, whose distance to it is the length of the
+         // path through the mirror, so it needs no correction here.
++        bool onPlanar(vec3 p) {
++            return uPlanarOn != 0 && abs(dot(uPlanarPlane.xyz, p) + uPlanarPlane.w) <= uPlanarTol;
++        }
++        // The surface is on the plane and the mirror drew nothing there: what it
++        // sees is the background, past everything the walk drew.
++        bool gPlanarEmpty = false;
+         bool planarAt(vec3 p, float rough, out vec3 c) {
+             c = vec3(0.0);
+-            if (uPlanarOn == 0) return false;
+-            if (abs(dot(uPlanarPlane.xyz, p) + uPlanarPlane.w) > uPlanarTol) return false;
++            if (!onPlanar(p)) return false;
+             vec2 muv = vec2(vUv.x, 2.0 * uCentre.y - vUv.y);
+             if (uRipple > 0.0) {
+                 vec2 px = 1.0 / uSize;
+@@ -858,7 +863,7 @@ internal static class GlShaders
+             vec3 pc = texture(uPlanar, tc(muv)).rgb;
+             // Nothing drawn: the capture cleared to black with the far plane, and an
+             // opaque surface writes a depth whatever its colour.
+-            if (texture(uPlanarDepth, tc(muv)).r >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) return false;
++            if (texture(uPlanarDepth, tc(muv)).r >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) { gPlanarEmpty = true; return false; }
+             // Roughness blurs it as it does a march's hit: the image stands as far
+             // behind the water as its source stands above it, and the planar depth
+             // is the mirrored eye's distance to it.
+@@ -996,10 +1001,6 @@ internal static class GlShaders
+ 
+             float zs = s.b * FAR;
+             if (zs <= 1.0) return;
+-            if (uPlainZ > 0.0) {
+-                gShare *= 1.0 - smoothstep(uPlainZ - 2048.0, uPlainZ, zs);
+-                if (gShare <= 0.0) return;
+-            }
+             // With the Z-buffer on, visibility is the depth test's and not the
+             // order's, so a surface redrawn last may still be behind the opaque
+             // one the picture shows. The picture is the authority.
+@@ -1007,6 +1008,13 @@ internal static class GlShaders
+             if (d > 0.0 && d < 1.0 && d * FAR < zs * 0.99 - 8.0) return;
+ 
+             vec3 p = viewAt(vUv, zs);
++            // 0083. Past the enhancement distance, the game's own look; the planar
++            // reflection is left out of it, since what it shows is fogged by the
++            // mirror's own depth and meets the black of the distance by itself.
++            if (uPlainZ > 0.0 && !onPlanar(p)) {
++                gShare *= 1.0 - smoothstep(uPlainZ - 2048.0, uPlainZ, zs);
++                if (gShare <= 0.0) return;
++            }
+             // A translucent surface writes no depth, so the depth buffer holds the
+             // floor under it: the ray's run between the two is how much water it
+             // crosses. An opaque surface has none; the sky behind is all water.
+@@ -1052,6 +1060,14 @@ internal static class GlShaders
+                 emit(pc * tint, w);
+                 return;
+             }
++            // 0068. The planar answer is final on its plane: an empty texel is the
++            // background (black, or the remaster's sky), which the fogged texels
++            // beside it fade into, and never a march.
++            if (gPlanarEmpty && uCompare == 0) {
++                oInfo.a += 4.0 / 255.0;
++                emit((uAtmosOn != 0 ? uAtmosSky : vec3(0.0)) * tint, w);
++                return;
++            }
+ 
+             // 0072. The cubemap in place of the screen: nothing it cannot see is
+             // borrowed from the picture, and a miss reflects nothing.

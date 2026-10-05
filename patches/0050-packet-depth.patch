@@ -1,0 +1,107 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+index d2e17df..7d78a81 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -159,6 +159,19 @@ public sealed partial class Gpu
+             Hle.GpuTrace.Sink?.Vertices(n, hits);
+         }
+ 
++        // 0050. The depth buffer takes the assembler's record or nothing; W and the
++        // fraction above are left to the address map.
++        if (!Detached && GtePacketDepth.Active)
++        {
++            for (int i = 0; i < n; i++) v[i].HasZ = false;
++            ref readonly var dr = ref GtePacketDepth.Find(_fifoSrc[0], _fifo[0], _fifo[vwAt[0]], _fifo[vwAt[n - 1]], out bool has);
++            if (has && dr.Z0 > 0f && dr.Z1 > 0f && dr.Z2 > 0f && (n == 3 || dr.Z3 > 0f))
++            {
++                v[0].W = dr.Z0; v[1].W = dr.Z1; v[2].W = dr.Z2; v[3].W = dr.Z3;
++                for (int i = 0; i < n; i++) v[i].HasZ = true;
++            }
++        }
++
+         // 0048. The lighting inputs, by the packet's address. Only the GL backend
+         // draws them, so the software path never asks.
+         if (!Detached && HleOn && GteLightMap.Active)
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GtePacketDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GtePacketDepth.cs
+new file mode 100644
+index 0000000..c028204
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GtePacketDepth.cs
+@@ -0,0 +1,77 @@
++using System.Runtime.CompilerServices;
++
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0050. Each packet's corner depths, recorded by the port that built the packet.
++///
++/// The address map (<see cref="GteVertexMap"/>) recovers a depth by following a
++/// screen word from the GTE to the packet, so it answers for anything that projected
++/// through the GTE, the skybox included, and misses a corner it could not follow. A
++/// port that assembles the packet itself knows every corner's depth and which routine
++/// asked for it, so it records only what should occlude: the map tiles, their clipped
++/// fans and the models. The GPU finds a record by the address it read the command
++/// word from and checks the command word and the first and last vertex words before
++/// believing it.
++///
++/// While <see cref="Active"/>, the depth buffer is fed from here alone, and a packet
++/// with no record keeps painter's order. Perspective and sub-pixel still come from the
++/// address map. Nothing here writes guest memory or the GTE.
++/// </summary>
++public static class GtePacketDepth
++{
++    public struct Rec
++    {
++        public uint Cmd, Xy0, XyLast;
++        public float Z0, Z1, Z2, Z3;
++    }
++
++    /// <summary>The port's switch.</summary>
++    public static bool Enabled;
++
++    /// <summary>PGXP's CPU tracking sends every assembler back to recompiled code,
++    /// which records nothing.</summary>
++    public static bool Active => Enabled && GteDepth.DepthWanted && !Pgxp.Pgxp.CpuTracking;
++
++    static Rec[]? _recs;
++    static Rec _discard;
++    static uint _base, _count;
++
++    /// <summary>The address range packets are built in.</summary>
++    public static void SetRange(uint baseAddress, uint bytes)
++    {
++        _base = baseAddress & 0x1FFFFFFFu;
++        _count = bytes >> 2;
++        _recs = new Rec[_count];
++    }
++
++    /// <summary>The record for the packet at <paramref name="pkt"/>, or a scratch one
++    /// when it is outside the range.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static ref Rec Slot(uint pkt)
++    {
++        uint i = ((pkt & 0x1FFFFFFFu) - _base) >> 2;
++        if (_recs == null || i >= _count) return ref _discard;
++        return ref _recs[i];
++    }
++
++    /// <summary>The record for the packet whose command word the GPU read from
++    /// <paramref name="cmdSrc"/>, if it still describes these words.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static ref readonly Rec Find(uint cmdSrc, uint cmd, uint xy0, uint xyLast, out bool found)
++    {
++        found = false;
++        uint i = ((cmdSrc & 0x1FFFFFFFu) - 4u - _base) >> 2;
++        if (_recs == null || cmdSrc == 0 || i >= _count) { Misses++; return ref _discard; }
++        ref readonly var r = ref _recs[i];
++        if (r.Cmd == 0 || r.Cmd != cmd || r.Xy0 != xy0 || r.XyLast != xyLast) { Misses++; return ref _discard; }
++        found = true;
++        Hits++;
++        return ref r;
++    }
++
++    /// <summary>Records written, and polygons that found theirs or did not.</summary>
++    public static long Recorded, Hits, Misses;
++
++    public static void ResetCounters() => Recorded = Hits = Misses = 0;
++}

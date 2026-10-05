@@ -1,0 +1,23 @@
+diff --git a/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs b/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs
+--- a/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs
++++ b/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs
+@@ -48,7 +48,19 @@
+         ImGui.SetNextWindowSize(new Vector2(640, 480), ImGuiCond.FirstUseEver);
+         ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0f, 0f, 0f, 1f));
+ 
++        //The picture is the point of this panel, so it gets none of the chrome
++        //every other panel wants. The themed WindowPadding (12,10) and the 1px
++        //WindowBorderSize are read by Begin when it computes the inner rect, so
++        //they are pushed around Begin only and popped straight after it: the
++        //toasts drawn below still lay themselves out on the real style, and no
++        //other panel is affected. Without this a docked, tab-bar-less Output
++        //panel filling the dockspace still letterboxes the game behind a band of
++        //window background on all four sides -- scaled by Theme.Scale, so it is
++        //widest exactly where the DPI is misread highest.
++        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
++        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+         bool visible = ImGui.Begin(this.Title());
++        ImGui.PopStyleVar(2);
+         IsDocked = ImGui.IsWindowDocked();
+         OutputView.Valid = false;
+ 

@@ -1,0 +1,1068 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs b/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs
+index aac06de..d040c1c 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Assets/Textures/VramTracker.cs
+@@ -11,6 +11,10 @@ public static class VramTracker
+     private static readonly bool[] _gpuDirty = new bool[Cols * Rows];
+     private static int _clock;
+ 
++    /// <summary>0060. Moves on every mark, so a caller can skip re-reading
++    /// generations while nothing has been written.</summary>
++    public static int Clock => _clock;
++
+     public static void Reset()
+     {
+         Array.Clear(_gen);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 5d5e554..79f5110 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -17,6 +17,10 @@ public sealed class GlCore : IGpuBackend
+     // rate with the feature off. Uploaded only for a batch that carries them.
+     struct GlLight { public float Lx, Ly, Lz, Fog; public uint Light; }
+ 
++    // 0060. The texture rectangle and the atlas entry, in a buffer of their own for
++    // the same reason; uploaded only for a batch that carries them.
++    struct GlTex { public uint Rect, Entry; }
++
+     const int MaxVerts = 0x40000;
+ 
+     readonly GL _gl;
+@@ -82,6 +86,16 @@ public sealed class GlCore : IGpuBackend
+     // Light slots written so far this batch; 0 means none, and the attributes stay off.
+     int _litFilled;
+     uint _vboLight;
++    readonly GlTex[] _texs = new GlTex[MaxVerts];
++    int _texFilled;
++    uint _vboTex;
++    bool _texAttribs;
++    GlTexCache? _mip;
++    int _uMipOn;
++    // The last lookup, since a quad asks twice.
++    uint _mipLastRect, _mipLastEntry;
++    int _mipLastTPage = -1, _mipLastClut, _mipLastClock;
++    long _mipLastFrame = -1;
+     // Where the next batch's vertices go in _vbo and _vboLight. Appending keeps an
+     // upload off the range the previous batch's draw may still be reading, which
+     // the driver would otherwise wait for; the buffers are orphaned on wrap.
+@@ -170,6 +184,7 @@ public sealed class GlCore : IGpuBackend
+         _uFbInv = _gl.GetUniformLocation(_progPrim, "uFbInv");
+         _uTrueColor = _gl.GetUniformLocation(_progPrim, "uTrueColor");
+         _uAniso = _gl.GetUniformLocation(_progPrim, "uAniso");
++        _uMipOn = _gl.GetUniformLocation(_progPrim, "uMipOn");
+         _uFluidN = _gl.GetUniformLocation(_progPrim, "uFluidN");
+         for (int i = 0; i < 8; i++)
+         {
+@@ -196,6 +211,8 @@ public sealed class GlCore : IGpuBackend
+         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uExtTex"), 2);
+         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uRepTex"), 3);
+         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uRepClut"), 4);
++        int uMip = _gl.GetUniformLocation(_progPrim, "uMip");
++        if (uMip >= 0) _gl.Uniform1(uMip, 5);
+         _uPrimScale = _gl.GetUniformLocation(_progPrim, "uScale");
+         SetScaleUniform(_progPrim, GlVram.Scale);
+         _primScaleSent = GlVram.Scale;
+@@ -318,6 +335,13 @@ public sealed class GlCore : IGpuBackend
+             _gl.VertexAttribPointer(7, 3, VertexAttribPointerType.Float, false, ls, (void*)0);
+             _gl.VertexAttribPointer(8, 1, VertexAttribPointerType.Float, false, ls, (void*)12);
+             _gl.VertexAttribIPointer(9, 1, VertexAttribIType.UnsignedInt, ls, (void*)16);
++
++            // 0060. Disabled until a batch carries them; the generic 0 is "none".
++            _vboTex = _gl.GenBuffer();
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vboTex);
++            _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(MaxVerts * sizeof(GlTex)), null, BufferUsageARB.DynamicDraw);
++            _gl.VertexAttribIPointer(10, 2, VertexAttribIType.UnsignedInt, (uint)sizeof(GlTex), (void*)0);
++            _gl.VertexAttribI4(10, 0u, 0u, 0u, 0u);
+             _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
+         }
+ 
+@@ -343,6 +367,15 @@ public sealed class GlCore : IGpuBackend
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+ 
+         _kClipX1 = 1023; _kClipY1 = 511;
++
++        // 0060. A failure leaves the mip path off and nothing else.
++        if (!_legacy && _uMipOn >= 0)
++        {
++            _mip = new GlTexCache(_gl);
++            _mip.Init();
++            if (!_mip.Ready) _mip = null;
++        }
++        GteDepth.MipmapsLive = _mip != null;
+         Ready = true;
+     }
+ 
+@@ -728,10 +761,60 @@ public sealed class GlCore : IGpuBackend
+             _lights[_count + 2] = new GlLight { Lx = c.Lx, Ly = c.Ly, Lz = c.Lz, Fog = c.Fog, Light = c.Light };
+             _litFilled = _count + 3;
+         }
++        if (a.HasTexRect && _vboTex != 0 && f.Textured && !f.UseImage)
++        {
++            if (_texFilled < _count) Array.Clear(_texs, _texFilled, _count - _texFilled);
++            var t = new GlTex { Rect = a.TexRect, Entry = 0x80000000u | MipEntry(a, b, c, f) };
++            _texs[_count] = t; _texs[_count + 1] = t; _texs[_count + 2] = t;
++            _texFilled = _count + 3;
++        }
+         bool dith = DitherOf(f);
+         _verts[_count++] = V(a, f, dith); _verts[_count++] = V(b, f, dith); _verts[_count++] = V(c, f, dith);
+     }
+ 
++    /// <summary>0060. The atlas entry for a textured triangle, or 0: none for a
++    /// replacement texture, a texture window, a scrolling texture (its fraction is
++    /// the shader's), or a polygon large enough on screen that it is magnified.</summary>
++    uint MipEntry(in HleVertex a, in HleVertex b, in HleVertex c, in PrimFlags f)
++    {
++        if (!GteDepth.Mipmaps || _mip == null || _pendingRepTex != 0 || _pendingRepClut != 0
++            || _env.TwMaskX != 0 || _env.TwMaskY != 0)
++            return 0;
++        uint rect = a.TexRect;
++        int u0 = (int)(rect & 0xFF), v0 = (int)((rect >> 8) & 0xFF);
++        int w = (int)((rect >> 16) & 0xFF) - u0 + 1, h = (int)(rect >> 24) - v0 + 1;
++        // Texels against the pixels of the quad this is half of, at the render scale.
++        float area = Math.Abs((b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X));
++        int s = GlVram.Scale;
++        if ((float)w * h * 32f < area * s * s) return 0;
++
++        int clock = Assets.Textures.VramTracker.Clock;
++        if (rect == _mipLastRect && f.TPage == _mipLastTPage && f.Clut == _mipLastClut
++            && _frame == _mipLastFrame && clock == _mipLastClock)
++            return _mipLastEntry;
++
++        uint entry = FluidOverlap(f.TPage, u0, v0, w, h) ? 0u : _mip.Lookup(f.TPage, f.Clut, rect, _frame);
++        _mipLastRect = rect; _mipLastTPage = f.TPage; _mipLastClut = f.Clut;
++        _mipLastFrame = _frame; _mipLastClock = Assets.Textures.VramTracker.Clock;
++        _mipLastEntry = entry;
++        return entry;
++    }
++
++    static bool FluidOverlap(int tpage, int u0, int v0, int w, int h)
++    {
++        if (GteDepth.FluidN == 0) return false;
++        int mode = (tpage >> 7) & 3;
++        int div = mode == 0 ? 4 : mode == 1 ? 2 : 1;
++        float x0 = (tpage & 0xF) * 64 + u0 / div, x1 = (tpage & 0xF) * 64 + (u0 + w - 1) / div + 1;
++        float y0 = ((tpage >> 4) & 1) * 256 + v0, y1 = y0 + h;
++        for (int i = 0; i < GteDepth.FluidN; i++)
++        {
++            ref var r = ref GteDepth.Fluid[i];
++            if (x0 < r.X + r.W && x1 > r.X && y0 < r.Y + r.H && y1 > r.Y) return true;
++        }
++        return false;
++    }
++
+     /// <summary>0058. A vertex as the normal pass wants it: the position the colour
+     /// pass is about to draw, and the view depth the plane is reconstructed from.</summary>
+     static AoGeometry.V GeoVert(in HleVertex v) => new() { X = v.X, Y = v.Y, Z = v.Z };
+@@ -1116,6 +1199,9 @@ public sealed class GlCore : IGpuBackend
+ 
+     private void FlushCore()
+     {
++        // 0060. Decode what this batch's polygons asked the atlas for, from VRAM as
++        // they saw it: anything that changes VRAM flushes before it does.
++        if (_mip != null && _mip.HasPending) _mip.Process(_vram.SampleTexture);
+ 
+         var rt = _kTarget;
+         uint destTex;
+@@ -1281,6 +1367,13 @@ public sealed class GlCore : IGpuBackend
+         // anisotropy rebuilds nothing.
+         GteDepth.AnisotropyLive = _uAniso >= 0;
+         if (_uAniso >= 0) _gl.Uniform1(_uAniso, (float)GteDepth.Anisotropy);
++        if (_uMipOn >= 0) _gl.Uniform1(_uMipOn, GteDepth.Mipmaps && _mip != null ? 1f : 0f);
++        if (_mip != null && _texFilled > 0)
++        {
++            _gl.ActiveTexture(TextureUnit.Texture5);
++            _gl.BindTexture(TextureTarget.Texture2D, _mip.Texture);
++            _gl.ActiveTexture(TextureUnit.Texture0);
++        }
+         GteDepth.FluidLive = _uFluidN >= 0;
+         if (_uFluidN >= 0 && GteDepth.FluidN != _fluidSentN)
+         {
+@@ -1326,6 +1419,7 @@ public sealed class GlCore : IGpuBackend
+         {
+             Orphan(_vbo, MaxVerts * Unsafe.SizeOf<GlVertex>());
+             if (_vboLight != 0) Orphan(_vboLight, MaxVerts * Unsafe.SizeOf<GlLight>());
++            if (_vboTex != 0) Orphan(_vboTex, MaxVerts * Unsafe.SizeOf<GlTex>());
+             _vboCursor = 0;
+         }
+         int first = _vboCursor;
+@@ -1344,6 +1438,17 @@ public sealed class GlCore : IGpuBackend
+             for (uint i = 7; i <= 9; i++)
+                 if (_lightAttribs) _gl.EnableVertexAttribArray(i); else _gl.DisableVertexAttribArray(i);
+         }
++        if (_texFilled > 0)
++        {
++            if (_texFilled < _count) Array.Clear(_texs, _texFilled, _count - _texFilled);
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vboTex);
++            _gl.BufferSubData<GlTex>(BufferTargetARB.ArrayBuffer, first * Unsafe.SizeOf<GlTex>(), _texs.AsSpan(0, _count));
++        }
++        if ((_texFilled > 0) != _texAttribs)
++        {
++            _texAttribs = _texFilled > 0;
++            if (_texAttribs) _gl.EnableVertexAttribArray(10); else _gl.DisableVertexAttribArray(10);
++        }
+ 
+         // 0051. A tested batch draws against a depth pulled towards the camera, so a
+         // coplanar overlap goes to the later table entry. An opaque one first writes
+@@ -1432,6 +1537,7 @@ public sealed class GlCore : IGpuBackend
+         }
+         _count = 0;
+         _litFilled = 0;
++        _texFilled = 0;
+     }
+ 
+     unsafe void Orphan(uint buffer, int bytes)
+@@ -2129,6 +2235,8 @@ public sealed class GlCore : IGpuBackend
+         if (_nrmVao != 0) _gl.DeleteVertexArray(_nrmVao);
+         if (_vbo != 0) _gl.DeleteBuffer(_vbo);
+         if (_vboLight != 0) _gl.DeleteBuffer(_vboLight);
++        if (_vboTex != 0) _gl.DeleteBuffer(_vboTex);
++        _mip?.Dispose();
+         if (_presentVbo != 0) _gl.DeleteBuffer(_presentVbo);
+         if (_aoTex != 0) _gl.DeleteTexture(_aoTex);
+         if (_aoBlurTex != 0) _gl.DeleteTexture(_aoBlurTex);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 2acfa1c..8e425c1 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -472,6 +472,8 @@ internal static class GlShaders
+         layout(location = 7) in vec3  inLit;
+         layout(location = 8) in float inFog;
+         layout(location = 9) in uint  inLight;
++        // 0060. The texture rectangle, and the atlas entry with its flags.
++        layout(location = 10) in uvec2 inTex;
+ 
+         // vUV is the one thing that wants correcting: handing gl_Position a real W
+         // makes the rasterizer interpolate it in 1/W, which is exactly the
+@@ -490,6 +492,7 @@ internal static class GlShaders
+         noperspective out vec3 vLit;
+         noperspective out float vFog;
+         flat out uint vLight;
++        flat out uvec2 vTex;
+ 
+         uniform vec2 uVertexOffset;
+         uniform vec2 uPosBias;
+@@ -514,6 +517,7 @@ internal static class GlShaders
+             vLit = inLit;
+             vFog = inFog;
+             vLight = inLight;
++            vTex = inTex;
+             vDither = (inTexpage >> 10) & 1;
+             vRepClut = (inTexpage >> 12) & 1;
+ 
+@@ -547,6 +551,7 @@ internal static class GlShaders
+         noperspective in vec3 vLit;
+         noperspective in float vFog;
+         flat in uint vLight;
++        flat in uvec2 vTex;
+ 
+         layout(location = 0, index = 0) out vec4 FragColor;
+         layout(location = 0, index = 1) out vec4 BlendColor;
+@@ -569,6 +574,9 @@ internal static class GlShaders
+         uniform int   uScale;
+         uniform vec2  uPosBias;
+         uniform float uAniso;
++        // 0060. The decoded texture atlas and its switch.
++        uniform sampler2D uMip;
++        uniform float uMipOn;
+         uniform vec3  uLightBk;
+         uniform vec3  uLcmR;
+         uniform vec3  uLcmG;
+@@ -648,6 +656,46 @@ internal static class GlShaders
+             return a;
+         }
+ 
++        // The console's truncation: towards the texel the gradient enters from.
++        ivec2 truncUV(vec2 t, bool negU, bool negV) {
++            return ivec2(negU ? int(ceil(t.x - 0.0001)) : int(floor(t.x + 0.0001)),
++                         negV ? int(ceil(t.y - 0.0001)) : int(floor(t.y + 0.0001)));
++        }
++
++        // 0060. One level of the decoded texture, bilinear, at a level-0 texel
++        // position inside the rectangle. Held half a level texel in from the edge,
++        // so the bilinear taps never leave the block.
++        vec4 mipAt(vec2 local, float level, vec2 ext, vec2 block) {
++            float sz = exp2(level);
++            vec2 lo = vec2(0.5 * sz);
++            vec2 p = clamp(local, lo, max(ext - lo, lo));
++            return textureLod(uMip, (block + p) / 2048.0, level);
++        }
++
++        // n taps across the whole long axis, each trilinear at lod, premultiplied by
++        // solidity. Level 0 is the exact texel, so the filter meets the console's
++        // point sample where the footprint shrinks to one texel.
++        vec4 mipFootprint(vec2 axis, float n, float lod, ivec2 rMin, ivec2 rMax, vec2 block, bool negU, bool negV) {
++            vec2 ext = vec2(rMax - rMin + 1);
++            float k0 = floor(lod), f = lod - k0;
++            vec4 acc = vec4(0.0);
++            for (int i = 0; i < 16; ++i) {
++                if (float(i) >= n) break;
++                vec2 t = vUV + axis * ((float(i) + 0.5) / n - 0.5);
++                vec2 local = t - vec2(rMin);
++                vec4 a;
++                if (k0 < 0.5) {
++                    vec4 c = decode(clamp(truncUV(t, negU, negV), rMin, rMax));
++                    a = (c.rgb == vec3(0.0) && c.a < 0.5) ? vec4(0.0) : vec4(c.rgb, 1.0);
++                } else {
++                    a = mipAt(local, k0, ext, block);
++                }
++                vec4 b = f > 0.0 ? mipAt(local, k0 + 1.0, ext, block) : a;
++                acc += mix(a, b, f);
++            }
++            return acc / n;
++        }
++
+         // 0048. The vertex colour, made again at this pixel from what made it: a lit
+         // colour, or a light colour and the three light dots, then the depth cue's
+         // weight from the raw MAC0 through the game's own clamp and curve. Floor,
+@@ -743,76 +791,52 @@ internal static class GlShaders
+ 
+             vec4 texel = decodeFluid(ivec2(rawU, rawV));
+ 
+-            // Anisotropic filtering. The footprint is a square looked at square-on
+-            // and a long thin sliver on a floor running away to the horizon, and
+-            // one point sample of a sliver is what makes such a floor crawl and
+-            // sparkle as the camera moves. Sample along the sliver's long axis
+-            // instead and average. Each tap truncates the way the hardware did, so
+-            // the short axis stays exactly as hard as the console left it and only
+-            // the axis that was being undersampled is averaged.
+-            //
+-            // **The taps are one texel apart, and the span is what is capped.**
+-            // Spreading the taps across the whole axis instead -- which is what
+-            // this first did -- is a fair estimator of the footprint's mean, and
+-            // it is still wrong here, because of what lies at the far end of a
+-            // long footprint. A derivative is in unclamped texture-space units,
+-            // so a distant floor reads tens or hundreds of texels per pixel while
+-            // its texture is 64 wide: past that the taps wrap, by the texture
+-            // window or by the page, into whatever else shares the 256x256 sheet
+-            // -- and in the 4- and 8-bit modes a tap that lands on another
+-            // texture's *indices* is read through this primitive's CLUT, which is
+-            // an arbitrary colour with no relation to either texture. That is the
+-            // white speckle on a receding floor and the neighbouring sprite
+-            // arriving at a billboard's edge. So the kernel covers min(len,
+-            // uAniso) texels centred on the pixel: every tap stays on the texture
+-            // the pixel is actually on, and the cost is that past uAniso texels of
+-            // footprint it filters a *part* of the footprint rather than
+-            // estimating the whole of it, degrading toward nearest rather than
+-            // toward a full box filter. There is no mip chain and there cannot be
+-            // one, so that is the honest limit of a fixed tap budget.
+-            //
+-            // This needs no test for "is this 3D": a HUD sprite, a menu box or a
+-            // font glyph is drawn at or near 1:1 and axis-aligned, so both
+-            // derivatives are about one texel, the axis spans one texel, taps
+-            // comes out 1 and the fragment takes the line above unchanged.
+-            // A transparent centre texel is a pixel the console did not draw, and
+-            // the filter must not make it one that is: deciding the silhouette by
+-            // how many taps came back solid grows the sprite outward by up to half
+-            // a footprint, which on an atlas page is the neighbouring sprite
+-            // arriving at this one's edge.
+-            if (uAniso > 1.5 && vRepClut == 0
++            // Anisotropic filtering and mipmaps. See "Anisotropic filtering" in
++            // docs/RENDERING.md. The centre tap above is the console's texel and
++            // decides the silhouette and the semi-transparency bit; the filters only
++            // replace its colour, and every tap stays inside the polygon's texture
++            // rectangle (0060), since past it is other art read through this CLUT.
++            if ((uAniso > 1.5 || uMipOn > 0.5) && vRepClut == 0
+                     && !(texel.rgb == vec3(0.0) && texel.a < 0.5)) {
+-                vec2 axis = dot(dUVdx, dUVdx) >= dot(dUVdy, dUVdy) ? dUVdx : dUVdy;
+-                float len = length(axis);
+-                int taps = int(min(ceil(len), uAniso));
+-                // `len > 0.0` is false for a NaN, which is what a degenerate
+-                // triangle at the horizon hands dFdx; such a fragment takes the
+-                // single sample rather than reading from wherever int(NaN) lands.
+-                if (taps > 1 && len > 0.0) {
+-                    vec2 stride = axis / len;
+-                    vec3 sum = vec3(0.0);
+-                    float solid = 0.0;
+-                    for (int i = 0; i < 16; ++i) {
+-                        if (i >= taps) break;
+-                        vec2 t = vUV + stride * (float(i) + 0.5 - 0.5 * float(taps));
+-                        vec4 c = decodeFluid(ivec2(
+-                            dUVdx.x < 0.0 ? int(ceil(t.x - 0.0001)) : int(floor(t.x + 0.0001)),
+-                            dUVdy.y < 0.0 ? int(ceil(t.y - 0.0001)) : int(floor(t.y + 0.0001))));
+-                        // A transparent texel is stored as black with the STP bit
+-                        // clear, so averaging it in as a colour draws a dark fringe
+-                        // round every grate, torch and bush in the game. Weigh it
+-                        // zero and renormalise by what survived.
+-                        float w = (c.rgb == vec3(0.0) && c.a < 0.5) ? 0.0 : 1.0;
+-                        sum += c.rgb * w;
+-                        solid += w;
++                bool hasRect = (vTex.y & 0x80000000u) != 0u;
++                ivec2 rMin = hasRect ? ivec2(int(vTex.x & 255u), int((vTex.x >> 8) & 255u)) : ivec2(0);
++                ivec2 rMax = hasRect ? ivec2(int((vTex.x >> 16) & 255u), int(vTex.x >> 24)) : ivec2(255);
++                float lx = length(dUVdx), ly = length(dUVdy);
++                vec2 axis = lx >= ly ? dUVdx : dUVdy;
++                float major = max(lx, ly), minor = min(lx, ly);
++                bool done = false;
++                // `major > 0.0` is false for the NaN a degenerate triangle hands dFdx.
++                if (major > 0.0 && uMipOn > 0.5 && (vTex.y & 0x40000000u) != 0u) {
++                    float n = clamp(ceil(major / max(minor, 1e-4)), 1.0, max(uAniso, 1.0));
++                    float maxLod = float((vTex.y >> 16) & 15u);
++                    float lod = min(log2(max(major / n, minor)), maxLod);
++                    if (lod > 0.0) {
++                        vec4 acc = mipFootprint(axis, n, lod, rMin, rMax,
++                            vec2(float(vTex.y & 255u), float((vTex.y >> 8) & 255u)) * 8.0,
++                            dUVdx.x < 0.0, dUVdy.y < 0.0);
++                        if (acc.a > 0.0) texel = vec4(acc.rgb / acc.a, texel.a);
++                        done = true;
++                    }
++                }
++                // One texel apart, up to uAniso of them: without a mip level under
++                // it a tap is a point sample, so the span is what is capped.
++                if (!done && uAniso > 1.5) {
++                    int taps = int(min(ceil(major), uAniso));
++                    if (taps > 1 && major > 0.0) {
++                        vec2 stride = axis / major;
++                        vec3 sum = vec3(0.0);
++                        float solid = 0.0;
++                        for (int i = 0; i < 16; ++i) {
++                            if (i >= taps) break;
++                            vec2 t = vUV + stride * (float(i) + 0.5 - 0.5 * float(taps));
++                            vec4 c = decodeFluid(clamp(truncUV(t, dUVdx.x < 0.0, dUVdy.y < 0.0), rMin, rMax));
++                            // A transparent texel is black: weigh it out.
++                            float w = (c.rgb == vec3(0.0) && c.a < 0.5) ? 0.0 : 1.0;
++                            sum += c.rgb * w;
++                            solid += w;
++                        }
++                        if (solid > 0.0) texel = vec4(sum / solid, texel.a);
+                     }
+-                    // The silhouette is the centre tap's, tested above, so it is
+-                    // exactly where truncation put it. The semi-transparency bit
+-                    // selects a blend equation rather than being a colour, so it
+-                    // too is taken whole from the centre tap and never averaged.
+-                    // An even tap count puts no tap at the centre, so every one of
+-                    // them can still come back transparent.
+-                    if (solid > 0.0) texel = vec4(sum / solid, texel.a);
+                 }
+             }
+ 
+@@ -828,7 +852,8 @@ internal static class GlShaders
+ 
+             if (texel.rgb == vec3(0.0) && texel.a < 0.5) discard;
+             if (uOpaqueDepth != 0 && texel.a >= 0.5) discard;
+-            ivec3 t8 = ivec3(texel.rgb * 31.0 + 0.5) << 3;
++            // 248 = 31 << 3: exact for a texel, and keeps a filtered colour's fraction.
++            ivec3 t8 = ivec3(texel.rgb * 248.0 + 0.5);
+             ivec3 c8 = (t8 * c8in) >> 7;
+             FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
+             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
+@@ -1191,10 +1216,73 @@ internal static class GlShaders
+         }
+         """;
+ 
++    // 0060. The texture atlas's two passes: decode a texture rectangle through its
++    // CLUT into its block, and build one level of a block from the level above.
++    public const string MipVs = """
++        #version 330 core
++        layout(location = 0) in vec2  aPos;
++        layout(location = 1) in ivec4 aRect;
++        layout(location = 2) in ivec4 aSrc;
++        layout(location = 3) in ivec4 aInfo;
++        flat out ivec4 vRect;
++        flat out ivec4 vSrc;
++        flat out ivec4 vInfo;
++        void main() {
++            gl_Position = vec4(aPos, 0.0, 1.0);
++            vRect = aRect; vSrc = aSrc; vInfo = aInfo;
++        }
++        """;
++
++    public const string MipDecodeFs = """
++        #version 330 core
++        flat in ivec4 vRect;   // u0, v0, w, h
++        flat in ivec4 vSrc;    // page x, page y, clut x, clut y
++        flat in ivec4 vInfo;   // mode, block x, block y
++        uniform sampler2D uVram;
++        out vec4 oColor;
++
++        int u5(float f) { return int(floor(f * 31.0 + 0.5)); }
++        vec4 fetch(ivec2 c) { return texelFetch(uVram, c & ivec2(1023, 511), 0); }
++        int fetch16(ivec2 c) {
++            vec4 p = fetch(c);
++            return u5(p.r) | (u5(p.g) << 5) | (u5(p.b) << 10) | (int(ceil(p.a)) << 15);
++        }
++
++        void main() {
++            // Past the rectangle the block repeats its edge.
++            ivec2 local = clamp(ivec2(gl_FragCoord.xy) - vInfo.yz, ivec2(0), vRect.zw - 1);
++            ivec2 uv = (vRect.xy + local) & ivec2(0xff);
++            vec4 c;
++            if (vInfo.x == 0) {
++                int s = fetch16(ivec2(vSrc.x + (uv.x >> 2), vSrc.y + uv.y));
++                c = fetch(ivec2(vSrc.z + ((s >> ((uv.x & 3) << 2)) & 0xf), vSrc.w));
++            } else if (vInfo.x == 1) {
++                int s = fetch16(ivec2(vSrc.x + (uv.x >> 1), vSrc.y + uv.y));
++                c = fetch(ivec2(vSrc.z + ((s >> ((uv.x & 1) << 3)) & 0xff), vSrc.w));
++            } else {
++                c = fetch(ivec2(vSrc.x + uv.x, vSrc.y + uv.y));
++            }
++            // Premultiplied by solidity; a transparent texel is already black.
++            oColor = (c.rgb == vec3(0.0) && c.a < 0.5) ? vec4(0.0) : vec4(c.rgb, 1.0);
++        }
++        """;
++
++    // The level above is the texture's base level while this runs, so it is lod 0.
++    public const string MipDownFs = """
++        #version 330 core
++        uniform sampler2D uAtlas;
++        out vec4 oColor;
++        void main() {
++            ivec2 p = ivec2(gl_FragCoord.xy) * 2;
++            oColor = 0.25 * (texelFetch(uAtlas, p, 0) + texelFetch(uAtlas, p + ivec2(1, 0), 0)
++                           + texelFetch(uAtlas, p + ivec2(0, 1), 0) + texelFetch(uAtlas, p + ivec2(1, 1), 0));
++        }
++        """;
++
+     static readonly (uint Index, string Name)[] PrimAttribs =
+     [
+         (0, "inPos"), (1, "inColorF"), (2, "inClutF"), (3, "inTexpageF"), (4, "inUV"), (5, "inW"), (6, "inZ"),
+-        (7, "inLit"), (8, "inFog"), (9, "inLight"),
++        (7, "inLit"), (8, "inFog"), (9, "inLight"), (10, "inTex"),
+     ];
+ 
+     public static uint BuildPrim(GL gl, string vsSrc, string fsSrc, string name)
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlTexCache.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlTexCache.cs
+new file mode 100644
+index 0000000..a2ec1d6
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlTexCache.cs
+@@ -0,0 +1,366 @@
++using System.Runtime.CompilerServices;
++using System.Runtime.InteropServices;
++using Silk.NET.OpenGL;
++
++namespace RecompOne.Runtime.Hle;
++
++/// <summary>
++/// 0060. Decoded textures with a mip chain each, for <see cref="GteDepth.Mipmaps"/>.
++///
++/// VRAM cannot be mipmapped: it is one sheet of pages, CLUTs and indices, and a lower
++/// level would average a texture into its neighbours and an index into the next one.
++/// So a texture a polygon is minified on is decoded through its CLUT into a block of
++/// its own in an RGBA8 atlas, premultiplied by solidity (a transparent texel is
++/// black), and its levels are built by a 2x2 box inside the block. A block is a
++/// power of two on a boundary of its size, so every level of it is aligned too and
++/// no level reads another block. Past the texture's own width the block repeats its
++/// edge, so a bilinear tap at the edge reads the edge.
++///
++/// An entry is keyed on the page, the mode, the CLUT and the texel rectangle, and is
++/// decoded again when <c>VramTracker</c> says the texels or the CLUT changed. Decodes
++/// are queued as polygons ask and run at the start of the batch that draws them, so a
++/// decode sees VRAM as those polygons did: anything that changes VRAM flushes first.
++/// </summary>
++sealed class GlTexCache
++{
++    public const int AtlasSize = 2048;
++    const int MinLog = 3, MaxLog = 8, AtlasLog = 11;
++    const int Levels = MaxLog + 1;
++
++    [StructLayout(LayoutKind.Sequential)]
++    struct QuadVert
++    {
++        public float X, Y;
++        public int U0, V0, W, H;
++        public int PageX, PageY, ClutX, ClutY;
++        public int Mode, BlockX, BlockY, Pad;
++    }
++
++    sealed class Entry
++    {
++        public ulong Key;
++        public int X, Y, Log;
++        public int U0, V0, W, H, Mode, PageX, PageY, ClutX, ClutY;
++        public int Gen;
++        public int CheckedClock = -1;
++        public long LastFrame;
++        public bool Queued;
++    }
++
++    readonly GL _gl;
++    uint _tex, _vao, _vbo, _progDecode, _progDown;
++    readonly uint[] _fbo = new uint[Levels];
++    public bool Ready { get; private set; }
++
++    readonly Dictionary<ulong, Entry> _entries = [];
++    readonly List<Entry> _queue = [];
++    QuadVert[] _quads = new QuadVert[6 * 64];
++
++    // Buddy allocator: free blocks per size, keyed by block index at that size.
++    readonly HashSet<int>[] _free = new HashSet<int>[AtlasLog + 1];
++
++    public GlTexCache(GL gl) => _gl = gl;
++
++    public uint Texture => _tex;
++
++    public unsafe void Init()
++    {
++        _progDecode = GlShaders.Build(_gl, GlShaders.MipVs, GlShaders.MipDecodeFs, "mipdecode",
++            [(0, "aPos"), (1, "aRect"), (2, "aSrc"), (3, "aInfo")]);
++        _progDown = GlShaders.Build(_gl, GlShaders.MipVs, GlShaders.MipDownFs, "mipdown",
++            [(0, "aPos"), (1, "aRect"), (2, "aSrc"), (3, "aInfo")]);
++        if (_progDecode == 0 || _progDown == 0) return;
++
++        _gl.UseProgram(_progDecode);
++        _gl.Uniform1(_gl.GetUniformLocation(_progDecode, "uVram"), 0);
++        _gl.UseProgram(_progDown);
++        _gl.Uniform1(_gl.GetUniformLocation(_progDown, "uAtlas"), 0);
++
++        _gl.ActiveTexture(TextureUnit.Texture7);
++        _tex = _gl.GenTexture();
++        _gl.BindTexture(TextureTarget.Texture2D, _tex);
++        for (int l = 0; l < Levels; l++)
++        {
++            uint sz = (uint)(AtlasSize >> l);
++            _gl.TexImage2D(TextureTarget.Texture2D, l, InternalFormat.Rgba8, sz, sz, 0,
++                PixelFormat.Rgba, PixelType.UnsignedByte, null);
++        }
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBaseLevel, 0);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, MaxLog);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.LinearMipmapNearest);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++
++        for (int l = 0; l < Levels; l++)
++        {
++            _fbo[l] = _gl.GenFramebuffer();
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo[l]);
++            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++                TextureTarget.Texture2D, _tex, l);
++        }
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++
++        _vao = _gl.GenVertexArray();
++        _vbo = _gl.GenBuffer();
++        _gl.BindVertexArray(_vao);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
++        uint st = (uint)sizeof(QuadVert);
++        _gl.EnableVertexAttribArray(0); _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, st, (void*)0);
++        _gl.EnableVertexAttribArray(1); _gl.VertexAttribIPointer(1, 4, VertexAttribIType.Int, st, (void*)8);
++        _gl.EnableVertexAttribArray(2); _gl.VertexAttribIPointer(2, 4, VertexAttribIType.Int, st, (void*)24);
++        _gl.EnableVertexAttribArray(3); _gl.VertexAttribIPointer(3, 4, VertexAttribIType.Int, st, (void*)40);
++        _gl.BindVertexArray(0);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
++
++        Reset();
++        Ready = true;
++    }
++
++    void Reset()
++    {
++        _entries.Clear();
++        _queue.Clear();
++        for (int i = 0; i <= AtlasLog; i++) _free[i] = [];
++        _free[AtlasLog].Add(0);
++        GteDepth.MipEntries = 0;
++    }
++
++    /// <summary>The atlas entry for a texture, as the flags the prim shader reads
++    /// (block x/8, y/8, log2 size, bit 30), or 0 when there is none.
++    /// <paramref name="tpage"/> and <paramref name="clut"/> are the primitive's.</summary>
++    public uint Lookup(int tpage, int clut, uint rect, long frame)
++    {
++        int mode = (tpage >> 7) & 3;
++        if (mode == 3) mode = 2;
++        int u0 = (int)(rect & 0xFF), v0 = (int)((rect >> 8) & 0xFF);
++        int u1 = (int)((rect >> 16) & 0xFF), v1 = (int)(rect >> 24);
++        int w = u1 - u0 + 1, h = v1 - v0 + 1;
++        if (w <= 0 || h <= 0) return 0;
++
++        ulong key = rect | (ulong)(tpage & 0x1F) << 32 | (ulong)mode << 37
++                  | (mode == 2 ? 0ul : (ulong)(clut & 0x7FFF) << 40);
++        if (!_entries.TryGetValue(key, out var e))
++        {
++            int log = MinLog;
++            while ((1 << log) < Math.Max(w, h)) log++;
++            if (log > MaxLog) return 0;
++            if (!Allocate(log, frame, out int bx, out int by)) { GteDepth.MipFull++; return 0; }
++            e = new Entry
++            {
++                Key = key, X = bx, Y = by, Log = log, U0 = u0, V0 = v0, W = w, H = h, Mode = mode,
++                PageX = (tpage & 0xF) * 64, PageY = ((tpage >> 4) & 1) * 256,
++                ClutX = (clut & 0x3F) * 16, ClutY = (clut >> 6) & 0x1FF,
++            };
++            _entries[key] = e;
++            GteDepth.MipEntries = _entries.Count;
++        }
++
++        e.LastFrame = frame;
++        int clock = Assets.Textures.VramTracker.Clock;
++        if (e.CheckedClock != clock)
++        {
++            e.CheckedClock = clock;
++            int gen = VramGen(e);
++            if (gen != e.Gen)
++            {
++                e.Gen = gen;
++                if (!e.Queued) { e.Queued = true; _queue.Add(e); }
++            }
++        }
++        return (uint)(e.X >> 3) | (uint)(e.Y >> 3) << 8 | (uint)e.Log << 16 | 0x40000000u;
++    }
++
++    static int VramGen(Entry e)
++    {
++        int div = e.Mode == 0 ? 4 : e.Mode == 1 ? 2 : 1;
++        int x0 = e.PageX + e.U0 / div, x1 = e.PageX + (e.U0 + e.W - 1) / div;
++        int g = Assets.Textures.VramTracker.Generation(x0, e.PageY + e.V0, x1 - x0 + 1, e.H);
++        if (e.Mode != 2)
++            g = g * 31 + Assets.Textures.VramTracker.Generation(e.ClutX, e.ClutY, e.Mode == 0 ? 16 : 256, 1);
++        return g | 1;
++    }
++
++    public bool HasPending => _queue.Count > 0;
++
++    /// <summary>Decode what the batch about to be drawn asked for and build its levels.
++    /// Leaves the framebuffer, program, VAO, viewport and texture unit 0 changed;
++    /// the caller binds its own after.</summary>
++    public unsafe void Process(uint vramTex)
++    {
++        if (_queue.Count == 0) return;
++        int n = _queue.Count;
++        if (_quads.Length < n * 6) _quads = new QuadVert[n * 6 * 2];
++
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.Disable(EnableCap.DepthTest);
++        _gl.Disable(EnableCap.Blend);
++        _gl.DepthMask(false);
++        _gl.BindVertexArray(_vao);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
++
++        // Level 0: decode.
++        for (int i = 0; i < n; i++) Quad(i, _queue[i], 0);
++        Upload(n);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo[0]);
++        _gl.Viewport(0, 0, AtlasSize, AtlasSize);
++        _gl.UseProgram(_progDecode);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        _gl.BindTexture(TextureTarget.Texture2D, vramTex);
++        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)(n * 6));
++
++        // Levels 1..: each from the one above, sampling that level alone so the level
++        // being written is not in the texture's sampled range.
++        _gl.UseProgram(_progDown);
++        _gl.BindTexture(TextureTarget.Texture2D, _tex);
++        for (int l = 1; l <= MaxLog; l++)
++        {
++            int m = 0;
++            for (int i = 0; i < n; i++)
++                if (_queue[i].Log >= l) Quad(m++, _queue[i], l);
++            if (m == 0) break;
++            Upload(m);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBaseLevel, l - 1);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, l - 1);
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo[l]);
++            _gl.Viewport(0, 0, (uint)(AtlasSize >> l), (uint)(AtlasSize >> l));
++            _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)(m * 6));
++        }
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBaseLevel, 0);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, MaxLog);
++
++        if (GteDepth.MipVerify > 0) Verify(_queue[n - 1]);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++        _gl.BindVertexArray(0);
++        foreach (var e in _queue) e.Queued = false;
++        GteDepth.MipDecodes += n;
++        _queue.Clear();
++    }
++
++    unsafe void Verify(Entry e)
++    {
++        GteDepth.MipVerify--;
++        int size = 1 << e.Log;
++        var px = new byte[size * size * 4];
++        var top = new byte[4];
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo[0]);
++        fixed (byte* p = px) _gl.ReadPixels(e.X, e.Y, (uint)size, (uint)size, PixelFormat.Rgba, PixelType.UnsignedByte, p);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo[e.Log]);
++        fixed (byte* p = top) _gl.ReadPixels(e.X >> e.Log, e.Y >> e.Log, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, p);
++        double r = 0, g = 0, b = 0, a = 0;
++        int distinct = 0, last = -1;
++        for (int i = 0; i < size * size; i++)
++        {
++            r += px[i * 4]; g += px[i * 4 + 1]; b += px[i * 4 + 2]; a += px[i * 4 + 3];
++            int v = px[i * 4] | px[i * 4 + 1] << 8 | px[i * 4 + 2] << 16;
++            if (v != last) { distinct++; last = v; }
++        }
++        int n = size * size;
++        Console.WriteLine($"[KF2] mip verify: mode {e.Mode} page {e.PageX},{e.PageY} rect {e.U0},{e.V0} {e.W}x{e.H} " +
++                          $"block {size}: level 0 mean {r / n:F1},{g / n:F1},{b / n:F1} solid {a / n / 255:P0}, " +
++                          $"{distinct} colour runs; level {e.Log} {top[0]},{top[1]},{top[2]},{top[3]}");
++    }
++
++    unsafe void Upload(int quads)
++    {
++        fixed (QuadVert* p = _quads)
++            _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(quads * 6 * sizeof(QuadVert)), p, BufferUsageARB.StreamDraw);
++    }
++
++    void Quad(int slot, Entry e, int level)
++    {
++        float size = AtlasSize >> level;
++        float x0 = (e.X >> level) / size * 2f - 1f, y0 = (e.Y >> level) / size * 2f - 1f;
++        float x1 = ((e.X >> level) + (1 << (e.Log - level))) / size * 2f - 1f;
++        float y1 = ((e.Y >> level) + (1 << (e.Log - level))) / size * 2f - 1f;
++        var q = new QuadVert
++        {
++            U0 = e.U0, V0 = e.V0, W = e.W, H = e.H,
++            PageX = e.PageX, PageY = e.PageY, ClutX = e.ClutX, ClutY = e.ClutY,
++            Mode = e.Mode, BlockX = e.X >> level, BlockY = e.Y >> level,
++        };
++        int b = slot * 6;
++        _quads[b] = q; _quads[b].X = x0; _quads[b].Y = y0;
++        _quads[b + 1] = q; _quads[b + 1].X = x1; _quads[b + 1].Y = y0;
++        _quads[b + 2] = q; _quads[b + 2].X = x0; _quads[b + 2].Y = y1;
++        _quads[b + 3] = q; _quads[b + 3].X = x1; _quads[b + 3].Y = y0;
++        _quads[b + 4] = q; _quads[b + 4].X = x1; _quads[b + 4].Y = y1;
++        _quads[b + 5] = q; _quads[b + 5].X = x0; _quads[b + 5].Y = y1;
++    }
++
++    // ---- The buddy allocator --------------------------------------------------
++
++    bool Allocate(int log, long frame, out int x, out int y)
++    {
++        if (TryAllocate(log, out x, out y)) return true;
++        // Evict what no frame since the last one has drawn, oldest first. The current
++        // and previous frame's entries may still be in a batch not yet drawn.
++        var old = new List<Entry>();
++        foreach (var e in _entries.Values)
++            if (e.LastFrame < frame - 1 && !e.Queued) old.Add(e);
++        old.Sort((a, b) => a.LastFrame.CompareTo(b.LastFrame));
++        foreach (var e in old)
++        {
++            _entries.Remove(e.Key);
++            Release(e.X, e.Y, e.Log);
++            GteDepth.MipEvictions++;
++            if (TryAllocate(log, out x, out y)) { GteDepth.MipEntries = _entries.Count; return true; }
++        }
++        GteDepth.MipEntries = _entries.Count;
++        return false;
++    }
++
++    bool TryAllocate(int log, out int x, out int y)
++    {
++        x = y = 0;
++        if (log > AtlasLog) return false;
++        int per = AtlasSize >> log;
++        foreach (int i in _free[log])
++        {
++            _free[log].Remove(i);
++            x = (i % per) << log; y = (i / per) << log;
++            return true;
++        }
++        if (!TryAllocate(log + 1, out int px, out int py)) return false;
++        int s = 1 << log;
++        _free[log].Add(Index(px + s, py, log));
++        _free[log].Add(Index(px, py + s, log));
++        _free[log].Add(Index(px + s, py + s, log));
++        x = px; y = py;
++        return true;
++    }
++
++    void Release(int x, int y, int log)
++    {
++        while (log < AtlasLog)
++        {
++            int s = 1 << log;
++            int px = x & ~(2 * s - 1), py = y & ~(2 * s - 1);
++            int a = Index(px, py, log), b = Index(px + s, py, log), c = Index(px, py + s, log), d = Index(px + s, py + s, log);
++            int self = Index(x, y, log);
++            var f = _free[log];
++            bool all = (a == self || f.Contains(a)) && (b == self || f.Contains(b))
++                    && (c == self || f.Contains(c)) && (d == self || f.Contains(d));
++            if (!all) { f.Add(self); return; }
++            f.Remove(a); f.Remove(b); f.Remove(c); f.Remove(d);
++            x = px; y = py; log++;
++        }
++        _free[AtlasLog].Add(0);
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    static int Index(int x, int y, int log) => (y >> log) * (AtlasSize >> log) + (x >> log);
++
++    public void Dispose()
++    {
++        if (!Ready) return;
++        _gl.DeleteTexture(_tex);
++        foreach (var f in _fbo) _gl.DeleteFramebuffer(f);
++        _gl.DeleteBuffer(_vbo);
++        _gl.DeleteVertexArray(_vao);
++        _gl.DeleteProgram(_progDecode);
++        _gl.DeleteProgram(_progDown);
++        Ready = false;
++    }
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuHleForward.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuHleForward.cs
+index b1c1dac..8ac961f 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -31,6 +31,7 @@ public sealed partial class Gpu
+         R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
+         Z = v.W, HasGteZ = z, HasPersp = persp,
+         Lx = v.Lx, Ly = v.Ly, Lz = v.Lz, Fog = v.Fog, Light = v.Light, LightGen = v.LightGen,
++        TexRect = v.TexRect, HasTexRect = v.HasTexRect,
+     };
+ 
+     PrimFlags PrimOf(bool tex, bool semi, bool raw, int clut, bool gouraud = false) => new()
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+index a369f95..eb2d023 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -28,6 +28,8 @@ public sealed partial class Gpu
+         public float Px, Py; public bool Precise, PreciseW;
+         // 0048. What GteLightMap recorded for this vertex; Light 0 is none.
+         public float Lx, Ly, Lz, Fog; public uint Light; public int LightGen;
++        // 0060. The polygon's texture rectangle, the same for every corner.
++        public uint TexRect; public bool HasTexRect;
+     }
+ 
+     static readonly RenderPrimEvent _primEvent = new();
+@@ -188,6 +190,23 @@ public sealed partial class Gpu
+             }
+         }
+ 
++        // 0060. The texture rectangle the filters stay inside: the port's record for a
++        // clipped fan, whose own UVs are only part of its face's, else the polygon's.
++        if (tex && !Detached && HleOn && GteTexRect.Active)
++        {
++            if (!GteTexRect.Find(_fifoSrc[0], _fifo[0], _fifo[vwAt[0]], _fifo[vwAt[n - 1]], out uint rect))
++            {
++                int u0 = 255, v0 = 255, u1 = 0, v1 = 0;
++                for (int i = 0; i < n; i++)
++                {
++                    u0 = Math.Min(u0, v[i].U); u1 = Math.Max(u1, v[i].U);
++                    v0 = Math.Min(v0, v[i].V); v1 = Math.Max(v1, v[i].V);
++                }
++                rect = (uint)u0 | (uint)v0 << 8 | (uint)u1 << 16 | (uint)v1 << 24;
++            }
++            for (int i = 0; i < n; i++) { v[i].TexRect = rect; v[i].HasTexRect = true; }
++        }
++
+         //dispatch the render event for prims
+         if (!Detached) Hle.GpuHle.PortWidenedPrim = false;
+         if (!Detached && Event.HasAnyListeners<RenderPrimEvent>())
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index c20066e..4c2926b 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -561,7 +561,8 @@ public static class GteDepth
+     /// many samples along the long axis instead and averages them, which is the
+     /// only mip-free way to do it — the VRAM sheet cannot carry a mip chain, since
+     /// one page's lower level would average in its neighbours and a CLUT's would
+-    /// average in the palette beside it.
++    /// average in the palette beside it. <see cref="Mipmaps"/> builds one where the
++    /// texture is decoded instead.
+     ///
+     /// Clamped to 1..16 by <c>Kf2.Anisotropic</c>. GL backend only; the software
+     /// rasterizer is always a single sample. Safe to change at run time — it is a
+@@ -578,6 +579,26 @@ public static class GteDepth
+     /// </summary>
+     public static bool AnisotropyLive;
+ 
++    /// <summary>
++    /// 0060. Mipmaps: each texture a polygon is minified on is decoded through its
++    /// CLUT into an atlas with a mip chain of its own, and the prim shader samples
++    /// that at the footprint's level, with <see cref="Anisotropy"/> taps along the
++    /// long axis. A texture cannot be mipmapped where it lives -- VRAM is one sheet
++    /// of pages, CLUTs and indices -- so it is mipmapped where it is decoded.
++    /// GL core backend only.
++    /// </summary>
++    public static bool Mipmaps;
++
++    /// <summary>True once the GL backend has built the atlas and found <c>uMipOn</c>.</summary>
++    public static bool MipmapsLive;
++
++    /// <summary>Atlas entries live, decoded (first or again), evicted, and polygons
++    /// that asked and found no room. Never reset.</summary>
++    public static long MipEntries, MipDecodes, MipEvictions, MipFull;
++
++    /// <summary>Decode batches still to read back and print (KF2_ANISO_PROBE=2).</summary>
++    public static int MipVerify;
++
+     /// <summary>
+     /// 0053. Scrolling textures — water, slime skins, the main-hall fire — that
+     /// <c>func_8002DC78</c> re-uploads at the world tick. Each live slot is a VRAM
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteTexRect.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteTexRect.cs
+new file mode 100644
+index 0000000..eb60122
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteTexRect.cs
+@@ -0,0 +1,63 @@
++using System.Runtime.CompilerServices;
++
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0060. The texture rectangle a packet samples, for the texture filters.
++///
++/// A filter that reads more than one texel must stay on the texture the polygon is
++/// on: past its edge is other art in the same page, read through this polygon's
++/// CLUT. The GPU takes the rectangle from the polygon's own UVs, which is exact for
++/// a whole face. A clipped fan carries only the part of its face's UVs that survived
++/// the clip, so the port records the face's rectangle by packet address, and a
++/// fan's filter and its texture cache entry are then the same as its neighbours'.
++/// Checked by the command word and the first and last vertex words, as
++/// <see cref="GtePacketDepth"/> is.
++/// </summary>
++public static class GteTexRect
++{
++    public struct Rec
++    {
++        public uint Cmd, Xy0, XyLast;
++        /// <summary>u0 | v0 &lt;&lt; 8 | u1 &lt;&lt; 16 | v1 &lt;&lt; 24, inclusive.</summary>
++        public uint Rect;
++    }
++
++    /// <summary>Set while a texture filter is on.</summary>
++    public static bool Active => GteDepth.Anisotropy > 1 || GteDepth.Mipmaps;
++
++    static Rec[]? _recs;
++    static Rec _discard;
++    static uint _base, _count;
++
++    public static void SetRange(uint baseAddress, uint bytes)
++    {
++        _base = baseAddress & 0x1FFFFFFFu;
++        _count = bytes >> 2;
++        _recs = new Rec[_count];
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static ref Rec Slot(uint pkt)
++    {
++        uint i = ((pkt & 0x1FFFFFFFu) - _base) >> 2;
++        if (_recs == null || i >= _count) return ref _discard;
++        return ref _recs[i];
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static bool Find(uint cmdSrc, uint cmd, uint xy0, uint xyLast, out uint rect)
++    {
++        rect = 0;
++        uint i = ((cmdSrc & 0x1FFFFFFFu) - 4u - _base) >> 2;
++        if (_recs == null || cmdSrc == 0 || i >= _count) return false;
++        ref readonly var r = ref _recs[i];
++        if (r.Cmd == 0 || r.Cmd != cmd || r.Xy0 != xy0 || r.XyLast != xyLast) return false;
++        rect = r.Rect;
++        Hits++;
++        return true;
++    }
++
++    /// <summary>Records written, and polygons that took one.</summary>
++    public static long Recorded, Hits;
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Hle/HleTypes.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
+index ff0c249..44663fd 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
+@@ -20,6 +20,10 @@ public struct HleVertex
+     public float Lx, Ly, Lz, Fog;
+     public uint Light;
+     public int LightGen;
++    // 0060. The texture rectangle (u0 | v0 << 8 | u1 << 16 | v1 << 24, inclusive);
++    // 0 with HasTexRect clear is none.
++    public uint TexRect;
++    public bool HasTexRect;
+ }
+ 
+ public struct PrimFlags

@@ -1,0 +1,63 @@
+diff --git a/RecompOne.Runtime/Gpu/Gpu.cs b/RecompOne.Runtime/Gpu/Gpu.cs
+index 8b55b53..1167448 100644
+--- a/RecompOne.Runtime/Gpu/Gpu.cs
++++ b/RecompOne.Runtime/Gpu/Gpu.cs
+@@ -140,6 +140,10 @@ public sealed partial class Gpu
+     {
+         uint op = (word >> 24) & 0xFF;
+         uint p = word & 0xFFFFFF;
++        // GP1 is display/control only -- a handful of writes per mode change --
++        // so tracing all of it is cheap and it is the only way to see whether the
++        // game ever enabled the display (GP1(03)).
++        if (Log.GpuOn) Log.Gpu($"GP1({op:X2}) 0x{p:X6}");
+         switch (op)
+         {
+             case >= 0x05 and <= 0x08:
+diff --git a/RecompOne.Runtime/sdk/LibGpu.cs b/RecompOne.Runtime/sdk/LibGpu.cs
+index 798b2e5..98bbfe5 100644
+--- a/RecompOne.Runtime/sdk/LibGpu.cs
++++ b/RecompOne.Runtime/sdk/LibGpu.cs
+@@ -15,6 +15,8 @@ public static class LibGpu
+         var gpu = Runtime.Gpu;
+         if (gpu == null) return;
+ 
++        if (Log.SdkOn) Log.Sdk($"DrawOTag ot=0x{c.A0:X8}");
++
+         uint addr = c.A0 & 0x1FFFFCu;
+         bool custom = GpuPrims.Any && GpuPrims.OtLength > 0;
+         uint otBase = GpuPrims.OtBase & 0x1FFFFCu;
+@@ -37,7 +39,11 @@ public static class LibGpu
+         if (custom) GpuPrims.Clear();
+     }
+ 
+-    public static void DrawSync(CpuContext c, IMemory m) => c.V0 = 0;
++    public static void DrawSync(CpuContext c, IMemory m)
++    {
++        if (Log.SdkOn) Log.Sdk($"DrawSync({(int)c.A0})");
++        c.V0 = 0;
++    }
+ 
+     public static void PutDrawEnv(CpuContext c, IMemory m)
+     {
+@@ -56,6 +62,10 @@ public static class LibGpu
+         byte isbg = m.ReadU8(env + 0x18);
+         byte r0 = m.ReadU8(env + 0x19), g0 = m.ReadU8(env + 0x1A), b0 = m.ReadU8(env + 0x1B);
+ 
++        if (Log.SdkOn)
++            Log.Sdk($"PutDrawEnv env=0x{env:X8} clip=({clipX},{clipY})-{clipW}x{clipH} " +
++                    $"ofs=({ofsX},{ofsY}) tpage=0x{tpage:X4} isbg={isbg}");
++
+         gpu.WriteGp0(GetCs(clipX, clipY));
+         gpu.WriteGp0(GetCe((short)(clipX + clipW - 1), (short)(clipY + clipH - 1)));
+         gpu.WriteGp0(GetOfs(ofsX, ofsY));
+@@ -100,6 +110,10 @@ public static class LibGpu
+         byte isrgb24 = m.ReadU8(env + 0x11);
+         bool pal = gpu.Pal;
+ 
++        if (Log.SdkOn)
++            Log.Sdk($"PutDispEnv env=0x{env:X8} disp=({dispX},{dispY})-{dispW}x{dispH} " +
++                    $"screen=({scrX},{scrY})-{scrW}x{scrH} inter={isinter} rgb24={isrgb24}");
++
+         gpu.WriteGp1(0x05000000u | (((uint)dispY & 0x3FF) << 10) | ((uint)dispX & 0x3FF));
+ 
+         int hStart = scrX * 10 + 0x260;

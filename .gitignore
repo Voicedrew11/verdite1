@@ -1,0 +1,10 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+.idea/
+
+# Tracked upstream, left out here: 15.7 MB read only by --autoconfigure.
+# Fetch it from upstream at the UPSTREAM pin.
+RecompOne.Recompiler/AutoConfigure/signatures/psyq.json

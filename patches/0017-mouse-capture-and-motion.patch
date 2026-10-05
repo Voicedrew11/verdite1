@@ -1,0 +1,123 @@
+--- a/RecompOne.Runtime/Host/InputManager.cs
++++ b/RecompOne.Runtime/Host/InputManager.cs
+@@ -74,6 +74,68 @@
+ 
+     public static bool IsKeyDown(Key k) => _keyboard?.IsKeyPressed(k) ?? false;
+ 
++    // ---- the mouse, as a motion source rather than a pointer -----------------
++    //
++    // A pointer runs out of desktop halfway through a turn, so a game played with
++    // the mouse needs the lock: GLFW's disabled cursor reports an unbounded
++    // virtual position, and the difference between two of them is the motion
++    // itself. Raw mode is the same thing with the desktop's pointer acceleration
++    // taken out, which is what a look axis wants, so it is preferred where the
++    // platform has it.
++    //
++    // The accumulator runs whether or not anything has asked for capture -- it is
++    // one subtraction per callback -- and is cleared on the mode change, because
++    // the pointer teleports when the cursor is locked or let go and that jump is
++    // not motion anyone asked for.
++    static Vector2 _mousePos;
++    static bool _mouseSeen;
++    static float _mouseDx, _mouseDy;
++    static bool _mouseCaptured;
++
++    public static bool MouseAvailable => _mouse != null;
++
++    /// <summary>
++    /// Lock the pointer to the window and hide it, or give it back. Silently
++    /// stays off if there is no mouse or the platform refuses the mode, so a
++    /// caller can ask and then read this back to see whether it happened.
++    /// </summary>
++    public static bool MouseCaptured
++    {
++        get => _mouseCaptured;
++        set
++        {
++            if (_mouse == null || value == _mouseCaptured) return;
++
++            var cursor = _mouse.Cursor;
++            var mode = value
++                ? (cursor.IsSupported(CursorMode.Raw) ? CursorMode.Raw : CursorMode.Disabled)
++                : CursorMode.Normal;
++
++            try { cursor.CursorMode = mode; }
++            catch (Exception e)
++            {
++                Console.Error.WriteLine($"[Host] mouse capture unavailable: {e.Message}");
++                return;
++            }
++
++            _mouseCaptured = value;
++            _mouseSeen = false;
++            _mouseDx = _mouseDy = 0f;
++        }
++    }
++
++    /// <summary>Motion since the last call, in window pixels, and cleared by
++    /// it.</summary>
++    public static (float X, float Y) TakeMouseMotion()
++    {
++        var motion = (_mouseDx, _mouseDy);
++        _mouseDx = _mouseDy = 0f;
++        return motion;
++    }
++
++    public static bool IsMouseButtonDown(MouseButton button) =>
++        _mouse != null && _mouse.IsButtonPressed(button);
++
+     public static void Poll()
+     {
+         PollGamepadEvents();
+@@ -112,6 +174,7 @@
+ 
+     public static void Shutdown()
+     {
++        MouseCaptured = false;
+         CloseControllers();
+         _sdl?.QuitSubSystem(Sdl.InitGamecontroller);
+         _sdl?.Dispose();
+@@ -330,6 +393,14 @@
+ 
+     static void OnMouseMove(IMouse mouse, Vector2 position)
+     {
++        if (_mouseSeen)
++        {
++            _mouseDx += position.X - _mousePos.X;
++            _mouseDy += position.Y - _mousePos.Y;
++        }
++        _mousePos = position;
++        _mouseSeen = true;
++
+         if (EventBus.HasAnyListeners<MouseEvent>())
+         {
+             EventBus.Dispatch(new MouseEvent
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -342,6 +342,26 @@
+ 
+     public static bool IsKeyDown(Key k) => InputManager.IsKeyDown(k);
+ 
++    // The mouse, for a port that wants to steer with it. InputManager owns the
++    // IMouse and is internal, so these are the way out of the assembly -- the
++    // same role IsKeyDown already plays for the keyboard.
++    public static bool MouseAvailable => InputManager.MouseAvailable;
++
++    /// <summary>Lock the pointer to the window and hide it, or give it back.
++    /// Read it back after setting it: a platform that refuses the mode leaves
++    /// this false.</summary>
++    public static bool MouseCaptured
++    {
++        get => InputManager.MouseCaptured;
++        set => InputManager.MouseCaptured = value;
++    }
++
++    /// <summary>Motion since the last call, in window pixels, and cleared by
++    /// it.</summary>
++    public static (float X, float Y) TakeMouseMotion() => InputManager.TakeMouseMotion();
++
++    public static bool IsMouseButtonDown(MouseButton button) => InputManager.IsMouseButtonDown(button);
++
+     public static void RequestDiscPath() => PopupManager.Open<DiscPickerPopup>();
+ 
+     public static void WaitForValidDisc() // wait for disc path to be valid before running it!!

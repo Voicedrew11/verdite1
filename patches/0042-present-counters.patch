@@ -1,0 +1,56 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/sdk/LibEtc.cs b/tools/RecompOne/RecompOne.Runtime/sdk/LibEtc.cs
+index 3ef91ad..bc4c65e 100644
+--- a/tools/RecompOne/RecompOne.Runtime/sdk/LibEtc.cs
++++ b/tools/RecompOne/RecompOne.Runtime/sdk/LibEtc.cs
+@@ -29,6 +29,15 @@ public static class LibEtc
+     /// </summary>
+     public static bool BlockingVSync;
+ 
++    //0042. Presents counted where they happen, not where a hook says they do. A
++    //port that paces from hooks on this function cannot use those hooks to notice
++    //that they have stopped running, so this is counted in the body itself: the
++    //calls that reach PresentFrame, and on request the managed stack of one of
++    //them, which shows whether the call still came through the hook trampoline.
++    public static long VSyncCalls;
++    public static volatile bool CaptureNextStack;
++    public static string? CapturedStack;
++
+     //The vblank is time, not a call. On hardware the interrupt fires every 16.7 ms
+     //whether or not the game is ready for it: a loop blocked on a CD read misses
+     //pictures, not vblanks. This port advanced _vcount once per VSync call instead,
+@@ -72,6 +81,13 @@ public static class LibEtc
+             return;
+         }
+ 
++        VSyncCalls++;
++        if (CaptureNextStack)
++        {
++            CaptureNextStack = false;
++            CapturedStack = Environment.StackTrace;
++        }
++
+         LastWaitMs = Interrupts.ClockMs;
+         //Upstream's frame interpolator feeds off this whichever timeline runs; it
+         //is inert unless Interp is enabled.
+diff --git a/tools/RecompOne/RecompOne.Runtime/sdk/LibGpu.cs b/tools/RecompOne/RecompOne.Runtime/sdk/LibGpu.cs
+index 3a9bb42..39d02e1 100644
+--- a/tools/RecompOne/RecompOne.Runtime/sdk/LibGpu.cs
++++ b/tools/RecompOne/RecompOne.Runtime/sdk/LibGpu.cs
+@@ -286,6 +286,9 @@ public static class LibGpu
+     private static int _flipX = -1, _flipY = -1;
+     private static double _autoMark;
+ 
++    //0042. Presents forced from a display flip; see LibEtc.VSyncCalls.
++    public static long AutoPresents;
++
+     //this is not the best method probably, but some games get stuck on this and i havent found a better way
+     private const double FlipGrace = 100.0;
+ 
+@@ -305,6 +308,7 @@ public static class LibGpu
+         if (now - _autoMark < Host.FrameClock.FrameMs * 0.5) return;
+ 
+         _autoMark = now;
++        AutoPresents++; //0042
+         Runtime.PresentFrame();
+     }
+ 

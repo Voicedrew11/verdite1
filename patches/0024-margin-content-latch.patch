@@ -1,0 +1,159 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -10,6 +10,15 @@
+     public bool Dirty;
+     public long Stamp;
+     public long LastDrawFrame;
++    // Whether this target's margin columns have ever carried a world's worth of
++    // content: latched once a single display flip delivers enough game vertices
++    // past the game's own draw edge, or a fill covers the target. Negative means
++    // never. The density test is what keeps an oversized clear rect -- genuine
++    // game output, but two vertices of it per flip -- from granting the margin
++    // to a scene that never renders anything out there.
++    public int MarginContentFlip = -1000;
++    public int MarginVerts;
++    public int MarginVertFlip = -1;
+     public int ZGen = -1;
+ 
+     public int Wide1x => W + Margin * 2;
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -405,8 +405,28 @@
+ 
+     bool DitherOf(in PrimFlags f) => _env.Dither && (f.Gouraud || (f.Textured && !f.RawTexture));
+ 
++    // Crossing vertices a single display flip must deliver before the target's
++    // margin counts as carrying a world. See the latch in V.
++    const int MarginVertsToLatch = 32;
++
+     GlVertex V(in HleVertex v, in PrimFlags f, bool dither)
+     {
++        // The latch records where the game itself drew past its own edge, and it
++        // takes a world's worth of crossings in one display flip to do it: a
++        // frame of gameplay puts hundreds of vertices out there, while an
++        // oversized clear rect -- genuine game output, and the splash draws one
++        // every MDEC frame -- contributes two. A primitive the widescreen patch
++        // widened crosses the edge by construction and never counts at all.
++        if (!GpuHle.PortWidenedPrim && _kTarget is { Margin: > 0 } && (v.X < _env.ClipX0 || v.X > _env.ClipX1))
++        {
++            if (_kTarget.MarginVertFlip != GpuHle.DisplayFlip)
++            {
++                _kTarget.MarginVertFlip = GpuHle.DisplayFlip;
++                _kTarget.MarginVerts = 0;
++            }
++            if (++_kTarget.MarginVerts >= MarginVertsToLatch)
++                _kTarget.MarginContentFlip = GpuHle.DisplayFlip;
++        }
+         bool raw = f.Textured && f.RawTexture;
+         float cr = raw ? 128f : v.R, cg = raw ? 128f : v.G, cb = raw ? 128f : v.B;
+         int tpage = f.UseImage ? 0x4000 : f.Textured ? (f.TPage & 0x1FF) : 0x8000;
+@@ -509,7 +529,7 @@
+                 FillRtFull(rt, color15);
+                 rt.Dirty = false;
+                 rt.LastDrawFrame = _frame;
+-                if (rt.Margin > 0) GpuHle.LastMarginContentFlip = GpuHle.DisplayFlip;
++                if (rt.Margin > 0) rt.MarginContentFlip = GpuHle.DisplayFlip;
+             }
+             else SyncRtFromVram(rt, x, y, w, h);
+         }
+@@ -805,6 +825,17 @@
+         }
+     }
+ 
++    public void ClearMarginLatches()
++    {
++        foreach (var t in _rts)
++        {
++            if (t == null) continue;
++            t.MarginContentFlip = -1000;
++            t.MarginVerts = 0;
++            t.MarginVertFlip = -1;
++        }
++    }
++
+     public void Present(in HleDispEnv disp) => PresentDisplay(disp.X, disp.Y, disp.W, disp.H, disp.Rgb24);
+ 
+     public unsafe (uint tex, int w, int h, float aspect) PresentDisplay(int dispX, int dispY, int w, int h, bool rgb24 = false, int outW = 0, int outH = 0)
+@@ -848,13 +879,13 @@
+                 if (dispX < rt.X || dispY < rt.Y || dispX + w > rt.X + rt.W || dispY + h > rt.Y + rt.H) continue;
+                 if (src == null || rt.LastDrawFrame > src.LastDrawFrame) src = rt;
+             }
+-        // A wide target whose margin columns this scene never draws presents a
+-        // 16:9 frame with black sides -- and when only one of the game's two flip
+-        // buffers has such a target (STR playback draws one OT, MDECs the other),
+-        // the present flaps between it and the 4:3 VRAM fallback: the picture
+-        // breathes horizontally. Demote before the census so the counters report
+-        // what was actually presented.
+-        if (src is { Margin: > 0 } && GpuHle.DisplayFlip - GpuHle.LastMarginContentFlip > 2)
++        // A wide target whose margin columns no scene has ever drawn would present
++        // invented picture at the sides -- the boot splash, whose frames arrive by
++        // MDEC, flapped between such a target and the 4:3 fallback. Refuse targets
++        // that never latched margin content; a target that did keeps serving, which
++        // is what keeps the in-game menu, dialogs, shops and signs wide instead of
++        // collapsing to the 320-wide 4:3 fallback the moment the world render stops.
++        if (src is { Margin: > 0 } && src.MarginContentFlip < 0)
+             src = null;
+         // Only the non-rgb24 path searches for a target, so src is meaningful only
+         // there; an rgb24 present (FMV) draws raw VRAM by a different route and would
+diff --git a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+--- a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
++++ b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+@@ -19,16 +19,17 @@
+     public static bool PresentProbe;
+     public static long PresentWide, PresentPlain, PresentFallback;
+     public static double PresentWindowStart = Environment.TickCount64 / 1000.0;
+-    // Whether the margin is showing anything the game actually drew. DisplayFlip
+-    // counts genuine display-area flips (NotifyDisplay seeing a different X,Y --
+-    // the per-frame flip, not the GP1(06)/(07)/(08) re-notifications of the same
+-    // rect). Writers stamp LastMarginContentFlip with it; PresentDisplay refuses
+-    // a wide target whose margin has been idle for more than two flips, which is
+-    // what keeps scenes whose picture arrives by MDEC -- the boot splash -- at
+-    // their authored width instead of flapping between a wide target and the
+-    // 4:3 fallback.
++    // DisplayFlip counts genuine display-area flips (NotifyDisplay seeing a
++    // different X,Y -- the per-frame flip, not the GP1(06)/(07)/(08)
++    // re-notifications of the same rect). Per-target margin-content latches
++    // stamp themselves with it; see GlDisplayRt.MarginContentFlip.
+     public static int DisplayFlip = 0;
+-    public static int LastMarginContentFlip = -1000;
++    // Set by the widescreen patch while a primitive it has itself widened is in
++    // flight, and cleared by GpuRaster before each primitive's RenderPrimEvent
++    // dispatch. The latch must record where the GAME drew past its own edge --
++    // the port stretching a splash fade across the margins is not margin content,
++    // and stamping from it is what made the boot splash flap between widths.
++    public static bool PortWidenedPrim;
+ 
+     public struct DispRect { public int X, Y, W, H; public long Stamp; public bool Valid; }
+ 
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -128,6 +128,7 @@
+         }
+ 
+         //dispatch the render event for prims
++        Hle.GpuHle.PortWidenedPrim = false;
+         if (Event.HasAnyListeners<RenderPrimEvent>())
+         {
+             var e = _primEvent;
+@@ -369,6 +370,7 @@
+         if (sz == 0) { uint wh = _fifo[idx]; w = (int)(wh & 0xFFFF); h = (int)((wh >> 16) & 0xFFFF); }
+         else { w = h = sz == 1 ? 1 : sz == 2 ? 8 : 16; }
+         //dispatch event
++        Hle.GpuHle.PortWidenedPrim = false;
+         if (Event.HasAnyListeners<RenderPrimEvent>())
+         {
+             var e = _primEvent;
+@@ -442,7 +442,10 @@
+     }
+
+     void LineSegment(int x0, int y0, int r0, int g0, int b0, int x1, int y1, int r1, int g1, int b1, bool semi, bool gouraud)
+     {
++        // Lines pass neither RenderPrimEvent dispatch, so nothing clears the
++        // widescreen patch's widened-prim flag for them; clear it here.
++        Hle.GpuHle.PortWidenedPrim = false;
+         x0 += _drawOffsetX; y0 += _drawOffsetY;
+         x1 += _drawOffsetX; y1 += _drawOffsetY;
+         if (HleOn) { HleLine(x0, y0, r0, g0, b0, x1, y1, r1, g1, b1, semi, gouraud); return; }

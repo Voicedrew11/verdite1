@@ -1,0 +1,163 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index d75d25c..263a177 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -94,7 +94,7 @@ public sealed class GlCore : IGpuBackend
+     int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv;
+     int _uTrueColor;
+     int _uAniso;
+-    int _uOpaqueDepth;
++    int _uOpaqueDepth, _uDepthBias, _uDepthSlope;
+     // The true-color flag the live display targets were built with. When it drifts
+     // from GteDepth.TrueColor the targets carry the wrong pixel format, so they are
+     // torn down at the next present and rebuilt (their content survives in VRAM).
+@@ -146,6 +146,8 @@ public sealed class GlCore : IGpuBackend
+         _uTrueColor = _gl.GetUniformLocation(_progPrim, "uTrueColor");
+         _uAniso = _gl.GetUniformLocation(_progPrim, "uAniso");
+         _uOpaqueDepth = _gl.GetUniformLocation(_progPrim, "uOpaqueDepth");
++        _uDepthBias = _gl.GetUniformLocation(_progPrim, "uDepthBias");
++        _uDepthSlope = _gl.GetUniformLocation(_progPrim, "uDepthSlope");
+         _uLightBk = _gl.GetUniformLocation(_progPrim, "uLightBk");
+         _uLcmR = _gl.GetUniformLocation(_progPrim, "uLcmR");
+         _uLcmG = _gl.GetUniformLocation(_progPrim, "uLcmG");
+@@ -1175,6 +1177,25 @@ public sealed class GlCore : IGpuBackend
+                 if (_lightAttribs) _gl.EnableVertexAttribArray(i); else _gl.DisableVertexAttribArray(i);
+         }
+ 
++        // 0051. A tested batch draws against a depth pulled towards the camera, so a
++        // coplanar overlap goes to the later table entry. An opaque one first writes
++        // its true depths with colour off, which keeps crossings inside the batch
++        // resolved, then draws colour without writing.
++        bool zBias = GteDepth.ZBuffer && (_kZMode == 1 || _kZMode == 2)
++                  && (GteDepth.DepthBias > 0f || GteDepth.DepthSlope > 0f);
++        SetDepthBias(zBias);
++        if (zBias && _kZMode == 1)
++        {
++            SetDepthBias(false);
++            _gl.Disable(EnableCap.Blend);
++            _gl.ColorMask(false, false, false, false);
++            _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_count);
++            _gl.ColorMask(true, true, true, true);
++            _gl.DepthMask(false);
++            SetDepthBias(true);
++            GteDepth.ZPrepasses++;
++        }
++
+         if (_legacy)
+         {
+             _gl.Disable(EnableCap.Blend);
+@@ -1218,6 +1239,7 @@ public sealed class GlCore : IGpuBackend
+                 _gl.DepthFunc(GteDepth.ZBuffer && _kZMode == 2 ? DepthFunction.Lequal : DepthFunction.Always);
+                 _gl.DepthMask(true);
+                 _gl.Uniform1(_uOpaqueDepth, 1);
++                SetDepthBias(false);
+                 _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_count);
+                 _gl.Uniform1(_uOpaqueDepth, 0);
+                 _gl.ColorMask(true, true, true, true);
+@@ -1241,6 +1263,12 @@ public sealed class GlCore : IGpuBackend
+ 
+     void SetBlend(float src, float dst) => _gl.Uniform4(_uBlend, src, src, src, dst);
+ 
++    void SetDepthBias(bool on)
++    {
++        if (_uDepthBias >= 0) _gl.Uniform1(_uDepthBias, on ? GteDepth.DepthBias / 65536f : 0f);
++        if (_uDepthSlope >= 0) _gl.Uniform1(_uDepthSlope, on ? GteDepth.DepthSlope : 0f);
++    }
++
+     void SetScaleUniform(uint prog)
+     {
+         int loc = _gl.GetUniformLocation(prog, "uScale");
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 8ec2bae..8e6109d 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -352,6 +352,8 @@ internal static class GlShaders
+         uniform float uSetMask;
+         uniform int   uCheckMask;
+         uniform int   uOpaqueDepth;
++        uniform float uDepthBias;
++        uniform float uDepthSlope;
+         uniform int   uScale;
+         uniform vec2  uPosBias;
+         uniform float uAniso;
+@@ -444,7 +446,9 @@ internal static class GlShaders
+             // no recovered depth does not test and does not write -- so this
+             // costs it nothing. Assigning this also turns off early-Z, so a
+             // punch-through discard cannot occlude whatever is behind the hole.
+-            gl_FragDepth = vDepth > 0.0 ? vDepth : 1.0;
++            // 0051. The tolerance is on the test only; GlCore draws the true depth first.
++            float dz = uDepthBias + uDepthSlope * max(abs(dFdx(vDepth)), abs(dFdy(vDepth)));
++            gl_FragDepth = vDepth > 0.0 ? max(vDepth - dz, 0.0) : 1.0;
+             ivec3 c8in = shade8();
+             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
+ 
+@@ -748,6 +752,8 @@ internal static class GlShaders
+         uniform float uSemiTrans;
+         uniform float uBlendMode;
+         uniform float uAniso;
++        uniform float uDepthBias;
++        uniform float uDepthSlope;
+ 
+         float u5(float f) { return floor(f * 31.0 + 0.5); }
+ 
+@@ -811,7 +817,9 @@ internal static class GlShaders
+         }
+ 
+         void main() {
+-            gl_FragDepth = vDepth > 0.0 ? vDepth : 1.0;
++            // 0051. The tolerance is on the test only; GlCore draws the true depth first.
++            float dz = uDepthBias + uDepthSlope * max(abs(dFdx(vDepth)), abs(dFdy(vDepth)));
++            gl_FragDepth = vDepth > 0.0 ? max(vDepth - dz, 0.0) : 1.0;
+             vec2 destUv = gl_FragCoord.xy / uDestSize;
+             vec4 dstTexel = texture2D(uDest, destUv);
+             if (uCheckMask > 0.5 && dstTexel.a >= 0.5) discard;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+index 7d78a81..c769c46 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -354,7 +354,8 @@ public sealed partial class Gpu
+                     if (inv <= 0f) continue;
+                     zpix = 1f / inv;
+                     zi = y * VramWidth + x;
+-                    if (zpix > _zbuf![zi]) { GteDepth.ZRejects++; continue; }
++                    // 0051. Within the tolerance the later table entry wins.
++                    if (zpix - GteDepth.DepthBias > _zbuf![zi]) { GteDepth.ZRejects++; continue; }
+                 }
+ 
+                 int r, g, bl;
+@@ -394,7 +395,7 @@ public sealed partial class Gpu
+                 // so a hole in the texture does not occlude whatever is behind it.
+                 // Semi-transparent tests against Z but does not write it, so two
+                 // overlapping additives still blend in table order.
+-                if (wrote && useZ && !semi) _zbuf![zi] = zpix;
++                if (wrote && useZ && !semi && zpix < _zbuf![zi]) _zbuf[zi] = zpix;
+             }
+         }
+     }
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index 1d187c7..d34b3ff 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -179,6 +179,12 @@ public static class GteDepth
+     /// </summary>
+     public static float DepthClearThreshold;
+ 
++    /// <summary>0051. How far behind the stored depth a fragment may be and still draw,
++    /// so two coplanar surfaces go to the later table entry instead of fighting: a
++    /// constant in SZ units, plus a multiple of the depth's change across one pixel
++    /// (GL only). Depths are still written unbiased.</summary>
++    public static float DepthBias = 1f, DepthSlope = 0.5f;
++
+     /// <summary>How many times the threshold above has fired. A rate rather than a
+     /// picture: several a frame means the threshold is too small and the buffer is
+     /// being thrown away, none at all means it is doing nothing.</summary>
+@@ -542,6 +548,9 @@ public static class GteDepth
+     /// back, so <see cref="ZRejects"/> stays at zero there.</summary>
+     public static long ZTris, ZSkipped, ZRejects;
+ 
++    /// <summary>0051. Opaque batches that wrote their true depth before their colour.</summary>
++    public static long ZPrepasses;
++
+     public static void ResetZCounters()
+     {
+         ZTris = ZSkipped = ZRejects = ZClears = 0;

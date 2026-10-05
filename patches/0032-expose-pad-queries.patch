@@ -1,0 +1,22 @@
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -342,6 +342,19 @@
+ 
+     public static bool IsKeyDown(Key k) => InputManager.IsKeyDown(k);
+ 
++    // The pad, for a port that draws its own binding table. Both of these are
++    // public on InputManager already and the class is internal, so unlike the
++    // mouse block below nothing had to be added there -- these two forwards are
++    // the whole of the reach.
++    public static bool IsPadConnected(int pad) => InputManager.IsPadConnected(pad);
++
++    /// <summary>The first pad button held down right now, or null. Face and
++    /// shoulder buttons are their SDL index, the triggers are 100/101 and the
++    /// stick directions 102-109 -- the encoding <c>GamepadBindings</c> stores
++    /// and a binding table has to display, so a caller needs no second table to
++    /// interpret the answer.</summary>
++    public static int? GetFirstPressedPadButton(int pad = 0) => InputManager.GetFirstPressedPadButton(pad);
++
+     // The mouse, for a port that wants to steer with it. InputManager owns the
+     // IMouse and is internal, so these are the way out of the assembly -- the
+     // same role IsKeyDown already plays for the keyboard.

@@ -1,0 +1,46 @@
+--- a/RecompOne.Runtime/Host/Window/Theme.cs
++++ b/RecompOne.Runtime/Host/Window/Theme.cs
+@@ -76,10 +76,42 @@
+         return -1;
+     }
+ 
+-    public static void Apply()
++    /// <summary>The style as ImGui built it, taken before the first ScaleAllSizes.</summary>
++    static ImGuiStyle _pristine;
++    static bool _havePristine;
++
++    public static unsafe void Apply()
+     {
+         var style = ImGui.GetStyle();
+ 
++        // Apply is called again on every accent, background and UI-scale change,
++        // and it ends in ScaleAllSizes -- which multiplies *every* size field in
++        // the style, while the block below only puts some of them back first.
++        // The rest are multiplied again on each call and compound without bound.
++        // Measured, running Apply at 1.4, 2, 1, 6, 2:
++        //
++        //     WindowMinSize    32 -> 44 -> 88 -> 88 -> 528 -> 1056
++        //     WindowPadding  (8,8) -> ... correct at every step (it is reset)
++        //
++        // WindowMinSize compounding is not cosmetic. ImGui floors every window
++        // that is not a child and not AlwaysAutoResize at it, in
++        // CalcWindowSizeAfterConstraint, and does so *after* applying a size
++        // constraint -- so a compounded minimum overrides both SetNextWindowSize
++        // and SetNextWindowSizeConstraints, which are the two things Popup.Render
++        // clamps a popup with. Measured on a 1280x720 viewport: a popup clamped
++        // to 1264x704 comes out 1264x1056 once WindowMinSize passes the viewport
++        // height. Vertically only, since 1056 is past 720 but not past 1280 --
++        // which is exactly the reported "make the scale smaller and then larger
++        // and it grows off the bottom of the screen", each change being one more
++        // multiplication.
++        //
++        // Restoring the style ImGui built, before re-theming it, is idempotent
++        // whatever upstream later adds to ScaleAllSizes; listing the fields this
++        // function forgets would only be correct until then. The colours are
++        // restored along with the sizes and every themed one is set again below.
++        if (!_havePristine) { _pristine = *style.NativePtr; _havePristine = true; }
++        else *style.NativePtr = _pristine;
++
+         style.WindowRounding = 6f;
+         style.ChildRounding = 4f;
+         style.FrameRounding = 4f;

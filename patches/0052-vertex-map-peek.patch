@@ -1,0 +1,86 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+index c769c46..a369f95 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -157,6 +157,7 @@ public sealed partial class Gpu
+                 }
+             Diagnostics.Profiler.End(lookup);
+             Hle.GpuTrace.Sink?.Vertices(n, hits);
++            if (wantSub && GteDepth.Probe) SubCensus(v, n, quad);
+         }
+ 
+         // 0050. The depth buffer takes the assembler's record or nothing; W and the
+@@ -243,6 +244,32 @@ public sealed partial class Gpu
+         }
+     }
+     
++    // 0052. The game culls on whole pixels (NCLIP > 0 on the first three corners); count
++    // the polygons whose fractional corners wind the other way, and those with corners
++    // both with and without a fraction.
++    static void SubCensus(ReadOnlySpan<Vert> v, int n, bool quad)
++    {
++        int subs = 0;
++        for (int i = 0; i < n; i++) if (v[i].HasSub) subs++;
++        if (subs == 0) return;
++        if (subs != n) { GteDepth.CensusMixed++; return; }
++
++        GteDepth.CensusPolys++;
++        double cf = CrossF(v[0], v[1], v[2]);
++        if (Math.Abs(cf) < 2.0) GteDepth.CensusTiny++;
++        if (Cross(v[0], v[1], v[2]) > 0 && cf <= 0) GteDepth.CensusFlipped++;
++        if (quad && Cross(v[1], v[2], v[3]) < 0 && CrossF(v[1], v[2], v[3]) >= 0) GteDepth.CensusFlipped++;
++    }
++
++    static long Cross(in Vert a, in Vert b, in Vert c) =>
++        (long)(b.X - a.X) * (c.Y - a.Y) - (long)(b.Y - a.Y) * (c.X - a.X);
++
++    static double CrossF(in Vert a, in Vert b, in Vert c)
++    {
++        double ax = a.X + a.Fx, ay = a.Y + a.Fy;
++        return (b.X + b.Fx - ax) * (c.Y + c.Fy - ay) - (b.Y + b.Fy - ay) * (c.X + c.Fx - ax);
++    }
++
+     // A vertex that recovered its sub-pixel position needs a finer grid than whole
+     // pixels to sit on, so RasterTriangle works in 1/16ths of one whenever any
+     // vertex of the triangle has a fraction to contribute -- and at shift zero,
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index d34b3ff..281a6b2 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -736,6 +736,11 @@ public static class GteDepth
+ 
+     public static void ResetOffsets() { Offset = 0; OffsetMax = 0f; OffsetCount = 0; }
+ 
++    /// <summary>0052, under <see cref="Probe"/>: polygons with a fraction on every corner,
++    /// those under one square pixel, those with some corners lacking one, and those whose
++    /// fractional corners wind opposite to their whole-pixel ones.</summary>
++    public static long CensusPolys, CensusTiny, CensusMixed, CensusFlipped;
++
+     // +1 so that 0 can mean "never written", which is what lets Collect stop early.
+     static int KeyOf(int x, int y) => (((y & 0x7FF) << 11) | (x & 0x7FF)) + 1;
+ 
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs
+index 2fa7480..052e28a 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs
+@@ -260,6 +260,20 @@ public static class GteVertexMap
+         Publish(value, e.Z, e.Fx, e.Fy, e.Clipped, false);
+     }
+ 
++    /// <summary>0052. <see cref="TryGet"/> without the hit and miss counters, for the
++    /// port's cull to ask about a word it has not stored anywhere yet.</summary>
++    public static bool Peek(uint phys, uint word, out Attr a)
++    {
++        a = default;
++        if (!Active || phys == 0) return false;
++        int idx = Index(phys);
++        if (!Marked(idx)) return false;
++        ref var e = ref _map![idx];
++        if (e.Value != word || _tick - e.Seq > EntryMaxAge) return false;
++        a.Z = e.Z; a.Fx = e.Fx; a.Fy = e.Fy; a.Clipped = e.Clipped;
++        return true;
++    }
++
+     /// <summary>The attributes of the vertex whose coordinate the GPU just read out of
+     /// <paramref name="phys"/>. <paramref name="word"/> is the word it read, and it
+     /// has to match the one the attributes were recorded for — that is what makes a

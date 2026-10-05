@@ -1,0 +1,26 @@
+--- a/RecompOne.Runtime/Dispatch/Dispatcher.cs
++++ b/RecompOne.Runtime/Dispatch/Dispatcher.cs
+@@ -105,15 +105,18 @@
+                     uint s = other.Base & 0x1FFFFFFFu;
+                     uint e = s + other.Size;
+ 
+                     if (s < newEnd && e > newStart)
+                     {
+-                        if (s >= newStart && e <= newEnd)
+-                        {
+-                            overwritten ??= [];
+-                            overwritten.Add(activeName);
+-                        }
++                        // Any overlap, not only full containment. OPEN/GAME/END
++                        // all load at the same base and the later executable is
++                        // often smaller, so the contained test would leave the
++                        // previous one's functions resident. The same hole
++                        // shows up when a smaller FDAT module loads over a
++                        // larger one.
++                        overwritten ??= [];
++                        overwritten.Add(activeName);
+                         continue;
+                     }
+                 }
+ 
+                 int shared = CountSharedFunctions(overlay, other);

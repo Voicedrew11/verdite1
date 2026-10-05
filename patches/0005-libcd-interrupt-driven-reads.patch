@@ -1,0 +1,233 @@
+diff --git a/RecompOne.Runtime/sdk/LibCd.cs b/RecompOne.Runtime/sdk/LibCd.cs
+index 5bbb3fa..554bbe6 100644
+--- a/RecompOne.Runtime/sdk/LibCd.cs
++++ b/RecompOne.Runtime/sdk/LibCd.cs
+@@ -49,6 +49,17 @@ public static class LibCd
+     static uint _cbReady;
+     static uint _cbData;
+ 
++    //kernel events. libcd's interrupt handler turns each cd interrupt into a
++    //DeliverEvent on HwCdRom, and a game that opened those events with EvMdINTR
++    //gets its handler called. a static recompilation has no interrupt path, so
++    //without this an event-driven loader simply never advances.
++    const uint HwCdRom = 0xF0000003u;
++    const uint EvSpACK = 0x0010u, EvSpCOMP = 0x0020u, EvSpDR = 0x0040u, EvSpERROR = 0x8000u;
++    const int MaxQueuedEvents = 64;
++    const int MaxEventsPerTick = 16;
++    const int MaxSectorEventsPerTick = 16;
++    static readonly Queue<uint> _events = new();
++
+     static bool _readActive;
+     static bool _xaActive;
+     static byte _filterFile;
+@@ -95,6 +106,18 @@ public static class LibCd
+ 
+     public static void CdReady(CpuContext c, IMemory m)
+     {
++        //polled ReadN. a recompiled build has no cd interrupt, so the game's
++        //"wait for the next sector" loop would spin forever. the emulated drive
++        //always has the next sector to hand, so report it ready. only for a read
++        //with no read callback registered -- the callback path is Tick()'s job.
++        if (_readActive && _cbData == 0 && _lastIntr != DiskError)
++        {
++            _lastResult[0] = _status;
++            for (int i = 1; i < _lastResult.Length; i++) _lastResult[i] = 0;
++            if (c.A1 != 0) WriteResult(m, c.A1);
++            c.V0 = DataReady;
++            return;
++        }
+         if (c.A1 != 0) WriteResult(m, c.A1);
+         c.V0 = (uint)_lastIntr;
+     }
+@@ -125,22 +148,73 @@ public static class LibCd
+                 m.WriteU8(buf + (uint)(i * size + j), data[j]);
+         }
+         _lastIntr = Complete;
++        //the real CdRead collects the sectors through libcd's own read callback
++        //and pauses the drive once the last one is in, and it is that pause's
++        //INT2 the caller sees as EvSpCOMP. this does the whole transfer at once,
++        //so report the same completion.
++        QueueEvent(EvSpCOMP);
+         c.V0 = 1;
+     }
+ 
+     internal static int CurrentLba { get { lock (_posGate) return PosToInt(_pos); } }
+     internal static double SectorsPerSecond => (_mode & 0x80) != 0 ? 150.0 : 75.0; //cd pacer
+ 
++    static void QueueEvent(uint spec)
++    {
++        lock (_events)
++        {
++            if (_events.Count >= MaxQueuedEvents) return;
++            _events.Enqueue(spec);
++        }
++    }
++
++    //deliver at interrupt time (vsync) rather than inside the command, so a
++    //handler that issues the next command does not recurse on top of this one.
++    //new events queued by a handler are eligible in the same drain, which is
++    //what keeps an event-driven loader running at more than one step a frame.
++    static void PumpEvents(CpuContext c, IMemory m)
++    {
++        for (int i = 0; i < MaxEventsPerTick; i++)
++        {
++            uint spec;
++            lock (_events)
++            {
++                if (_events.Count == 0) return;
++                spec = _events.Dequeue();
++            }
++            Bios.BiosB.DeliverEventIntr(c, m, HwCdRom, spec);
++        }
++    }
++
++    //one EvSpDR per sector for the duration of a ReadN, the way the drive would
++    //raise INT1. the handler is expected to CdGetSector the sector, which is
++    //what advances the drive; the burst is bounded so a handler that does not
++    //cannot spin here.
++    static void PumpSectorEvents(CpuContext c, IMemory m)
++    {
++        for (int i = 0; i < MaxSectorEventsPerTick && _readActive; i++)
++        {
++            _lastIntr = DataReady;
++            Dispatcher.LoadByLba(CurrentLba);
++            Bios.BiosB.DeliverEventIntr(c, m, HwCdRom, EvSpDR);
++        }
++    }
++
+     internal static void Tick()
+     {
++        var c = Runtime.Cpu;
++        var m = Runtime.Mem;
++        if (c == null || m == null) return;
++
++        PumpEvents(c, m);
++
+         bool xaMode = (_mode & 0x40) != 0;
+ 
+         if (_readActive && xaMode) return;
+ 
++        if (_readActive && _cbData == 0) PumpSectorEvents(c, m);
++
+         if (!_readActive || _cbData == 0) return;
+-        var c = Runtime.Cpu;
+-        var m = Runtime.Mem;
+-        if (c == null || m == null) return;
+ 
+         var snap = c.Snapshot();
+         while (_cbData != 0)
+@@ -226,11 +300,15 @@ public static class LibCd
+         uint madr = c.A0;
+         int words = (int)c.A1;
+         int lba = CurrentLba;
++        Dispatcher.LoadByLba(lba);
+         byte[] data;
+-        lock (DiscLock) data = Runtime.Cd!.ReadSectorData(lba);
++        lock (DiscLock) data = Runtime.Cd!.ReadSectorData(lba, SectorSize(_mode));
+         int bytes = Math.Min(data.Length, words * 4);
+         for (int j = 0; j < bytes; j++)
+             m.WriteU8(madr + (uint)j, data[j]);
++        //one sector-ready per sector: consuming this one moves the drive on,
++        //which is what makes a polled CdReady/CdGetSector loop read sequentially.
++        if (_readActive) AdvancePos(1);
+         c.V0 = 1;
+     }
+ 
+@@ -302,6 +380,7 @@ public static class LibCd
+         _readActive = false;
+         _xaActive = false;
+         _filterFile = _filterChannel = 0;
++        lock (_events) _events.Clear();
+         Array.Clear(_pos);
+         Array.Clear(_lastResult);
+         Runtime.Spu?.SetCdMix(0x80, 0, 0x80, 0); //reset mix
+@@ -384,6 +463,7 @@ public static class LibCd
+                 _lastResult[6] = 0;
+                 _lastResult[7] = 0;
+                 if (result != 0) WriteResult(m, result);
++                QueueCommandEvents(com);
+                 return 0;
+             case GetlocL:
+             {
+@@ -399,6 +479,7 @@ public static class LibCd
+                 _lastResult[6] = 0;
+                 _lastResult[7] = 0;
+                 if (result != 0) WriteResult(m, result);
++                QueueCommandEvents(com);
+                 return 0;
+             }
+             case GetlocP:
+@@ -418,6 +499,7 @@ public static class LibCd
+                     _lastResult[7] = _pos[2];
+                 }
+                 if (result != 0) WriteResult(m, result);
++                QueueCommandEvents(com);
+                 return 0;
+             }
+             case GetTN:
+@@ -428,6 +510,7 @@ public static class LibCd
+                 _lastResult[2] = ToBcd(fs?.LastTrack ?? 1);
+                 for (int i = 3; i < _lastResult.Length; i++) _lastResult[i] = 0;
+                 if (result != 0) WriteResult(m, result);
++                QueueCommandEvents(com);
+                 return 0;
+             }
+             case GetTD:
+@@ -442,6 +525,7 @@ public static class LibCd
+                 _lastResult[2] = tss;
+                 for (int i = 3; i < _lastResult.Length; i++) _lastResult[i] = 0;
+                 if (result != 0) WriteResult(m, result);
++                QueueCommandEvents(com);
+                 return 0;
+             }
+             case Pause: case Stop: case Init:
+@@ -471,9 +555,25 @@ public static class LibCd
+         _lastResult[0] = _status;
+         for (int i = 1; i < _lastResult.Length; i++) _lastResult[i] = 0;
+         if (result != 0) WriteResult(m, result);
++        QueueCommandEvents(com);
+         return 0;
+     }
+ 
++    //every command is acknowledged (INT3 -> EvSpACK). only the commands with a
++    //second response report completion (INT2 -> EvSpCOMP); a read has none --
++    //its completion is the pause the reader issues once it has every sector.
++    static void QueueCommandEvents(byte com)
++    {
++        QueueEvent(EvSpACK);
++        switch (com)
++        {
++            case Init: case Stop: case Pause:
++            case SeekL: case SeekP: case Standby:
++                QueueEvent(EvSpCOMP);
++                break;
++        }
++    }
++
+     static int ResolveTrack(int abs, out int rel)
+     {
+         rel = abs - 150;
+@@ -506,6 +606,7 @@ public static class LibCd
+ 
+     static void SetError(byte errByte, byte extraStat)
+     {
++        QueueEvent(EvSpERROR);
+         _lastIntr = DiskError;
+         _lastResult[0] = (byte)(_status | extraStat);
+         _lastResult[1] = errByte;
+diff --git a/RecompOne.Runtime/sdk/LibEtc.cs b/RecompOne.Runtime/sdk/LibEtc.cs
+index a036512..1a77102 100644
+--- a/RecompOne.Runtime/sdk/LibEtc.cs
++++ b/RecompOne.Runtime/sdk/LibEtc.cs
+@@ -19,6 +19,11 @@ public static class LibEtc
+         Runtime.PresentFrame();
+         _vcount++;
+ 
++        //RCntCNT3/EvSpINT -- the vblank root counter. a game that opened it with
++        //EvMdINTR expects its handler once a frame; the recompiled build has no
++        //timer interrupt, so this is the only place it can come from.
++        Bios.BiosB.DeliverEventIntr(c, m, 0xF2000003u, 0x0002u);
++
+         if (Event.HasAnyListeners<VSyncEvent>())
+         {
+             var e = _vsyncEvent;

@@ -1,0 +1,32 @@
+diff --git a/RecompOne.Runtime/Memory/PSMemory.cs b/RecompOne.Runtime/Memory/PSMemory.cs
+index 8cae036..2ea31ed 100644
+--- a/RecompOne.Runtime/Memory/PSMemory.cs
++++ b/RecompOne.Runtime/Memory/PSMemory.cs
+@@ -88,7 +88,26 @@ public sealed class PSMemory : IMemory
+         throw new InvalidOperationException($"unmapped address: 0x{address:X8}");
+     }
+ 
+-    private static bool IsCd(uint phys) => phys >= 0x1F801800u && phys <= 0x1F801803u;
++    // Diagnostic: name the recompiled functions that drive the CD controller.
++    // PSY-Q reaches I/O through a base pointer held in a global rather than a
++    // literal lui 0x1F80, so the library cannot be identified by scanning for
++    // hardware addresses statically. Catching the access here and printing the
++    // managed stack names the calling function directly. Off unless KF2_CDTRACE=1.
++    private static readonly HashSet<uint> CdTraced = new();
++    private static readonly bool CdTraceOn =
++        Environment.GetEnvironmentVariable("KF2_CDTRACE") == "1";
++
++    private static bool IsCd(uint phys)
++    {
++        bool hit = phys >= 0x1F801800u && phys <= 0x1F801803u;
++        if (hit && CdTraceOn)
++        {
++            lock (CdTraced)
++                if (CdTraced.Add(phys))
++                    Console.WriteLine($"[CDTRACE] first access 0x{phys:X8}\n{Environment.StackTrace}");
++        }
++        return hit;
++    }
+     private static bool IsSpu(uint phys) => phys >= 0x1F801C00u && phys < 0x1F801E80u;
+ 
+     public byte ReadU8(uint address)

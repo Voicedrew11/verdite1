@@ -1,0 +1,2170 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index bf40c22..c8ca00e 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -4,7 +4,7 @@ using Silk.NET.OpenGL;
+ 
+ namespace RecompOne.Runtime.Hle;
+ 
+-public sealed class GlCore : IGpuBackend
++public sealed partial class GlCore : IGpuBackend
+ {
+     [StructLayout(LayoutKind.Sequential)]
+     // W is the clip W the vertex shader divides by: the view depth GteDepth
+@@ -400,6 +400,8 @@ public sealed class GlCore : IGpuBackend
+             // 0068. Only this backend can draw into a planar texture; the port walks
+             // nothing mirrored without it.
+             PlanarReflections.Supported = _progSsr != 0 && _uClipOn >= 0 && _uSsrPlanarOn >= 0;
++            // 0072.
++            InitRetained(_progSsr);
+         }
+ 
+         _uPresent24Origin = _gl.GetUniformLocation(_progPresent24, "uOrigin");
+@@ -1819,7 +1821,12 @@ public sealed class GlCore : IGpuBackend
+         }
+ 
+         _gl.Disable(EnableCap.ScissorTest);
+-        if (rt != null) { rt.Dirty = true; rt.LastDrawFrame = _frame; }
++        if (rt != null)
++        {
++            rt.Dirty = true;
++            rt.LastDrawFrame = _frame;
++            if (!rt.IsPlanar) rt.RetainedSerial = RetainedScene.Serial;
++        }
+         else
+         {
+             int x0 = Math.Max(_kClipX0, (int)Math.Floor(_drawMinX));
+@@ -2150,7 +2157,11 @@ public sealed class GlCore : IGpuBackend
+             if (!aoOn) surfaces = DrawSurfaces(src!, gScale);
+             // A surface buffer that was not drawn this present holds another frame's.
+             ssrOn = surfaces && src!.Surface != 0;
+-            if (ssrOn) RunSsr(src!, dispX - src!.X, dispY - src.Y, w1x, h1x);
++            if (ssrOn)
++            {
++                DrawRetained(src!);
++                RunSsr(src!, dispX - src!.X, dispY - src.Y, w1x, h1x);
++            }
+             EndGpuTimer(ssrQuery, GpuWork.Reflections, ssrStart);
+             Diagnostics.Profiler.End(ssrProfile);
+         }
+@@ -2605,7 +2616,8 @@ public sealed class GlCore : IGpuBackend
+         var planar = src.Planar;
+         bool planarOn = PlanarReflections.Enabled && planar is { Tex: not 0 } && src.PlanarFrame == src.LastDrawFrame;
+         if (_uSsrPlanarOn >= 0) _gl.Uniform1(_uSsrPlanarOn, planarOn ? 1 : 0);
+-        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, planarOn && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
++        bool retCompare = _retPlanar != null && _retPlaneN > 0 && _retCube;
++        if (_uSsrCompare >= 0) _gl.Uniform1(_uSsrCompare, (planarOn || retCompare) && _ssrInfo && ScreenReflections.WantMap ? 1 : 0);
+         if (planarOn)
+         {
+             var pp = src.PlanarPlane;
+@@ -2618,10 +2630,13 @@ public sealed class GlCore : IGpuBackend
+             _gl.BindTexture(TextureTarget.Texture2D, planar.Tex);
+             PlanarReflections.Read++;
+         }
++        // 0072. The retained scene's planes and cubemap, drawn for this target.
++        BindRetainedForSsr();
++        if (_retPlanar != null && _retPlaneN > 0) planar = _retPlanar;
+         // Rough materials read the picture, and the planar texture, from a mip chain.
+         bool rough = SurfaceMaterial.AnyRoughness;
+         float colorMipH = rough ? BuildMip(src, ref _colorMipTex, ref _colorMipFbo, ref _colorMipW, ref _colorMipH, ColorMipUnit) : 0f;
+-        float planarMipH = rough && planarOn
++        float planarMipH = rough && (planarOn || (_retPlanar != null && _retPlaneN > 0))
+             ? BuildMip(planar!, ref _planarMipTex, ref _planarMipFbo, ref _planarMipW, ref _planarMipH, PlanarMipUnit) : 0f;
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _ssrFbo);
+         _gl.Viewport(0, 0, (uint)w, (uint)h);
+@@ -2636,7 +2651,7 @@ public sealed class GlCore : IGpuBackend
+         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
+         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+         ScreenReflections.Passes++;
+-        if (planarOn)
++        if (planarOn || _retPlanar != null)
+         {
+             // The next capture draws into these; leave nothing bound that a prim
+             // batch could read back while writing it.
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+index 51830c0..2145c67 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -36,6 +36,8 @@ public sealed class GlDisplayRt
+     public long PlanarFrame = -1;
+     public readonly float[] PlanarPlane = new float[4];
+     public readonly float[] ClipPlane = new float[4];
++    // 0072. The retained scene's frame this target's picture was drawn under.
++    public int RetainedSerial;
+     public int CreatedScale;
+     public bool Dirty;
+     public long Stamp;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+new file mode 100644
+index 0000000..0379fb0
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+@@ -0,0 +1,536 @@
++using Silk.NET.OpenGL;
++
++namespace RecompOne.Runtime.Hle;
++
++/// <summary>
++/// 0072. The retained scene (<see cref="RetainedScene"/>), drawn at present for the
++/// target being presented: its planes into the target's planar texture, each
++/// mirrored straight into the picture's pixels and kept only where the frame's own
++/// surface lies on that plane, and a cubemap from the frame's camera. The reflection
++/// pass reads both. See "The retained scene" in docs/RENDERING.md.
++/// </summary>
++public sealed partial class GlCore
++{
++    uint _progWorld, _worldVao, _worldVbo, _worldDynVao, _worldDynVbo;
++    int _worldGen = -1, _worldCap, _worldDynCap;
++    int _uwR, _uwCam, _uwT, _uwH, _uwC, _uwFb, _uwNear, _uwCueH, _uwFogOn, _uwMirror, _uwPlaneY, _uwPlaneBias;
++    int _uwScale, _uwAniso, _uwBlend, _uwBlendOpaque, _uwFluidN;
++    int _uwMaskOn, _uwMaskPlane, _uwMaskTol, _uwMaskCentre, _uwMaskH, _uwMaskSize;
++    readonly int[] _uwFluidRect = new int[8], _uwFluidOff = new int[8];
++
++    uint _cubeTex, _cubeDepth, _cubeFbo;
++    int _cubeMade;
++
++    // What this present drew, for the reflection pass.
++    RetainedScene.Frame? _retFrame;
++    GlDisplayRt? _retPlanar;
++    bool _retCube;
++    int _retPlaneN;
++    readonly float[] _retPlanes = new float[RetainedScene.MaxPlanes * 4];
++
++    int _uSsrRetN, _uSsrRetPlane, _uSsrCubeOn, _uSsrToWorld, _uSsrViewT, _uSsrCubeSteps, _uSsrCubeSize;
++
++    const int CubeUnit = 9, CubeDepthUnit = 10, MaskUnit = 11;
++
++    /// <summary>How far above a plane geometry must stand to be mirrored in it:
++    /// the water itself, and anything lying in it, is not its own reflection.</summary>
++    public static float PlaneBias = 8f;
++
++    unsafe void InitRetained(uint progSsr)
++    {
++        if (_legacy || progSsr == 0) return;
++        _progWorld = GlShaders.Build(_gl, GlShaders.WorldVs, GlShaders.PrimFs, "world");
++        if (_progWorld == 0) return;
++
++        int L(string n) => _gl.GetUniformLocation(_progWorld, n);
++        _uwR = L("uR"); _uwCam = L("uCam"); _uwT = L("uT"); _uwH = L("uH"); _uwC = L("uC"); _uwFb = L("uFb");
++        _uwNear = L("uNear"); _uwCueH = L("uCueH"); _uwFogOn = L("uFogOn"); _uwMirror = L("uMirror");
++        _uwPlaneY = L("uPlaneY"); _uwPlaneBias = L("uPlaneBias");
++        _uwScale = L("uScale"); _uwAniso = L("uAniso"); _uwBlend = L("uBlend"); _uwBlendOpaque = L("uBlendOpaque");
++        _uwFluidN = L("uFluidN");
++        for (int i = 0; i < 8; i++) { _uwFluidRect[i] = L($"uFluidRect[{i}]"); _uwFluidOff[i] = L($"uFluidOff[{i}]"); }
++        _uwMaskOn = L("uMaskOn"); _uwMaskPlane = L("uMaskPlane"); _uwMaskTol = L("uMaskTol");
++        _uwMaskCentre = L("uMaskCentre"); _uwMaskH = L("uMaskH"); _uwMaskSize = L("uMaskSize");
++
++        _gl.UseProgram(_progWorld);
++        void Unit(string n, int u) { int l = L(n); if (l >= 0) _gl.Uniform1(l, u); }
++        Unit("uVram", 0); Unit("uDest", 1); Unit("uExtTex", 2); Unit("uRepTex", 3); Unit("uRepClut", 4);
++        Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit);
++        void I(string n, int v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
++        void F(string n, float v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
++        int tw = L("uTexWindow");
++        if (tw >= 0) _gl.Uniform4(tw, 255, 255, 0, 0);
++        F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
++        I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
++        I("uMaskOn", 0);
++        if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
++        int pb = L("uPosBias");
++        if (pb >= 0) _gl.Uniform2(pb, 0f, 0f);
++
++        _worldVbo = _gl.GenBuffer();
++        _worldDynVbo = _gl.GenBuffer();
++        _worldVao = MakeWorldVao(_worldVbo);
++        _worldDynVao = MakeWorldVao(_worldDynVbo);
++
++        _gl.UseProgram(progSsr);
++        int SL(string n) => _gl.GetUniformLocation(progSsr, n);
++        _uSsrRetN = SL("uRetPlanarN"); _uSsrRetPlane = SL("uRetPlane"); _uSsrCubeOn = SL("uCubeOn");
++        _uSsrToWorld = SL("uToWorld"); _uSsrViewT = SL("uViewT"); _uSsrCubeSteps = SL("uCubeSteps");
++        _uSsrCubeSize = SL("uCubeSize");
++        int uc = SL("uCube"), ud = SL("uCubeDepth");
++        if (uc >= 0) _gl.Uniform1(uc, CubeUnit);
++        if (ud >= 0) _gl.Uniform1(ud, CubeDepthUnit);
++        if (_uSsrRetN >= 0) _gl.Uniform1(_uSsrRetN, 0);
++        if (_uSsrCubeOn >= 0) _gl.Uniform1(_uSsrCubeOn, 0);
++
++        RetainedScene.Supported = _uSsrRetN >= 0 && _uSsrCubeOn >= 0 && _uwMaskOn >= 0;
++    }
++
++    unsafe uint MakeWorldVao(uint vbo)
++    {
++        uint vao = _gl.GenVertexArray();
++        _gl.BindVertexArray(vao);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, vbo);
++        uint st = (uint)sizeof(RetainedScene.Vertex);
++        _gl.EnableVertexAttribArray(0); _gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, st, (void*)0);
++        _gl.EnableVertexAttribArray(1); _gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, st, (void*)12);
++        _gl.EnableVertexAttribArray(2); _gl.VertexAttribPointer(2, 1, VertexAttribPointerType.Float, false, st, (void*)24);
++        _gl.EnableVertexAttribArray(3); _gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, st, (void*)28);
++        _gl.EnableVertexAttribArray(4); _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, st, (void*)32);
++        _gl.EnableVertexAttribArray(5); _gl.VertexAttribPointer(5, 3, VertexAttribPointerType.Float, false, st, (void*)40);
++        _gl.EnableVertexAttribArray(6); _gl.VertexAttribIPointer(6, 1, VertexAttribIType.UnsignedInt, st, (void*)52);
++        _gl.EnableVertexAttribArray(7); _gl.VertexAttribIPointer(7, 1, VertexAttribIType.UnsignedInt, st, (void*)56);
++        _gl.BindVertexArray(0);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
++        return vao;
++    }
++
++    /// <summary>The planar texture and the cubemap for the target about to be
++    /// presented, from the frame it holds. Nothing is drawn when the frame has left
++    /// the ring (a menu's frozen picture, many presents on).</summary>
++    unsafe void DrawRetained(GlDisplayRt src)
++    {
++        _retFrame = null;
++        _retPlanar = null;
++        _retCube = false;
++        _retPlaneN = 0;
++        if (!RetainedScene.Enabled || _progWorld == 0) return;
++        var f = RetainedScene.Find(src.RetainedSerial);
++        if (f == null) { RetainedScene.Missed++; return; }
++        RetainedScene.Found++;
++        _retFrame = f;
++        RetainedScene.ChunksDrawn += _chunksDrawn; RetainedScene.ChunksTested += _chunksTested;
++        _chunksDrawn = _chunksTested = 0;
++
++        UploadWorld(f);
++        _gl.UseProgram(_progWorld);
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.Disable(EnableCap.CullFace);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        _gl.BindTexture(TextureTarget.Texture2D, _vram.SampleTexture);
++        _gl.ActiveTexture(TextureUnit.Texture1);
++        _gl.BindTexture(TextureTarget.Texture2D, _vram.SampleTexture);
++        if (_uwAniso >= 0) _gl.Uniform1(_uwAniso, (float)GteDepth.Anisotropy);
++        SendWorldFluid();
++
++        if (RetainedScene.Planar && f.PlaneCount > 0 && src.Surface != 0)
++        {
++            uint q = BeginRetainedTimer();
++            DrawRetainedPlanar(src, f);
++            EndRetainedTimer(q, ref _planarQuery, true);
++        }
++        if (RetainedScene.Cube)
++        {
++            uint q = BeginRetainedTimer();
++            DrawRetainedCube(f);
++            EndRetainedTimer(q, ref _cubeQuery, false);
++        }
++
++        // Dual-source factors left set are an error for any draw into more than one
++        // buffer, blending on or not -- the reflection pass's probe draws into two.
++        _gl.BlendFunc(BlendingFactor.One, BlendingFactor.Zero);
++        _gl.Disable(EnableCap.Blend);
++        _gl.Disable(EnableCap.DepthTest);
++        _gl.DepthMask(false);
++        _gl.BindVertexArray(0);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++    }
++
++    unsafe void UploadWorld(RetainedScene.Frame f)
++    {
++        if (_worldGen != RetainedScene.StaticGeneration)
++        {
++            var s = RetainedScene.Static;
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldVbo);
++            _gl.BufferData<RetainedScene.Vertex>(BufferTargetARB.ArrayBuffer, s, BufferUsageARB.StaticDraw);
++            _worldGen = RetainedScene.StaticGeneration;
++        }
++        var d = f.SortedDynamic();
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldDynVbo);
++        if (d.Length > _worldDynCap)
++        {
++            _worldDynCap = Math.Max(d.Length, _worldDynCap * 2);
++            _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(_worldDynCap * sizeof(RetainedScene.Vertex)), null,
++                           BufferUsageARB.StreamDraw);
++        }
++        if (d.Length > 0) _gl.BufferSubData<RetainedScene.Vertex>(BufferTargetARB.ArrayBuffer, 0, d);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
++    }
++
++    void SendWorldFluid()
++    {
++        if (_uwFluidN >= 0) _gl.Uniform1(_uwFluidN, (float)GteDepth.FluidN);
++        for (int i = 0; i < GteDepth.FluidN && i < 8; i++)
++        {
++            ref var slot = ref GteDepth.Fluid[i];
++            if (_uwFluidRect[i] >= 0) _gl.Uniform4(_uwFluidRect[i], slot.X, slot.Y, slot.W, slot.H);
++            if (_uwFluidOff[i] >= 0) _gl.Uniform1(_uwFluidOff[i], slot.Off);
++        }
++    }
++
++    /// <summary>A camera for the world program: rotation, world position,
++    /// translation, projection and target size.</summary>
++    void SetWorldView(ReadOnlySpan<float> r, double camX, double camY, double camZ, float tx, float ty, float tz,
++                      float h, float cx, float cy, float fbW, float fbH, float cueH, bool fog, int scale)
++    {
++        // GLSL reads a mat3 column-major; ask for the transpose of the row-major R.
++        if (_uwR >= 0) _gl.UniformMatrix3(_uwR, 1, true, r);
++        if (_uwCam >= 0) _gl.Uniform3(_uwCam, (float)camX, (float)camY, (float)camZ);
++        if (_uwT >= 0) _gl.Uniform3(_uwT, tx, ty, tz);
++        if (_uwH >= 0) _gl.Uniform1(_uwH, h);
++        if (_uwC >= 0) _gl.Uniform2(_uwC, cx, cy);
++        if (_uwFb >= 0) _gl.Uniform2(_uwFb, fbW, fbH);
++        if (_uwNear >= 0) _gl.Uniform1(_uwNear, 16f);
++        if (_uwCueH >= 0) _gl.Uniform1(_uwCueH, Math.Max(1f, cueH));
++        if (_uwFogOn >= 0) _gl.Uniform1(_uwFogOn, fog ? 1 : 0);
++        if (_uwScale >= 0) _gl.Uniform1(_uwScale, scale);
++    }
++
++    /// <summary>The static map and the frame's models: opaque with the depth test
++    /// and write, then each blend mode tested without writing. Subtractive blending
++    /// needs a second pass against a copy of the target and is left out; nothing
++    /// this game reflects uses it.</summary>
++    void DrawWorldRanges(RetainedScene.Frame f)
++    {
++        _gl.Enable(EnableCap.DepthTest);
++        _gl.DepthFunc(DepthFunction.Lequal);
++        _gl.DepthMask(true);
++        _gl.Disable(EnableCap.Blend);
++        DrawRange(0, f);
++
++        _gl.DepthMask(false);
++        _gl.Enable(EnableCap.Blend);
++        _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
++        _gl.BlendFuncSeparate(BlendingFactor.Src1Color, BlendingFactor.Src1Alpha, BlendingFactor.One, BlendingFactor.Zero);
++        for (int mode = 0; mode < 4; mode++)
++        {
++            if (mode == 2) continue;
++            float src = mode switch { 0 => 0.5f, 3 => 0.25f, _ => 1f }, dst = mode == 0 ? 0.5f : 1f;
++            if (_uwBlend >= 0) _gl.Uniform4(_uwBlend, src, src, src, dst);
++            DrawRange(1 + mode, f);
++        }
++        _gl.Disable(EnableCap.Blend);
++    }
++
++    void DrawRange(int r, RetainedScene.Frame f)
++    {
++        if (RetainedScene.StaticCount[r] > 0)
++        {
++            _gl.BindVertexArray(_worldVao);
++            // Runs of neighbouring visible chunks are one draw.
++            int first = -1, count = 0;
++            for (int c = 0; c <= RetainedScene.Chunks; c++)
++            {
++                int k = r * RetainedScene.Chunks + c;
++                bool take = c < RetainedScene.Chunks && _chunkVis[c] && RetainedScene.ChunkCount[k] > 0;
++                if (take && first >= 0 && RetainedScene.ChunkStart[k] == first + count) { count += RetainedScene.ChunkCount[k]; continue; }
++                if (first >= 0 && count > 0)
++                {
++                    _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
++                    RetainedScene.Triangles += count / 3;
++                }
++                first = take ? RetainedScene.ChunkStart[k] : -1;
++                count = take ? RetainedScene.ChunkCount[k] : 0;
++            }
++        }
++        int dn = f.DynCount[r];
++        if (dn > 0)
++        {
++            _gl.BindVertexArray(_worldDynVao);
++            _gl.DrawArrays(PrimitiveType.Triangles, f.DynStart[r], (uint)dn);
++            RetainedScene.Triangles += dn / 3;
++        }
++    }
++
++    // ---- which chunks a view can see --------------------------------------------
++
++    readonly bool[] _chunkVis = new bool[RetainedScene.Chunks];
++    long _chunksDrawn, _chunksTested;
++
++    /// <summary>The static chunks this view can see: in front of the near plane,
++    /// inside the picture, nearer than the fog's black (past which a reflection
++    /// is black whatever it hits), and for a mirror above the plane. A chunk is
++    /// dropped only when all eight corners of its box fail one test.</summary>
++    void CullChunks(ReadOnlySpan<float> r, double camX, double camY, double camZ, float tx, float ty, float tz,
++                    float h, float cx, float cy, float fbW, float fbH, bool mirror, float planeY)
++    {
++        float reach = Math.Max(ScreenReflections.March(), 4096f) + 2048f;
++        for (int c = 0; c < RetainedScene.Chunks; c++)
++        {
++            _chunkVis[c] = false;
++            if (!RetainedScene.ChunkUsed[c]) continue;
++            _chunksTested++;
++            float x0 = RetainedScene.ChunkMin[c * 3], y0 = RetainedScene.ChunkMin[c * 3 + 1], z0 = RetainedScene.ChunkMin[c * 3 + 2];
++            float x1 = RetainedScene.ChunkMax[c * 3], y1 = RetainedScene.ChunkMax[c * 3 + 1], z1 = RetainedScene.ChunkMax[c * 3 + 2];
++            if (mirror)
++            {
++                // Nothing in it stands above the plane (Y is down).
++                if (y0 >= planeY - PlaneBias) continue;
++                (y0, y1) = (2f * planeY - y1, 2f * planeY - y0);
++            }
++            double nx = Math.Clamp(camX, x0, x1) - camX, ny = Math.Clamp(camY, y0, y1) - camY, nz = Math.Clamp(camZ, z0, z1) - camZ;
++            if (nx * nx + ny * ny + nz * nz > (double)reach * reach) continue;
++            // local x = cx + h*x/z inside [0, fbW]: h*x + cx*z >= 0 and h*x + (cx - fbW)*z <= 0;
++            // the same for y. Out when every corner fails one of the five.
++            int near = 0, left = 0, right = 0, top = 0, bottom = 0;
++            for (int k = 0; k < 8; k++)
++            {
++                double dx = ((k & 1) != 0 ? x1 : x0) - camX, dy = ((k & 2) != 0 ? y1 : y0) - camY, dz = ((k & 4) != 0 ? z1 : z0) - camZ;
++                float qx = (float)(r[0] * dx + r[1] * dy + r[2] * dz) + tx;
++                float qy = (float)(r[3] * dx + r[4] * dy + r[5] * dz) + ty;
++                float qz = (float)(r[6] * dx + r[7] * dy + r[8] * dz) + tz;
++                if (qz < 16f) near++;
++                if (h * qx + cx * qz < 0f) left++;
++                if (h * qx + (cx - fbW) * qz > 0f) right++;
++                if (h * qy + cy * qz < 0f) top++;
++                if (h * qy + (cy - fbH) * qz > 0f) bottom++;
++            }
++            if (near == 8 || left == 8 || right == 8 || top == 8 || bottom == 8) continue;
++            _chunkVis[c] = true;
++            _chunksDrawn++;
++        }
++    }
++
++    /// <summary>The target's planar texture, made at its size the first time.</summary>
++    GlDisplayRt RetainedPlanarOf(GlDisplayRt rt)
++    {
++        var p = rt.Planar;
++        if (p == null || p.W != rt.W || p.H != rt.H || p.Margin != rt.Margin || p.CreatedScale != GlVram.Scale)
++        {
++            p?.Destroy(_gl);
++            p = new GlDisplayRt { X = rt.X, Y = rt.Y, W = rt.W, H = rt.H, Margin = rt.Margin, IsPlanar = true };
++            p.Create(_gl);
++            _gl.BindTexture(TextureTarget.Texture2D, p.Tex);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
++            _gl.BindTexture(TextureTarget.Texture2D, 0);
++            rt.Planar = p;
++            rt.PlanarSerial = -1;
++        }
++        return p;
++    }
++
++    void DrawRetainedPlanar(GlDisplayRt src, RetainedScene.Frame f)
++    {
++        var p = RetainedPlanarOf(src);
++        var v = f.View;
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, p.Fbo);
++        _gl.Viewport(0, 0, (uint)p.TexW, (uint)p.TexH);
++        _gl.ColorMask(true, true, true, true);
++        _gl.DepthMask(true);
++        _gl.ClearColor(0f, 0f, 0f, 0f);
++        _gl.ClearDepth(1.0);
++        _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
++
++        Span<float> r = [v.R00, v.R01, v.R02, v.R10, v.R11, v.R12, v.R20, v.R21, v.R22];
++        float cx = v.Cx + src.Margin;
++        SetWorldView(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, v.H, true,
++                     p.CreatedScale);
++        if (_uwMirror >= 0) _gl.Uniform1(_uwMirror, 1);
++        if (_uwPlaneBias >= 0) _gl.Uniform1(_uwPlaneBias, PlaneBias);
++        if (_uwMaskOn >= 0) _gl.Uniform1(_uwMaskOn, 1);
++        if (_uwMaskTol >= 0) _gl.Uniform1(_uwMaskTol, Math.Max(1f, PlanarReflections.Tolerance));
++        if (_uwMaskCentre >= 0) _gl.Uniform2(_uwMaskCentre, cx, v.Cy);
++        if (_uwMaskH >= 0) _gl.Uniform1(_uwMaskH, Math.Max(1f, v.H));
++        if (_uwMaskSize >= 0) _gl.Uniform2(_uwMaskSize, (float)src.Wide1x, src.H);
++        _gl.ActiveTexture(TextureUnit.Texture0 + MaskUnit);
++        _gl.BindTexture(TextureTarget.Texture2D, src.Surface);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        _gl.Enable(EnableCap.ClipDistance0);
++
++        // A plane Y = h in this view: a view position's world Y is column 1 of R
++        // dotted with it less the translation, plus the camera's.
++        float tdot = v.R01 * v.Tx + v.R11 * v.Ty + v.R21 * v.Tz;
++        int n = Math.Min(f.PlaneCount, RetainedScene.MaxPlanes);
++        for (int k = 0; k < n; k++)
++        {
++            float h = f.Planes[k];
++            _retPlanes[k * 4] = v.R01;
++            _retPlanes[k * 4 + 1] = v.R11;
++            _retPlanes[k * 4 + 2] = v.R21;
++            _retPlanes[k * 4 + 3] = (float)(v.CamY - h) - tdot;
++            if (_uwPlaneY >= 0) _gl.Uniform1(_uwPlaneY, h);
++            CullChunks(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, true, h);
++            if (_uwMaskPlane >= 0)
++                _gl.Uniform4(_uwMaskPlane, _retPlanes[k * 4], _retPlanes[k * 4 + 1], _retPlanes[k * 4 + 2], _retPlanes[k * 4 + 3]);
++            DrawWorldRanges(f);
++        }
++
++        _gl.Disable(EnableCap.ClipDistance0);
++        if (_uwMaskOn >= 0) _gl.Uniform1(_uwMaskOn, 0);
++        if (_uwMirror >= 0) _gl.Uniform1(_uwMirror, 0);
++        _gl.ActiveTexture(TextureUnit.Texture0 + MaskUnit);
++        _gl.BindTexture(TextureTarget.Texture2D, 0);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        p.LastDrawFrame = _frame;
++        _retPlanar = p;
++        _retPlaneN = n;
++        RetainedScene.PlanarDraws++;
++    }
++
++    // The six faces as rows of a world-to-face rotation, in OpenGL's cube-map
++    // convention (the spec's table of major axis, s and t), so a direction looks
++    // up the texel this face drew for it.
++    static readonly float[][] CubeFaces =
++    [
++        [0, 0, -1, 0, -1, 0, 1, 0, 0],   // +X
++        [0, 0, 1, 0, -1, 0, -1, 0, 0],   // -X
++        [1, 0, 0, 0, 0, 1, 0, 1, 0],     // +Y
++        [1, 0, 0, 0, 0, -1, 0, -1, 0],   // -Y
++        [1, 0, 0, 0, -1, 0, 0, 0, 1],    // +Z
++        [-1, 0, 0, 0, -1, 0, 0, 0, -1],  // -Z
++    ];
++
++    unsafe void EnsureCube(int n)
++    {
++        if (_cubeTex != 0 && _cubeMade == n) return;
++        if (_cubeTex == 0)
++        {
++            _cubeTex = _gl.GenTexture();
++            _cubeDepth = _gl.GenTexture();
++            _cubeFbo = _gl.GenFramebuffer();
++        }
++        int levels = 1 + (int)Math.Floor(Math.Log2(n));
++        _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeTex);
++        for (int i = 0; i < 6; i++)
++            _gl.TexImage2D(TextureTarget.TextureCubeMapPositiveX + i, 0, InternalFormat.Rgba8, (uint)n, (uint)n, 0,
++                PixelFormat.Rgba, PixelType.UnsignedByte, null);
++        _gl.GenerateMipmap(TextureTarget.TextureCubeMap);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)GLEnum.LinearMipmapLinear);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMaxLevel, levels - 1);
++        _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeDepth);
++        for (int i = 0; i < 6; i++)
++            _gl.TexImage2D(TextureTarget.TextureCubeMapPositiveX + i, 0, InternalFormat.DepthComponent24, (uint)n, (uint)n, 0,
++                PixelFormat.DepthComponent, PixelType.Float, null);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureCompareMode, (int)GLEnum.None);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)GLEnum.ClampToEdge);
++        _gl.BindTexture(TextureTarget.TextureCubeMap, 0);
++        _cubeMade = n;
++    }
++
++    void DrawRetainedCube(RetainedScene.Frame f)
++    {
++        int n = Math.Clamp(RetainedScene.CubeSize, 16, 2048);
++        EnsureCube(n);
++        var v = f.View;
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _cubeFbo);
++        _gl.Viewport(0, 0, (uint)n, (uint)n);
++        if (_uwMirror >= 0) _gl.Uniform1(_uwMirror, 0);
++        if (_uwMaskOn >= 0) _gl.Uniform1(_uwMaskOn, 0);
++        for (int i = 0; i < 6; i++)
++        {
++            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++                TextureTarget.TextureCubeMapPositiveX + i, _cubeTex, 0);
++            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment,
++                TextureTarget.TextureCubeMapPositiveX + i, _cubeDepth, 0);
++            _gl.ColorMask(true, true, true, true);
++            _gl.DepthMask(true);
++            _gl.ClearColor(0f, 0f, 0f, 0f);
++            _gl.ClearDepth(1.0);
++            _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
++            SetWorldView(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, v.H,
++                         false, 1);
++            CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f);
++            DrawWorldRanges(f);
++        }
++        _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeTex);
++        _gl.GenerateMipmap(TextureTarget.TextureCubeMap);
++        _gl.BindTexture(TextureTarget.TextureCubeMap, 0);
++        _retCube = true;
++        RetainedScene.CubeDraws++;
++    }
++
++    /// <summary>The reflection pass's half: the planes and the cubemap this present
++    /// drew, or both off.</summary>
++    void BindRetainedForSsr()
++    {
++        bool planar = _retPlanar != null && _retPlaneN > 0;
++        if (_uSsrRetN >= 0) _gl.Uniform1(_uSsrRetN, planar ? _retPlaneN : 0);
++        if (planar)
++        {
++            if (_uSsrRetPlane >= 0) _gl.Uniform4(_uSsrRetPlane, (uint)_retPlaneN, _retPlanes.AsSpan(0, _retPlaneN * 4));
++            if (_uSsrPlanarTol >= 0) _gl.Uniform1(_uSsrPlanarTol, Math.Max(1f, PlanarReflections.Tolerance));
++            if (_uSsrRipple >= 0) _gl.Uniform1(_uSsrRipple, Math.Max(0f, PlanarReflections.Ripple));
++            _gl.ActiveTexture(TextureUnit.Texture4);
++            _gl.BindTexture(TextureTarget.Texture2D, _retPlanar!.Depth);
++            _gl.ActiveTexture(TextureUnit.Texture3);
++            _gl.BindTexture(TextureTarget.Texture2D, _retPlanar.Tex);
++            _gl.ActiveTexture(TextureUnit.Texture0);
++        }
++        bool cube = _retCube && _retFrame != null;
++        if (_uSsrCubeOn >= 0) _gl.Uniform1(_uSsrCubeOn, cube ? 1 : 0);
++        if (cube)
++        {
++            var v = _retFrame!.View;
++            // The view-to-world rotation is R transposed; GLSL's column-major read
++            // of the row-major R is exactly that.
++            Span<float> r = [v.R00, v.R01, v.R02, v.R10, v.R11, v.R12, v.R20, v.R21, v.R22];
++            if (_uSsrToWorld >= 0) _gl.UniformMatrix3(_uSsrToWorld, 1, false, r);
++            if (_uSsrViewT >= 0) _gl.Uniform3(_uSsrViewT, v.Tx, v.Ty, v.Tz);
++            if (_uSsrCubeSteps >= 0) _gl.Uniform1(_uSsrCubeSteps, Math.Clamp(RetainedScene.CubeSteps, 1, 256));
++            if (_uSsrCubeSize >= 0) _gl.Uniform1(_uSsrCubeSize, (float)_cubeMade);
++            _gl.ActiveTexture(TextureUnit.Texture0 + CubeDepthUnit);
++            _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeDepth);
++            _gl.ActiveTexture(TextureUnit.Texture0 + CubeUnit);
++            _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeTex);
++            _gl.ActiveTexture(TextureUnit.Texture0);
++        }
++    }
++
++    // ---- GPU time, for the probe ------------------------------------------------
++
++    uint _planarQuery, _cubeQuery;
++
++    uint BeginRetainedTimer()
++    {
++        // Queries do not nest, and a frame capture's are running around the pass.
++        if (!RetainedScene.Probe || !_timerQueries || GpuTrace.Sink != null) return 0;
++        var q = _gl.GenQuery();
++        _gl.BeginQuery(QueryTarget.TimeElapsed, q);
++        return q;
++    }
++
++    void EndRetainedTimer(uint q, ref uint slot, bool planar)
++    {
++        if (q == 0) return;
++        _gl.EndQuery(QueryTarget.TimeElapsed);
++        // Read the previous one, a present later, rather than wait on this one.
++        if (slot != 0)
++        {
++            long ns = GpuTimeNs(slot);
++            if (ns < 0) DeleteGpuTimer(slot);
++            else if (planar) RetainedScene.PlanarGpuNs = ns;
++            else RetainedScene.CubeGpuNs = ns;
++        }
++        slot = q;
++    }
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index e3fab34..f350a79 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -585,6 +585,21 @@ internal static class GlShaders
+         uniform sampler2D uPlanarMip;
+         uniform float uColorMipH;
+         uniform float uPlanarMipH;
++        // 0072. The retained scene. Its planar texture is the one bound as uPlanar,
++        // drawn straight into this target's pixels (no row flip), each pixel holding
++        // the reflection in the plane its own surface lies on; the planes are this
++        // frame's, in this view, as uPlanarPlane is. And a cubemap from the camera,
++        // unfogged, with its depth, marched in place of the screen: uToWorld and
++        // uViewT take a view position back to world axes about the camera.
++        uniform int   uRetPlanarN;
++        uniform vec4  uRetPlane[4];
++        uniform int   uCubeOn;
++        uniform samplerCube uCube;
++        uniform samplerCube uCubeDepth;
++        uniform mat3  uToWorld;
++        uniform vec3  uViewT;
++        uniform int   uCubeSteps;
++        uniform float uCubeSize;
+ 
+         const float FAR = 65536.0;
+         const float OVERLAY = 3.0;
+@@ -685,6 +700,93 @@ internal static class GlShaders
+             return true;
+         }
+ 
++        // 0072. The retained planar reflection at this pixel: the first of the
++        // frame's planes its surface lies on, read unmirrored, bent by the water's
++        // own brightness gradient as the old lookup was.
++        bool retPlanarAt(vec3 p, float rough, out vec3 c) {
++            c = vec3(0.0);
++            if (uRetPlanarN == 0) return false;
++            bool on = false;
++            for (int k = 0; k < 4; k++) {
++                if (k >= uRetPlanarN) break;
++                if (abs(dot(uRetPlane[k].xyz, p) + uRetPlane[k].w) <= uPlanarTol) { on = true; break; }
++            }
++            if (!on) return false;
++            vec2 muv = vUv;
++            if (uRipple > 0.0) {
++                vec2 px = 1.0 / uSize;
++                float l0 = luma(texture(uColor, tc(vUv)).rgb);
++                float lx = luma(texture(uColor, tc(vUv + vec2(px.x, 0.0))).rgb);
++                float ly = luma(texture(uColor, tc(vUv + vec2(0.0, px.y))).rgb);
++                muv += vec2(lx - l0, ly - l0) * uRipple * px;
++            }
++            muv = clamp(muv, vec2(0.0), vec2(1.0));
++            vec3 pc = texture(uPlanar, tc(muv)).rgb;
++            float pd = texture(uPlanarDepth, tc(muv)).r;
++            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) return false;
++            c = pc;
++            if (rough > 0.0) {
++                float zi = pd * FAR;
++                float travel = zi < FAR * 0.999 ? max(zi - p.z, 0.0) * length(p) / p.z : 0.0;
++                c = blurAt(uPlanar, uPlanarMip, uPlanarMipH, muv, rough * travel * uProjH / (max(zi, 1.0) * uSize.y), true);
++            }
++            return true;
++        }
++
++        // 0072. The distance from the camera to the first surface along a world
++        // direction: the face's depth is its own view depth, so divide by the
++        // direction's share along the face's axis. Nothing drawn is past everything.
++        float cubeDist(vec3 d) {
++            float z = texture(uCubeDepth, d).r;
++            if (z >= 1.0) return FAR * 8.0;
++            vec3 a = abs(d);
++            return z * FAR / max(a.x, max(a.y, a.z));
++        }
++
++        // 0072. The reflected ray marched against the cubemap's depth, in world axes
++        // about the camera: a step whose point stands further from the camera than
++        // the surface the camera sees in its direction has gone behind it. Halved
++        // back to the crossing, it is a hit only where the ray is at that surface;
++        // one that passed behind an object from the camera's side marches on. No
++        // per-pixel jitter: the steps are fine enough, and a pattern is worse.
++        bool cubeMarch(vec3 p, vec3 r, float rough, out vec3 c, out float tHit) {
++            c = vec3(0.0);
++            tHit = 0.0;
++            vec3 P = uToWorld * (p - uViewT);
++            vec3 D = normalize(uToWorld * r);
++            float n1 = float(max(uCubeSteps, 1));
++            float tPrev = 0.0;
++            for (int i = 0; i < 256; i++) {
++                if (i >= uCubeSteps) break;
++                float x = (float(i) + 1.0) / n1;
++                float t = uMaxDist * x * x + 8.0;
++                vec3 q = P + D * t;
++                float len = length(q);
++                float sd = cubeDist(q / len);
++                if (len > sd * 1.002 + 2.0) {
++                    float lo = tPrev, hi = t;
++                    for (int k = 0; k < 6; k++) {
++                        float mid = 0.5 * (lo + hi);
++                        vec3 qm = P + D * mid;
++                        float lm = length(qm);
++                        if (lm > cubeDist(qm / lm) * 1.002 + 2.0) hi = mid; else lo = mid;
++                    }
++                    vec3 qh = P + D * hi;
++                    float lh = length(qh);
++                    if (lh - cubeDist(qh / lh) < uThickness + (hi - lo)) {
++                        tHit = hi;
++                        // The cone's width where it lands, as texels of a face seen
++                        // from the camera: a face spans a right angle.
++                        float texels = rough * hi / max(lh, 1.0) * uCubeSize / 1.5708;
++                        c = textureLod(uCube, qh / lh, log2(max(texels, 1.0))).rgb;
++                        return true;
++                    }
++                }
++                tPrev = t;
++            }
++            return false;
++        }
++
+         // Fades a reflection out as its source nears the picture's edge, where the
+         // march loses the surface it would have hit a few pixels further on.
+         float edgeFade(vec2 uv) {
+@@ -727,7 +829,7 @@ internal static class GlShaders
+             float w = f0 + (max(refl, f0) - f0) * pow(1.0 - cosv, 5.0);
+ 
+             vec3 pc;
+-            bool planarHit = planarAt(p, rough, pc);
++            bool planarHit = planarAt(p, rough, pc) || retPlanarAt(p, rough, pc);
+             if (planarHit && uCompare == 0) {
+                 oInfo.a += 4.0 / 255.0;
+                 w = clamp(w, 0.0, 1.0);
+@@ -735,6 +837,38 @@ internal static class GlShaders
+                 return;
+             }
+ 
++            // 0072. The cubemap in place of the screen: nothing it cannot see is
++            // borrowed from the picture, and a miss reflects nothing.
++            if (uCubeOn != 0) {
++                vec3 cc;
++                float ct;
++                bool cubeHit = cubeMarch(p, r, rough, cc, ct);
++                if (planarHit) {
++                    // The probe's check on the two: where both found a surface, how
++                    // far apart they are, against the planar texture read mirrored
++                    // (the wrong way round, for this one) as the control.
++                    oInfo.a += 4.0 / 255.0;
++                    if (cubeHit) {
++                        vec3 sc = cc * fogKeep(p.z * (length(p) + ct) / length(p));
++                        oInfo.b = abs(luma(pc) - luma(sc));
++                        oInfo.g = abs(luma(texture(uPlanar, tc(vec2(vUv.x, 2.0 * uCentre.y - vUv.y))).rgb) - luma(sc));
++                        oInfo.a += 16.0 / 255.0;
++                    }
++                    w = clamp(w, 0.0, 1.0);
++                    oColor = vec4(pc * tint * w, w);
++                    return;
++                }
++                if (!cubeHit) return;
++                float zImage = p.z * (length(p) + ct) / length(p);
++                float keep = fogKeep(zImage);
++                w *= 1.0 - smoothstep(0.7, 1.0, ct / uMaxDist);
++                w = clamp(w, 0.0, 1.0);
++                oInfo.a += 1.0 / 255.0;
++                oInfo.b = keep;
++                oColor = vec4(cc * keep * tint * w, w);
++                return;
++            }
++
+             // The same 4x4 interleaved pattern the occlusion pass uses, as a start
+             // offset along the ray, so step banding becomes a fine grain.
+             ivec2 px = ivec2(gl_FragCoord.xy) & 3;
+@@ -837,6 +971,105 @@ internal static class GlShaders
+         }
+         """;
+ 
++    /// <summary>
++    /// 0072. The retained scene's vertex shader: a world-space corner through a
++    /// camera the backend hands it, to exactly the outputs <c>PrimVs</c> gives
++    /// <c>PrimFs</c>, so a reflected texel is decoded, filtered and blended by the
++    /// same code as a drawn one. The projection is the GTE's -- the centre plus H
++    /// times x/z -- written as a clip-space position with W the view depth, so the
++    /// rasterizer interpolates the texture coordinate perspective-correctly and
++    /// clips against a near plane, which a packet of already-projected corners
++    /// never needed. The depth cue is the one the corner's light record would have
++    /// fogged it with, at this camera's depth: through a mirror that is the length
++    /// of the path, which is the fog the reflection wants. A cubemap face draws
++    /// unfogged, and the reflection pass fogs its hit for the path instead.
++    ///
++    /// With uMirror set the corner is drawn where its image in the plane
++    /// <c>Y = uPlaneY</c> stands, seen from the real camera, so the planar texture
++    /// lines up with the picture pixel for pixel; what lies below the plane is
++    /// clipped away before it is mirrored.
++    /// </summary>
++    public const string WorldVs = """
++        #version 330 core
++        layout(location = 0) in vec3  inWorld;
++        layout(location = 1) in vec3  inColorF;
++        layout(location = 2) in float inClutF;
++        layout(location = 3) in float inTexpageF;
++        layout(location = 4) in vec2  inUV;
++        layout(location = 5) in vec3  inCue;
++        layout(location = 6) in uint  inRect;
++        layout(location = 7) in uint  inFlags;
++
++        invariant gl_Position;
++
++        noperspective out vec4 vColor;
++        out vec2 vUV;
++        out float vDepth;
++        flat out ivec2 clutBase;
++        flat out ivec2 pageBase;
++        flat out int   texMode;
++        flat out int   vDither;
++        flat out int   vRepClut;
++        noperspective out vec3 vLit;
++        noperspective out float vFog;
++        flat out uint vLight;
++        flat out uvec2 vTex;
++        flat out uint vMat;
++
++        uniform mat3  uR;
++        uniform vec3  uCam;
++        uniform vec3  uT;
++        uniform float uH;
++        uniform vec2  uC;
++        uniform vec2  uFb;
++        uniform float uNear;
++        uniform float uCueH;
++        uniform int   uFogOn;
++        uniform int   uMirror;
++        uniform float uPlaneY;
++        uniform float uPlaneBias;
++
++        float cueKeep(float z) {
++            int curve = int(inCue.z + 0.5);
++            if (uFogOn == 0 || curve == 0) return 1.0;
++            float q = min(uCueH * 65536.0 / max(z, 1.0), 131071.0);
++            float ir0 = clamp((inCue.x * q + inCue.y) / 4096.0, 0.0, 4096.0);
++            float w = curve == 1 ? max(ir0 - 800.0, 0.0) * 2.0
++                    : (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0);
++            return clamp(1.0 - w / 4096.0, 0.0, 1.0);
++        }
++
++        void main() {
++            vec3 w = inWorld;
++            gl_ClipDistance[0] = (uPlaneY - uPlaneBias) - w.y;
++            if (uMirror != 0) w.y = 2.0 * uPlaneY - w.y;
++            vec3 v = uR * (w - uCam) + uT;
++            float z = v.z;
++            gl_Position = vec4((uC * z + uH * v.xy) * 2.0 / uFb - z, z - 2.0 * uNear, z);
++            vDepth = z > 0.0 ? z * (1.0 / 65536.0) : 0.0;
++
++            vColor = vec4(inColorF * cueKeep(z), 0.0) / 255.0;
++            vLit = vec3(0.0);
++            vFog = 0.0;
++            vLight = 0u;
++            vTex = uvec2(inRect, inFlags & 0x80000000u);
++            vMat = inFlags & 255u;
++            vDither = 0;
++            vRepClut = 0;
++            vUV = inUV;
++
++            int inTexpage = int(inTexpageF + 0.5);
++            int inClut = int(inClutF + 0.5);
++            if ((inTexpage & 0x8000) != 0) {
++                texMode = 4;
++            } else {
++                texMode = (inTexpage >> 7) & 3;
++                pageBase = ivec2((inTexpage & 0xf) * 64, ((inTexpage >> 4) & 1) * 256);
++                clutBase = ivec2((inClut & 0x3f) * 16, (inClut >> 6) & 0x1ff);
++            }
++        }
++        """;
++
+     public const string PrimVs = """
+         #version 330 core
+         layout(location = 0) in vec2  inPos;
+@@ -990,6 +1223,16 @@ internal static class GlShaders
+         uniform vec4  uClipPlane;
+         uniform vec2  uClipCentre;
+         uniform float uClipH;
++        // 0072. Drawing one plane of a retained planar reflection: kept only where
++        // the presented frame's own surface (its surface buffer, the target's size
++        // in 1x pixels) lies within uMaskTol of the plane, in that frame's view.
++        uniform int   uMaskOn;
++        uniform sampler2D uMaskSurface;
++        uniform vec4  uMaskPlane;
++        uniform float uMaskTol;
++        uniform vec2  uMaskCentre;
++        uniform float uMaskH;
++        uniform vec2  uMaskSize;
+         // 0071. Authored lights, published by the port in the GTE's view space
+         // (RemasterUniforms): position and radius; colour times intensity and the
+         // spot's inner cosine; direction and the outer cosine (-2 for a point, and
+@@ -1231,6 +1474,13 @@ internal static class GlShaders
+                 vec3 cp = vec3((gl_FragCoord.xy / float(uScale) - uClipCentre) * (cz / uClipH), cz);
+                 if (dot(uClipPlane.xyz, cp) + uClipPlane.w < 0.0) discard;
+             }
++            if (uMaskOn != 0) {
++                vec2 mq = gl_FragCoord.xy / float(uScale);
++                float mz = texture(uMaskSurface, mq / uMaskSize).b * 65536.0;
++                if (mz <= 1.0) discard;
++                vec3 mp = vec3((mq - uMaskCentre) * (mz / uMaskH), mz);
++                if (abs(dot(uMaskPlane.xyz, mp) + uMaskPlane.w) > uMaskTol) discard;
++            }
+             // 0071. Not into a planar reflection: its view is the mirrored camera's.
+             vec3 extra = vec3(0.0);
+             bool mat = uEmitOn != 0 && vMat != 0u && vLight != 0u;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+new file mode 100644
+index 0000000..d9bf00f
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -0,0 +1,273 @@
++using System.Runtime.InteropServices;
++
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0072. The area's geometry kept on the GPU in world space, so a reflection can
++/// draw the scene again from any camera without the game's own code running twice.
++///
++/// <para>The port fills it: the static map from the map data once an area settles
++/// (<see cref="SetStatic"/>), and every frame the camera the frame was drawn with and
++/// the models it submitted (<see cref="BeginFrame"/>, <see cref="AddDynamic"/>). The
++/// GL core backend draws it with a world-space vertex shader in front of the game's
++/// own prim fragment shader, so a reflected texel is decoded, filtered and lit by
++/// the same code as a drawn one.</para>
++///
++/// <para>Everything is drawn at present, for the target being presented, with the
++/// camera and the models of the frame that target holds: with two display buffers
++/// that is a frame ago, so the frames are kept in a short ring by serial and the
++/// target remembers the serial it was drawn under.</para>
++/// </summary>
++public static class RetainedScene
++{
++    /// <summary>One corner, as the backend uploads it.</summary>
++    [StructLayout(LayoutKind.Sequential)]
++    public struct Vertex
++    {
++        /// <summary>World position, the game's units.</summary>
++        public float X, Y, Z;
++        /// <summary>The lit colour before the depth cue, 0..255.</summary>
++        public float R, G, B;
++        /// <summary>As the GP0 packet carries them; texpage bit 15 is untextured.</summary>
++        public float Clut, Texpage;
++        public float U, V;
++        /// <summary>The depth cue this corner is fogged with: DQA, DQB, and the curve
++        /// in GteLightMap's numbering (0 none, 1 offset, 2 knee).</summary>
++        public float Dqa, Dqb, Curve;
++        /// <summary>0060's texture rectangle, u0 v0 u1 v1 a byte each.</summary>
++        public uint Rect;
++        /// <summary>Bit 31 the rectangle is valid, bit 10 semi-transparent, bits 8-9
++        /// the blend mode, the low byte the material.</summary>
++        public uint Flags;
++    }
++
++    public const uint FlagRect = 0x80000000u, FlagSemi = 0x400u;
++
++    /// <summary>The port's switch: draw reflections from this scene.</summary>
++    public static bool Enabled;
++
++    /// <summary>Set by the GL core backend once its world program built.</summary>
++    public static bool Supported;
++
++    /// <summary>Draw planar reflections from it, and the camera cubemap.</summary>
++    public static bool Planar = true, Cube = true;
++
++    /// <summary>A cubemap face's size, in pixels, and the steps the reflection
++    /// pass marches it in.</summary>
++    public static int CubeSize = 256, CubeSteps = 48;
++
++    /// <summary>The probe's switch: GPU time per draw, read back with a query.</summary>
++    public static bool Probe;
++
++    // ---- the static map ----------------------------------------------------------
++
++    static Vertex[] _static = [];
++    static int _staticCount;
++
++    /// <summary>Bumped on every <see cref="SetStatic"/>; the backend re-uploads.</summary>
++    public static int StaticGeneration { get; private set; }
++
++    public static ReadOnlySpan<Vertex> Static => _static.AsSpan(0, _staticCount);
++
++    /// <summary>The static map is kept in chunks of <see cref="ChunkTiles"/> tiles a
++    /// side, so a view draws only the chunks it can see. Sorted by range (opaque,
++    /// then each blend mode) and within a range by chunk; a chunk's triangles in a
++    /// range are <see cref="ChunkStart"/>/<see cref="ChunkCount"/> at
++    /// <c>range * Chunks + chunk</c>.</summary>
++    public const int ChunkTiles = 8, ChunkSide = 80 / ChunkTiles, Chunks = ChunkSide * ChunkSide;
++    const float ChunkUnits = ChunkTiles * 2048f;
++
++    public static readonly int[] ChunkStart = new int[5 * Chunks], ChunkCount = new int[5 * Chunks];
++
++    /// <summary>Each chunk's bounds in world space, and whether it holds anything.</summary>
++    public static readonly float[] ChunkMin = new float[Chunks * 3], ChunkMax = new float[Chunks * 3];
++    public static readonly bool[] ChunkUsed = new bool[Chunks];
++
++    /// <summary>Draw ranges in <see cref="Static"/> as a whole: opaque first, then
++    /// the semi-transparent triangles by blend mode.</summary>
++    public static readonly int[] StaticStart = new int[5], StaticCount = new int[5];
++
++    /// <summary>The static map, replaced whole. Sorted here into ranges and chunks.</summary>
++    public static void SetStatic(ReadOnlySpan<Vertex> tris)
++    {
++        if (_static.Length < tris.Length) _static = new Vertex[tris.Length];
++        int n = tris.Length / 3 * 3;
++        Array.Clear(ChunkCount);
++        Array.Clear(ChunkUsed);
++        for (int c = 0; c < Chunks; c++)
++        {
++            ChunkMin[c * 3] = ChunkMin[c * 3 + 1] = ChunkMin[c * 3 + 2] = float.MaxValue;
++            ChunkMax[c * 3] = ChunkMax[c * 3 + 1] = ChunkMax[c * 3 + 2] = float.MinValue;
++        }
++        var key = new int[n / 3];
++        for (int i = 0, t = 0; i < n; i += 3, t++)
++        {
++            int c = ChunkOf(tris[i], tris[i + 1], tris[i + 2]);
++            key[t] = Range(tris[i].Flags) * Chunks + c;
++            ChunkCount[key[t]] += 3;
++            ChunkUsed[c] = true;
++            for (int k = 0; k < 3; k++)
++            {
++                ref readonly var v = ref tris[i + k];
++                ChunkMin[c * 3] = Math.Min(ChunkMin[c * 3], v.X); ChunkMax[c * 3] = Math.Max(ChunkMax[c * 3], v.X);
++                ChunkMin[c * 3 + 1] = Math.Min(ChunkMin[c * 3 + 1], v.Y); ChunkMax[c * 3 + 1] = Math.Max(ChunkMax[c * 3 + 1], v.Y);
++                ChunkMin[c * 3 + 2] = Math.Min(ChunkMin[c * 3 + 2], v.Z); ChunkMax[c * 3 + 2] = Math.Max(ChunkMax[c * 3 + 2], v.Z);
++            }
++        }
++        int at = 0;
++        for (int k = 0; k < 5 * Chunks; k++) { ChunkStart[k] = at; at += ChunkCount[k]; }
++        var put = new int[5 * Chunks];
++        Array.Copy(ChunkStart, put, put.Length);
++        for (int i = 0, t = 0; i < n; i += 3, t++)
++        {
++            int k = key[t];
++            _static[put[k]] = tris[i]; _static[put[k] + 1] = tris[i + 1]; _static[put[k] + 2] = tris[i + 2];
++            put[k] += 3;
++        }
++        for (int r = 0; r < 5; r++)
++        {
++            StaticStart[r] = ChunkStart[r * Chunks];
++            int sum = 0;
++            for (int c = 0; c < Chunks; c++) sum += ChunkCount[r * Chunks + c];
++            StaticCount[r] = sum;
++        }
++        _staticCount = n;
++        StaticGeneration++;
++    }
++
++    static int ChunkOf(in Vertex a, in Vertex b, in Vertex c)
++    {
++        int cx = Math.Clamp((int)((a.X + b.X + c.X) / 3f / ChunkUnits), 0, ChunkSide - 1);
++        int cz = Math.Clamp((int)((a.Z + b.Z + c.Z) / 3f / ChunkUnits), 0, ChunkSide - 1);
++        return cz * ChunkSide + cx;
++    }
++
++    static int Sort(ReadOnlySpan<Vertex> tris, Vertex[] dst, int[] start, int[] count)
++    {
++        Array.Clear(count);
++        int n = tris.Length / 3 * 3;
++        for (int i = 0; i < n; i += 3) count[Range(tris[i].Flags)] += 3;
++        int at = 0;
++        for (int r = 0; r < 5; r++) { start[r] = at; at += count[r]; }
++        Span<int> put = stackalloc int[5];
++        for (int r = 0; r < 5; r++) put[r] = start[r];
++        for (int i = 0; i < n; i += 3)
++        {
++            int r = Range(tris[i].Flags);
++            dst[put[r]] = tris[i]; dst[put[r] + 1] = tris[i + 1]; dst[put[r] + 2] = tris[i + 2];
++            put[r] += 3;
++        }
++        return n;
++    }
++
++    static int Range(uint flags) => (flags & FlagSemi) == 0 ? 0 : 1 + (int)((flags >> 8) & 3);
++
++    // ---- the frames --------------------------------------------------------------
++
++    /// <summary>A camera: the GTE's world-to-view rotation at its 4096 scale
++    /// divided out, the camera's world position, the view translation the game's
++    /// matrix carries, and its projection (H and the centre, in the game's pixels).</summary>
++    public struct View
++    {
++        public float R00, R01, R02, R10, R11, R12, R20, R21, R22;
++        public double CamX, CamY, CamZ;
++        public float Tx, Ty, Tz;
++        public float H, Cx, Cy;
++    }
++
++    /// <summary>A plane a planar reflection mirrors in: world Y, Y being down.</summary>
++    public const int MaxPlanes = 4;
++
++    public sealed class Frame
++    {
++        public int Serial = -1;
++        public View View;
++        public Vertex[] Dynamic = new Vertex[4096];
++        public int DynamicCount;
++        public readonly int[] DynStart = new int[5], DynCount = new int[5];
++        public Vertex[] Sorted = new Vertex[4096];
++        public bool SortedValid;
++        public readonly float[] Planes = new float[MaxPlanes];
++        public int PlaneCount;
++
++        public ReadOnlySpan<Vertex> SortedDynamic()
++        {
++            if (!SortedValid)
++            {
++                if (Sorted.Length < DynamicCount) Sorted = new Vertex[Dynamic.Length];
++                Sort(Dynamic.AsSpan(0, DynamicCount), Sorted, DynStart, DynCount);
++                SortedValid = true;
++            }
++            return Sorted.AsSpan(0, DynamicCount / 3 * 3);
++        }
++    }
++
++    const int Ring = 4;
++    static readonly Frame[] _frames = [new(), new(), new(), new()];
++    static int _serial;
++
++    /// <summary>The serial of the frame being built, which a target drawn now
++    /// records.</summary>
++    public static int Serial => _serial;
++
++    static Frame Current => _frames[_serial % Ring];
++
++    /// <summary>A new frame, drawn with <paramref name="view"/>. The models the
++    /// port adds after this belong to it.</summary>
++    public static void BeginFrame(in View view)
++    {
++        _serial++;
++        var f = Current;
++        f.Serial = _serial;
++        f.View = view;
++        f.DynamicCount = 0;
++        f.SortedValid = false;
++        f.PlaneCount = 0;
++    }
++
++    /// <summary>One model's triangles, in world space, to the current frame.</summary>
++    public static void AddDynamic(ReadOnlySpan<Vertex> tris)
++    {
++        var f = Current;
++        if (f.Serial != _serial) return;
++        int n = tris.Length / 3 * 3;
++        if (f.DynamicCount + n > f.Dynamic.Length)
++            Array.Resize(ref f.Dynamic, Math.Max(f.Dynamic.Length * 2, f.DynamicCount + n));
++        tris[..n].CopyTo(f.Dynamic.AsSpan(f.DynamicCount));
++        f.DynamicCount += n;
++        f.SortedValid = false;
++    }
++
++    /// <summary>The planes the current frame mirrors in, nearest-first by the
++    /// port's own ranking; at most <see cref="MaxPlanes"/>.</summary>
++    public static void SetPlanes(ReadOnlySpan<float> worldY)
++    {
++        var f = Current;
++        int n = Math.Min(worldY.Length, MaxPlanes);
++        worldY[..n].CopyTo(f.Planes);
++        f.PlaneCount = n;
++    }
++
++    public static Frame? Find(int serial)
++    {
++        if (serial <= 0) return null;
++        var f = _frames[serial % Ring];
++        return f.Serial == serial ? f : null;
++    }
++
++    // ---- what the probe reads ----------------------------------------------------
++
++    /// <summary>Planar and cubemap draws made, triangles submitted, and the GPU
++    /// time the last of each took, in nanoseconds (0 while the probe is off).</summary>
++    public static long PlanarDraws, CubeDraws, Triangles;
++    public static long PlanarGpuNs, CubeGpuNs;
++
++    /// <summary>Static chunks drawn, of those tested, over every view.</summary>
++    public static long ChunksDrawn, ChunksTested;
++
++    /// <summary>Presents that had a frame to draw, and those whose target's frame
++    /// had fallen out of the ring.</summary>
++    public static long Found, Missed;
++
++    public static void ResetCounters() => PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+index cadf596..e8bb9c0 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+@@ -30,7 +30,10 @@ public sealed partial class GlCore
+ 
+     int _uSsrRetN, _uSsrRetPlane, _uSsrCubeOn, _uSsrToWorld, _uSsrViewT, _uSsrCubeSteps, _uSsrCubeSize;
+ 
+-    const int CubeUnit = 9, CubeDepthUnit = 10, MaskUnit = 11;
++    const int CubeUnit = 9, CubeDepthUnit = 10, MaskUnit = 11, HalvesUnit = 16;
++
++    uint _halvesTex;
++    int _uwHalfGate;
+ 
+     /// <summary>How far above a plane geometry must stand to be mirrored in it:
+     /// the water itself, and anything lying in it, is not its own reflection.</summary>
+@@ -51,23 +54,32 @@ public sealed partial class GlCore
+         for (int i = 0; i < 8; i++) { _uwFluidRect[i] = L($"uFluidRect[{i}]"); _uwFluidOff[i] = L($"uFluidOff[{i}]"); }
+         _uwMaskOn = L("uMaskOn"); _uwMaskPlane = L("uMaskPlane"); _uwMaskTol = L("uMaskTol");
+         _uwMaskCentre = L("uMaskCentre"); _uwMaskH = L("uMaskH"); _uwMaskSize = L("uMaskSize");
++        _uwHalfGate = L("uHalfGate");
+ 
+         _gl.UseProgram(_progWorld);
+         void Unit(string n, int u) { int l = L(n); if (l >= 0) _gl.Uniform1(l, u); }
+         Unit("uVram", 0); Unit("uDest", 1); Unit("uExtTex", 2); Unit("uRepTex", 3); Unit("uRepClut", 4);
+-        Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit);
++        Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit); Unit("uHalves", HalvesUnit);
+         void I(string n, int v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         void F(string n, float v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         int tw = L("uTexWindow");
+         if (tw >= 0) _gl.Uniform4(tw, 255, 255, 0, 0);
+         F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
+         I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
+-        I("uMaskOn", 0);
++        I("uMaskOn", 0); I("uHalfGate", 0);
+         InitShadowUniforms(_progWorld, false);
+         if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
+         int pb = L("uPosBias");
+         if (pb >= 0) _gl.Uniform2(pb, 0f, 0f);
+ 
++        _halvesTex = _gl.GenTexture();
++        _gl.BindTexture(TextureTarget.Texture2D, _halvesTex);
++        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8ui, RetainedScene.HalvesW, RetainedScene.HalvesH, 0,
++            PixelFormat.RedInteger, PixelType.UnsignedByte, null);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++        _gl.BindTexture(TextureTarget.Texture2D, 0);
++
+         _worldVbo = _gl.GenBuffer();
+         _worldDynVbo = _gl.GenBuffer();
+         _worldVao = MakeWorldVao(_worldVbo);
+@@ -133,6 +145,14 @@ public sealed partial class GlCore
+         _gl.BindTexture(TextureTarget.Texture2D, _vram.SampleTexture);
+         if (_uwAniso >= 0) _gl.Uniform1(_uwAniso, (float)GteDepth.Anisotropy);
+         SendWorldFluid();
++        // Only the map halves the frame's walk drew: its visibility flood from the
++        // eye's level, which a mirror (pitch negated, same cone) shares.
++        _gl.ActiveTexture(TextureUnit.Texture0 + HalvesUnit);
++        _gl.BindTexture(TextureTarget.Texture2D, _halvesTex);
++        _gl.TexSubImage2D<byte>(TextureTarget.Texture2D, 0, 0, 0, RetainedScene.HalvesW, RetainedScene.HalvesH,
++            PixelFormat.RedInteger, PixelType.UnsignedByte, f.Halves);
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, RetainedScene.HalfGate ? 1 : 0);
+ 
+         if (RetainedScene.Planar && f.PlaneCount > 0 && src.Surface != 0)
+         {
+@@ -143,10 +163,11 @@ public sealed partial class GlCore
+         if (RetainedScene.Cube)
+         {
+             uint q = BeginRetainedTimer();
+-            DrawRetainedCube(f);
++            DrawRetainedCube(f, src);
+             EndRetainedTimer(q, ref _cubeQuery, false);
+         }
+ 
++        if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, 0);
+         // Dual-source factors left set are an error for any draw into more than one
+         // buffer, blending on or not -- the reflection pass's probe draws into two.
+         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.Zero);
+@@ -219,6 +240,14 @@ public sealed partial class GlCore
+     /// this game reflects uses it.</summary>
+     void DrawWorldRanges(RetainedScene.Frame f)
+     {
++        // A mirror and a cube face (whose rotations all have determinant -1) turn
++        // the winding over, so the faces the game keeps are clockwise here.
++        if (RetainedScene.CullBack)
++        {
++            _gl.Enable(EnableCap.CullFace);
++            _gl.FrontFace(FrontFaceDirection.CW);
++            _gl.CullFace(TriangleFace.Back);
++        }
+         _gl.Enable(EnableCap.DepthTest);
+         _gl.DepthFunc(DepthFunction.Lequal);
+         _gl.DepthMask(true);
+@@ -237,6 +266,47 @@ public sealed partial class GlCore
+             RetainedScene.Triangles += DrawRange(1 + mode, f) / 3;
+         }
+         _gl.Disable(EnableCap.Blend);
++        _gl.Disable(EnableCap.CullFace);
++        _gl.FrontFace(FrontFaceDirection.Ccw);
++    }
++
++    /// <summary>The probe's count on the planar pass just drawn: pixels whose
++    /// nearest opaque face is a front face, and pixels a back face would have taken
++    /// with culling off (drawn against the culled depth, nearer than it or where
++    /// nothing was). Waits on the queries; the probe only.</summary>
++    void CountFacing(RetainedScene.Frame f)
++    {
++        if (!RetainedScene.CullBack) return;
++        _gl.ColorMask(false, false, false, false);
++        _gl.DepthMask(false);
++        _gl.Enable(EnableCap.DepthTest);
++        _gl.Disable(EnableCap.Blend);
++        _gl.Enable(EnableCap.CullFace);
++        _gl.FrontFace(FrontFaceDirection.CW);
++        long Count(TriangleFace cull, DepthFunction func)
++        {
++            _gl.CullFace(cull);
++            _gl.DepthFunc(func);
++            uint q = _gl.GenQuery();
++            _gl.BeginQuery(QueryTarget.SamplesPassed, q);
++            DrawRange(0, f);
++            _gl.EndQuery(QueryTarget.SamplesPassed);
++            _gl.GetQueryObject(q, QueryObjectParameterName.Result, out long n);
++            _gl.DeleteQuery(q);
++            return n;
++        }
++        RetainedScene.FrontPixels += Count(TriangleFace.Back, DepthFunction.Equal);
++        RetainedScene.BackPixels += Count(TriangleFace.Front, DepthFunction.Less);
++        if (RetainedScene.HalfGate && _uwHalfGate >= 0)
++        {
++            _gl.Uniform1(_uwHalfGate, 2);
++            RetainedScene.UndrawnPixels += Count(TriangleFace.Back, DepthFunction.Less);
++            _gl.Uniform1(_uwHalfGate, 1);
++        }
++        _gl.Disable(EnableCap.CullFace);
++        _gl.FrontFace(FrontFaceDirection.Ccw);
++        _gl.DepthFunc(DepthFunction.Lequal);
++        _gl.ColorMask(true, true, true, true);
+     }
+ 
+     /// <summary>Range <paramref name="r"/> of the visible static chunks, and of the
+@@ -279,13 +349,19 @@ public sealed partial class GlCore
+     long _chunksDrawn, _chunksTested;
+ 
+     /// <summary>The static chunks this view can see: in front of the near plane,
+-    /// inside the picture, nearer than the fog's black (past which a reflection
+-    /// is black whatever it hits), and for a mirror above the plane. A chunk is
+-    /// dropped only when all eight corners of its box fail one test.</summary>
++    /// inside the picture, not wholly past where the fog is black, and for a mirror
++    /// above the plane. A chunk is dropped only when all eight corners of its box
++    /// fail one test. The fog is the game's depth cue, on view depth: a mirrored
++    /// chunk is black once its nearest corner is deeper than the depth its own
++    /// latest fog is black at (<paramref name="cueH"/> the game's H). A cube face
++    /// is drawn unfogged and its hit fogged for the whole path at the picture's
++    /// pixel, so there the bound is the frame's black depth over the cosine of the
++    /// picture's widest ray (<paramref name="cubeReach"/>, infinite for none).</summary>
+     void CullChunks(ReadOnlySpan<float> r, double camX, double camY, double camZ, float tx, float ty, float tz,
+-                    float h, float cx, float cy, float fbW, float fbH, bool mirror, float planeY)
++                    float h, float cx, float cy, float fbW, float fbH, bool mirror, float planeY, float cueH,
++                    float cubeReach)
+     {
+-        float reach = Math.Max(ScreenReflections.March(), 4096f) + 2048f;
++        float oldReach = Math.Max(ScreenReflections.March(), 4096f) + 2048f;
+         for (int c = 0; c < RetainedScene.Chunks; c++)
+         {
+             _chunkVis[c] = false;
+@@ -300,16 +376,19 @@ public sealed partial class GlCore
+                 (y0, y1) = (2f * planeY - y1, 2f * planeY - y0);
+             }
+             double nx = Math.Clamp(camX, x0, x1) - camX, ny = Math.Clamp(camY, y0, y1) - camY, nz = Math.Clamp(camZ, z0, z1) - camZ;
+-            if (nx * nx + ny * ny + nz * nz > (double)reach * reach) continue;
++            double dist = Math.Sqrt(nx * nx + ny * ny + nz * nz);
++            if (!mirror && dist > cubeReach) continue;
+             // local x = cx + h*x/z inside [0, fbW]: h*x + cx*z >= 0 and h*x + (cx - fbW)*z <= 0;
+             // the same for y. Out when every corner fails one of the five.
+             int near = 0, left = 0, right = 0, top = 0, bottom = 0;
++            float minZ = float.MaxValue;
+             for (int k = 0; k < 8; k++)
+             {
+                 double dx = ((k & 1) != 0 ? x1 : x0) - camX, dy = ((k & 2) != 0 ? y1 : y0) - camY, dz = ((k & 4) != 0 ? z1 : z0) - camZ;
+                 float qx = (float)(r[0] * dx + r[1] * dy + r[2] * dz) + tx;
+                 float qy = (float)(r[3] * dx + r[4] * dy + r[5] * dz) + ty;
+                 float qz = (float)(r[6] * dx + r[7] * dy + r[8] * dz) + tz;
++                minZ = Math.Min(minZ, qz);
+                 if (qz < 16f) near++;
+                 if (h * qx + cx * qz < 0f) left++;
+                 if (h * qx + (cx - fbW) * qz > 0f) right++;
+@@ -317,6 +396,17 @@ public sealed partial class GlCore
+                 if (h * qy + (cy - fbH) * qz > 0f) bottom++;
+             }
+             if (near == 8 || left == 8 || right == 8 || top == 8 || bottom == 8) continue;
++            if (mirror)
++            {
++                float q = RetainedScene.ChunkFogQ[c];
++                if (q > 0f && minZ > cueH * 65536f / q) continue;
++                if (RetainedScene.Probe && dist > oldReach)
++                {
++                    RetainedScene.OldCullVisible++;
++                    float keep = RetainedScene.FogKeep(RetainedScene.ChunkFogOf[c], cueH, Math.Max(minZ, 16f));
++                    RetainedScene.OldCullKeep = Math.Max(RetainedScene.OldCullKeep, keep);
++                }
++            }
+             _chunkVis[c] = true;
+             _chunksDrawn++;
+         }
+@@ -381,10 +471,12 @@ public sealed partial class GlCore
+             _retPlanes[k * 4 + 2] = v.R21;
+             _retPlanes[k * 4 + 3] = (float)(v.CamY - h) - tdot;
+             if (_uwPlaneY >= 0) _gl.Uniform1(_uwPlaneY, h);
+-            CullChunks(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, true, h);
++            CullChunks(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, v.Cy, src.Wide1x, src.H, true, h, v.H,
++                       float.PositiveInfinity);
+             if (_uwMaskPlane >= 0)
+                 _gl.Uniform4(_uwMaskPlane, _retPlanes[k * 4], _retPlanes[k * 4 + 1], _retPlanes[k * 4 + 2], _retPlanes[k * 4 + 3]);
+             DrawWorldRanges(f);
++            if (RetainedScene.Probe) CountFacing(f);
+         }
+ 
+         _gl.Disable(EnableCap.ClipDistance0);
+@@ -447,11 +539,17 @@ public sealed partial class GlCore
+         _cubeMade = n;
+     }
+ 
+-    void DrawRetainedCube(RetainedScene.Frame f)
++    void DrawRetainedCube(RetainedScene.Frame f, GlDisplayRt src)
+     {
+         int n = Math.Clamp(RetainedScene.CubeSize, 16, 2048);
+         EnsureCube(n);
+         var v = f.View;
++        // A hit's image is fogged at the picture pixel's depth along the whole path,
++        // and that depth is the path times the cosine of the pixel's ray, which is
++        // least at the picture's corners.
++        float cxm = v.Cx + src.Margin, hh = Math.Max(1f, v.H);
++        float ex = Math.Max(cxm, src.Wide1x - cxm) / hh, ey = Math.Max(v.Cy, src.H - v.Cy) / hh;
++        float cubeReach = ScreenReflections.FogBlackDepth() * MathF.Sqrt(ex * ex + ey * ey + 1f);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _cubeFbo);
+         _gl.Viewport(0, 0, (uint)n, (uint)n);
+         if (_uwMirror >= 0) _gl.Uniform1(_uwMirror, 0);
+@@ -469,7 +567,8 @@ public sealed partial class GlCore
+             _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+             SetWorldView(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, v.H,
+                          false, 1);
+-            CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f);
++            CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f,
++                       v.H, cubeReach);
+             DrawWorldRanges(f);
+         }
+         _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeTex);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 6f04e56..5c5a158 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -716,7 +716,11 @@ internal static class GlShaders
+ 
+         // 0072. The retained planar reflection at this pixel: the first of the
+         // frame's planes its surface lies on, read unmirrored, bent by the water's
+-        // own brightness gradient as the old lookup was.
++        // own brightness gradient as the old lookup was. gRetEmpty: the surface is
++        // on a plane and the mirror drew nothing there, which is exact -- open sky
++        // -- and not a cue to march the cubemap, whose answer has the camera's
++        // parallax.
++        bool gRetEmpty = false;
+         bool retPlanarAt(vec3 p, float rough, out vec3 c) {
+             c = vec3(0.0);
+             if (uRetPlanarN == 0) return false;
+@@ -737,7 +741,7 @@ internal static class GlShaders
+             muv = clamp(muv, vec2(0.0), vec2(1.0));
+             vec3 pc = texture(uPlanar, tc(muv)).rgb;
+             float pd = texture(uPlanarDepth, tc(muv)).r;
+-            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) return false;
++            if (pd >= 1.0 && max(pc.r, max(pc.g, pc.b)) <= 0.0) { gRetEmpty = true; return false; }
+             c = pc;
+             if (rough > 0.0) {
+                 float zi = pd * FAR;
+@@ -845,6 +849,7 @@ internal static class GlShaders
+ 
+             vec3 pc;
+             bool planarHit = planarAt(p, rough, pc) || retPlanarAt(p, rough, pc);
++            if (gRetEmpty && uCompare == 0) { emit(vec3(0.0), 0.0); return; }
+             if (planarHit && uCompare == 0) {
+                 oInfo.a += 4.0 / 255.0;
+                 emit(pc * tint, w);
+@@ -1039,6 +1044,10 @@ internal static class GlShaders
+         uniform int   uMirror;
+         uniform float uPlaneY;
+         uniform float uPlaneBias;
++        // The map halves the frame's walk drew, one byte each; 1 draws only those,
++        // 2 only the others (the probe's count). Models carry no half.
++        uniform usampler2D uHalves;
++        uniform int uHalfGate;
+ 
+         float cueKeep(float z) {
+             int curve = int(inCue.z + 0.5);
+@@ -1051,6 +1060,16 @@ internal static class GlShaders
+         }
+ 
+         void main() {
++            uint hid = (inFlags >> 13) & 0x3FFFu;
++            if (uHalfGate != 0) {
++                bool drawn = hid == 0u
++                    || texelFetch(uHalves, ivec2(int((hid - 1u) % 160u), int((hid - 1u) / 160u)), 0).r != 0u;
++                if (drawn != (uHalfGate == 1)) {
++                    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
++                    gl_ClipDistance[0] = -1.0;
++                    return;
++                }
++            }
+             vec3 w = inWorld;
+             gl_ClipDistance[0] = (uPlaneY - uPlaneBias) - w.y;
+             if (uMirror != 0) w.y = 2.0 * uPlaneY - w.y;
+@@ -1060,9 +1079,20 @@ internal static class GlShaders
+             vDepth = z > 0.0 ? z * (1.0 / 65536.0) : 0.0;
+ 
+             vColor = vec4(inColorF * cueKeep(z), 0.0) / 255.0;
+-            vLit = vec3(0.0);
+-            vFog = 0.0;
+-            vLight = 0u;
++            // Fogged per pixel as 0048 fogs the game's own faces: the raw IR0 is
++            // affine on screen (it goes as 1/z), so interpolated it is exact, and
++            // shade8 puts it through the curve at every pixel.
++            int curve = int(inCue.z + 0.5);
++            if (uFogOn != 0 && curve != 0) {
++                float q = min(uCueH * 65536.0 / max(z, 1.0), 131071.0);
++                vLit = inColorF;
++                vFog = (inCue.x * q + inCue.y) / 4096.0;
++                vLight = uint(curve) << 24;
++            } else {
++                vLit = vec3(0.0);
++                vFog = 0.0;
++                vLight = 0u;
++            }
+             vTex = uvec2(inRect, inFlags & 0x80000000u);
+             vMat = inFlags & 255u;
+             vDither = 0;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+index 98d4052..ed64ea9 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -51,6 +51,20 @@ public static class RetainedScene
+     /// <summary>0077. An effect (a spark, a flame): drawn, but it casts no shadow.</summary>
+     public const uint FlagNoShadow = 0x1000u;
+ 
++    /// <summary>Bits 13-26: the map half a static corner belongs to, plus one
++    /// ((tile Z * 80 + tile X) * 2 + upper), 0 for anything else. A reflection draws
++    /// only the halves the game's own walk drew in that frame
++    /// (<see cref="Frame.Halves"/>).</summary>
++    public const int HalfShift = 13;
++    public const uint HalfBits = 0x3FFFu;
++    public const int HalvesW = 160, HalvesH = 80;
++
++    public static uint HalfFlag(int tx, int tz, int upper) => (uint)((tz * 80 + tx) * 2 + upper + 1) << HalfShift;
++
++    /// <summary>Reflect only the halves the game drew in the frame. Off, every half on
++    /// the map is reflected, including those its visibility flood leaves out.</summary>
++    public static bool HalfGate = true;
++
+     /// <summary>The port's switch: draw reflections from this scene.</summary>
+     public static bool Enabled;
+ 
+@@ -74,6 +88,11 @@ public static class RetainedScene
+     /// pass marches it in.</summary>
+     public static int CubeSize = 256, CubeSteps = 48;
+ 
++    /// <summary>Cull the faces a view sees from behind, as the game's assemblers
++    /// do: a mirror or a cube face shows only what the game would draw from there.
++    /// Off, the underside of every floor above a plane is reflected.</summary>
++    public static bool CullBack = true;
++
+     /// <summary>The probe's switch: GPU time per draw, read back with a query.</summary>
+     public static bool Probe;
+ 
+@@ -101,6 +120,12 @@ public static class RetainedScene
+     public static readonly float[] ChunkMin = new float[Chunks * 3], ChunkMax = new float[Chunks * 3];
+     public static readonly bool[] ChunkUsed = new bool[Chunks];
+ 
++    /// <summary>Each chunk's latest fog: the depth-cue quotient (H*65536/z) at and
++    /// below which its last corner is black, 0 when a corner never goes black; and
++    /// that corner's DQA, DQB and curve, for the probe.</summary>
++    public static readonly float[] ChunkFogQ = new float[Chunks];
++    public static readonly Vertex[] ChunkFogOf = new Vertex[Chunks];
++
+     /// <summary>Draw ranges in <see cref="Static"/> as a whole: opaque first, then
+     /// the semi-transparent triangles by blend mode.</summary>
+     public static readonly int[] StaticStart = new int[5], StaticCount = new int[5];
+@@ -114,6 +139,7 @@ public static class RetainedScene
+         Array.Clear(ChunkUsed);
+         for (int c = 0; c < Chunks; c++)
+         {
++            ChunkFogQ[c] = float.MaxValue;
+             ChunkMin[c * 3] = ChunkMin[c * 3 + 1] = ChunkMin[c * 3 + 2] = float.MaxValue;
+             ChunkMax[c * 3] = ChunkMax[c * 3 + 1] = ChunkMax[c * 3 + 2] = float.MinValue;
+         }
+@@ -130,6 +156,8 @@ public static class RetainedScene
+                 ChunkMin[c * 3] = Math.Min(ChunkMin[c * 3], v.X); ChunkMax[c * 3] = Math.Max(ChunkMax[c * 3], v.X);
+                 ChunkMin[c * 3 + 1] = Math.Min(ChunkMin[c * 3 + 1], v.Y); ChunkMax[c * 3 + 1] = Math.Max(ChunkMax[c * 3 + 1], v.Y);
+                 ChunkMin[c * 3 + 2] = Math.Min(ChunkMin[c * 3 + 2], v.Z); ChunkMax[c * 3 + 2] = Math.Max(ChunkMax[c * 3 + 2], v.Z);
++                float q = BlackQuotient(v);
++                if (q < ChunkFogQ[c]) { ChunkFogQ[c] = q; ChunkFogOf[c] = v; }
+             }
+         }
+         int at = 0;
+@@ -153,6 +181,27 @@ public static class RetainedScene
+         StaticGeneration++;
+     }
+ 
++    /// <summary>The quotient H*65536/z at and below which a corner's depth cue
++    /// leaves nothing (the curves WorldVs fogs with), or 0 when it never does.</summary>
++    public static float BlackQuotient(in Vertex v)
++    {
++        int curve = (int)(v.Curve + 0.5f);
++        if (curve == 0 || v.Dqa >= 0f) return 0f;
++        float ir0 = curve == 1 ? 2848f : 3232f;
++        return Math.Max(0f, (ir0 * 4096f - v.Dqb) / v.Dqa);
++    }
++
++    /// <summary>How much of a corner's colour survives the cue at view depth z.</summary>
++    public static float FogKeep(in Vertex v, float h, float z)
++    {
++        int curve = (int)(v.Curve + 0.5f);
++        if (curve == 0) return 1f;
++        float q = Math.Min(h * 65536f / Math.Max(z, 1f), 131071f);
++        float ir0 = Math.Clamp((v.Dqa * q + v.Dqb) / 4096f, 0f, 4096f);
++        float w = curve == 1 ? Math.Max(ir0 - 800f, 0f) * 2f : ir0 < 2800f ? ir0 : 3f * ir0 - 5600f;
++        return Math.Clamp(1f - w / 4096f, 0f, 1f);
++    }
++
+     static int ChunkOf(in Vertex a, in Vertex b, in Vertex c)
+     {
+         int cx = Math.Clamp((int)((a.X + b.X + c.X) / 3f / ChunkUnits), 0, ChunkSide - 1);
+@@ -207,6 +256,9 @@ public static class RetainedScene
+         public bool SortedValid;
+         public readonly float[] Planes = new float[MaxPlanes];
+         public int PlaneCount;
++        /// <summary>1 for each map half the frame's own tile walk drew, by
++        /// <c>(tile Z * 80 + tile X) * 2 + upper</c>.</summary>
++        public readonly byte[] Halves = new byte[HalvesW * HalvesH];
+ 
+         public ReadOnlySpan<Vertex> SortedDynamic()
+         {
+@@ -241,6 +293,14 @@ public static class RetainedScene
+         f.DynamicCount = 0;
+         f.SortedValid = false;
+         f.PlaneCount = 0;
++        Array.Clear(f.Halves);
++    }
++
++    /// <summary>A map half the current frame's walk drew.</summary>
++    public static void NoteHalf(int tx, int tz, int upper)
++    {
++        var f = Current;
++        if (f.Serial == _serial && (uint)tx < 80u && (uint)tz < 80u) f.Halves[(tz * 80 + tx) * 2 + upper] = 1;
+     }
+ 
+     /// <summary>One model's triangles, in world space, to the current frame.</summary>
+@@ -287,5 +347,24 @@ public static class RetainedScene
+     /// had fallen out of the ring.</summary>
+     public static long Found, Missed;
+ 
+-    public static void ResetCounters() => PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
++    /// <summary>The probe's, per planar pass: pixels whose nearest opaque face is a
++    /// front face, and those a back face would have covered with culling off.</summary>
++    public static long FrontPixels, BackPixels;
++
++    /// <summary>The probe's, per planar pass: pixels a map half the game did not draw
++    /// that frame would have taken with the gate off.</summary>
++    public static long UndrawnPixels;
++
++    /// <summary>The probe's: mirrored chunks drawn that the old distance cull
++    /// (straight-line distance past one fog's black) dropped, and the most of a
++    /// colour any of them keeps at its nearest depth.</summary>
++    public static long OldCullVisible;
++    public static float OldCullKeep;
++
++    public static void ResetCounters()
++    {
++        PlanarDraws = CubeDraws = Triangles = Found = Missed = ChunksDrawn = ChunksTested = 0;
++        FrontPixels = BackPixels = OldCullVisible = UndrawnPixels = 0;
++        OldCullKeep = 0f;
++    }
+ }
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+@@ -36,6 +36,13 @@ public sealed partial class GlCore
+     uint _halvesTex;
+     int _uwHalfGate;
+ 
++    // Authored lights, glows and mipmaps in the world program (0072 amended).
++    int _uwWorldLit, _uwLightN, _uwLightPos, _uwLightCol, _uwLightDir, _uwLightCentre, _uwLightH, _uwEmitOn, _uwMipOn;
++    int _uwLightShadow, _uwShadowToWorld, _uwShadowSize, _uwShadowOffset, _uwShadowBias, _uwShadowSoft;
++    uint _worldMipVbo, _worldDynMipVbo;
++    readonly float[] _wLightPos = new float[RemasterUniforms.MaxLights * 4], _wLightDir = new float[RemasterUniforms.MaxLights * 4];
++    int _wLightN;
++
+     /// <summary>How far above a plane geometry must stand to be mirrored in it:
+     /// the water itself, and anything lying in it, is not its own reflection.</summary>
+     public static float PlaneBias = 8f;
+@@ -58,6 +65,11 @@ public sealed partial class GlCore
+         _uwHalfGate = L("uHalfGate");
+         _uwAtmosOn = L("uAtmosOn"); _uwAtmosColour = L("uAtmosColour"); _uwAtmosShape = L("uAtmosShape");
+         _uwAtmosSkip = L("uAtmosSkip");
++        _uwWorldLit = L("uWorldLit"); _uwLightN = L("uLightN"); _uwLightPos = L("uLightPos"); _uwLightCol = L("uLightCol");
++        _uwLightDir = L("uLightDir"); _uwLightCentre = L("uLightCentre"); _uwLightH = L("uLightH"); _uwEmitOn = L("uEmitOn");
++        _uwMipOn = L("uMipOn"); _uwLightShadow = L("uLightShadow"); _uwShadowToWorld = L("uShadowToWorld");
++        _uwShadowSize = L("uShadowSize"); _uwShadowOffset = L("uShadowOffset"); _uwShadowBias = L("uShadowBias");
++        _uwShadowSoft = L("uShadowSoft");
+ 
+         _gl.UseProgram(_progWorld);
+         void Unit(string n, int u) { int l = L(n); if (l >= 0) _gl.Uniform1(l, u); }
+@@ -69,7 +81,7 @@ public sealed partial class GlCore
+         if (tw >= 0) _gl.Uniform4(tw, 255, 255, 0, 0);
+         F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
+         I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
+-        I("uMaskOn", 0); I("uHalfGate", 0); I("uAtmosOn", 0); I("uAtmosSkip", 0);
++        I("uMaskOn", 0); I("uHalfGate", 0); I("uAtmosOn", 0); I("uAtmosSkip", 0); I("uWorldLit", 0);
+         InitShadowUniforms(_progWorld, false);
+         if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
+         int pb = L("uPosBias");
+@@ -85,8 +97,10 @@ public sealed partial class GlCore
+ 
+         _worldVbo = _gl.GenBuffer();
+         _worldDynVbo = _gl.GenBuffer();
+-        _worldVao = MakeWorldVao(_worldVbo);
+-        _worldDynVao = MakeWorldVao(_worldDynVbo);
++        _worldMipVbo = _gl.GenBuffer();
++        _worldDynMipVbo = _gl.GenBuffer();
++        _worldVao = MakeWorldVao(_worldVbo, _worldMipVbo);
++        _worldDynVao = MakeWorldVao(_worldDynVbo, _worldDynMipVbo);
+ 
+         _gl.UseProgram(progSsr);
+         int SL(string n) => _gl.GetUniformLocation(progSsr, n);
+@@ -102,7 +116,7 @@ public sealed partial class GlCore
+         RetainedScene.Supported = _uSsrRetN >= 0 && _uSsrCubeOn >= 0 && _uwMaskOn >= 0;
+     }
+ 
+-    unsafe uint MakeWorldVao(uint vbo)
++    unsafe uint MakeWorldVao(uint vbo, uint mipVbo)
+     {
+         uint vao = _gl.GenVertexArray();
+         _gl.BindVertexArray(vao);
+@@ -116,6 +130,15 @@ public sealed partial class GlCore
+         _gl.EnableVertexAttribArray(5); _gl.VertexAttribPointer(5, 3, VertexAttribPointerType.Float, false, st, (void*)40);
+         _gl.EnableVertexAttribArray(6); _gl.VertexAttribIPointer(6, 1, VertexAttribIType.UnsignedInt, st, (void*)52);
+         _gl.EnableVertexAttribArray(7); _gl.VertexAttribIPointer(7, 1, VertexAttribIType.UnsignedInt, st, (void*)56);
++        _gl.EnableVertexAttribArray(8); _gl.VertexAttribIPointer(8, 1, VertexAttribIType.UnsignedInt, st, (void*)60);
++        // The mip entries are the backend's, not the port's: a buffer of their own. A
++        // shadow's casters have none, and read the attribute's constant 0.
++        if (mipVbo != 0)
++        {
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, mipVbo);
++            _gl.EnableVertexAttribArray(9); _gl.VertexAttribIPointer(9, 1, VertexAttribIType.UnsignedInt, 4, (void*)0);
++        }
++        else _gl.VertexAttribI4(9, 0u, 0u, 0u, 0u);
+         _gl.BindVertexArray(0);
+         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
+         return vao;
+@@ -139,7 +162,15 @@ public sealed partial class GlCore
+         _chunksDrawn = _chunksTested = 0;
+ 
+         UploadWorld(f);
++        bool mips = UpdateWorldMips(f);
+         _gl.UseProgram(_progWorld);
++        if (_uwMipOn >= 0) _gl.Uniform1(_uwMipOn, mips ? 1f : 0f);
++        if (mips)
++        {
++            _gl.ActiveTexture(TextureUnit.Texture5);
++            _gl.BindTexture(TextureTarget.Texture2D, _mip!.Texture);
++        }
++        BeginWorldLights();
+         _gl.Disable(EnableCap.ScissorTest);
+         _gl.Disable(EnableCap.CullFace);
+         _gl.ActiveTexture(TextureUnit.Texture0);
+@@ -172,6 +203,7 @@ public sealed partial class GlCore
+         }
+ 
+         if (_uwHalfGate >= 0) _gl.Uniform1(_uwHalfGate, 0);
++        EndWorldLights();
+         // Dual-source factors left set are an error for any draw into more than one
+         // buffer, blending on or not -- the reflection pass's probe draws into two.
+         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.Zero);
+@@ -494,6 +526,7 @@ public sealed partial class GlCore
+                        float.PositiveInfinity);
+             if (_uwMaskPlane >= 0)
+                 _gl.Uniform4(_uwMaskPlane, _retPlanes[k * 4], _retPlanes[k * 4 + 1], _retPlanes[k * 4 + 2], _retPlanes[k * 4 + 3]);
++            SendWorldLights(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, cx, v.Cy, v.H, true, h);
+             DrawWorldRanges(f);
+             if (RetainedScene.Probe) CountFacing(f);
+         }
+@@ -588,6 +621,7 @@ public sealed partial class GlCore
+                          false, 1);
+             CullChunks(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, n, n, false, 0f,
+                        v.H, cubeReach);
++            SendWorldLights(CubeFaces[i], v.CamX, v.CamY, v.CamZ, 0f, 0f, 0f, n * 0.5f, n * 0.5f, n * 0.5f, false, 0f);
+             DrawWorldRanges(f);
+         }
+         _gl.BindTexture(TextureTarget.TextureCubeMap, _cubeTex);
+@@ -634,6 +668,191 @@ public sealed partial class GlCore
+         }
+     }
+ 
++    // ---- authored lights, glows and mipmaps in the world program -----------------
++
++    /// <summary>The frame's lights and glows reach the retained scene: the corners carry
++    /// their RGBC while either is on, so with neither the draws are as they were.</summary>
++    void BeginWorldLights()
++    {
++        _wLightN = RetainedScene.Lit && RemasterUniforms.Active && _uwLightN >= 0 ? RemasterUniforms.LightCount : 0;
++        bool emit = RetainedScene.Lit && (SurfaceMaterial.AnyEmissive || (SurfaceMaterial.AnySpecular && _wLightN != 0)) && _uwEmitOn >= 0;
++        RetainedScene.LitLights = _wLightN;
++        RetainedScene.LitGlow = emit;
++        if (emit) BindMaterials();
++        _gl.UseProgram(_progWorld);
++        if (_uwEmitOn >= 0) _gl.Uniform1(_uwEmitOn, emit ? 1 : 0);
++        if (_uwWorldLit >= 0) _gl.Uniform1(_uwWorldLit, emit || _wLightN != 0 ? 1 : 0);
++        if (_uwLightN >= 0) _gl.Uniform1(_uwLightN, _wLightN);
++        if (_wLightN == 0) return;
++        _gl.Uniform4(_uwLightCol, (uint)_wLightN, new ReadOnlySpan<float>(RemasterUniforms.LightCol, 0, _wLightN * 4));
++        if (_uwLightShadow < 0) return;
++        int mask = Math.Max(_shadowReadyMask, 0);
++        for (int i = 0; i < RemasterUniforms.MaxLights; i++)
++        {
++            int sl = i < _wLightN ? RemasterUniforms.LightShadow[i] : -1;
++            _shadowSend[i] = sl >= 0 && sl < RemasterUniforms.MaxShadows && (mask & (1 << sl)) != 0 ? sl : -1;
++        }
++        _gl.Uniform1(_uwLightShadow, (uint)_shadowSend.Length, _shadowSend);
++        if (mask == 0) return;
++        _gl.Uniform1(_uwShadowSize, (float)Math.Clamp(RemasterUniforms.ShadowSize, 64, 4096));
++        _gl.Uniform1(_uwShadowOffset, RemasterUniforms.ShadowOffset);
++        _gl.Uniform1(_uwShadowBias, RemasterUniforms.ShadowBias);
++        _gl.Uniform1(_uwShadowSoft, RemasterUniforms.ShadowSoft);
++        for (int sl = 0; sl < RemasterUniforms.MaxShadows; sl++)
++            if ((mask & (1 << sl)) != 0)
++            {
++                _gl.ActiveTexture(TextureUnit.Texture0 + ShadowUnit + sl);
++                _gl.BindTexture(TextureTarget.TextureCubeMap, _shadowBind[sl]);
++            }
++        _gl.ActiveTexture(TextureUnit.Texture0);
++    }
++
++    /// <summary>Back to the program as the shadow cubemaps draw with it: no light, no
++    /// glow, nothing shadowed.</summary>
++    void EndWorldLights()
++    {
++        if (_uwLightN >= 0) _gl.Uniform1(_uwLightN, 0);
++        if (_uwEmitOn >= 0) _gl.Uniform1(_uwEmitOn, 0);
++        if (_uwWorldLit >= 0) _gl.Uniform1(_uwWorldLit, 0);
++        if (_uwMipOn >= 0) _gl.Uniform1(_uwMipOn, 0f);
++        if (_uwLightShadow >= 0) _gl.Uniform1(_uwLightShadow, (uint)NoShadows.Length, NoShadows);
++        _wLightN = 0;
++    }
++
++    /// <summary>The lights in one view's space: what the view's rotation and translation
++    /// make of their world positions, mirrored first in <paramref name="planeY"/> for a
++    /// planar pass, whose geometry is mirrored the same way; and the projection the
++    /// shader rebuilds a fragment's position with. The shadow lookup turns a view
++    /// offset back to world axes with the same rotation, mirror included.</summary>
++    void SendWorldLights(ReadOnlySpan<float> r, double camX, double camY, double camZ, float tx, float ty, float tz,
++                         float cx, float cy, float h, bool mirror, float planeY)
++    {
++        if (_wLightN == 0) return;
++        for (int i = 0; i < _wLightN; i++)
++        {
++            int o = i * 4;
++            double wx = RemasterUniforms.LightWorldPos[o], wy = RemasterUniforms.LightWorldPos[o + 1], wz = RemasterUniforms.LightWorldPos[o + 2];
++            float dx = RemasterUniforms.LightWorldDir[o], dy = RemasterUniforms.LightWorldDir[o + 1], dz = RemasterUniforms.LightWorldDir[o + 2];
++            if (mirror) { wy = 2.0 * planeY - wy; dy = -dy; }
++            double px = wx - camX, py = wy - camY, pz = wz - camZ;
++            _wLightPos[o] = (float)(r[0] * px + r[1] * py + r[2] * pz) + tx;
++            _wLightPos[o + 1] = (float)(r[3] * px + r[4] * py + r[5] * pz) + ty;
++            _wLightPos[o + 2] = (float)(r[6] * px + r[7] * py + r[8] * pz) + tz;
++            _wLightPos[o + 3] = RemasterUniforms.LightWorldPos[o + 3];
++            _wLightDir[o] = r[0] * dx + r[1] * dy + r[2] * dz;
++            _wLightDir[o + 1] = r[3] * dx + r[4] * dy + r[5] * dz;
++            _wLightDir[o + 2] = r[6] * dx + r[7] * dy + r[8] * dz;
++            _wLightDir[o + 3] = RemasterUniforms.LightDir[o + 3];
++        }
++        _gl.Uniform4(_uwLightPos, (uint)_wLightN, new ReadOnlySpan<float>(_wLightPos, 0, _wLightN * 4));
++        _gl.Uniform4(_uwLightDir, (uint)_wLightN, new ReadOnlySpan<float>(_wLightDir, 0, _wLightN * 4));
++        if (_uwLightCentre >= 0) _gl.Uniform2(_uwLightCentre, cx, cy);
++        if (_uwLightH >= 0) _gl.Uniform1(_uwLightH, Math.Max(1f, h));
++        if (_uwShadowToWorld >= 0)
++        {
++            // GLSL reads the row-major array as its transpose, the view-to-world turn;
++            // a mirrored view's is that turn with Y flipped after it: R with column 1 negated.
++            Span<float> m = [r[0], mirror ? -r[1] : r[1], r[2], r[3], mirror ? -r[4] : r[4], r[5], r[6], mirror ? -r[7] : r[7], r[8]];
++            _gl.UniformMatrix3(_uwShadowToWorld, 1, false, m);
++        }
++    }
++
++    // The mip atlas entries of the static map, by distinct texture, and the frame's models.
++    readonly Dictionary<(int, int, uint), int> _mipKeyAt = new();
++    readonly List<(int TPage, int Clut, uint Rect)> _mipKeys = new();
++    uint[] _mipKeyEntry = [];
++    int[] _staticMipKey = [];
++    uint[] _staticMip = [], _dynMip = [];
++    int _mipKeysGen = -1;
++    bool _staticMipUploaded;
++
++    /// <summary>The atlas entry of every retained texture, looked up each present so the
++    /// entries the reflections use stay in the atlas and are rebuilt when VRAM under them
++    /// changes; the static buffer is uploaded again only when one moved. False when
++    /// mipmaps are off, and every entry then reads 0.</summary>
++    unsafe bool UpdateWorldMips(RetainedScene.Frame f)
++    {
++        bool on = RetainedScene.Mips && GteDepth.Mipmaps && _mip != null && _uwMipOn >= 0;
++        var st = RetainedScene.Static;
++        if (_mipKeysGen != RetainedScene.StaticGeneration)
++        {
++            _mipKeysGen = RetainedScene.StaticGeneration;
++            _mipKeyAt.Clear();
++            _mipKeys.Clear();
++            if (_staticMipKey.Length < st.Length) _staticMipKey = new int[st.Length];
++            for (int i = 0; i + 2 < st.Length; i += 3)
++            {
++                int k = MipKey(st[i]);
++                _staticMipKey[i] = _staticMipKey[i + 1] = _staticMipKey[i + 2] = k;
++            }
++            _mipKeyEntry = new uint[_mipKeys.Count];
++            if (_staticMip.Length < st.Length) _staticMip = new uint[st.Length];
++            Array.Clear(_staticMip);
++            _staticMipUploaded = false;
++        }
++        bool moved = !_staticMipUploaded;
++        for (int k = 0; k < _mipKeys.Count; k++)
++        {
++            var (tp, cl, rect) = _mipKeys[k];
++            uint e = on ? MipOf(tp, cl, rect) : 0u;
++            if (e != _mipKeyEntry[k]) { _mipKeyEntry[k] = e; moved = true; }
++        }
++        int found = 0;
++        foreach (var e in _mipKeyEntry) if (e != 0) found++;
++        RetainedScene.MipsFound = found;
++        RetainedScene.MipsKeys = _mipKeys.Count;
++        if (moved)
++        {
++            for (int i = 0; i < st.Length; i++)
++                _staticMip[i] = _staticMipKey[i] >= 0 ? _mipKeyEntry[_staticMipKey[i]] : 0u;
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldMipVbo);
++            if (_staticMip.Length == 0) _staticMip = new uint[1];
++            _gl.BufferData<uint>(BufferTargetARB.ArrayBuffer, new ReadOnlySpan<uint>(_staticMip, 0, Math.Max(st.Length, 1)), BufferUsageARB.StaticDraw);
++            _staticMipUploaded = true;
++        }
++        var d = f.SortedDynamic();
++        if (_dynMip.Length < Math.Max(d.Length, 1)) _dynMip = new uint[Math.Max(Math.Max(d.Length, 1), _dynMip.Length * 2)];
++        for (int i = 0; i + 2 < d.Length; i += 3)
++        {
++            uint e = on ? DynMip(d[i]) : 0u;
++            _dynMip[i] = _dynMip[i + 1] = _dynMip[i + 2] = e;
++        }
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldDynMipVbo);
++        _gl.BufferData<uint>(BufferTargetARB.ArrayBuffer, new ReadOnlySpan<uint>(_dynMip, 0, Math.Max(d.Length, 1)), BufferUsageARB.StreamDraw);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
++        // Decode what the lookups queued before anything reads the atlas.
++        if (on && _mip!.HasPending) _mip.Process(_vram.SampleTexture);
++        return on;
++    }
++
++    int MipKey(in RetainedScene.Vertex v)
++    {
++        int tp = (int)(v.Texpage + 0.5f), cl = (int)(v.Clut + 0.5f);
++        if ((tp & 0x8000) != 0 || (v.Flags & RetainedScene.FlagRect) == 0) return -1;
++        var key = (tp & 0x1FF, (tp >> 7 & 3) == 2 ? 0 : cl, v.Rect);
++        if (_mipKeyAt.TryGetValue(key, out int k)) return k;
++        _mipKeyAt[key] = k = _mipKeys.Count;
++        _mipKeys.Add(key);
++        return k;
++    }
++
++    uint DynMip(in RetainedScene.Vertex v)
++    {
++        int tp = (int)(v.Texpage + 0.5f), cl = (int)(v.Clut + 0.5f);
++        if ((tp & 0x8000) != 0 || (v.Flags & RetainedScene.FlagRect) == 0) return 0u;
++        return MipOf(tp & 0x1FF, cl, v.Rect);
++    }
++
++    /// <summary>As <see cref="MipEntry"/> takes it, less the magnification test: a
++    /// scrolling texture has none, since its fraction is the shader's.</summary>
++    uint MipOf(int tpage, int clut, uint rect)
++    {
++        int u0 = (int)(rect & 0xFF), v0 = (int)((rect >> 8) & 0xFF);
++        int w = (int)((rect >> 16) & 0xFF) - u0 + 1, h = (int)(rect >> 24) - v0 + 1;
++        if (w <= 0 || h <= 0 || FluidOverlap(tpage, u0, v0, w, h)) return 0u;
++        return _mip!.Lookup(tpage, clut, rect, _frame);
++    }
++
+     // ---- GPU time, for the probe ------------------------------------------------
+ 
+     uint _planarQuery, _cubeQuery;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -1213,6 +1213,10 @@ internal static class GlShaders
+         layout(location = 5) in vec3  inCue;
+         layout(location = 6) in uint  inRect;
+         layout(location = 7) in uint  inFlags;
++        // The colour the game lit the corner from, which a light and a glow scale; and
++        // its mip atlas entry (0060), 0 for none.
++        layout(location = 8) in uint  inRgbc;
++        layout(location = 9) in uint  inMip;
+ 
+         invariant gl_Position;
+ 
+@@ -1246,6 +1250,8 @@ internal static class GlShaders
+         // 2 only the others (the probe's count). Models carry no half.
+         uniform usampler2D uHalves;
+         uniform int uHalfGate;
++        // Authored lights or a glow are drawn: the corner carries its RGBC to them.
++        uniform int uWorldLit;
+ 
+         float cueKeep(float z) {
+             int curve = int(inCue.z + 0.5);
+@@ -1291,7 +1297,11 @@ internal static class GlShaders
+                 vFog = 0.0;
+                 vLight = 0u;
+             }
+-            vTex = uvec2(inRect, inFlags & 0x80000000u);
++            if (uWorldLit != 0 && inRgbc != 0u) {
++                if (vLight == 0u) { vLit = inColorF; vFog = 0.0; }
++                vLight |= inRgbc & 0xFFFFFFu;
++            }
++            vTex = uvec2(inRect, (inFlags & 0x80000000u) | inMip);
+             vMat = inFlags & 255u;
+             vDither = 0;
+             vRepClut = 0;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShadows.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShadows.cs
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShadows.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShadows.cs
+@@ -296,7 +296,7 @@ public sealed partial class GlCore
+         {
+             _uwOpaqueDepth = _gl.GetUniformLocation(_progWorld, "uOpaqueDepth");
+             _casterVbo = _gl.GenBuffer();
+-            _casterVao = MakeWorldVao(_casterVbo);
++            _casterVao = MakeWorldVao(_casterVbo, 0);
+             _shadowReadFbo = _gl.GenFramebuffer();
+             _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _shadowReadFbo);
+             _gl.DrawBuffer(DrawBufferMode.None);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/RemasterUniforms.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/RemasterUniforms.cs
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/RemasterUniforms.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/RemasterUniforms.cs
+@@ -38,6 +38,13 @@ public static class RemasterUniforms
+     public static readonly float[] LightCol = new float[MaxLights * 4];
+     public static readonly float[] LightDir = new float[MaxLights * 4];
+ 
++    /// <summary>The same lights in world space, for a view other than the frame's (the
++    /// retained scene's mirrors and cube faces, 0072): position and radius, and the
++    /// spot's direction; the colours and cones are <see cref="LightCol"/> and the
++    /// <c>w</c> of <see cref="LightDir"/>.</summary>
++    public static readonly float[] LightWorldPos = new float[MaxLights * 4];
++    public static readonly float[] LightWorldDir = new float[MaxLights * 4];
++
+     public static int LightCount { get; private set; }
+ 
+     /// <summary>Bumped by <see cref="Publish"/>; a batch drawn under one generation is
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -39,6 +39,10 @@ public static class RetainedScene
+         /// <summary>Bit 31 the rectangle is valid, bit 10 semi-transparent, bits 8-9
+         /// the blend mode, the low byte the material.</summary>
+         public uint Flags;
++        /// <summary>The colour the game lit this corner from (the GTE's RGBC, low 24
++        /// bits), which an authored light and a glow scale as they do the game's own
++        /// face; 0 leaves the corner out of both.</summary>
++        public uint Rgbc;
+     }
+ 
+     public const uint FlagRect = 0x80000000u, FlagSemi = 0x400u;
+@@ -102,6 +106,16 @@ public static class RetainedScene
+     /// <summary>The probe's switch: GPU time per draw, read back with a query.</summary>
+     public static bool Probe;
+ 
++    /// <summary>The frame's authored lights and glows drawn into the reflections, and
++    /// its textures filtered through the mip atlas as the frame's are. Off, each is
++    /// left out as it was before either was drawn (the comparisons).</summary>
++    public static bool Lit = true, Mips = true;
++
++    /// <summary>The last present's: lights sent to the world draws, whether a glow was
++    /// on, and the retained textures with an atlas entry of those that could have one.</summary>
++    public static int LitLights, MipsFound, MipsKeys;
++    public static bool LitGlow;
++
+     // ---- the static map ----------------------------------------------------------
+ 
+     static Vertex[] _static = [];
+
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index f332000..4ffa372 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -1235,2 +1246,5 @@ internal static class GlShaders
+         flat out uint vMat;
++        // 0072, amended. A half's weight in the gate, faded in and out by the port;
++        // PrimFs dithers it away. 1 for everything the gate does not weigh.
++        flat out float vFade;
+ 
+@@ -1267,5 +1281,8 @@ internal static class GlShaders
+             uint hid = (inFlags >> 13) & 0x3FFFu;
++            vFade = 1.0;
+             if (uHalfGate != 0) {
+-                bool drawn = hid == 0u
+-                    || texelFetch(uHalves, ivec2(int((hid - 1u) % 160u), int((hid - 1u) / 160u)), 0).r != 0u;
++                uint weight = hid == 0u ? 255u
++                    : texelFetch(uHalves, ivec2(int((hid - 1u) % 160u), int((hid - 1u) / 160u)), 0).r;
++                bool drawn = weight != 0u;
++                if (uHalfGate == 1) vFade = float(weight) / 255.0;
+                 if (drawn != (uHalfGate == 1)) {
+@@ -1364,2 +1381,3 @@ internal static class GlShaders
+         flat out uint vMat;
++        flat out float vFade;
+ 
+@@ -1395,2 +1413,3 @@ internal static class GlShaders
+             vMat = inMat;
++            vFade = 1.0;
+             vDither = (inTexpage >> 10) & 1;
+@@ -1430,2 +1449,3 @@ internal static class GlShaders
+         flat in uint vMat;
++        flat in float vFade;
+ 
+diff --git a/RecompOne.Runtime/Gpu/RetainedScene.cs b/RecompOne.Runtime/Gpu/RetainedScene.cs
+index a61c861..9f70ef3 100644
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -278,4 +278,5 @@ public static class RetainedScene
+         public int PlaneCount;
+-        /// <summary>1 for each map half the frame's own tile walk drew, by
+-        /// <c>(tile Z * 80 + tile X) * 2 + upper</c>.</summary>
++        /// <summary>Each map half's weight in the reflections, by
++        /// <c>(tile Z * 80 + tile X) * 2 + upper</c>: 255 for one the frame's own
++        /// tile walk drew, unless the port weighs them (<see cref="CurrentHalves"/>).</summary>
+         public readonly byte[] Halves = new byte[HalvesW * HalvesH];
+@@ -318,3 +319,3 @@ public static class RetainedScene
+ 
+-    /// <summary>A map half the current frame's walk drew.</summary>
++    /// <summary>A map half the current frame's walk drew, at full weight.</summary>
+     public static void NoteHalf(int tx, int tz, int upper)
+@@ -322,5 +323,10 @@ public static class RetainedScene
+         var f = Current;
+-        if (f.Serial == _serial && (uint)tx < 80u && (uint)tz < 80u) f.Halves[(tz * 80 + tx) * 2 + upper] = 1;
++        if (f.Serial == _serial && (uint)tx < 80u && (uint)tz < 80u) f.Halves[(tz * 80 + tx) * 2 + upper] = 255;
+     }
+ 
++    /// <summary>The current frame's halves, for a port that weighs them itself: 0
++    /// is not reflected, 255 fully, and between is dithered (the world program's
++    /// <c>vFade</c>). Empty outside a frame.</summary>
++    public static Span<byte> CurrentHalves => Current.Serial == _serial ? Current.Halves : Span<byte>.Empty;
++
+     /// <summary>One model's triangles, in world space, to the current frame.</summary>

@@ -1,0 +1,638 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -9,7 +9,7 @@
+     // W is the clip W the vertex shader divides by: the view depth GteDepth
+     // recovered, or exactly 1 for everything that had none, which is every vertex
+     // this renderer ever saw before.
+-    struct GlVertex { public float X, Y; public float R, G, B; public float Clut, Texpage; public float U, V; public float W; }
++    struct GlVertex { public float X, Y; public float R, G, B; public float Clut, Texpage; public float U, V; public float W, Z; }
+ 
+     const int MaxVerts = 0x40000;
+ 
+@@ -43,6 +43,7 @@
+     bool _kTransparent;
+     int _kImage = -1;
+     int _kBlend, _kSetMask, _kCheckMask;
++    int _kZMode;
+     int _kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY;
+     int _kClipX0, _kClipY0, _kClipX1, _kClipY1;
+     uint _kRepTex, _kRepClut;
+@@ -129,6 +130,7 @@
+         _gl.EnableVertexAttribArray(3); _gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, stride, (void*)24);
+         _gl.EnableVertexAttribArray(4); _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)28);
+         _gl.EnableVertexAttribArray(5); _gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, (void*)36);
++        _gl.EnableVertexAttribArray(6); _gl.VertexAttribPointer(6, 1, VertexAttribPointerType.Float, false, stride, (void*)40);
+ 
+         // fullscreen quad for present, real vbo since gl_VertexID without arrays does not draw on mesa for some reason?? or i did it wrong?
+         _presentVao = _gl.GenVertexArray();
+@@ -280,7 +282,7 @@
+             }
+     }
+ 
+-    bool DesiredMatches(bool transparent, int blend, int image)
++    bool DesiredMatches(bool transparent, int blend, int image, int zMode)
+     {
+         int twAndX = ~(_env.TwMaskX * 8) & 0xFF, twAndY = ~(_env.TwMaskY * 8) & 0xFF;
+         int twOrX = (_env.TwOffX & _env.TwMaskX) * 8, twOrY = (_env.TwOffY & _env.TwMaskY) * 8;
+@@ -288,24 +290,26 @@
+             && (_pendingRepTex == 0 || (_kRepX == _pendingRepX && _kRepY == _pendingRepY
+                                         && _kRepW == _pendingRepW && _kRepH == _pendingRepH))
+             && _kTransparent == transparent && _kBlend == blend && _kImage == image
++            && _kZMode == zMode
+             && _kSetMask == (_env.SetMask ? 1 : 0) && _kCheckMask == (_env.CheckMask ? 1 : 0)
+             && _kTwAndX == twAndX && _kTwAndY == twAndY && _kTwOrX == twOrX && _kTwOrY == twOrY
+             && _kClipX0 == _env.ClipX0 && _kClipY0 == _env.ClipY0 && _kClipX1 == _env.ClipX1 && _kClipY1 == _env.ClipY1;
+     }
+ 
+-    void Begin(in PrimFlags f, int vertsNeeded)
++    void Begin(in PrimFlags f, int vertsNeeded, int zMode = 0)
+     {
+         bool transparent = f.SemiTrans;
+         int blend = f.BlendMode;
+         int image = f.UseImage ? f.Image : -1;
+         var target = Classify();
+-        if (_count > 0 && (target != _kTarget || !DesiredMatches(transparent, blend, image))) Flush();
++        if (_count > 0 && (target != _kTarget || !DesiredMatches(transparent, blend, image, zMode))) Flush();
+         if (_count + vertsNeeded > MaxVerts) Flush();
+         CheckTextureFeedback(f);
+ 
+         _kTarget = target;
+         _kImage = image;
+         _kTransparent = transparent; _kBlend = blend;
++        _kZMode = zMode;
+         _kSetMask = _env.SetMask ? 1 : 0; _kCheckMask = _env.CheckMask ? 1 : 0;
+         _kTwAndX = ~(_env.TwMaskX * 8) & 0xFF; _kTwAndY = ~(_env.TwMaskY * 8) & 0xFF;
+         _kTwOrX = (_env.TwOffX & _env.TwMaskX) * 8; _kTwOrY = (_env.TwOffY & _env.TwMaskY) * 8;
+@@ -419,7 +423,8 @@
+             Clut = f.Clut & 0x7FFF,
+             Texpage = tpage,
+             U = v.U, V = v.V,
+-            W = v.HasGteZ && v.Z > 0f ? v.Z : 1f,
++            W = v.HasPersp && v.Z > 0f ? v.Z : 1f,
++            Z = v.HasGteZ && v.Z > 0f ? v.Z : 0f,
+         };
+     }
+ 
+@@ -428,7 +433,13 @@
+         ResolveReplacement(f,
+             (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
+             (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
+-        Begin(f, 3);
++        // 0 = painter's (2D, or a vertex missed). 1 = opaque 3D, test and write.
++        // 2 = semi-transparent 3D, test but leave Z so overlapping additives still
++        // blend in table order.
++        int zMode = 0;
++        if (a.HasGteZ && b.HasGteZ && c.HasGteZ)
++            zMode = f.SemiTrans ? 2 : 1;
++        Begin(f, 3, zMode);
+         bool dith = DitherOf(f);
+         _verts[_count++] = V(a, f, dith); _verts[_count++] = V(b, f, dith); _verts[_count++] = V(c, f, dith);
+     }
+@@ -500,7 +511,10 @@
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, rt.Fbo);
+         _gl.Disable(EnableCap.ScissorTest);
+         _gl.ClearColor(r, g, b, a);
+-        _gl.Clear(ClearBufferMask.ColorBufferBit);
++        _gl.ClearDepth(1.0);
++        _gl.DepthMask(true);
++        _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
++        rt.ZGen = GteDepth.Generation;
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+     }
+ 
+@@ -571,11 +585,37 @@
+         GpuGlAccess.TargetOriginY = rt == null ? 0 : rt.Y;
+         GpuGlAccess.TargetMargin = rt == null ? 0 : rt.Margin;
+ 
+-        _gl.Disable(EnableCap.DepthTest);
+         _gl.Disable(EnableCap.CullFace);
+         _gl.Enable(EnableCap.ScissorTest);
+         int s = GlVram.Scale;
+ 
++        // Depth test is per-batch: opaque 3D writes, semi-transparent 3D tests
++        // without writing, 2D (and everything while the setting is off) keeps
++        // the console's painter's algorithm. First draw onto an RT after Present
++        // — or after the setting was flipped — clears the attachment so last
++        // frame's depths cannot occlude this one. The clear is not gated on this
++        // batch's mode, so a 2D primitive arriving first cannot skip it.
++        if (rt != null && GteDepth.ZBuffer && (rt.LastDrawFrame != _frame || rt.ZGen != GteDepth.Generation))
++        {
++            _gl.Disable(EnableCap.ScissorTest);
++            _gl.DepthMask(true);
++            _gl.ClearDepth(1.0);
++            _gl.Clear(ClearBufferMask.DepthBufferBit);
++            _gl.Enable(EnableCap.ScissorTest);
++            rt.ZGen = GteDepth.Generation;
++        }
++        if (_kZMode != 0)
++        {
++            _gl.Enable(EnableCap.DepthTest);
++            _gl.DepthFunc(DepthFunction.Lequal);
++            _gl.DepthMask(_kZMode == 1);
++        }
++        else
++        {
++            _gl.Disable(EnableCap.DepthTest);
++            _gl.DepthMask(false);
++        }
++
+         int clipX0, clipY0, clipX1, clipY1;
+         if (rt == null)
+         {
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -6,10 +6,11 @@
+ {
+     public int X, Y, W, H;
+     public int Margin;
+-    public uint Tex, Fbo;
++    public uint Tex, Fbo, Depth;
+     public bool Dirty;
+     public long Stamp;
+     public long LastDrawFrame;
++    public int ZGen = -1;
+ 
+     public int Wide1x => W + Margin * 2;
+     public int TexW => Wide1x * GlVram.Scale;
+@@ -39,15 +40,26 @@
+         gl.BindFramebuffer(FramebufferTarget.Framebuffer, Fbo);
+         gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+             TextureTarget.Texture2D, Tex, 0);
++
++        Depth = gl.GenRenderbuffer();
++        gl.BindRenderbuffer(RenderbufferTarget.Renderbuffer, Depth);
++        gl.RenderbufferStorage(RenderbufferTarget.Renderbuffer, InternalFormat.DepthComponent24,
++            (uint)TexW, (uint)TexH);
++        gl.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment,
++            RenderbufferTarget.Renderbuffer, Depth);
++
+         gl.ClearColor(0f, 0f, 0f, 0f);
++        gl.ClearDepth(1.0);
+         gl.Disable(EnableCap.ScissorTest);
+-        gl.Clear(ClearBufferMask.ColorBufferBit);
++        gl.DepthMask(true);
++        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+     }
+ 
+     public void Destroy(GL gl)
+     {
+         if (Fbo != 0) gl.DeleteFramebuffer(Fbo);
+         if (Tex != 0) gl.DeleteTexture(Tex);
+-        Fbo = Tex = 0;
++        if (Depth != 0) gl.DeleteRenderbuffer(Depth);
++        Fbo = Tex = Depth = 0;
+     }
+ }
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -64,6 +64,7 @@
+         layout(location = 3) in float inTexpageF;
+         layout(location = 4) in vec2  inUV;
+         layout(location = 5) in float inW;
++        layout(location = 6) in float inZ;
+ 
+         // vUV is the one thing that wants correcting: handing gl_Position a real W
+         // makes the rasterizer interpolate it in 1/W, which is exactly the
+@@ -71,6 +72,7 @@
+         noperspective out vec4 vColor;
+         out vec2 vUV;
++        out float vDepth;
+         flat out ivec2 clutBase;
+         flat out ivec2 pageBase;
+         flat out int   texMode;
+         flat out int   vDither;
+@@ -87,7 +89,12 @@
+             // Exactly 1 is the "no depth was recovered" case, and it is written out
+             // as the original expression rather than as p*1/1, so a primitive
+             // without perspective data lands on the same pixels to the last bit.
++            // Depth is a fragment value, not clip-space Z: these vertices are
++            // already projected, and putting SZ into gl_Position.z lets OpenGL
++            // clip them against a far plane the GPU never had — a hard line
++            // across the floor where the cave used to continue.
+             gl_Position = inW == 1.0 ? vec4(p, 0.0, 1.0) : vec4(p * inW, 0.0, inW);
++            vDepth = inZ > 0.0 ? inZ * (1.0/65536.0) : 0.0;
+ 
+             int inClut = int(inClutF + 0.5);
+             int inTexpage = int(inTexpageF + 0.5);
+@@ -109,6 +116,7 @@
+         #version 330 core
+         noperspective in vec4 vColor;
+         in vec2 vUV;
++        in float vDepth;
+         flat in ivec2 clutBase;
+         flat in ivec2 pageBase;
+         flat in int   texMode;
+@@ -164,6 +172,12 @@
+         }
+ 
+         void main() {
++            // Written on every path so a 3D triangle's recovered SZ is the
++            // window depth, and a 2D primitive (vDepth == 0, test off) keeps
++            // the interpolated clip Z it has always had. Assigning this also
++            // turns off early-Z, so a punch-through discard cannot occlude
++            // whatever is behind the hole.
++            gl_FragDepth = vDepth > 0.0 ? vDepth : gl_FragCoord.z;
+             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
+ 
+             if (texMode == 4) {
+@@ -317,10 +332,12 @@
+         attribute float inTexpageF;
+         attribute vec2  inUV;
+         attribute float inW;
++        attribute float inZ;
+ 
+         varying vec4  vColor;
+         varying vec2  vUV;
++        varying float vDepth;
+         varying vec2  vClutBase;
+         varying vec2  vPageBase;
+         varying float vTexMode;
+         varying float vDither;
+@@ -338,7 +355,11 @@
+             // correctly. GLSL 120 has no `noperspective`, so on this backend alone
+             // vColor is corrected along with it -- visible only as a slightly
+             // different Gouraud gradient on a steeply angled textured polygon.
++            // Depth is a fragment value, not clip-space Z: these vertices are
++            // already projected, and putting SZ into gl_Position.z lets OpenGL
++            // clip them against a far plane the GPU never had.
+             gl_Position = inW == 1.0 ? vec4(p, 0.0, 1.0) : vec4(p * inW, 0.0, inW);
++            vDepth = inZ > 0.0 ? inZ * (1.0/65536.0) : 0.0;
+ 
+             float tp = floor(inTexpageF + 0.5);
+             float clut = floor(inClutF + 0.5);
+@@ -387,6 +406,7 @@
+         #version 120
+         varying vec4  vColor;
+         varying vec2  vUV;
++        varying float vDepth;
+         varying vec2  vClutBase;
+         varying vec2  vPageBase;
+         varying float vTexMode;
+@@ -447,6 +467,7 @@
+         void main() {
++            gl_FragDepth = vDepth > 0.0 ? vDepth : gl_FragCoord.z;
+             vec2 destUv = gl_FragCoord.xy / uDestSize;
+             vec4 dstTexel = texture2D(uDest, destUv);
+             if (uCheckMask > 0.5 && dstTexel.a >= 0.5) discard;
+ 
+             vec3 rgb;
+@@ -507,7 +528,7 @@
+ 
+     static readonly (uint Index, string Name)[] PrimAttribs =
+     [
+-        (0, "inPos"), (1, "inColorF"), (2, "inClutF"), (3, "inTexpageF"), (4, "inUV"), (5, "inW"),
++        (0, "inPos"), (1, "inColorF"), (2, "inClutF"), (3, "inTexpageF"), (4, "inUV"), (5, "inW"), (6, "inZ"),
+     ];
+ 
+     public static uint BuildPrim(GL gl, string vsSrc, string fsSrc, string name)
+diff --git a/RecompOne.Runtime/Gpu/GpuCommands.cs b/RecompOne.Runtime/Gpu/GpuCommands.cs
+--- a/RecompOne.Runtime/Gpu/GpuCommands.cs
++++ b/RecompOne.Runtime/Gpu/GpuCommands.cs
+@@ -104,6 +104,7 @@
+                 }
+         }
+         Assets.Textures.VramTracker.MarkCpuWrite(x, y, w, h);
++        ClearZ(x, y, w, h);
+ 
+         if (HleOn) HleFill(x, y, w, h, color);
+     }
+diff --git a/RecompOne.Runtime/Gpu/GpuHleForward.cs b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+--- a/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -21,11 +21,15 @@
+     // hardware path. Fx and Fy are zero for a vertex that recovered nothing, and
+     // for every vertex at all while the setting is off, so this is an exact no-op
+     // in both cases rather than an almost-no-op.
+-    static HleVertex HV(in Vert v, bool persp) => new()
++    //
++    // HasPersp and HasGteZ are independent: the first is "use Z as clip W" (the
++    // perspective-correct path), the second is "this Z is a real view depth" for
++    // the Z-buffer. Untextured walls have the second without the first.
++    static HleVertex HV(in Vert v, bool persp, bool z) => new()
+     {
+         X = v.X + v.Fx, Y = v.Y + v.Fy,
+         R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
+-        Z = v.W, HasGteZ = persp,
++        Z = v.W, HasGteZ = z, HasPersp = persp,
+     };
+ 
+     PrimFlags PrimOf(bool tex, bool semi, bool raw, int clut, bool gouraud = false) => new()
+@@ -41,12 +45,15 @@
+ 
+         // All three or none, as in the software path: the backend turns a vertex's
+         // depth into gl_Position.w, and one vertex left at 1 would tear the
+-        // triangle's texture in half.
++        // triangle's texture in half. The Z-buffer is the same rule for a different
++        // reason — a corner at ndc.z = 0 among two real depths would punch a hole.
+         bool persp = tex && a.HasW && b.HasW && c.HasW;
++        bool z = GteDepth.ZBuffer && a.HasZ && b.HasZ && c.HasZ;
++        if (GteDepth.ZBuffer) { if (z) GteDepth.ZTris++; else GteDepth.ZSkipped++; }
+ 
+         var be = GpuHle.Backend!;
+         be.SetDrawEnv(CurEnv());
+-        be.DrawTri(HV(a, persp), HV(b, persp), HV(c, persp), PrimOf(tex, semi, raw, clut, gouraud));
++        be.DrawTri(HV(a, persp, z), HV(b, persp, z), HV(c, persp, z), PrimOf(tex, semi, raw, clut, gouraud));
+     }
+ 
+     void HleRect(int x, int y, int w, int h, int u, int v, int clut, int r, int g, int b, bool tex, bool semi, bool raw)
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -7,7 +7,9 @@
+ {
+     // W is the view depth GteDepth recovered for this vertex, and HasW says
+     // whether it found one at all. Without it the vertex interpolates affinely,
+-    // exactly as the GPU did.
++    // exactly as the GPU did. HasZ is the same recovered number offered to the
++    // Z-buffer, independently: untextured geometry has a depth and no texture
++    // to correct.
+     //
+     // Fx and Fy are the fraction of a pixel the GTE truncated off this vertex's
+     // position, and HasSub says whether that was recovered. X and Y stay whole
+@@ -17,7 +19,7 @@
+     struct Vert
+     {
+         public int X, Y, R, G, B, U, V;
+-        public float W; public bool HasW;
++        public float W; public bool HasW, HasZ;
+         public float Fx, Fy; public bool HasSub;
+     }
+ 
+@@ -31,6 +33,15 @@
+         {  3, -1,  2, -2 },
+     };
+ 
++    // Software Z-buffer. Dead on any machine where GL comes up (GpuHle.Active),
++    // and kept in step with the hardware path so forcing the software rasterizer
++    // still depth-tests. One float per VRAM pixel, +inf meaning empty; LEQUAL
++    // so a later ordering-table entry at the same depth still wins, which is
++    // the painter's-algorithm tie the console had.
++    float[]? _zbuf;
++    int _zClipLeft, _zClipTop, _zClipRight = int.MinValue, _zClipBottom;
++    int _zGen = -1;
++
+     void DrawPolygon()
+     {
+         uint cmd = _fifo[0];
+@@ -78,9 +89,10 @@
+         // vertex. Each vertex is asked for by the address its coordinate word was
+         // read out of, which is the vertex itself and not merely the pixel it landed
+         // on, so nothing has to be picked between and a miss is simply affine.
+-        if (GteDepth.Active && (tex || GteDepth.Subpixel))
++        if (GteDepth.Active && (tex || GteDepth.Subpixel || GteDepth.ZBuffer))
+         {
+             bool wantW = tex && GteDepth.Enabled;
++            bool wantZ = GteDepth.ZBuffer;
+             bool wantSub = GteDepth.Subpixel;
+ 
+             // The old screen-position table, kept only as a comparison: it answers
+@@ -94,10 +106,10 @@
+                     a[i].X = v[i].X - _drawOffsetX;
+                     a[i].Y = v[i].Y - _drawOffsetY;
+                 }
+-                GteDepth.Apply(a[..n], wantW, wantSub);
++                GteDepth.Apply(a[..n], wantW || wantZ, wantSub);
+                 for (int i = 0; i < n; i++)
+                 {
+-                    v[i].W = a[i].Z; v[i].HasW = a[i].HasW;
++                    v[i].W = a[i].Z; v[i].HasW = wantW && a[i].HasW; v[i].HasZ = wantZ && a[i].Z > 0f;
+                     v[i].Fx = a[i].Fx; v[i].Fy = a[i].Fy; v[i].HasSub = a[i].HasSub;
+                 }
+             }
+@@ -107,6 +119,7 @@
+                 if (!GteVertexMap.TryGet(_fifoSrc[vwAt[i]], _fifo[vwAt[i]], out var a)) continue;
+                 v[i].W = a.Z;
+                 v[i].HasW = wantW && a.Z > 0f;
++                v[i].HasZ = wantZ && a.Z > 0f;
+                 v[i].Fx = wantSub ? a.Fx : 0f;
+                 v[i].Fy = wantSub ? a.Fy : 0f;
+                 v[i].HasSub = wantSub;
+@@ -208,6 +221,21 @@
+             cu = c.U * ic; cv = c.V * ic;
+         }
+ 
++        // Same all-or-nothing rule for the Z-buffer: a corner left at ndc z = 0
++        // among two real depths would punch a hole through the triangle. 1/Z is
++        // linear in screen space for a plane, so the pixel's view depth is the
++        // reciprocal of the interpolated inverses — whether or not the texture
++        // is also being divided.
++        bool useZ = GteDepth.ZBuffer && a.HasZ && b.HasZ && c.HasZ;
++        float za = 0f, zb = 0f, zc = 0f;
++        if (useZ)
++        {
++            GteDepth.ZTris++;
++            EnsureZClear();
++            za = 1f / a.W; zb = 1f / b.W; zc = 1f / c.W;
++        }
++        else if (GteDepth.ZBuffer) GteDepth.ZSkipped++;
++
+         // The steps are per pixel and the coordinates are per sixteenth, so a step
+         // is one edge-function derivative times the width of a pixel.
+         int sx0 = (by - cy) << sh, sy0 = (cx - bx) << sh;
+@@ -226,6 +254,17 @@
+             {
+                 if (w0 + bias0 < 0 || w1 + bias1 < 0 || w2 + bias2 < 0) continue;
+ 
++                int zi = 0;
++                float zpix = 0f;
++                if (useZ)
++                {
++                    float inv = (w0 * za + w1 * zb + w2 * zc) / area;
++                    if (inv <= 0f) continue;
++                    zpix = 1f / inv;
++                    zi = y * VramWidth + x;
++                    if (zpix > _zbuf![zi]) { GteDepth.ZRejects++; continue; }
++                }
++
+                 int r, g, bl;
+                 if (gouraud)
+                 {
+@@ -235,6 +274,7 @@
+                 }
+                 else { r = a.R; g = a.G; bl = a.B; }
+ 
++                bool wrote;
+                 if (tex)
+                 {
+                     int u, tv;
+@@ -254,9 +294,15 @@
+                     bool stp = (texel & 0x8000) != 0;
+                     int tr = (texel & 0x1F) << 3, tg = ((texel >> 5) & 0x1F) << 3, tb = ((texel >> 10) & 0x1F) << 3;
+                     if (!raw) { tr = tr * r >> 7; tg = tg * g >> 7; tb = tb * bl >> 7; }
+-                    Plot(x, y, tr, tg, tb, semi && stp, ditherTex, stp);
++                    wrote = Plot(x, y, tr, tg, tb, semi && stp, ditherTex, stp);
+                 }
+-                else Plot(x, y, r, g, bl, semi, _dither && gouraud);
++                else wrote = Plot(x, y, r, g, bl, semi, _dither && gouraud);
++
++                // Punch-through (texel 0) and a mask-bit reject both skip the write,
++                // so a hole in the texture does not occlude whatever is behind it.
++                // Semi-transparent tests against Z but does not write it, so two
++                // overlapping additives still blend in table order.
++                if (wrote && useZ && !semi) _zbuf![zi] = zpix;
+             }
+         }
+     }
+@@ -414,14 +460,14 @@
+         return Vram[(clutY & (VramHeight - 1)) * VramWidth + ((clutX + index) & (VramWidth - 1))];
+     }
+ 
+-    void Plot(int x, int y, int r, int g, int b, bool semi, bool dither, bool maskBit = false)
++    bool Plot(int x, int y, int r, int g, int b, bool semi, bool dither, bool maskBit = false)
+     {
+-        if (x < _drawAreaLeft || x > _drawAreaRight || y < _drawAreaTop || y > _drawAreaBottom) return;
+-        if (x < 0 || x >= VramWidth || y < 0 || y >= VramHeight) return;
++        if (x < _drawAreaLeft || x > _drawAreaRight || y < _drawAreaTop || y > _drawAreaBottom) return false;
++        if (x < 0 || x >= VramWidth || y < 0 || y >= VramHeight) return false;
+ 
+         int idx = y * VramWidth + x;
+         ushort bg = Vram[idx];
+-        if (_checkMask && (bg & 0x8000) != 0) return;
++        if (_checkMask && (bg & 0x8000) != 0) return false;
+ 
+         if (dither)
+         {
+@@ -446,6 +492,43 @@
+         ushort outp = (ushort)(fr | (fg << 5) | (fb << 10));
+         if (_setMask || maskBit) outp |= 0x8000;
+         Vram[idx] = outp;
++        return true;
++    }
++
++    void EnsureZClear()
++    {
++        _zbuf ??= new float[VramWidth * VramHeight];
++        if (_zClipLeft == _drawAreaLeft && _zClipTop == _drawAreaTop
++            && _zClipRight == _drawAreaRight && _zClipBottom == _drawAreaBottom
++            && _zGen == GteDepth.Generation)
++            return;
++
++        int x0 = Math.Max(0, _drawAreaLeft), x1 = Math.Min(VramWidth - 1, _drawAreaRight);
++        int y0 = Math.Max(0, _drawAreaTop), y1 = Math.Min(VramHeight - 1, _drawAreaBottom);
++        for (int y = y0; y <= y1; y++)
++            Array.Fill(_zbuf, float.MaxValue, y * VramWidth + x0, x1 - x0 + 1);
++        _zClipLeft = _drawAreaLeft; _zClipTop = _drawAreaTop;
++        _zClipRight = _drawAreaRight; _zClipBottom = _drawAreaBottom;
++        _zGen = GteDepth.Generation;
++    }
++
++    void ClearZ(int x, int y, int w, int h)
++    {
++        if (_zbuf == null) return;
++        int x0 = Math.Max(0, x), x1 = Math.Min(VramWidth, x + w);
++        int y0 = Math.Max(0, y), y1 = Math.Min(VramHeight, y + h);
++        if (x0 >= x1 || y0 >= y1) return;
++        for (int py = y0; py < y1; py++)
++            Array.Fill(_zbuf, float.MaxValue, py * VramWidth + x0, x1 - x0);
++        // A fill of the current clip is itself the frame clear, so the next
++        // triangle must not think the clip is still virgin from a previous buffer.
++        if (x0 <= _drawAreaLeft && y0 <= _drawAreaTop && x1 > _drawAreaRight && y1 > _drawAreaBottom)
++        {
++            _zClipLeft = _drawAreaLeft; _zClipTop = _drawAreaTop;
++            _zClipRight = _drawAreaRight; _zClipBottom = _drawAreaBottom;
++            _zGen = GteDepth.Generation;
++        }
++        else _zClipRight = int.MinValue;
+     }
+ 
+     void SetTexpageFromWord(uint tp)
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -93,11 +93,11 @@
+     // Screen position turned out not to be an identity at all, and everything below
+     // that picks between samples is a heuristic standing in for one. GteVertexMap
+     // has the real thing -- the address of the word the coordinate lives at -- and
+-    // it serves both halves now. What is left here is the pair of switches, the
++    // it serves both halves now. What is left here is the switches, the
+     // accounting, and this table, which answers only when PositionFallback asks it
+     // to so that the two mechanisms can be compared in one build.
+ 
+-    static bool _enabled, _subpixel;
++    static bool _enabled, _subpixel, _zbuffer;
+ 
+     /// <summary>
+     /// While false the depth is not served, so both renderers interpolate affinely
+@@ -121,9 +121,35 @@
+         set { _subpixel = value; GteVertexMap.SetActive(Active); }
+     }
+ 
+-    /// <summary>Nothing is recorded and every lookup misses while both halves are
+-    /// off, which is what makes this cost nothing when neither is wanted.</summary>
+-    public static bool Active => _enabled || _subpixel;
++    /// <summary>
++    /// While false both renderers keep the console's painter's algorithm: the
++    /// ordering table is the whole of occlusion. On, a triangle whose vertices
++    /// all recovered a view depth is depth-tested per pixel against that depth,
++    /// so two surfaces that actually interpenetrate stop taking turns in front
++    /// of each other. A miss is the old behaviour — 2D never hits, so the HUD
++    /// still draws on top in table order. Safe to change at run time: the next
++    /// triangle starts or stops testing.
++    /// </summary>
++    public static bool ZBuffer
++    {
++        get => _zbuffer;
++        set
++        {
++            if (_zbuffer == value) return;
++            _zbuffer = value;
++            Generation++;
++            GteVertexMap.SetActive(Active);
++        }
++    }
++
++    /// <summary>Bumped when <see cref="ZBuffer"/> is flipped, so a render target
++    /// that already has a depth buffer from last frame knows to clear it rather
++    /// than test against whatever was sitting there while the setting was off.</summary>
++    public static int Generation;
++
++    /// <summary>Nothing is recorded and every lookup misses while every consumer
++    /// is off, which is what makes this cost nothing when none of them is wanted.</summary>
++    public static bool Active => _enabled || _subpixel || _zbuffer;
+ 
+     /// <summary>Consult the screen-position table below for vertices the exact map
+     /// could not answer for. Off by default — it is the guess this was all built to
+@@ -203,6 +229,14 @@
+     public static void ResetCounters() =>
+         Recorded = Hits = Misses = Saturated = Refined = Rejected = 0;
+ 
++    /// <summary>Triangles that depth-tested, triangles that had no recovered Z
++    /// and so kept painter's order, and software-rasterizer pixels that lost the
++    /// test. The hardware path cannot count pixels without reading the buffer
++    /// back, so <see cref="ZRejects"/> stays at zero there.</summary>
++    public static long ZTris, ZSkipped, ZRejects;
++
++    public static void ResetZCounters() => ZTris = ZSkipped = ZRejects = 0;
++
+     /// <summary>While false <see cref="Offset"/> and <see cref="OffsetMax"/> are not
+     /// accumulated, so measuring the wobble costs nothing when nobody is asking.
+     /// It is a separate switch from the counters above because the two probes
+diff --git a/RecompOne.Runtime/Gpu/GteVertexMap.cs b/RecompOne.Runtime/Gpu/GteVertexMap.cs
+--- a/RecompOne.Runtime/Gpu/GteVertexMap.cs
++++ b/RecompOne.Runtime/Gpu/GteVertexMap.cs
+@@ -91,7 +91,7 @@
+ 
+     /// <summary>Nothing is recorded, followed or looked up while this is false, so the
+     /// map costs one predictable branch on the memory path when neither perspective
+-    /// correction nor sub-pixel positioning wants it. <see cref="GteDepth"/> owns it.</summary>
++    /// correction, sub-pixel positioning nor the Z-buffer wants it. <see cref="GteDepth"/> owns it.</summary>
+     public static bool Active;
+ 
+     // A vertex word copied more than this many RAM writes after it was read is not
+diff --git a/RecompOne.Runtime/Gpu/Hle/HleTypes.cs b/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
+--- a/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
++++ b/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
+@@ -7,6 +7,10 @@
+     public byte R, G, B;
+     public float U, V;
+     public bool HasGteZ;
++    // Independent of HasGteZ: the depth buffer wants Z on untextured geometry
++    // too, and putting that Z into clip W would turn perspective correction on
++    // as a side effect. HasPersp is the original "use Z as gl_Position.w".
++    public bool HasPersp;
+ }
+ 
+ public struct PrimFlags

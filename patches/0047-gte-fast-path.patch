@@ -1,0 +1,559 @@
+diff --git a/RecompOne.Runtime/Dispatch/Dispatcher.cs b/RecompOne.Runtime/Dispatch/Dispatcher.cs
+index ab0494b..659c46a 100644
+--- a/RecompOne.Runtime/Dispatch/Dispatcher.cs
++++ b/RecompOne.Runtime/Dispatch/Dispatcher.cs
+@@ -46,6 +46,8 @@ public static class Dispatcher
+         _pending = overlay;
+     }
+ 
++    public static bool HasPending => _pending != null;
++
+     public static void NotifyWrite(uint phys)
+     {
+         var p = _pending;
+diff --git a/RecompOne.Runtime/Hardware/Gte.cs b/RecompOne.Runtime/Hardware/Gte.cs
+index 4b3d454..059998b 100644
+--- a/RecompOne.Runtime/Hardware/Gte.cs
++++ b/RecompOne.Runtime/Hardware/Gte.cs
+@@ -35,7 +35,7 @@ public static class Gte
+     // read of SXY0/1/2 can hand out the numbers that belong to *that* slot.
+     // 0009-0012; upstream has no equivalent -- PGXP answers the same question from
+     // the other side, through the CPU's registers rather than by address.
+-    private struct Projected
++    internal struct Projected
+     {
+         public float Z, Fx, Fy;
+         public bool Clipped, Valid;
+@@ -88,6 +88,80 @@ public static class Gte
+         return true;
+     }
+     
++    /// <summary>0047. Every register, for a caller that has to run the same work twice
++    /// from one state and compare (KF2_POLYASM=verify).</summary>
++    public sealed class State
++    {
++        internal readonly short[] V = new short[9], SX = new short[3], SY = new short[3];
++        internal readonly short[] RT = new short[9], LLM = new short[9], LCM = new short[9];
++        internal readonly ushort[] SZ = new ushort[4];
++        internal readonly uint[] RGB = new uint[3];
++        internal readonly int[] TR = new int[3], BK = new int[3], FC = new int[3];
++        internal readonly Projected[] SP = new Projected[3];
++        internal readonly int[] Ints = new int[16];
++        internal readonly uint[] Uints = new uint[8];
++    }
++
++    public static void Save(State s)
++    {
++        V.CopyTo(s.V, 0); SX.CopyTo(s.SX, 0); SY.CopyTo(s.SY, 0);
++        RT.CopyTo(s.RT, 0); LLM.CopyTo(s.LLM, 0); LCM.CopyTo(s.LCM, 0);
++        SZ.CopyTo(s.SZ, 0); RGB.CopyTo(s.RGB, 0);
++        TR.CopyTo(s.TR, 0); BK.CopyTo(s.BK, 0); FC.CopyTo(s.FC, 0); SP.CopyTo(s.SP, 0);
++        var i = s.Ints;
++        i[0] = IR0; i[1] = IR1; i[2] = IR2; i[3] = IR3; i[4] = MAC0; i[5] = MAC1; i[6] = MAC2; i[7] = MAC3;
++        i[8] = OFX; i[9] = OFY; i[10] = DQA; i[11] = DQB; i[12] = ZSF3; i[13] = ZSF4; i[14] = H; i[15] = OTZ;
++        var u = s.Uints;
++        u[0] = (uint)(RGBC_R | (RGBC_G << 8) | (RGBC_B << 16) | (RGBC_CODE << 24));
++        u[1] = RES1; u[2] = LZCS; u[3] = LZCR; u[4] = FLAG;
++    }
++
++    public static void Load(State s)
++    {
++        s.V.CopyTo(V, 0); s.SX.CopyTo(SX, 0); s.SY.CopyTo(SY, 0);
++        s.RT.CopyTo(RT, 0); s.LLM.CopyTo(LLM, 0); s.LCM.CopyTo(LCM, 0);
++        s.SZ.CopyTo(SZ, 0); s.RGB.CopyTo(RGB, 0);
++        s.TR.CopyTo(TR, 0); s.BK.CopyTo(BK, 0); s.FC.CopyTo(FC, 0); s.SP.CopyTo(SP, 0);
++        var i = s.Ints;
++        IR0 = i[0]; IR1 = i[1]; IR2 = i[2]; IR3 = i[3]; MAC0 = i[4]; MAC1 = i[5]; MAC2 = i[6]; MAC3 = i[7];
++        OFX = i[8]; OFY = i[9]; DQA = (short)i[10]; DQB = i[11]; ZSF3 = (short)i[12]; ZSF4 = (short)i[13];
++        H = (ushort)i[14]; OTZ = (ushort)i[15];
++        var u = s.Uints;
++        RGBC_R = (byte)u[0]; RGBC_G = (byte)(u[0] >> 8); RGBC_B = (byte)(u[0] >> 16); RGBC_CODE = (byte)(u[0] >> 24);
++        RES1 = u[1]; LZCS = u[2]; LZCR = u[3]; FLAG = u[4];
++        _snapDirty = true;
++        if (++_lightGen == 0)
++        {
++            Array.Clear(_light);
++            _lightGen = 1;
++        }
++    }
++
++    /// <summary>The register that differs first, or null.</summary>
++    public static string? Diff(State a, State b)
++    {
++        static string? Arr<T>(string name, T[] x, T[] y) where T : IEquatable<T>
++        {
++            for (var k = 0; k < x.Length; k++)
++                if (!x[k].Equals(y[k])) return $"{name}[{k}] {x[k]} vs {y[k]}";
++            return null;
++        }
++
++        return Arr("V", a.V, b.V) ?? Arr("SX", a.SX, b.SX) ?? Arr("SY", a.SY, b.SY) ?? Arr("SZ", a.SZ, b.SZ)
++            ?? Arr("RGB", a.RGB, b.RGB) ?? Arr("int", a.Ints, b.Ints) ?? Arr("uint", a.Uints, b.Uints)
++            ?? Arr("RT", a.RT, b.RT) ?? Arr("LLM", a.LLM, b.LLM) ?? Arr("LCM", a.LCM, b.LCM)
++            ?? Arr("TR", a.TR, b.TR) ?? Arr("BK", a.BK, b.BK) ?? Arr("FC", a.FC, b.FC) ?? Projections(a.SP, b.SP);
++
++        static string? Projections(Projected[] x, Projected[] y)
++        {
++            for (var k = 0; k < x.Length; k++)
++                if (x[k].Z != y[k].Z || x[k].Fx != y[k].Fx || x[k].Fy != y[k].Fy ||
++                    x[k].Clipped != y[k].Clipped || x[k].Valid != y[k].Valid)
++                    return $"SP[{k}]";
++            return null;
++        }
++    }
++
+     private static readonly byte[] Unr = BuildUnr();
+ 
+     private static byte[] BuildUnr()
+@@ -344,6 +418,289 @@ public static class Gte
+         SY[1] = SY[2];
+         SY[2] = (short)ny;
+ 
++        ProjectTail(m3, sx, sy, sz, rx, ry, nx, ny);
++
++        if (last)
++        {
++            var dp = CheckMac0((long)div * DQA + DQB);
++            MAC0 = (int)dp;
++            IR0 = SatIR0((int)(dp >> 12));
++        }
++    }
++
++    // 0047. The forms every caller in this game uses -- NormalColorDpq(3) and
++    // NormalColorCol at sf=12 lm=1, DpqColor and RotTrans at sf=12 lm=0 -- with the
++    // shift, the saturation floor and the flag bits constant and the flags gathered in
++    // a local. Bit-identical to the general path, which KF2_GTE_FAST=0 keeps. The two
++    // matrix products of a lighting op depend only on the normal and on LLM, BK and
++    // LCM, so they are remembered per normal until one of those is written
++    // (KF2_GTE_LIGHTCACHE=0 turns that off).
++    public static bool FastLighting = Environment.GetEnvironmentVariable("KF2_GTE_FAST") != "0";
++    public static bool LightCache = Environment.GetEnvironmentVariable("KF2_GTE_LIGHTCACHE") != "0";
++    public static long LightCacheHits, LightCacheMisses;
++
++    private struct LightEntry
++    {
++        public ulong Key;
++        public uint Gen, Flags;
++        public int Ir1, Ir2, Ir3;
++    }
++
++    private const int LightSlotBits = 10;
++    private static readonly LightEntry[] _light = new LightEntry[1 << LightSlotBits];
++    private static uint _lightGen = 1;
++
++    /// <summary>SetMac and SatIR at sf=12: returns MAC, gives IR.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static int MacFast(long v, int n, bool lm, ref uint f, out int ir)
++    {
++        if (v >= 1L << 43) f |= 1u << (31 - n);
++        else if (v < -(1L << 43)) f |= 1u << (28 - n);
++        var m = (int)(v >> 12);
++        var min = lm ? 0 : -0x8000;
++        if (m < min)
++        {
++            ir = min;
++            f |= 1u << (25 - n);
++        }
++        else if (m > 0x7FFF)
++        {
++            ir = 0x7FFF;
++            f |= 1u << (25 - n);
++        }
++        else ir = m;
++        return m;
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static int SatIrFast(int v, int n, bool lm, ref uint f)
++    {
++        var min = lm ? 0 : -0x8000;
++        if (v < min)
++        {
++            f |= 1u << (25 - n);
++            return min;
++        }
++        if (v > 0x7FFF)
++        {
++            f |= 1u << (25 - n);
++            return 0x7FFF;
++        }
++        return v;
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static int SatColorFast(int v, int n, ref uint f)
++    {
++        if (v < 0)
++        {
++            f |= 1u << (21 - n);
++            return 0;
++        }
++        if (v > 0xFF)
++        {
++            f |= 1u << (21 - n);
++            return 0xFF;
++        }
++        return v;
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static void PushColorFast(ref uint f)
++    {
++        var r = SatColorFast(MAC1 >> 4, 0, ref f);
++        var g = SatColorFast(MAC2 >> 4, 1, ref f);
++        var b = SatColorFast(MAC3 >> 4, 2, ref f);
++        RGB[0] = RGB[1];
++        RGB[1] = RGB[2];
++        RGB[2] = (uint)(r | (g << 8) | (b << 16) | (RGBC_CODE << 24));
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static void InterpFast(long in1, long in2, long in3, bool lm, ref uint f)
++    {
++        var d1 = SatIrFast((int)((((long)FC[0] << 12) - in1) >> 12), 1, false, ref f);
++        var d2 = SatIrFast((int)((((long)FC[1] << 12) - in2) >> 12), 2, false, ref f);
++        var d3 = SatIrFast((int)((((long)FC[2] << 12) - in3) >> 12), 3, false, ref f);
++        long ir0 = IR0;
++        MAC1 = MacFast(d1 * ir0 + in1, 1, lm, ref f, out IR1);
++        MAC2 = MacFast(d2 * ir0 + in2, 2, lm, ref f, out IR2);
++        MAC3 = MacFast(d3 * ir0 + in3, 3, lm, ref f, out IR3);
++        PushColorFast(ref f);
++    }
++
++    /// <summary>Both matrix products of Ncs/Ncds/Nccs (lm=1), as the final IR1-3 and
++    /// the flag bits they raised. MAC1-3 and IR1-3 are overwritten by every op's last
++    /// stage, so nothing else of them is kept.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static void LightStage(int vec, out int i1, out int i2, out int i3, ref uint f)
++    {
++        long vx = V[vec * 3], vy = V[vec * 3 + 1], vz = V[vec * 3 + 2];
++        var key = (ulong)(ushort)vx | ((ulong)(ushort)vy << 16) | ((ulong)(ushort)vz << 32);
++        ref var e = ref _light[(int)((key * 0x9E3779B97F4A7C15UL) >> (64 - LightSlotBits))];
++        if (LightCache && e.Gen == _lightGen && e.Key == key)
++        {
++            LightCacheHits++;
++            i1 = e.Ir1;
++            i2 = e.Ir2;
++            i3 = e.Ir3;
++            f |= e.Flags;
++            return;
++        }
++
++        uint g = 0;
++        MacFast(LLM[0] * vx + LLM[1] * vy + LLM[2] * vz, 1, true, ref g, out var a1);
++        MacFast(LLM[3] * vx + LLM[4] * vy + LLM[5] * vz, 2, true, ref g, out var a2);
++        MacFast(LLM[6] * vx + LLM[7] * vy + LLM[8] * vz, 3, true, ref g, out var a3);
++        MacFast(((long)BK[0] << 12) + (long)LCM[0] * a1 + (long)LCM[1] * a2 + (long)LCM[2] * a3, 1, true, ref g, out i1);
++        MacFast(((long)BK[1] << 12) + (long)LCM[3] * a1 + (long)LCM[4] * a2 + (long)LCM[5] * a3, 2, true, ref g, out i2);
++        MacFast(((long)BK[2] << 12) + (long)LCM[6] * a1 + (long)LCM[7] * a2 + (long)LCM[8] * a3, 3, true, ref g, out i3);
++        f |= g;
++
++        if (!LightCache) return;
++        LightCacheMisses++;
++        e.Key = key;
++        e.Gen = _lightGen;
++        e.Flags = g;
++        e.Ir1 = i1;
++        e.Ir2 = i2;
++        e.Ir3 = i3;
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static void NcdsFast(int vec, ref uint f)
++    {
++        LightStage(vec, out var i1, out var i2, out var i3, ref f);
++        InterpFast(((long)RGBC_R * i1) << 4, ((long)RGBC_G * i2) << 4, ((long)RGBC_B * i3) << 4, true, ref f);
++    }
++
++    /// <summary>Rtps at sf=12 lm=0: Rtp with the flags in a local.</summary>
++    private static void RtpsFast()
++    {
++        uint f = 0;
++        long vx = V[0], vy = V[1], vz = V[2];
++        var m1 = ((long)TR[0] << 12) + RT[0] * vx + RT[1] * vy + RT[2] * vz;
++        var m2 = ((long)TR[1] << 12) + RT[3] * vx + RT[4] * vy + RT[5] * vz;
++        var m3 = ((long)TR[2] << 12) + RT[6] * vx + RT[7] * vy + RT[8] * vz;
++        MAC1 = MacFast(m1, 1, false, ref f, out IR1);
++        MAC2 = MacFast(m2, 2, false, ref f, out IR2);
++        if (m3 >= 1L << 43) f |= 1u << 28;
++        else if (m3 < -(1L << 43)) f |= 1u << 25;
++        MAC3 = (int)(m3 >> 12);
++        var ir3flag = (int)(m3 >> 12);
++        if (ir3flag < -0x8000 || ir3flag > 0x7FFF) f |= 1u << 22;
++        IR3 = MAC3 < -0x8000 ? -0x8000 : MAC3 > 0x7FFF ? 0x7FFF : MAC3;
++
++        var sz = (int)(m3 >> 12);
++        if (sz < 0)
++        {
++            f |= 1u << 18;
++            sz = 0;
++        }
++        else if (sz > 0xFFFF)
++        {
++            f |= 1u << 18;
++            sz = 0xFFFF;
++        }
++        SZ[0] = SZ[1];
++        SZ[1] = SZ[2];
++        SZ[2] = SZ[3];
++        SZ[3] = (ushort)sz;
++
++        uint div;
++        if (H >= (uint)sz * 2)
++        {
++            f |= 1u << 17;
++            div = 0x1FFFF;
++        }
++        else
++        {
++            var z = Clz16((uint)sz);
++            var n = (ulong)H << z;
++            var d = (ulong)sz << z;
++            var idx = (int)((d - 0x7FC0) >> 7);
++            if (idx < 0) idx = 0;
++            else if (idx > 0x100) idx = 0x100;
++            var u = (ulong)Unr[idx] + 0x101;
++            d = (0x2000080UL - d * u) >> 8;
++            d = (0x0000080UL + d * u) >> 8;
++            var res = (n * d + 0x8000) >> 16;
++            div = res > 0x1FFFF ? 0x1FFFFu : (uint)res;
++        }
++
++        var sx = (long)div * IR1 + OFX;
++        if (sx > 0x7FFFFFFFL) f |= 1u << 16;
++        else if (sx < -0x80000000L) f |= 1u << 15;
++        var sy = (long)div * IR2 + OFY;
++        if (sy > 0x7FFFFFFFL) f |= 1u << 16;
++        else if (sy < -0x80000000L) f |= 1u << 15;
++        var rx = (int)(sx >> 16);
++        var ry = (int)(sy >> 16);
++        var nx = rx;
++        if (rx < -0x400)
++        {
++            f |= 1u << 14;
++            nx = -0x400;
++        }
++        else if (rx > 0x3FF)
++        {
++            f |= 1u << 14;
++            nx = 0x3FF;
++        }
++        var ny = ry;
++        if (ry < -0x400)
++        {
++            f |= 1u << 13;
++            ny = -0x400;
++        }
++        else if (ry > 0x3FF)
++        {
++            f |= 1u << 13;
++            ny = 0x3FF;
++        }
++        SX[0] = SX[1];
++        SX[1] = SX[2];
++        SX[2] = (short)nx;
++        SY[0] = SY[1];
++        SY[1] = SY[2];
++        SY[2] = (short)ny;
++
++        ProjectTail(m3, sx, sy, sz, rx, ry, nx, ny);
++
++        var dp = (long)div * DQA + DQB;
++        if (dp > 0x7FFFFFFFL) f |= 1u << 16;
++        else if (dp < -0x80000000L) f |= 1u << 15;
++        MAC0 = (int)dp;
++        var ir0 = (int)(dp >> 12);
++        if (ir0 < 0)
++        {
++            f |= 1u << 12;
++            ir0 = 0;
++        }
++        else if (ir0 > 0x1000)
++        {
++            f |= 1u << 12;
++            ir0 = 0x1000;
++        }
++        IR0 = ir0;
++        FLAG = f;
++        EndFlag();
++    }
++
++    private static void RotTransFast()
++    {
++        uint f = 0;
++        long vx = V[0], vy = V[1], vz = V[2];
++        MAC1 = MacFast(((long)TR[0] << 12) + RT[0] * vx + RT[1] * vy + RT[2] * vz, 1, false, ref f, out IR1);
++        MAC2 = MacFast(((long)TR[1] << 12) + RT[3] * vx + RT[4] * vy + RT[5] * vz, 2, false, ref f, out IR2);
++        MAC3 = MacFast(((long)TR[2] << 12) + RT[6] * vx + RT[7] * vy + RT[8] * vz, 3, false, ref f, out IR3);
++        FLAG = f;
++        EndFlag();
++    }
++
++    /// <summary>Everything Rtp does with a projected vertex besides the registers.</summary>
++    private static void ProjectTail(long m3, long sx, long sy, int sz, int rx, int ry, int nx, int ny)
++    {
+         // PGXP takes the same moment from the other side: not the truncated packet
+         // coordinate and the fraction it lost, but the 16.16 projection recomputed
+         // in floating point off the un-truncated view depth. The two mechanisms sit
+@@ -391,13 +748,6 @@ public static class Gte
+             if (GteDepth.PositionFallback)
+                 GteDepth.Record(nx, ny, sz, sx * (1f / 65536f), sy * (1f / 65536f), clipped);
+         }
+-
+-        if (last)
+-        {
+-            var dp = CheckMac0((long)div * DQA + DQB);
+-            MAC0 = (int)dp;
+-            IR0 = SatIR0((int)(dp >> 12));
+-        }
+     }
+ 
+     private static void EndFlag()
+@@ -422,6 +772,12 @@ public static class Gte
+ 
+     public static void Rtps(int sf, bool lm)
+     {
++        if (FastLighting && sf == 12 && !lm)
++        {
++            RtpsFast();
++            return;
++        }
++
+         FLAG = 0;
+         Rtp(V[0], V[1], V[2], sf, lm, true);
+         EndFlag();
+@@ -471,6 +827,12 @@ public static class Gte
+ 
+     public static void MvmvaOp(int sf, bool lm, int mx, int vn, int cv)
+     {
++        if (FastLighting && sf == 12 && !lm && mx == 0 && vn == 0 && cv == 0)
++        {
++            RotTransFast();
++            return;
++        }
++
+         FLAG = 0;
+         Mvmva(sf, lm, mx, vn, cv);
+         EndFlag();
+@@ -517,6 +879,15 @@ public static class Gte
+ 
+     public static void Dpcs(int sf, bool lm)
+     {
++        if (FastLighting && sf == 12 && !lm)
++        {
++            uint f = 0;
++            InterpFast((long)RGBC_R << 16, (long)RGBC_G << 16, (long)RGBC_B << 16, false, ref f);
++            FLAG = f;
++            EndFlag();
++            return;
++        }
++
+         FLAG = 0;
+         Interp((long)RGBC_R << 16, (long)RGBC_G << 16, (long)RGBC_B << 16, sf, lm);
+         EndFlag();
+@@ -564,6 +935,15 @@ public static class Gte
+ 
+     public static void NcdsOp(int sf, bool lm)
+     {
++        if (FastLighting && sf == 12 && lm)
++        {
++            uint f = 0;
++            NcdsFast(0, ref f);
++            FLAG = f;
++            EndFlag();
++            return;
++        }
++
+         FLAG = 0;
+         Ncds(0, sf, lm);
+         EndFlag();
+@@ -571,6 +951,17 @@ public static class Gte
+ 
+     public static void NcdtOp(int sf, bool lm)
+     {
++        if (FastLighting && sf == 12 && lm)
++        {
++            uint f = 0;
++            NcdsFast(0, ref f);
++            NcdsFast(1, ref f);
++            NcdsFast(2, ref f);
++            FLAG = f;
++            EndFlag();
++            return;
++        }
++
+         FLAG = 0;
+         Ncds(0, sf, lm);
+         Ncds(1, sf, lm);
+@@ -580,6 +971,19 @@ public static class Gte
+ 
+     public static void NccsOp(int sf, bool lm)
+     {
++        if (FastLighting && sf == 12 && lm)
++        {
++            uint f = 0;
++            LightStage(0, out var i1, out var i2, out var i3, ref f);
++            MAC1 = MacFast(((long)RGBC_R * i1) << 4, 1, true, ref f, out IR1);
++            MAC2 = MacFast(((long)RGBC_G * i2) << 4, 2, true, ref f, out IR2);
++            MAC3 = MacFast(((long)RGBC_B * i3) << 4, 3, true, ref f, out IR3);
++            PushColorFast(ref f);
++            FLAG = f;
++            EndFlag();
++            return;
++        }
++
+         FLAG = 0;
+         Nccs(0, sf, lm);
+         EndFlag();
+@@ -959,6 +1363,11 @@ public static class Gte
+         // The rotation matrix, the translation and the screen offsets are what a
+         // transform serial identifies; anything else leaves it alone.
+         if (reg <= 7 || reg is 24 or 25 or 26) _snapDirty = true;
++        if (reg is >= 8 and <= 20 && ++_lightGen == 0)
++        {
++            Array.Clear(_light);
++            _lightGen = 1;
++        }
+ 
+         switch (reg)
+         {
+diff --git a/RecompOne.Runtime/Hardware/Interrupts.cs b/RecompOne.Runtime/Hardware/Interrupts.cs
+index 2dbfe2a..65041c3 100644
+--- a/RecompOne.Runtime/Hardware/Interrupts.cs
++++ b/RecompOne.Runtime/Hardware/Interrupts.cs
+@@ -98,6 +98,10 @@ public static class Interrupts
+     }
+ 
+     private const int PollInterval = 2048;
++
++    /// <summary>0047. Counts the polls that could have run a handler, so a caller can
++    /// tell that nothing but its own code has touched memory since it last looked.</summary>
++    public static uint SlowPolls;
+     private static int _countdown = PollInterval;
+ 
+     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+@@ -126,6 +130,7 @@ public static class Interrupts
+     private static void PollSlow(CpuContext cpu, IMemory mem)
+     {
+         _countdown = PollInterval;
++        SlowPolls++;
+         TickVBlank();
+         Runtime.Timers?.Poll(RaiseTimer);
+         if (_inHandler || _servicing || !_irqEnabled) return;
+diff --git a/RecompOne.Runtime/Memory/PSMemory.cs b/RecompOne.Runtime/Memory/PSMemory.cs
+index 865f5cc..7b66d2a 100644
+--- a/RecompOne.Runtime/Memory/PSMemory.cs
++++ b/RecompOne.Runtime/Memory/PSMemory.cs
+@@ -40,6 +40,12 @@ public sealed class PSMemory : IMemory
+ 
+     internal byte[] RamBuffer => _ram;
+ 
++    /// <summary>0047. True while a store of RAM through this class does nothing but
++    /// the store and <see cref="GteVertexMap"/>'s bookkeeping -- nothing frozen, no
++    /// logger, no overlay waiting on its header -- so a caller that keeps the vertex
++    /// map's calls may write 8- and 16-bit values into <see cref="Ram"/> directly.</summary>
++    public bool DirectRam => _frozenCount == 0 && !RamLogger.TrackReads && !RamLogger.TrackWrites && !Dispatcher.HasPending;
++
+     //memory can be frozen for debuging reasons
+     private readonly bool[] _frozen;
+     private int _frozenCount;

@@ -1,0 +1,140 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 9e99314..2919b43 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -129,2 +129,3 @@ public sealed partial class GlCore : IGpuBackend
+     int _uMipOn;
++    int _uPlainZ, _uAoPlainZ, _uSsrPlainZ;
+     // The last lookup, since a quad asks twice.
+@@ -223,2 +224,3 @@ public sealed partial class GlCore : IGpuBackend
+         _uMipOn = _gl.GetUniformLocation(_progPrim, "uMipOn");
++        _uPlainZ = _gl.GetUniformLocation(_progPrim, "uPlainZ");
+         _uFluidN = _gl.GetUniformLocation(_progPrim, "uFluidN");
+@@ -336,2 +338,3 @@ public sealed partial class GlCore : IGpuBackend
+                 _uAoMaxDepth = _gl.GetUniformLocation(_progAo, "uMaxDepth");
++                _uAoPlainZ = _gl.GetUniformLocation(_progAo, "uPlainZ");
+                 _uAoSamples = _gl.GetUniformLocation(_progAo, "uSamples");
+@@ -411,2 +414,3 @@ public sealed partial class GlCore : IGpuBackend
+                 _uSsrMurkDist = _gl.GetUniformLocation(_progSsr, "uMurkDist");
++                _uSsrPlainZ = _gl.GetUniformLocation(_progSsr, "uPlainZ");
+                 _uSsrMurkColor = _gl.GetUniformLocation(_progSsr, "uMurkColor");
+@@ -1848,2 +1852,5 @@ public sealed partial class GlCore : IGpuBackend
+         if (_uMipOn >= 0) _gl.Uniform1(_uMipOn, GteDepth.Mipmaps && _mip != null ? 1f : 0f);
++        // 0083.
++        GteDepth.PlainDepthLive = _uPlainZ >= 0;
++        if (_uPlainZ >= 0) _gl.Uniform1(_uPlainZ, GteDepth.PlainDepth);
+         if (_mip != null && _texFilled > 0)
+@@ -2618,2 +2625,3 @@ public sealed partial class GlCore : IGpuBackend
+         if (_uAoMaxDepth >= 0) _gl.Uniform1(_uAoMaxDepth, GteDepth.AoMaxDepth);
++        if (_uAoPlainZ >= 0) _gl.Uniform1(_uAoPlainZ, GteDepth.PlainDepth);
+         if (_uAoSamples >= 0) _gl.Uniform1(_uAoSamples, Math.Clamp(GteDepth.AoSamples, 1, 64));
+@@ -2835,2 +2843,3 @@ public sealed partial class GlCore : IGpuBackend
+         if (_uSsrMurkDist >= 0) _gl.Uniform1(_uSsrMurkDist, WaterMurk.Enabled ? Math.Max(1f, WaterMurk.Distance) : 0f);
++        if (_uSsrPlainZ >= 0) _gl.Uniform1(_uSsrPlainZ, GteDepth.PlainDepth);
+         if (_uSsrMurkColor >= 0) _gl.Uniform3(_uSsrMurkColor, WaterMurk.R, WaterMurk.G, WaterMurk.B);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index f332000..4ffa372 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -198,2 +198,4 @@ internal static class GlShaders
+         uniform int   uSamples;
++        // 0083. Past this view depth the surface is left as the game drew it.
++        uniform float uPlainZ;
+ 
+@@ -347,2 +349,4 @@ internal static class GlShaders
+             if (p.z > uMaxDepth) { oColor = vec4(1.0, 0.0, 0.0, 0.0); return; }
++            float plain = uPlainZ > 0.0 ? smoothstep(uPlainZ - 2048.0, uPlainZ, p.z) : 0.0;
++            if (plain >= 1.0) { oColor = vec4(1.0, 1.0, 0.0, 0.0); return; }
+ 
+@@ -417,2 +421,3 @@ internal static class GlShaders
+                 ao *= 1.0 - uWorldStrength * clamp(worldOcclusion(p, n, a0), 0.0, 1.0);
++            ao = mix(ao, 1.0, plain);
+             oColor = vec4(clamp(ao, 0.0, 1.0), 1.0, geo, clamp(disagree, 0.0, 1.0));
+@@ -675,2 +680,4 @@ internal static class GlShaders
+         uniform float uMurkDist;
++        // 0083. Past this view depth the surface is left as the game drew it.
++        uniform float uPlainZ;
+         uniform vec3  uMurkColor;
+@@ -991,2 +998,6 @@ internal static class GlShaders
+             if (zs <= 1.0) return;
++            if (uPlainZ > 0.0) {
++                gShare *= 1.0 - smoothstep(uPlainZ - 2048.0, uPlainZ, zs);
++                if (gShare <= 0.0) return;
++            }
+             // With the Z-buffer on, visibility is the depth test's and not the
+@@ -1536,2 +1556,6 @@ internal static class GlShaders
+         uniform int   uAtmosSkip;
++        // 0083. The view depth past which the port's enhancements give way to the
++        // game's own look, over the tile before it; 0 is everywhere enhanced.
++        uniform float uPlainZ;
++        float gPlain = 0.0;
+         // The fog's share of the colour, added past the texture: the lit colour was
+@@ -1816,3 +1840,12 @@ internal static class GlShaders
+             if (uAtmosOn != 0) gFog8 = uAtmosColour * clamp(w / 4096.0, 0.0, 1.0);
+-            return ivec3(clamp(floor(lit * (1.0 - w / 4096.0)), 0.0, 255.0));
++            vec3 pp = clamp(floor(lit * (1.0 - w / 4096.0)), 0.0, 255.0);
++            // 0083. Past the distance, the corner colours the game lit, with the
++            // glow a material adds before the cue still added.
++            if (gPlain > 0.0) {
++                vec3 gc = vColor.rgb * 255.0 + 0.5;
++                if (uEmitOn != 0)
++                    gc += floor(vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u)) * extra * (1.0 - w / 4096.0));
++                pp = mix(pp, clamp(floor(gc), 0.0, 255.0), gPlain);
++            }
++            return ivec3(pp);
+         }
+@@ -1851,2 +1884,10 @@ internal static class GlShaders
+             }
++            // 0072, amended. A half fading in or out of a reflection: an ordered
++            // dither, so it needs no blending and keeps its depth.
++            if (vFade < 1.0) {
++                ivec2 fp = ivec2(gl_FragCoord.xy) & 3;
++                if ((float(ditherTbl[fp.y * 4 + fp.x] + 4) + 0.5) / 8.0 > vFade) discard;
++            }
++            if (uPlainZ > 0.0 && vDepth > 0.0)
++                gPlain = smoothstep(uPlainZ - 2048.0, uPlainZ, vDepth * 65536.0);
+             if (uMaskOn != 0) {
+@@ -1864,3 +1905,6 @@ internal static class GlShaders
+             vec3 hi = vec3(0.0);
+-            if (uLightN > 0 && uClipOn == 0) extra = authored(spec, m0.b, hi);
++            if (uLightN > 0 && uClipOn == 0 && gPlain < 1.0) {
++                extra = authored(spec, m0.b, hi) * (1.0 - gPlain);
++                hi *= 1.0 - gPlain;
++            }
+             // A surface's own glow needs no position, so it is in a planar
+@@ -1925,3 +1969,3 @@ internal static class GlShaders
+                     float fade = 1.0 - smoothstep(len * 0.03, len * 0.09, fw);
+-                    vec2 sl = waveSlope(wp.xz, len) * fade;
++                    vec2 sl = waveSlope(wp.xz, len) * fade * (1.0 - gPlain);
+                     // The inverse of [wx wy], then the UV's own derivatives.
+@@ -1965,3 +2009,4 @@ internal static class GlShaders
+             // the mip atlas, which was decoded through the game's CLUT.
+-            if ((uAniso > 1.5 || (uMipOn > 0.5 && vRepClut == 0))
++            vec3 rawTexel = texel.rgb;
++            if ((uAniso > 1.5 || (uMipOn > 0.5 && vRepClut == 0)) && gPlain < 1.0
+                     && !(texel.rgb == vec3(0.0) && texel.a < 0.5)) {
+@@ -2009,2 +2054,4 @@ internal static class GlShaders
+                 }
++                // 0083. Fading to the console's one texel.
++                if (gPlain > 0.0) texel.rgb = mix(texel.rgb, rawTexel, gPlain);
+             }
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+index 84bc786..dcff8c2 100644
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -628,2 +628,15 @@ public static class GteDepth
+ 
++    /// <summary>
++    /// 0083. The view depth, in GTE units, past which a surface is drawn the game's
++    /// own way: corner colours rather than per-pixel lighting, no authored light,
++    /// one texel rather than the filter, no ripple, no occlusion and no reflection.
++    /// Faded in over the 2048 units before it. 0 is everywhere enhanced. Perspective,
++    /// sub-pixel and the depth test are kept: they correct the picture rather than
++    /// add to it. GL core only; a plain uniform the next batch reads.
++    /// </summary>
++    public static float PlainDepth;
++
++    /// <summary>True once the GL backend has found <c>uPlainZ</c> on the prim program.</summary>
++    public static bool PlainDepthLive;
++
+     /// <summary>0073. How often a replacement texture's filter was set.</summary>

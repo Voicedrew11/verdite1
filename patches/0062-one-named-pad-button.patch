@@ -1,0 +1,37 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs b/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs
+index 73e4c72..8d2bb4c 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/InputManager.cs
+@@ -201,6 +201,15 @@ internal static unsafe class InputManager
+         return null;
+     }
+ 
++    /// <summary>One binding held down right now, in the same encoding
++    /// <see cref="GetFirstPressedPadButton"/> returns -- so triggers and stick
++    /// directions answer here too.</summary>
++    public static bool IsPadButtonDown(int button, int pad = 0)
++    {
++        var ctrl = pad == 0 ? _pad0 : _pad1;
++        return _sdl != null && ctrl != null && Pressed(ctrl, button);
++    }
++
+     private static bool IsStickBinding(int b)
+     {
+         return b is >= LeftStickLeft and <= RightStickDown;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+index b7fd566..005e960 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -524,6 +524,12 @@ public static class HostWindow
+     /// interpret the answer.</summary>
+     public static int? GetFirstPressedPadButton(int pad = 0) => InputManager.GetFirstPressedPadButton(pad);
+ 
++    /// <summary>One named pad button, in the same encoding, held down right now.
++    /// <see cref="GetFirstPressedPadButton"/> answers only about the lowest
++    /// index held, so a button high in the enum -- the DualSense mute key is
++    /// SDL's Misc1, 15 -- is invisible to it while anything else is down.</summary>
++    public static bool IsPadButtonDown(int button, int pad = 0) => InputManager.IsPadButtonDown(button, pad);
++
+     // The mouse, for a port that wants to steer with it. InputManager owns the
+     // IMouse and is internal, so these are the way out of the assembly -- the
+     // same role IsKeyDown already plays for the keyboard.

@@ -1,0 +1,95 @@
+--- a/RecompOne.Runtime/sdk/LibCdStream.cs
++++ b/RecompOne.Runtime/sdk/LibCdStream.cs
+@@ -6,13 +6,12 @@ namespace RecompOne.Runtime.Sdk;
+ 
+ public static class LibCdStream
+ {
+     const int HeaderSize = 32;
+     const int SlotData = 2016;
+     const ushort VideoMagic = 0x0160;
+-    const int PrimeFrames = 2;
+ 
+     public static bool InUse { get; private set; }
+     static uint _statusBase;
+     static int _slots;
+     static uint _dataBase;
+ 
+@@ -21,13 +20,12 @@ public static class LibCdStream
+     static int _pendingLba = -1;
+     static int _streamLba = -1;
+     static int _streamStartLba;
+     static readonly Stopwatch _clock = new();
+ 
+     static int _writeIdx;
+-    static bool _primed;
+     static bool[] _busy = System.Array.Empty<bool>();
+     static readonly Queue<(int start, int n)> _ready = new();
+     static int _prevStart = -1, _prevN;
+ 
+     static Thread? _thread;
+     static volatile bool _run;
+@@ -143,13 +141,12 @@ public static class LibCdStream
+             _clock.Reset();
+         }
+     }
+ 
+     static void ResetRing(IMemory m)
+     {
+-        _primed = false;
+         _writeIdx = 0;
+         _prevStart = -1;
+         _prevN = 0;
+         _ready.Clear();
+         _busy = _slots > 0 ? new bool[_slots] : System.Array.Empty<bool>();
+         for (int i = 0; i < _slots; i++)
+@@ -190,17 +187,25 @@ public static class LibCdStream
+             if ((sec[2] & 0x04) != 0) { Assets.Xa.XaRouter.Sector(_streamLba, sec, true); _streamLba++; continue; }
+             if (Read16(sec, 8) != VideoMagic || Read16(sec, 12) != 0) { _streamLba++; continue; }
+ 
+             int n = Read16(sec, 14);
+             if (n <= 0 || n > _slots) { _streamLba++; continue; }
+ 
+-            if (_primed)
+-            {
+-                double delivered = _clock.Elapsed.TotalSeconds * LibCd.SectorsPerSecond;
+-                if ((_streamLba - _streamStartLba) + n > delivered) { Thread.Sleep(1); continue; }
+-            }
++            // The disc is what paces an STR movie: sectors arrive at
++            // LibCd.SectorsPerSecond and a frame is several of them, so the movie's
++            // frame rate is the delivery rate divided by its sectors per frame.
++            // Pace from the moment the stream starts -- there is no free burst on
++            // hardware and a latch that has to be tripped can fail to trip. It did:
++            // priming used to wait for two decoded frames to sit in the ring at once,
++            // which a 32-slot ring cannot hold for a movie of 13-14 sectors a frame
++            // once the game is draining it as fast as it arrives. That movie was
++            // delivered unthrottled and therefore played at whatever rate the game's
++            // display loop ran at -- measured 60 frames a second at KF2_FPS=60 and
++            // ~95 at 144, against the 15 the two 9-sector movies before it held.
++            double delivered = _clock.Elapsed.TotalSeconds * LibCd.SectorsPerSecond;
++            if ((_streamLba - _streamStartLba) + n > delivered) { Thread.Sleep(1); continue; }
+ 
+             int start;
+             lock (_lock)
+             {
+                 if (_writeIdx + n > _slots) _writeIdx = 0;
+                 start = _writeIdx;
+@@ -213,19 +218,12 @@ public static class LibCdStream
+ 
+             lock (_lock)
+             {
+                 for (int i = 0; i < n; i++) _busy[start + i] = true;
+                 _ready.Enqueue((start, n));
+                 _writeIdx = start + n;
+-
+-                if (!_primed && _ready.Count >= PrimeFrames)
+-                {
+-                    _primed = true;
+-                    _streamStartLba = _streamLba;
+-                    _clock.Restart();
+-                }
+             }
+         }
+     }
+ 
+     static bool CollectFrame(Cdrom.CdController cd, IMemory m, int start, int n)
+     {

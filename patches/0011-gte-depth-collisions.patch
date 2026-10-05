@@ -1,0 +1,518 @@
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index 50159eb..cdae420 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -61,31 +61,6 @@ public sealed partial class Gpu
+             v[i].Y = _drawOffsetY + rawY;
+             v[i].W = 1f;
+ 
+-            // Asked for before the draw offset and before the prim event, since the
+-            // key is the coordinate as the GTE produced it. A mod is then free to
+-            // move X afterwards -- widescreen does -- and the depth and the fraction
+-            // stay attached to the vertex.
+-            //
+-            // One probe of the table serves both halves. An untextured polygon has
+-            // no use for the depth, so it is only asked about at all when the
+-            // fraction is wanted: with perspective correction alone this is exactly
+-            // the `tex` test it has always been.
+-            if (GteDepth.Active && (tex || GteDepth.Subpixel)
+-                && GteDepth.TryGet(rawX, rawY, out float w, out float fx, out float fy))
+-            {
+-                if (tex && GteDepth.Enabled && w > 0f)
+-                {
+-                    v[i].W = w;
+-                    v[i].HasW = true;
+-                }
+-                if (GteDepth.Subpixel)
+-                {
+-                    v[i].Fx = fx;
+-                    v[i].Fy = fy;
+-                    v[i].HasSub = true;
+-                }
+-            }
+-
+             if (tex)
+             {
+                 uint uvw = _fifo[idx++];
+@@ -95,6 +70,32 @@ public sealed partial class Gpu
+                 else if (i == 1) SetTexpageFromWord((uvw >> 16) & 0xFFFF);
+             }
+         }
++
++        // Asked for before the draw offset is baked in as far as the key is
++        // concerned, and before the prim event, so a mod is free to move X
++        // afterwards -- widescreen does -- and the depth and the fraction stay
++        // attached to the vertex. The whole primitive is bound at once: two
++        // vertices that share a pixel keep their own samples, and a leftover
++        // far Z is dropped rather than tearing the texture.
++        if (GteDepth.Active && (tex || GteDepth.Subpixel))
++        {
++            Span<GteDepth.Attr> a = stackalloc GteDepth.Attr[4];
++            for (int i = 0; i < n; i++)
++            {
++                a[i].X = v[i].X - _drawOffsetX;
++                a[i].Y = v[i].Y - _drawOffsetY;
++            }
++            GteDepth.Apply(a[..n], tex && GteDepth.Enabled, GteDepth.Subpixel);
++            for (int i = 0; i < n; i++)
++            {
++                v[i].W = a[i].Z;
++                v[i].HasW = a[i].HasW;
++                v[i].Fx = a[i].Fx;
++                v[i].Fy = a[i].Fy;
++                v[i].HasSub = a[i].HasSub;
++            }
++        }
++
+         //dispatch the render event for prims
+         if (Event.HasAnyListeners<RenderPrimEvent>())
+         {
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+index 7d9a0ab..e724bd7 100644
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -40,18 +40,37 @@ namespace RecompOne.Runtime;
+ /// The two halves are read independently: <see cref="Enabled"/> serves the depth
+ /// and <see cref="Subpixel"/> the fraction, one lookup either way.
+ ///
+-/// Four properties of the table are deliberate:
++/// Screen position is not a unique key. Two vertices of different depths land on
++/// the same pixel all the time — a distant wall behind a nearby column, or several
++/// off-screen vertices clamped to ±1024 — and last-write-wins then hands one
++/// polygon the other's W. A nearby floor that inherits a far Z looks as if the
++/// camera jumped to the horizon; a vertex that inherits the wrong fraction jumps
++/// by up to a pixel every time the winner changes. The table therefore keeps the
++/// last few samples at each key, and <see cref="Apply"/> picks the set whose
++/// depths belong together on the primitive being drawn. A leftover that is still
++/// an obvious high outlier (one corner tens of times further than the other two,
++/// with no geometric progression toward it) is dropped, so that triangle stays
++/// affine rather than tearing.
++///
++/// Saturated coordinates are recorded too. Dropping them made every large nearby
++/// wall and floor — the polygons that want correction most — fall back to affine
++/// the moment one vertex left the ±1024 window, which is the pop that looks like
++/// the vantage point jumped. The clamp is still the key, because that is what the
++/// packet carries; uniqueness for W comes from keeping several samples and from
++/// the primitive-level pick. **The position is not moved past the clamp.** Every
++/// off-screen vertex the GPU would have stuck at ±1024 stays there, so a shared
++/// edge whose other end is still on the wall does not open a hole. Only the
++/// [0, 1) fraction of an on-screen vertex is served, and it is a function of the
++/// key alone — two triangles that share a vertex look up the same fraction even
++/// when they pick different depths.
++///
++/// The other properties of the table are unchanged:
+ ///
+ ///   * **Nothing is cleared per frame.** Entries carry a monotonic sequence number
+ ///     and expire once the table's own capacity of vertices has been written past
+ ///     them, which is a frame or two of geometry. That keeps the frame boundary
+ ///     out of this file entirely — there is no hook to place and nothing to keep
+ ///     in step with double buffering.
+-///   * **Saturated coordinates are not recorded.** A vertex projecting off screen
+-///     clamps to ±1024, so several different vertices at different depths collapse
+-///     onto one key. Recording those would hand one of them the other's depth,
+-///     which is a worse picture than affine; dropping them just means the polygon
+-///     misses and stays as it was.
+ ///   * **A primitive is all-or-nothing for W.** The caller only interpolates
+ ///     perspectively when *every* vertex of the triangle hit, so a polygon can
+ ///     never mix a real W with a fallback of 1 and shear itself apart. The
+@@ -95,17 +114,49 @@ public static class GteDepth
+ 
+     // Linear probing, bounded. A key that cannot be placed within this many slots
+     // displaces the oldest of them rather than searching further, so both Record
+-    // and TryGet are constant time no matter how full the table is.
+-    const int ProbeLen = 8;
++    // and Collect are constant time no matter how full the table is. Wider than
++    // the four samples kept per key, so a hot pixel and its hash neighbours still
++    // fit in the window.
++    const int ProbeLen = 16;
++
++    // Several vertices share a screen pixel; last-write-wins is what hands a
++    // nearby floor a far wall's W. Four is enough for a quad's corners to collide
++    // on the clamp and still all be sitting in the table when the primitive is
++    // drawn.
++    public const int MaxCand = 4;
+ 
+     // An entry is stale once a table's worth of vertices has been recorded since.
+     // At a few thousand projected vertices a frame that is the last frame or two.
+     const long MaxAge = Size;
+ 
+-    // Fx and Fy are the truncated part of the projected position, in [0, 1) of a
+-    // pixel: adding them back puts the vertex where the GTE actually put it.
++    // A high outlier: the furthest vertex is more than this times the middle one,
++    // *and* that jump is at least four times the step between the nearer two. A
++    // corridor floor (100, 500, 2000) is a geometric progression and passes; a
++    // collision (100, 120, 8000) is a cliff and does not. Only the far end is
++    // tested — a vertex next to the camera among two distant ones is legitimate.
++    const float OutlierRatio = 8f;
++    const float OutlierCliff = 4f;
++
++    // Fx and Fy are the [0, 1) fraction the GTE truncated, or zero for a vertex
++    // that saturated: the packet coordinate is then the whole position, which is
++    // what keeps a shared edge closed when one end is on the clamp wall.
+     struct Slot { public int Key; public long Seq; public float Z, Fx, Fy; }
+ 
++    public struct Sample
++    {
++        public float Z, Fx, Fy;
++        public long Seq;
++    }
++
++    /// <summary>One vertex of the primitive being bound: the lookup key is the
++    /// packet coordinate, and the rest is filled in by <see cref="Apply"/>.</summary>
++    public struct Attr
++    {
++        public int X, Y;
++        public float Z, Fx, Fy;
++        public bool HasW, HasSub;
++    }
++
+     static readonly Slot[] _slots = new Slot[Size];
+     static long _seq;
+ 
+@@ -113,7 +164,21 @@ public static class GteDepth
+     /// hit rate is the only real evidence that the two ends agree on the key.</summary>
+     public static long Recorded, Hits, Misses;
+ 
+-    public static void ResetCounters() => Recorded = Hits = Misses = 0;
++    /// <summary>Vertices whose screen position was the GTE clamp, not the true
++    /// projection. They used to be dropped entirely; they are now the main source
++    /// of extra hits on nearby walls and floors.</summary>
++    public static long Saturated;
++
++    /// <summary>Vertices that <see cref="Apply"/> rebound from the newest sample
++    /// at their key to an older one whose depth fitted the rest of the primitive.</summary>
++    public static long Refined;
++
++    /// <summary>Vertices whose recovered W was an obvious high outlier with no
++    /// better candidate, so perspective was refused for that corner.</summary>
++    public static long Rejected;
++
++    public static void ResetCounters() =>
++        Recorded = Hits = Misses = Saturated = Refined = Rejected = 0;
+ 
+     /// <summary>While false <see cref="Offset"/> and <see cref="OffsetMax"/> are not
+     /// accumulated, so measuring the wobble costs nothing when nobody is asking.
+@@ -125,28 +190,42 @@ public static class GteDepth
+     /// summed and at worst, in pixels. Divided by <see cref="OffsetCount"/> the sum
+     /// is the mean, and for positions spread evenly inside a pixel that mean is the
+     /// mean distance from a corner of a unit square, 0.7652 — the number that says
+-    /// the recovered fraction is a real fraction and not a table full of zeroes.</summary>
++    /// the recovered fraction is a real fraction and not a table full of zeroes.
++    /// Clamped vertices are kept out of this sum, so the measurement stays about
++    /// the 16.16 fraction and is not blown up by the unclamped remainder.</summary>
+     public static double Offset;
+     public static float OffsetMax;
+     public static long OffsetCount;
+ 
+     public static void ResetOffsets() { Offset = 0; OffsetMax = 0f; OffsetCount = 0; }
+ 
+-    // +1 so that 0 can mean "never written", which is what lets TryGet stop early.
++    // +1 so that 0 can mean "never written", which is what lets Collect stop early.
+     static int KeyOf(int x, int y) => (((y & 0x7FF) << 11) | (x & 0x7FF)) + 1;
+ 
+     static int Bucket(int key) => (int)(((uint)key * 2654435761u) >> (32 - Bits));
+ 
+-    /// <summary>Called from <c>Gte.Rtp</c> with the projected screen position, the
+-    /// view depth that produced it, and the part of the position the GTE truncated
+-    /// away. <paramref name="z"/> is SZ3, the same quantity the divider used, so it
+-    /// is proportional to view-space W; <paramref name="fx"/> and
+-    /// <paramref name="fy"/> are in [0, 1) of a pixel.</summary>
+-    public static void Record(int x, int y, int z, float fx, float fy)
++    /// <summary>Called from <c>Gte.Rtp</c> with the (possibly clamped) screen
++    /// position the packet will carry, the view depth that produced it, and the
++    /// GTE's true 16.16 position. <paramref name="z"/> is SZ3, the same quantity
++    /// the divider used, so it is proportional to view-space W.
++    /// <paramref name="clipped"/> is a vertex that saturated at ±1024.</summary>
++    public static void Record(int x, int y, int z, float trueX, float trueY, bool clipped)
+     {
+         if (!Active || z <= 0) return;
+ 
+-        if (Probe)
++        // On-screen: the 16.16 remainder in [0, 1). Clamped: leave the vertex on
++        // the packet coordinate. Serving the true position past ±1024 opened a
++        // hole along every shared edge whose other end was still on the wall.
++        float fx = 0f, fy = 0f;
++        if (!clipped)
++        {
++            fx = trueX - x;
++            fy = trueY - y;
++        }
++
++        if (clipped) Saturated++;
++
++        if (Probe && !clipped)
+         {
+             float d = MathF.Sqrt(fx * fx + fy * fy);
+             Offset += d;
+@@ -158,57 +237,216 @@ public static class GteDepth
+         int bucket = Bucket(key);
+         long now = ++_seq;
+ 
+-        int oldest = bucket;
+-        long oldestSeq = long.MaxValue;
++        int copies = 0;
++        int oldestSame = -1;
++        long oldestSameSeq = long.MaxValue;
++        int firstEmpty = -1;
++        int oldestAny = bucket;
++        long oldestAnySeq = long.MaxValue;
+ 
+         for (int i = 0; i < ProbeLen; i++)
+         {
+             int s = (bucket + i) & Mask;
+             ref var slot = ref _slots[s];
+-            if (slot.Key == key || slot.Key == 0 || now - slot.Seq > MaxAge)
++            bool stale = slot.Key == 0 || now - slot.Seq > MaxAge;
++            if (stale)
++            {
++                if (firstEmpty < 0) firstEmpty = s;
++            }
++            else if (slot.Key == key)
+             {
+-                slot.Key = key;
+-                slot.Seq = now;
+-                slot.Z = z;
+-                slot.Fx = fx;
+-                slot.Fy = fy;
+-                Recorded++;
+-                return;
++                copies++;
++                if (slot.Seq < oldestSameSeq) { oldestSameSeq = slot.Seq; oldestSame = s; }
+             }
+-            if (slot.Seq < oldestSeq) { oldestSeq = slot.Seq; oldest = s; }
++            if (!stale && slot.Seq < oldestAnySeq) { oldestAnySeq = slot.Seq; oldestAny = s; }
+         }
+ 
+-        _slots[oldest] = new Slot { Key = key, Seq = now, Z = z, Fx = fx, Fy = fy };
++        int dest;
++        if (copies < MaxCand && firstEmpty >= 0) dest = firstEmpty;
++        else if (copies >= MaxCand && oldestSame >= 0) dest = oldestSame;
++        else if (firstEmpty >= 0) dest = firstEmpty;
++        else dest = oldestAny;
++
++        _slots[dest] = new Slot { Key = key, Seq = now, Z = z, Fx = fx, Fy = fy };
+         Recorded++;
+     }
+ 
+     /// <summary>The depth and sub-pixel position last projected to this screen
+     /// position, if they are recent enough to belong to the geometry being drawn
+     /// now. One probe of the table serves both halves; which of them the caller is
+-    /// allowed to use is <see cref="Enabled"/> and <see cref="Subpixel"/>.</summary>
++    /// allowed to use is <see cref="Enabled"/> and <see cref="Subpixel"/>.
++    /// Prefer <see cref="Apply"/> at primitive decode — this is the single-vertex
++    /// last-write path, kept for anything that is not a polygon.</summary>
+     public static bool TryGet(int x, int y, out float z, out float fx, out float fy)
+     {
+         z = 0f; fx = 0f; fy = 0f;
+         if (!Active) return false;
+ 
++        Span<Sample> one = stackalloc Sample[1];
++        if (Collect(x, y, one) == 0)
++        {
++            Misses++;
++            return false;
++        }
++
++        z = one[0].Z;
++        fx = one[0].Fx;
++        fy = one[0].Fy;
++        Hits++;
++        return true;
++    }
++
++    /// <summary>Bind every vertex of a triangle or quad at once. Newest-at-the-key
++    /// is the first guess; a key that has several samples is then rebound to the
++    /// depth that sits with the rest of the primitive, and a leftover high outlier
++    /// is dropped so the triangle stays affine rather than tearing.</summary>
++    public static void Apply(Span<Attr> verts, bool wantW, bool wantSub)
++    {
++        int n = verts.Length;
++        Span<Sample> pool = stackalloc Sample[MaxCand * 4];
++        Span<int> count = stackalloc int[4];
++
++        for (int i = 0; i < n; i++)
++        {
++            int c = Collect(verts[i].X, verts[i].Y, pool.Slice(i * MaxCand, MaxCand));
++            count[i] = c;
++            if (c > 0)
++            {
++                Hits++;
++                ref readonly var s = ref pool[i * MaxCand];
++                verts[i].Z = s.Z;
++                verts[i].Fx = wantSub ? s.Fx : 0f;
++                verts[i].Fy = wantSub ? s.Fy : 0f;
++                verts[i].HasW = wantW && s.Z > 0f;
++                verts[i].HasSub = wantSub;
++            }
++            else
++            {
++                Misses++;
++                verts[i].Z = 1f;
++                verts[i].Fx = 0f;
++                verts[i].Fy = 0f;
++                verts[i].HasW = false;
++                verts[i].HasSub = false;
++            }
++        }
++
++        if (n < 3) return;
++
++        int hitN = 0;
++        float logSum = 0f;
++        for (int i = 0; i < n; i++)
++        {
++            if (count[i] == 0) continue;
++            float z = pool[i * MaxCand].Z;
++            if (z <= 0f) continue;
++            logSum += MathF.Log(z);
++            hitN++;
++        }
++
++        if (hitN >= 2)
++        {
++            float target = MathF.Exp(logSum / hitN);
++            for (int i = 0; i < n; i++)
++            {
++                if (count[i] < 2) continue;
++                int best = 0;
++                float bestD = Rel(pool[i * MaxCand].Z, target);
++                for (int k = 1; k < count[i]; k++)
++                {
++                    float d = Rel(pool[i * MaxCand + k].Z, target);
++                    if (d < bestD) { bestD = d; best = k; }
++                }
++                if (best == 0) continue;
++                Refined++;
++                (pool[i * MaxCand], pool[i * MaxCand + best]) =
++                    (pool[i * MaxCand + best], pool[i * MaxCand]);
++                verts[i].Z = pool[i * MaxCand].Z;
++                verts[i].HasW = wantW && verts[i].Z > 0f;
++                // Position stays the newest-at-the-key fraction: a shared edge
++                // must not move just because this triangle picked a different Z.
++            }
++        }
++
++        if (!wantW) return;
++
++        CheckTri(verts, count, pool, 0, 1, 2);
++        if (n == 4) CheckTri(verts, count, pool, 1, 2, 3);
++    }
++
++    static void CheckTri(Span<Attr> v, Span<int> count, Span<Sample> pool,
++        int ia, int ib, int ic)
++    {
++        if (!v[ia].HasW || !v[ib].HasW || !v[ic].HasW) return;
++        int o = HighOutlier(v[ia].Z, v[ib].Z, v[ic].Z);
++        if (o < 0) return;
++
++        int idx = o == 0 ? ia : o == 1 ? ib : ic;
++        float za = v[ia].Z, zb = v[ib].Z, zc = v[ic].Z;
++        for (int k = 1; k < count[idx]; k++)
++        {
++            float z = pool[idx * MaxCand + k].Z;
++            float na = idx == ia ? z : za, nb = idx == ib ? z : zb, nc = idx == ic ? z : zc;
++            if (HighOutlier(na, nb, nc) >= 0) continue;
++
++            Refined++;
++            v[idx].Z = pool[idx * MaxCand + k].Z;
++            return;
++        }
++
++        Rejected++;
++        v[idx].HasW = false;
++    }
++
++    static int Collect(int x, int y, Span<Sample> dst)
++    {
+         int key = KeyOf(x, y);
+         int bucket = Bucket(key);
+         long now = _seq;
++        Span<Sample> tmp = stackalloc Sample[ProbeLen];
++        int n = 0;
+ 
+         for (int i = 0; i < ProbeLen; i++)
+         {
+             ref var slot = ref _slots[(bucket + i) & Mask];
+-            if (slot.Key == 0) break;          // insertion would have stopped here too
++            if (slot.Key == 0) break;
+             if (slot.Key != key) continue;
+-            if (now - slot.Seq > MaxAge) break;
+-            z = slot.Z;
+-            fx = slot.Fx;
+-            fy = slot.Fy;
+-            Hits++;
+-            return true;
++            if (now - slot.Seq > MaxAge) continue;
++            tmp[n++] = new Sample { Z = slot.Z, Fx = slot.Fx, Fy = slot.Fy, Seq = slot.Seq };
++        }
++
++        for (int i = 1; i < n; i++)
++        {
++            var t = tmp[i];
++            int j = i - 1;
++            while (j >= 0 && tmp[j].Seq < t.Seq) { tmp[j + 1] = tmp[j]; j--; }
++            tmp[j + 1] = t;
+         }
+ 
+-        Misses++;
+-        return false;
++        int outN = n < dst.Length ? n : dst.Length;
++        for (int i = 0; i < outN; i++) dst[i] = tmp[i];
++        return outN;
++    }
++
++    static float Rel(float z, float target)
++    {
++        if (z <= 0f || target <= 0f) return float.MaxValue;
++        return z > target ? z / target : target / z;
++    }
++
++    // Returns 0/1/2 for the far vertex of (a,b,c), or -1 if the three depths
++    // could belong on one surface.
++    static int HighOutlier(float a, float b, float c)
++    {
++        int i0 = 0, i1 = 1, i2 = 2;
++        float z0 = a, z1 = b, z2 = c;
++        if (z0 > z1) { (z0, z1) = (z1, z0); (i0, i1) = (i1, i0); }
++        if (z1 > z2) { (z1, z2) = (z2, z1); (i1, i2) = (i2, i1); }
++        if (z0 > z1) { (z0, z1) = (z1, z0); (i0, i1) = (i1, i0); }
++        if (z0 <= 0f || z1 <= 0f) return -1;
++        float rHigh = z2 / z1;
++        float rLow = z1 / z0;
++        if (rHigh > OutlierRatio && rHigh > rLow * OutlierCliff) return i2;
++        return -1;
+     }
+ }
+diff --git a/RecompOne.Runtime/Hardware/Gte.cs b/RecompOne.Runtime/Hardware/Gte.cs
+index db5631c..d07c3ec 100644
+--- a/RecompOne.Runtime/Hardware/Gte.cs
++++ b/RecompOne.Runtime/Hardware/Gte.cs
+@@ -188,17 +188,18 @@ public static class Gte
+         SX[0] = SX[1]; SX[1] = SX[2]; SX[2] = (short)nx;
+         SY[0] = SY[1]; SY[1] = SY[2]; SY[2] = (short)ny;
+ 
+-        // The one place the screen position, the depth that made it and the part of
+-        // it about to be thrown away are all in hand. GteDepth keys on the position
+-        // because that is what survives into the GP0 packet; a saturated coordinate
+-        // is not a key -- several vertices clamp onto it -- so those are left out
+-        // and simply miss later.
++        // The one place the screen position, the depth that made it and the true
++        // 16.16 coordinate are all in hand. GteDepth keys on the (possibly
++        // clamped) packet position because that is what survives into the GP0
++        // packet. A saturated vertex is recorded for its depth so the polygon
++        // can stay perspective-correct, but it is not moved off the clamp wall
++        // — that opened holes along shared edges. Several vertices can share a
++        // clamped key; Apply picks a depth per primitive and a fraction per key.
+         //
+-        // sx and sy are 16.16 and the shift above floors them, so the low sixteen
+-        // bits are exactly what SX2/SY2 lost: nx + fx is the position the GTE
+-        // computed, for negative coordinates as well as positive ones.
+-        if (GteDepth.Active && rx == nx && ry == ny)
+-            GteDepth.Record(nx, ny, sz, (sx & 0xFFFF) * (1f / 65536f), (sy & 0xFFFF) * (1f / 65536f));
++        // sx and sy are 16.16 and the shift above floors them, so trueX - nx is
++        // the fraction SX2 lost when the coordinate did not clamp.
++        if (GteDepth.Active)
++            GteDepth.Record(nx, ny, sz, sx * (1f / 65536f), sy * (1f / 65536f), rx != nx || ry != ny);
+ 
+         if (last)
+         {

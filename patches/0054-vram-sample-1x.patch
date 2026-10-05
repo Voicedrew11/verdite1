@@ -1,0 +1,998 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index ae11a67..7828fd6 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -172,8 +172,8 @@ public sealed class GlCore : IGpuBackend
+         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uExtTex"), 2);
+         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uRepTex"), 3);
+         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uRepClut"), 4);
+-        SetScaleUniform(_progPrim);
+-        if (_uVramSize >= 0) _gl.Uniform2(_uVramSize, (float)GlVram.Width, GlVram.Height);
++        SetScaleUniform(_progPrim, GlVram.Scale);
++        if (_uVramSize >= 0) _gl.Uniform2(_uVramSize, (float)VramShadow.Width, VramShadow.Height);
+ 
+         _uPresentOrigin = _gl.GetUniformLocation(_progPresent, "uOrigin");
+         _uPresentSize = _gl.GetUniformLocation(_progPresent, "uSize");
+@@ -358,7 +358,7 @@ public sealed class GlCore : IGpuBackend
+         var fresh = new GlDisplayRt { X = fbX, Y = fbY, W = fbW, H = fbH, Margin = GpuHle.WideMargin(fbW), Stamp = ++_rtStamp, LastDrawFrame = _frame };
+         fresh.Create(_gl);
+         _rts[slot] = fresh;
+-        SyncRtFromVram(fresh, fbX, fbY, fbW, fbH);
++        SyncRtFromVram(fresh, fbX, fbY, fbW, fbH, fromSample: true);
+         return fresh;
+     }
+ 
+@@ -379,35 +379,44 @@ public sealed class GlCore : IGpuBackend
+             rt.X * s, rt.Y * s, (rt.X + rt.W) * s, (rt.Y + rt.H) * s,
+             ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++        _vram.Publish(rt.X, rt.Y, rt.W, rt.H);
+         rt.Dirty = false;
+         Assets.Textures.VramTracker.MarkGpuWrite(rt.X, rt.Y, rt.W, rt.H);
+     }
+ 
+-    void SyncRtFromVram(GlDisplayRt rt, int rx, int ry, int rw, int rh)
++    void SyncRtFromVram(GlDisplayRt rt, int rx, int ry, int rw, int rh, bool fromSample)
+     {
+         int x0 = Math.Max(rx, rt.X), y0 = Math.Max(ry, rt.Y);
+         int x1 = Math.Min(rx + rw, rt.X + rt.W), y1 = Math.Min(ry + rh, rt.Y + rt.H);
+         if (x0 >= x1 || y0 >= y1) return;
+         int s = GlVram.Scale;
++        int dx0 = (x0 - rt.X + rt.Margin) * s, dy0 = (y0 - rt.Y) * s;
++        int dx1 = (x1 - rt.X + rt.Margin) * s, dy1 = (y1 - rt.Y) * s;
++        if (fromSample)
++        {
++            _vram.BlitSample(x0, y0, x1 - x0, y1 - y0, rt.Fbo, rt.TexW, rt.TexH,
++                dx0, dy0, dx1 - dx0, dy1 - dy0);
++            return;
++        }
+         _gl.Disable(EnableCap.ScissorTest);
+         _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _vram.Fbo);
+         _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, rt.Fbo);
+         _gl.BlitFramebuffer(x0 * s, y0 * s, x1 * s, y1 * s,
+-            (x0 - rt.X + rt.Margin) * s, (y0 - rt.Y) * s, (x1 - rt.X + rt.Margin) * s, (y1 - rt.Y) * s,
++            dx0, dy0, dx1, dy1,
+             ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+     }
+ 
+-    void WritebackDirtyIntersecting(int x, int y, int w, int h)
++    void SyncRtsFromVram(int x, int y, int w, int h, bool fromSample = true)
+     {
+         foreach (var rt in _rts)
+-            if (rt is { Dirty: true } && rt.Intersects(x, y, w, h)) Writeback(rt);
++            if (rt != null && rt.Intersects(x, y, w, h)) SyncRtFromVram(rt, x, y, w, h, fromSample);
+     }
+ 
+-    void SyncRtsFromVram(int x, int y, int w, int h)
++    void WritebackDirtyIntersecting(int x, int y, int w, int h)
+     {
+         foreach (var rt in _rts)
+-            if (rt != null && rt.Intersects(x, y, w, h)) SyncRtFromVram(rt, x, y, w, h);
++            if (rt is { Dirty: true } && rt.Intersects(x, y, w, h)) Writeback(rt);
+     }
+ 
+     void CheckTextureFeedback(in PrimFlags f)
+@@ -714,7 +723,7 @@ public sealed class GlCore : IGpuBackend
+                 rt.LastDrawFrame = _frame;
+                 if (rt.Margin > 0) rt.MarginContentFlip = GpuHle.DisplayFlip;
+             }
+-            else SyncRtFromVram(rt, x, y, w, h);
++            else SyncRtFromVram(rt, x, y, w, h, fromSample: true);
+         }
+     }
+ 
+@@ -905,8 +914,14 @@ public sealed class GlCore : IGpuBackend
+         // A restore of a frame this backend read out at scale writes the scaled
+         // copy instead of the 1x pixels the game is handing back; everything else
+         // uploads as it always did.
+-        if (!SnapRestore(x, y, w, h, px)) _vram.WriteRect(x, y, w, h, px);
+-        SyncRtsFromVram(x, y, w, h);
++        bool restored = SnapRestore(x, y, w, h, px);
++        if (restored) _vram.Publish(x, y, w, h);
++        else
++        {
++            _vram.WriteRect(x, y, w, h, px);
++            if (_rts[0] == null && _rts[1] == null) _vram.Promote(x, y, w, h);
++        }
++        SyncRtsFromVram(x, y, w, h, fromSample: !restored);
+         SnapProbe();
+     }
+ 
+@@ -1004,22 +1019,30 @@ public sealed class GlCore : IGpuBackend
+ 
+         var rt = _kTarget;
+         uint destTex;
++        uint vramTex;
+         if (rt == null)
+         {
+-            _vram.BindDraw();
+-            destTex = _vram.Texture;
++            // 0054. A draw with no display target used to land in the scaled atlas
++            // and then Publish that AABB down onto 1x sample VRAM. Uploads no longer
++            // reach the atlas, so that copy erased the texture pages -- fetch
++            // returned 0, paletted fragments discarded, objects sampled leftover
++            // framebuffer texels. Draw into 1x and sample a copy of it.
++            vramTex = _vram.BeginSampleRead();
++            _vram.BindSampleDraw();
++            destTex = _vram.SampleTexture;
+         }
+         else
+         {
+             _gl.BindFramebuffer(FramebufferTarget.Framebuffer, rt.Fbo);
+             _gl.Viewport(0, 0, (uint)rt.TexW, (uint)rt.TexH);
+             destTex = rt.Tex;
++            vramTex = _vram.SampleTexture;
+         }
+-        int destW = rt == null ? GlVram.Width : rt.TexW;
+-        int destH = rt == null ? GlVram.Height : rt.TexH;
++        int destW = rt == null ? VramShadow.Width : rt.TexW;
++        int destH = rt == null ? VramShadow.Height : rt.TexH;
+ 
+         GpuGlAccess.Gl = _gl;
+-        GpuGlAccess.TargetFbo = rt == null ? _vram.Fbo : rt.Fbo;
++        GpuGlAccess.TargetFbo = rt == null ? _vram.SampleFbo : rt.Fbo;
+         GpuGlAccess.TargetWidth = destW;
+         GpuGlAccess.TargetHeight = destH;
+         GpuGlAccess.TargetOriginX = rt == null ? 0 : rt.X;
+@@ -1028,7 +1051,7 @@ public sealed class GlCore : IGpuBackend
+ 
+         _gl.Disable(EnableCap.CullFace);
+         _gl.Enable(EnableCap.ScissorTest);
+-        int s = GlVram.Scale;
++        int s = rt == null ? 1 : GlVram.Scale;
+ 
+         // Depth test is per-batch: opaque 3D writes, semi-transparent 3D tests
+         // without writing, 2D (and everything while the setting is off) keeps
+@@ -1103,13 +1126,22 @@ public sealed class GlCore : IGpuBackend
+         int readY = Math.Max(0, ry0 * s);
+         int readW = Math.Max(0, (rx1 - rx0 + 1) * s);
+         int readH = Math.Max(0, (ry1 - ry0 + 1) * s);
+-        destTex = _vram.BeginDestRead(destTex, destW, destH, readX, readY, readW, readH);
++        // Dest is sampled only for the mask bit, and on the 2.1 path for blend.
++        // Copying or barrier-ing it on every batch was waiting on the scaled
++        // atlas after a texture upload -- the 0.7 ms Flush. A draw into 1x VRAM
++        // already isolated its sample source, so dest can reuse that copy.
++        bool sampleDest = _kCheckMask != 0 || (_legacy && _kTransparent) || (_kTransparent && _kBlend == 2);
++        if (sampleDest)
++            destTex = rt == null ? vramTex : _vram.BeginDestRead(destTex, destW, destH, readX, readY, readW, readH);
++        else
++            destTex = vramTex;
+         RebindTarget(rt);
+ 
+         _gl.UseProgram(_progPrim);
++        SetScaleUniform(_progPrim, s);
+         _gl.BindVertexArray(_vao);
+         _gl.ActiveTexture(TextureUnit.Texture0);
+-        _gl.BindTexture(TextureTarget.Texture2D, _vram.Texture);
++        _gl.BindTexture(TextureTarget.Texture2D, vramTex);
+         _gl.ActiveTexture(TextureUnit.Texture1);
+         _gl.BindTexture(TextureTarget.Texture2D, destTex);
+         if (_kImage >= 0 && _kImage < _images.Count)
+@@ -1276,7 +1308,11 @@ public sealed class GlCore : IGpuBackend
+             int x1 = Math.Min(_kClipX1, (int)Math.Ceiling(_drawMaxX));
+             int y1 = Math.Min(_kClipY1, (int)Math.Ceiling(_drawMaxY));
+             if (x1 >= x0 && y1 >= y0)
++            {
+                 Assets.Textures.VramTracker.MarkGpuWrite(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
++                _vram.CommitDraw(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
++                _vram.Promote(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
++            }
+         }
+         _count = 0;
+         _litFilled = 0;
+@@ -1290,12 +1326,14 @@ public sealed class GlCore : IGpuBackend
+         if (_uDepthSlope >= 0) _gl.Uniform1(_uDepthSlope, on ? GteDepth.DepthSlope : 0f);
+     }
+ 
+-    void SetScaleUniform(uint prog)
++    void SetScaleUniform(uint prog) => SetScaleUniform(prog, GlVram.Scale);
++
++    void SetScaleUniform(uint prog, int scale)
+     {
+         int loc = _gl.GetUniformLocation(prog, "uScale");
+         if (loc < 0) return;
+-        if (_legacy) _gl.Uniform1(loc, (float)GlVram.Scale);
+-        else _gl.Uniform1(loc, GlVram.Scale);
++        if (_legacy) _gl.Uniform1(loc, (float)scale);
++        else _gl.Uniform1(loc, scale);
+     }
+ 
+     /// <summary>Read the finished frame's depth attachment back and hand it to
+@@ -1320,11 +1358,7 @@ public sealed class GlCore : IGpuBackend
+ 
+     void RebindTarget(GlDisplayRt? rt)
+     {
+-        if (rt == null)
+-        {
+-            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _vram.Fbo);
+-            _gl.Viewport(0, 0, (uint)GlVram.Width, (uint)GlVram.Height);
+-        }
++        if (rt == null) _vram.BindSampleDraw();
+         else
+         {
+             _gl.BindFramebuffer(FramebufferTarget.Framebuffer, rt.Fbo);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index b83dc62..d3720db 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -374,7 +374,9 @@ internal static class GlShaders
+              3, -1,  2, -2 );
+ 
+         int u5(float f) { return int(floor(f * 31.0 + 0.5)); }
+-        vec4 fetch(ivec2 c) { return texelFetch(uVram, (c & ivec2(1023, 511)) * uScale, 0); }
++        // 0054. Sample VRAM is 1x. Multiplying by uScale fetched the scaled atlas
++        // the uploads were blitting into, which is what stalled Flush.
++        vec4 fetch(ivec2 c) { return texelFetch(uVram, c & ivec2(1023, 511), 0); }
+         int fetch16(ivec2 c) {
+             vec4 p = fetch(c);
+             return u5(p.r) | (u5(p.g) << 5) | (u5(p.b) << 10) | (int(ceil(p.a)) << 15);
+@@ -799,7 +801,8 @@ internal static class GlShaders
+ 
+         vec4 fetch(vec2 c) {
+             vec2 w = vec2(mod(c.x, 1024.0), mod(c.y, 512.0));
+-            return texture2D(uVram, (w * uScale + 0.5) / uVramSize);
++            // 0054. Sample VRAM is 1x; see the core-profile fetch.
++            return texture2D(uVram, (w + 0.5) / uVramSize);
+         }
+ 
+         float fetch16(vec2 c) {
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs
+index d02ff0d..864f230 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs
+@@ -7,7 +7,8 @@ public sealed class Gl21Vram : IGlVram
+ {
+     private readonly GL _gl;
+     private uint _tex, _fbo;
+-    private uint _stageTex;
++    private uint _stageTex, _stageFbo;
++    private uint _sampleTex, _sampleWriteFbo;
+     private uint _destVramTex, _destVramFbo;
+     private uint _destRtTex, _destRtFbo;
+     private int _destRtW, _destRtH;
+@@ -21,6 +22,8 @@ public sealed class Gl21Vram : IGlVram
+ 
+     public uint Texture => _tex;
+     public uint Fbo => _fbo;
++    public uint SampleTexture => _sampleTex;
++    public uint SampleFbo => _stageFbo;
+ 
+     public Gl21Vram(GL gl)
+     {
+@@ -32,6 +35,9 @@ public sealed class Gl21Vram : IGlVram
+         _tex = CreateTex(GlVram.Width, GlVram.Height);
+         _fbo = CreateFbo(_tex);
+         _stageTex = CreateTex(VramShadow.Width, VramShadow.Height);
++        _stageFbo = CreateFbo(_stageTex);
++        _sampleTex = CreateTex(VramShadow.Width, VramShadow.Height);
++        _sampleWriteFbo = _gl.GenFramebuffer();
+         _destVramTex = CreateTex(GlVram.Width, GlVram.Height);
+         _destVramFbo = CreateFbo(_destVramTex);
+         _scratchTex = CreateTex(GlVram.Width, GlVram.Height);
+@@ -108,6 +114,34 @@ public sealed class Gl21Vram : IGlVram
+         _gl.Viewport(0, 0, (uint)GlVram.Width, (uint)GlVram.Height);
+     }
+ 
++    public void BindSampleDraw()
++    {
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _stageFbo);
++        _gl.Viewport(0, 0, (uint)VramShadow.Width, (uint)VramShadow.Height);
++    }
++
++    public uint BeginSampleRead()
++    {
++        BlitScaled(_sampleTex, VramShadow.Width, VramShadow.Height, _stageFbo,
++            VramShadow.Width, VramShadow.Height,
++            0, 0, VramShadow.Width, VramShadow.Height,
++            0, 0, VramShadow.Width, VramShadow.Height);
++        return _sampleTex;
++    }
++
++    public void CommitDraw(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        // CopyTexSubImage2D reads the GPU 1x FBO into sample VRAM without
++        // attaching sample as a colour target — attaching it was the remaining
++        // Flush stall (BlitScaled would then restore _fbo and the detach would
++        // strip the scaled atlas instead).
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _stageFbo);
++        _gl.BindTexture(TextureTarget.Texture2D, _sampleTex);
++        _gl.CopyTexSubImage2D(TextureTarget.Texture2D, 0, x, y, x, y, (uint)w, (uint)h);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++    }
++
+     private unsafe void BlitQuad(uint srcTex, int srcW, int srcH, uint dstFbo, int dstW, int dstH, int sx, int sy,
+         int dx, int dy, int w, int h)
+     {
+@@ -184,18 +218,40 @@ public sealed class Gl21Vram : IGlVram
+ 
+     public void WriteRect(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
+     {
++        // 0054. Sample texture is never an FBO attachment -- see Gl45Vram.WriteRect.
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+         _gl.ActiveTexture(TextureUnit.Texture7);
+-        _gl.BindTexture(TextureTarget.Texture2D, _stageTex);
++        _gl.BindTexture(TextureTarget.Texture2D, _sampleTex);
+         _gl.PixelStore(PixelStoreParameter.UnpackAlignment, 2);
+         _gl.TexSubImage2D(TextureTarget.Texture2D, 0, x, y, (uint)w, (uint)h,
+             PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, px);
+         _gl.ActiveTexture(TextureUnit.Texture0);
++    }
+ 
++    public void Promote(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
+         var s = GlVram.Scale;
+-        BlitScaled(_stageTex, VramShadow.Width, VramShadow.Height, _fbo, GlVram.Width, GlVram.Height,
++        BlitScaled(_sampleTex, VramShadow.Width, VramShadow.Height, _fbo, GlVram.Width, GlVram.Height,
+             x, y, w, h, x * s, y * s, w * s, h * s);
+     }
+ 
++    public void Publish(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        var s = GlVram.Scale;
++        BlitScaled(_tex, GlVram.Width, GlVram.Height, _stageFbo, VramShadow.Width, VramShadow.Height,
++            x * s, y * s, w * s, h * s, x, y, w, h);
++        CommitDraw(x, y, w, h);
++    }
++
++    public void BlitSample(int sx, int sy, int sw, int sh, uint dstFbo, int dstW, int dstH, int dx, int dy, int dw, int dh)
++    {
++        if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
++        BlitScaled(_sampleTex, VramShadow.Width, VramShadow.Height, dstFbo, dstW, dstH,
++            sx, sy, sw, sh, dx, dy, dw, dh);
++    }
++
+     private unsafe void BlitScaled(uint srcTex, int srcW, int srcH, uint dstFbo, int dstW, int dstH,
+         int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh)
+     {
+@@ -235,17 +291,34 @@ public sealed class Gl21Vram : IGlVram
+         float r = (color15 & 0x1F) / 31f, g = ((color15 >> 5) & 0x1F) / 31f, b = ((color15 >> 10) & 0x1F) / 31f;
+         var a = (color15 & 0x8000) != 0 ? 1f : 0f;
+         var s = GlVram.Scale;
+-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+         _gl.Enable(EnableCap.ScissorTest);
+-        _gl.Scissor(x * s, y * s, (uint)Math.Max(0, w * s), (uint)Math.Max(0, h * s));
+         _gl.ClearColor(r, g, b, a);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        _gl.Scissor(x * s, y * s, (uint)Math.Max(0, w * s), (uint)Math.Max(0, h * s));
++        _gl.Clear(ClearBufferMask.ColorBufferBit);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _stageFbo);
++        _gl.Viewport(0, 0, (uint)VramShadow.Width, (uint)VramShadow.Height);
++        _gl.Scissor(x, y, (uint)Math.Max(0, w), (uint)Math.Max(0, h));
+         _gl.Clear(ClearBufferMask.ColorBufferBit);
+         _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        _gl.Viewport(0, 0, (uint)GlVram.Width, (uint)GlVram.Height);
++        CommitDraw(x, y, w, h);
+     }
+ 
+     public void CopyRect(int sx, int sy, int dx, int dy, int w, int h)
+     {
+         var s = GlVram.Scale;
++        BlitScaled(_sampleTex, VramShadow.Width, VramShadow.Height, _scratchFbo, VramShadow.Width, VramShadow.Height,
++            sx, sy, w, h, 0, 0, w, h);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _scratchFbo);
++        _gl.BindTexture(TextureTarget.Texture2D, _sampleTex);
++        _gl.CopyTexSubImage2D(TextureTarget.Texture2D, 0, dx, dy, 0, 0, (uint)w, (uint)h);
++
++        BlitScaled(_stageTex, VramShadow.Width, VramShadow.Height, _scratchFbo, VramShadow.Width, VramShadow.Height,
++            sx, sy, w, h, 0, 0, w, h);
++        BlitScaled(_scratchTex, GlVram.Width, GlVram.Height, _stageFbo, VramShadow.Width, VramShadow.Height,
++            0, 0, w, h, dx, dy, w, h);
+         BlitQuad(_tex, GlVram.Width, GlVram.Height, _scratchFbo, GlVram.Width, GlVram.Height,
+             sx * s, sy * s, sx * s, sy * s, w * s, h * s);
+         BlitQuad(_scratchTex, GlVram.Width, GlVram.Height, _fbo, GlVram.Width, GlVram.Height,
+@@ -257,37 +330,44 @@ public sealed class Gl21Vram : IGlVram
+     {
+         if (w <= 0 || h <= 0) return;
+ 
+-        var s = GlVram.Scale;
+-        var rowBytes = w * s * 4;
++        var rowBytes = w * 4;
+         if (_readBuf.Length < rowBytes) _readBuf = new byte[rowBytes];
+ 
+-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _sampleWriteFbo);
++        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++            TextureTarget.Texture2D, _sampleTex, 0);
+         _gl.Disable(EnableCap.ScissorTest);
+         _gl.PixelStore(PixelStoreParameter.PackAlignment, 1);
+ 
+         for (var row = 0; row < h; row++)
+         {
+-            _gl.ReadPixels(x * s, (y + row) * s, (uint)(w * s), 1, PixelFormat.Rgba, PixelType.UnsignedByte,
++            _gl.ReadPixels(x, y + row, (uint)w, 1, PixelFormat.Rgba, PixelType.UnsignedByte,
+                 _readBuf.AsSpan(0, rowBytes));
+ 
+             for (var col = 0; col < w; col++)
+             {
+-                var o = col * s * 4;
++                var o = col * 4;
+                 int r5 = _readBuf[o] >> 3, g5 = _readBuf[o + 1] >> 3, b5 = _readBuf[o + 2] >> 3;
+                 var a = _readBuf[o + 3] >= 128 ? 1 : 0;
+                 dst[row * w + col] = (ushort)(r5 | (g5 << 5) | (b5 << 10) | (a << 15));
+             }
+         }
++        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++            TextureTarget.Texture2D, 0, 0);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+     }
+ 
+     public void Dispose()
+     {
+         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
++        if (_stageFbo != 0) _gl.DeleteFramebuffer(_stageFbo);
++        if (_sampleWriteFbo != 0) _gl.DeleteFramebuffer(_sampleWriteFbo);
+         if (_destVramFbo != 0) _gl.DeleteFramebuffer(_destVramFbo);
+         if (_destRtFbo != 0) _gl.DeleteFramebuffer(_destRtFbo);
+         if (_scratchFbo != 0) _gl.DeleteFramebuffer(_scratchFbo);
+         if (_tex != 0) _gl.DeleteTexture(_tex);
+         if (_stageTex != 0) _gl.DeleteTexture(_stageTex);
++        if (_sampleTex != 0) _gl.DeleteTexture(_sampleTex);
+         if (_destVramTex != 0) _gl.DeleteTexture(_destVramTex);
+         if (_destRtTex != 0) _gl.DeleteTexture(_destRtTex);
+         if (_scratchTex != 0) _gl.DeleteTexture(_scratchTex);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs
+index d7daa22..b7e89e9 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs
+@@ -7,7 +7,9 @@ public sealed class Gl33Vram : IGlVram
+ {
+     private readonly GL _gl;
+     private uint _tex, _fbo;
+-    private uint _stageTex, _stageFbo;
++    private uint _gpuTex, _gpuFbo;
++    private uint _sampleTex;
++    private uint _readFbo;
+     private uint _scratchFbo;
+     private uint _destVramTex, _destVramFbo;
+     private uint _destRtTex, _destRtFbo;
+@@ -15,6 +17,8 @@ public sealed class Gl33Vram : IGlVram
+ 
+     public uint Texture => _tex;
+     public uint Fbo => _fbo;
++    public uint SampleTexture => _sampleTex;
++    public uint SampleFbo => _gpuFbo;
+ 
+     public Gl33Vram(GL gl)
+     {
+@@ -25,8 +29,10 @@ public sealed class Gl33Vram : IGlVram
+     {
+         _tex = CreateTex(GlVram.Width, GlVram.Height);
+         _fbo = CreateFbo(_tex);
+-        _stageTex = CreateTex(VramShadow.Width, VramShadow.Height);
+-        _stageFbo = CreateFbo(_stageTex);
++        _gpuTex = CreateTex(VramShadow.Width, VramShadow.Height);
++        _gpuFbo = CreateFbo(_gpuTex);
++        _sampleTex = CreateTex(VramShadow.Width, VramShadow.Height);
++        _readFbo = _gl.GenFramebuffer();
+         _destVramTex = CreateTex(GlVram.Width, GlVram.Height);
+         _destVramFbo = CreateFbo(_destVramTex);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+@@ -62,6 +68,27 @@ public sealed class Gl33Vram : IGlVram
+         _gl.Viewport(0, 0, (uint)GlVram.Width, (uint)GlVram.Height);
+     }
+ 
++    public void BindSampleDraw()
++    {
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _gpuFbo);
++        _gl.Viewport(0, 0, (uint)VramShadow.Width, (uint)VramShadow.Height);
++    }
++
++    public uint BeginSampleRead()
++    {
++        Copy1x(_sampleTex, true, _gpuFbo, 0, 0, VramShadow.Width, VramShadow.Height, 0, 0);
++        return _sampleTex;
++    }
++
++    public void CommitDraw(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _gpuFbo);
++        _gl.BindTexture(TextureTarget.Texture2D, _sampleTex);
++        _gl.CopyTexSubImage2D(TextureTarget.Texture2D, 0, x, y, x, y, (uint)w, (uint)h);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++    }
++
+     public uint BeginDestRead(uint targetTex, int targetW, int targetH, int x, int y, int w, int h)
+     {
+         var isVram = targetTex == _tex;
+@@ -121,38 +148,78 @@ public sealed class Gl33Vram : IGlVram
+ 
+     public void WriteRect(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
+     {
++        // 0054. Sample texture is never an FBO attachment -- see Gl45Vram.WriteRect.
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+-        _gl.BindTexture(TextureTarget.Texture2D, _stageTex);
++        _gl.BindTexture(TextureTarget.Texture2D, _sampleTex);
+         _gl.PixelStore(PixelStoreParameter.UnpackAlignment, 2);
+         _gl.TexSubImage2D(TextureTarget.Texture2D, 0, x, y, (uint)w, (uint)h,
+             PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, px);
++    }
++
++    public void Promote(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        int s = GlVram.Scale;
++        BlitFromSample(x, y, w, h, _fbo, x * s, y * s, w * s, h * s);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++    }
+ 
++    public void Publish(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        int s = GlVram.Scale;
+         _gl.Disable(EnableCap.ScissorTest);
+-        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _stageFbo);
+-        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
+-        _gl.BlitFramebuffer(x, y, x + w, y + h, x * GlVram.Scale, y * GlVram.Scale, (x + w) * GlVram.Scale,
+-            (y + h) * GlVram.Scale,
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _gpuFbo);
++        _gl.BlitFramebuffer(x * s, y * s, (x + w) * s, (y + h) * s, x, y, x + w, y + h,
+             ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        CommitDraw(x, y, w, h);
++    }
++
++    public void BlitSample(int sx, int sy, int sw, int sh, uint dstFbo, int dstW, int dstH, int dx, int dy, int dw, int dh)
++    {
++        if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
++        BlitFromSample(sx, sy, sw, sh, dstFbo, dx, dy, dw, dh);
++        _ = dstW;
++        _ = dstH;
+     }
+ 
+     public void Fill(int x, int y, int w, int h, ushort color15)
+     {
+         float r = (color15 & 0x1F) / 31f, g = ((color15 >> 5) & 0x1F) / 31f, b = ((color15 >> 10) & 0x1F) / 31f;
+         var a = (color15 & 0x8000) != 0 ? 1f : 0f;
+-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+         _gl.Enable(EnableCap.ScissorTest);
++        _gl.ClearColor(r, g, b, a);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+         _gl.Scissor(x * GlVram.Scale, y * GlVram.Scale, (uint)Math.Max(0, w * GlVram.Scale),
+             (uint)Math.Max(0, h * GlVram.Scale));
+-        _gl.ClearColor(r, g, b, a);
++        _gl.Clear(ClearBufferMask.ColorBufferBit);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _gpuFbo);
++        _gl.Viewport(0, 0, (uint)VramShadow.Width, (uint)VramShadow.Height);
++        _gl.Scissor(x, y, (uint)Math.Max(0, w), (uint)Math.Max(0, h));
+         _gl.Clear(ClearBufferMask.ColorBufferBit);
+         _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        _gl.Viewport(0, 0, (uint)GlVram.Width, (uint)GlVram.Height);
++        CommitDraw(x, y, w, h);
+     }
+ 
+     public void CopyRect(int sx, int sy, int dx, int dy, int w, int h)
+     {
+         var s = GlVram.Scale;
+         _gl.Disable(EnableCap.ScissorTest);
++        Copy1x(_sampleTex, true, _destVramFbo, sx, sy, w, h, 0, 0);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _destVramFbo);
++        _gl.BindTexture(TextureTarget.Texture2D, _sampleTex);
++        _gl.CopyTexSubImage2D(TextureTarget.Texture2D, 0, dx, dy, 0, 0, (uint)w, (uint)h);
++
++        Copy1x(_gpuTex, false, _destVramFbo, sx, sy, w, h, 0, 0);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _destVramFbo);
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _gpuFbo);
++        _gl.BlitFramebuffer(0, 0, w, h, dx, dy, dx + w, dy + h,
++            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++
+         _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+         _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _destVramFbo);
+         _gl.BlitFramebuffer(sx * s, sy * s, (sx + w) * s, (sy + h) * s, sx * s, sy * s, (sx + w) * s, (sy + h) * s,
+@@ -167,29 +234,67 @@ public sealed class Gl33Vram : IGlVram
+ 
+     public void ReadRect(int x, int y, int w, int h, Span<ushort> dst)
+     {
+-        var s = GlVram.Scale;
+         _gl.Disable(EnableCap.ScissorTest);
+-        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+-        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _stageFbo);
+-        _gl.BlitFramebuffer(x * s, y * s, (x + w) * s, (y + h) * s, x, y, x + w, y + h, ClearBufferMask.ColorBufferBit,
+-            BlitFramebufferFilter.Nearest);
+-
+-        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _stageFbo);
++        BindSampleRead();
+         _gl.PixelStore(PixelStoreParameter.PackAlignment, 2);
+         _gl.ReadPixels(x, y, (uint)w, (uint)h, PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, dst);
++        UnbindSampleRead();
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+     }
+ 
++    private void BindSampleRead()
++    {
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _readFbo);
++        _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0,
++            TextureTarget.Texture2D, _sampleTex, 0);
++    }
++
++    private void UnbindSampleRead()
++    {
++        _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0,
++            TextureTarget.Texture2D, 0, 0);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++    }
++
++    private void BlitFromSample(int sx, int sy, int sw, int sh, uint dstFbo, int dx, int dy, int dw, int dh)
++    {
++        _gl.Disable(EnableCap.ScissorTest);
++        BindSampleRead();
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, dstFbo);
++        _gl.BlitFramebuffer(sx, sy, sx + sw, sy + sh, dx, dy, dx + dw, dy + dh,
++            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        UnbindSampleRead();
++    }
++
++    // srcIsSample: read from sample (temp attach) or from gpu FBO.
++    private void Copy1x(uint srcTex, bool srcIsSample, uint dstFbo, int sx, int sy, int w, int h, int dx, int dy)
++    {
++        if (w <= 0 || h <= 0) return;
++        _gl.Disable(EnableCap.ScissorTest);
++        if (srcIsSample) BindSampleRead();
++        else
++        {
++            _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, srcTex == _gpuTex ? _gpuFbo : _fbo);
++        }
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, dstFbo);
++        _gl.BlitFramebuffer(sx, sy, sx + w, sy + h, dx, dy, dx + w, dy + h,
++            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        if (srcIsSample) UnbindSampleRead();
++        else _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++    }
++
+     public void Dispose()
+     {
+         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
+-        if (_stageFbo != 0) _gl.DeleteFramebuffer(_stageFbo);
++        if (_gpuFbo != 0) _gl.DeleteFramebuffer(_gpuFbo);
++        if (_readFbo != 0) _gl.DeleteFramebuffer(_readFbo);
+         if (_scratchFbo != 0) _gl.DeleteFramebuffer(_scratchFbo);
+         if (_destVramFbo != 0) _gl.DeleteFramebuffer(_destVramFbo);
+         if (_destRtFbo != 0) _gl.DeleteFramebuffer(_destRtFbo);
+         if (_tex != 0) _gl.DeleteTexture(_tex);
+-        if (_stageTex != 0) _gl.DeleteTexture(_stageTex);
++        if (_gpuTex != 0) _gl.DeleteTexture(_gpuTex);
++        if (_sampleTex != 0) _gl.DeleteTexture(_sampleTex);
+         if (_destVramTex != 0) _gl.DeleteTexture(_destVramTex);
+         if (_destRtTex != 0) _gl.DeleteTexture(_destRtTex);
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs
+index 29e3d63..4b21874 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs
+@@ -6,11 +6,15 @@ public sealed class Gl45Vram : IGlVram
+ {
+     private readonly GL _gl;
+     private uint _tex, _fbo;
+-    private uint _stageTex, _stageFbo;
++    private uint _gpuTex, _gpuFbo;
++    private uint _sampleTex;
++    private uint _readFbo;
+     private uint _scratchTex;
+ 
+     public uint Texture => _tex;
+     public uint Fbo => _fbo;
++    public uint SampleTexture => _sampleTex;
++    public uint SampleFbo => _gpuFbo;
+ 
+     public Gl45Vram(GL gl)
+     {
+@@ -21,8 +25,10 @@ public sealed class Gl45Vram : IGlVram
+     {
+         _tex = CreateTex(GlVram.Width, GlVram.Height);
+         _fbo = CreateFbo(_tex);
+-        _stageTex = CreateTex(VramShadow.Width, VramShadow.Height);
+-        _stageFbo = CreateFbo(_stageTex);
++        _gpuTex = CreateTex(VramShadow.Width, VramShadow.Height);
++        _gpuFbo = CreateFbo(_gpuTex);
++        _sampleTex = CreateTex(VramShadow.Width, VramShadow.Height);
++        _readFbo = _gl.GenFramebuffer();
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+     }
+ 
+@@ -54,6 +60,24 @@ public sealed class Gl45Vram : IGlVram
+         _gl.Viewport(0, 0, (uint)GlVram.Width, (uint)GlVram.Height);
+     }
+ 
++    public void BindSampleDraw()
++    {
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _gpuFbo);
++        _gl.Viewport(0, 0, (uint)VramShadow.Width, (uint)VramShadow.Height);
++    }
++
++    public uint BeginSampleRead()
++    {
++        Copy1x(_sampleTex, _gpuTex, 0, 0, VramShadow.Width, VramShadow.Height, 0, 0);
++        return _sampleTex;
++    }
++
++    public void CommitDraw(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        Copy1x(_gpuTex, _sampleTex, x, y, w, h, x, y);
++    }
++
+     public uint BeginDestRead(uint targetTex, int targetW, int targetH, int x, int y, int w, int h)
+     {
+         _gl.TextureBarrier();
+@@ -67,36 +91,73 @@ public sealed class Gl45Vram : IGlVram
+ 
+     public void WriteRect(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
+     {
++        // 0054. Sample texture is never an FBO attachment, so this is a buffer
++        // upload rather than a render-target write. Sampling it from Flush does
++        // not wait on a blit.
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+-        _gl.BindTexture(TextureTarget.Texture2D, _stageTex);
++        _gl.BindTexture(TextureTarget.Texture2D, _sampleTex);
+         _gl.PixelStore(PixelStoreParameter.UnpackAlignment, 2);
+         _gl.TexSubImage2D(TextureTarget.Texture2D, 0, x, y, (uint)w, (uint)h,
+             PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, px);
++    }
+ 
++    public void Promote(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        int s = GlVram.Scale;
++        BlitFromSample(x, y, w, h, _fbo, x * s, y * s, w * s, h * s);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++    }
++
++    public void Publish(int x, int y, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        int s = GlVram.Scale;
+         _gl.Disable(EnableCap.ScissorTest);
+-        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _stageFbo);
+-        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
+-        _gl.BlitFramebuffer(x, y, x + w, y + h,
+-            x * GlVram.Scale, y * GlVram.Scale, (x + w) * GlVram.Scale, (y + h) * GlVram.Scale,
+-            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _gpuFbo);
++        _gl.BlitFramebuffer(x * s, y * s, (x + w) * s, (y + h) * s,
++            x, y, x + w, y + h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        CommitDraw(x, y, w, h);
++    }
++
++    public void BlitSample(int sx, int sy, int sw, int sh, uint dstFbo, int dstW, int dstH, int dx, int dy, int dw, int dh)
++    {
++        if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
++        BlitFromSample(sx, sy, sw, sh, dstFbo, dx, dy, dw, dh);
++        _ = dstW;
++        _ = dstH;
+     }
+ 
+     public void Fill(int x, int y, int w, int h, ushort color15)
+     {
+         float r = (color15 & 0x1F) / 31f, g = ((color15 >> 5) & 0x1F) / 31f, b = ((color15 >> 10) & 0x1F) / 31f;
+         var a = (color15 & 0x8000) != 0 ? 1f : 0f;
+-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+         _gl.Enable(EnableCap.ScissorTest);
++        _gl.ClearColor(r, g, b, a);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+         _gl.Scissor(x * GlVram.Scale, y * GlVram.Scale, (uint)Math.Max(0, w * GlVram.Scale),
+             (uint)Math.Max(0, h * GlVram.Scale));
+-        _gl.ClearColor(r, g, b, a);
++        _gl.Clear(ClearBufferMask.ColorBufferBit);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _gpuFbo);
++        _gl.Viewport(0, 0, (uint)VramShadow.Width, (uint)VramShadow.Height);
++        _gl.Scissor(x, y, (uint)Math.Max(0, w), (uint)Math.Max(0, h));
+         _gl.Clear(ClearBufferMask.ColorBufferBit);
+         _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        _gl.Viewport(0, 0, (uint)GlVram.Width, (uint)GlVram.Height);
++        CommitDraw(x, y, w, h);
+     }
+ 
+     public void CopyRect(int sx, int sy, int dx, int dy, int w, int h)
+     {
++        EnsureScratch();
++        Copy1x(_sampleTex, _scratchTex, sx, sy, w, h, 0, 0);
++        Copy1x(_scratchTex, _sampleTex, 0, 0, w, h, dx, dy);
++        Copy1x(_gpuTex, _scratchTex, sx, sy, w, h, 0, 0);
++        Copy1x(_scratchTex, _gpuTex, 0, 0, w, h, dx, dy);
++
+         int sw = w * GlVram.Scale, sh = h * GlVram.Scale;
+         var overlap = sx < dx + w && dx < sx + w && sy < dy + h && dy < sy + h;
+         if (!overlap)
+@@ -107,7 +168,6 @@ public sealed class Gl45Vram : IGlVram
+             return;
+         }
+ 
+-        EnsureScratch();
+         _gl.CopyImageSubData(_tex, CopyImageSubDataTarget.Texture2D, 0, sx * GlVram.Scale, sy * GlVram.Scale, 0,
+             _scratchTex, CopyImageSubDataTarget.Texture2D, 0, 0, 0, 0, (uint)sw, (uint)sh, 1);
+         _gl.CopyImageSubData(_scratchTex, CopyImageSubDataTarget.Texture2D, 0, 0, 0, 0,
+@@ -117,17 +177,44 @@ public sealed class Gl45Vram : IGlVram
+     public void ReadRect(int x, int y, int w, int h, Span<ushort> dst)
+     {
+         _gl.Disable(EnableCap.ScissorTest);
+-        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+-        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _stageFbo);
+-        _gl.BlitFramebuffer(x * GlVram.Scale, y * GlVram.Scale, (x + w) * GlVram.Scale, (y + h) * GlVram.Scale,
+-            x, y, x + w, y + h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+-
+-        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _stageFbo);
++        BindSampleRead();
+         _gl.PixelStore(PixelStoreParameter.PackAlignment, 2);
+         _gl.ReadPixels(x, y, (uint)w, (uint)h, PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, dst);
++        UnbindSampleRead();
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+     }
+ 
++    private void Copy1x(uint src, uint dst, int sx, int sy, int w, int h, int dx, int dy)
++    {
++        if (w <= 0 || h <= 0) return;
++        _gl.CopyImageSubData(src, CopyImageSubDataTarget.Texture2D, 0, sx, sy, 0,
++            dst, CopyImageSubDataTarget.Texture2D, 0, dx, dy, 0, (uint)w, (uint)h, 1);
++    }
++
++    private void BindSampleRead()
++    {
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _readFbo);
++        _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0,
++            TextureTarget.Texture2D, _sampleTex, 0);
++    }
++
++    private void UnbindSampleRead()
++    {
++        _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0,
++            TextureTarget.Texture2D, 0, 0);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++    }
++
++    private void BlitFromSample(int sx, int sy, int sw, int sh, uint dstFbo, int dx, int dy, int dw, int dh)
++    {
++        _gl.Disable(EnableCap.ScissorTest);
++        BindSampleRead();
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, dstFbo);
++        _gl.BlitFramebuffer(sx, sy, sx + sw, sy + sh, dx, dy, dx + dw, dy + dh,
++            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        UnbindSampleRead();
++    }
++
+     private void EnsureScratch()
+     {
+         if (_scratchTex != 0) return;
+@@ -137,9 +224,11 @@ public sealed class Gl45Vram : IGlVram
+     public void Dispose()
+     {
+         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
+-        if (_stageFbo != 0) _gl.DeleteFramebuffer(_stageFbo);
++        if (_gpuFbo != 0) _gl.DeleteFramebuffer(_gpuFbo);
++        if (_readFbo != 0) _gl.DeleteFramebuffer(_readFbo);
+         if (_tex != 0) _gl.DeleteTexture(_tex);
+-        if (_stageTex != 0) _gl.DeleteTexture(_stageTex);
++        if (_gpuTex != 0) _gl.DeleteTexture(_gpuTex);
++        if (_sampleTex != 0) _gl.DeleteTexture(_sampleTex);
+         if (_scratchTex != 0) _gl.DeleteTexture(_scratchTex);
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/IGlVram.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/IGlVram.cs
+index 20aea4b..4276f7a 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/IGlVram.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/IGlVram.cs
+@@ -2,12 +2,39 @@ namespace RecompOne.Runtime.Hle;
+ 
+ public interface IGlVram
+ {
++    /// <summary>The scaled framebuffer the display targets write back into, and
++    /// the present's VRAM fallback. Not what the prim shader samples.</summary>
+     uint Texture { get; }
+     uint Fbo { get; }
+ 
++    /// <summary>0054. 1x VRAM the prim shader samples. Never a draw
++    /// attachment: <see cref="WriteRect"/> is <c>TexSubImage2D</c> into this, and
++    /// the next <c>Flush</c> samples it. Leaving it on <see cref="SampleFbo"/>
++    /// was the remaining 0.6 ms stall — the driver treated the upload as a
++    /// render-target write. A read attachment is only bound for a blit or
++    /// <see cref="ReadRect"/> and detached before return.</summary>
++    uint SampleTexture { get; }
++
++    /// <summary>1x FBO for GPU writes (fill, copy, writeback, a draw with no
++    /// display target). A different texture from <see cref="SampleTexture"/>, so
++    /// sampling pages is not a framebuffer-as-texture hazard.</summary>
++    uint SampleFbo { get; }
++
+     void Init();
+     void BindDraw();
+ 
++    /// <summary>Bind <see cref="SampleFbo"/> at 1x. Copies sample VRAM into it
++    /// first so a GPU write is not drawing on a stale 1x atlas.</summary>
++    void BindSampleDraw();
++
++    /// <summary>The texture to bind as <c>uVram</c> while <see cref="SampleFbo"/>
++    /// is the draw target: <see cref="SampleTexture"/> itself.</summary>
++    uint BeginSampleRead();
++
++    /// <summary>Copy a GPU write from <see cref="SampleFbo"/> back into
++    /// <see cref="SampleTexture"/> so the next batch samples it.</summary>
++    void CommitDraw(int x, int y, int w, int h);
++
+     uint BeginDestRead(uint targetTex, int targetW, int targetH, int x, int y, int w, int h);
+ 
+     void SampleBarrier();
+@@ -17,5 +44,22 @@ public interface IGlVram
+     void WriteRect(int x, int y, int w, int h, ReadOnlySpan<ushort> px);
+     void ReadRect(int x, int y, int w, int h, Span<ushort> dst);
+ 
++    /// <summary>Upscale 1x sample VRAM into the scaled framebuffer. A draw with
++    /// no display target lands in 1x and then promotes, so the present's VRAM
++    /// fallback and 0039's snapshots still see it. Uploads do not, which is the
++    /// stall <c>0054</c> removed.</summary>
++    void Promote(int x, int y, int w, int h);
++
++    /// <summary>Downsample the scaled framebuffer into 1x sample VRAM. Writeback
++    /// of a display target and a scaled snapshot restore use this. A draw with no
++    /// display target must not: the scaled atlas no longer holds the uploads, so
++    /// publishing a draw AABB would erase the texture pages the shader samples.</summary>
++    void Publish(int x, int y, int w, int h);
++
++    /// <summary>Blit 1x sample VRAM into <paramref name="dstFbo"/>, upscaling if
++    /// the destination is larger. Used to push a CPU upload into a display
++    /// target.</summary>
++    void BlitSample(int sx, int sy, int sw, int sh, uint dstFbo, int dstW, int dstH, int dx, int dy, int dw, int dh);
++
+     void Dispose();
+ }
+\ No newline at end of file
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 50e83ba..04b2a8e 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -1104,13 +1104,32 @@ public sealed class GlCore : IGpuBackend
+         else
+         {
+             _vram.WriteRect(x, y, w, h, px);
+-            if (_rts[0] == null && _rts[1] == null) _vram.Promote(x, y, w, h);
++            // 0054, amended. The present reads the scaled framebuffer wherever no
++            // target serves the display, so an upload no target will present goes
++            // there too. "No target at all" was not that: one idle target from the
++            // boot clear kept every MDEC frame of the first intro movie off the screen.
++            if (!ServedByTarget(x, y, w, h)) _vram.Promote(x, y, w, h);
+         }
+         if (_check != null) { _check.Upload(x, y, w, h, px); _check.Check(_vram, restored ? "restore" : "upload", x, y, w, h, false); }
+         SyncRtsFromVram(x, y, w, h, fromSample: !restored);
+         SnapProbe();
+     }
+ 
++    /// <summary>0054, amended. Whether a live display target contains the
++    /// rectangle and the present would take it, which is where an upload is
++    /// carried by <see cref="SyncRtsFromVram"/> rather than by the scaled
++    /// framebuffer.</summary>
++    bool ServedByTarget(int x, int y, int w, int h)
++    {
++        foreach (var rt in _rts)
++            if (rt != null && !MarginRefused(rt)
++                && x >= rt.X && y >= rt.Y && x + w <= rt.X + rt.W && y + h <= rt.Y + rt.H)
++                return true;
++        return false;
++    }
++
++    static bool MarginRefused(GlDisplayRt rt) => rt is { Margin: > 0, MarginContentFlip: < 0 };
++
+     public void ReadVram(int x, int y, int w, int h, Span<ushort> px) => ReadVram(x, y, w, h, px, true);
+ 
+     /// <summary>0046. <paramref name="snapshot"/> false reads without offering the
+@@ -1678,7 +1697,7 @@ public sealed class GlCore : IGpuBackend
+         // that never latched margin content; a target that did keeps serving, which
+         // is what keeps the in-game menu, dialogs, shops and signs wide instead of
+         // collapsing to the 320-wide 4:3 fallback the moment the world render stops.
+-        bool latchRefused = src is { Margin: > 0 } && src.MarginContentFlip < 0;
++        bool latchRefused = src != null && MarginRefused(src);
+         if (latchRefused)
+             src = null;
+         // KF2_PRESENT_PROBE=2: the census cannot say *why* a present dropped to the

@@ -1,0 +1,138 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs
+index 052e28a..a7a8eb2 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteVertexMap.cs
+@@ -146,10 +146,7 @@ public static class GteVertexMap
+     {
+         if (on && _map == null)
+         {
+-            uint ram = Runtime.Mode == RunMode.Devkit ? MemoryMap.DevkitRamSize : MemoryMap.RetailRamSize;
+-            _ramMask = ram - 1;
+-            _map = new Entry[ram >> 2];
+-            _mark = new ulong[(ram >> 2) / 64];
++            Allocate();
+         }
+         // Switching off stops the stores being watched, so every address the game
+         // wrote in the meantime is still marked and still holds what it meant
+@@ -162,6 +159,21 @@ public static class GteVertexMap
+         Active = on && _map != null;
+     }
+ 
++    // Sized from the guest's RAM, which PSMemory may construct after a patch has
++    // already switched the map on.
++    static void Allocate()
++    {
++        uint ram = Runtime.RamSize;
++        _ramMask = ram - 1;
++        _map = new Entry[ram >> 2];
++        _mark = new ulong[(ram >> 2) / 64];
++    }
++
++    internal static void RamSizeChanged()
++    {
++        if (_map != null && (uint)_map.Length != Runtime.RamSize >> 2) Allocate();
++    }
++
+     static int Index(uint phys) => (int)((phys & _ramMask) >> 2);
+ 
+     static bool Marked(int i) => (_mark![i >> 6] & (1UL << (i & 63))) != 0;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Memory/PSMemory.cs b/tools/RecompOne/RecompOne.Runtime/Memory/PSMemory.cs
+index 7b66d2a..a88a797 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Memory/PSMemory.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Memory/PSMemory.cs
+@@ -26,6 +26,7 @@ public sealed class PSMemory : IMemory
+     public bool TryWords(uint address, int count, out ReadOnlySpan<uint> words)
+     {
+         var phys = MemoryMap.ToPhysical(address);
++        if (RamProbe.On) RamProbe.Note(phys);
+         var off = phys & _ramMask;
+ 
+         if (phys >= MemoryMap.RamWindow || (off & 3u) != 0 || off + (uint)count * 4u > (uint)_ram.Length)
+@@ -65,6 +66,7 @@ public sealed class PSMemory : IMemory
+         _frozen = new bool[size];
+ 
+         Runtime.RamSize = size;
++        GteVertexMap.RamSizeChanged();
+ 
+         // PGXP shadows one PgxpValue per RAM word, so it has to be sized from the
+         // same array the guest sees -- which is a ctor argument rather than a
+@@ -189,6 +191,7 @@ public sealed class PSMemory : IMemory
+     public byte ReadU8(uint address)
+     {
+         var phys = MemoryMap.ToPhysical(address);
++        if (RamProbe.On) RamProbe.Note(phys);
+         var off = phys & _ramMask;
+         if (phys < MemoryMap.RamWindow && off < (uint)_ram.Length && !RamLogger.TrackReads)
+             return Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_ram), (nint)off);
+@@ -204,6 +207,7 @@ public sealed class PSMemory : IMemory
+     public ushort ReadU16(uint address)
+     {
+         var phys = MemoryMap.ToPhysical(address);
++        if (RamProbe.On) RamProbe.Note(phys);
+         var off = phys & _ramMask;
+         if (phys < MemoryMap.RamWindow && off + 2u <= (uint)_ram.Length && !RamLogger.TrackReads)
+             return Unsafe.ReadUnaligned<ushort>(
+@@ -220,6 +224,7 @@ public sealed class PSMemory : IMemory
+     public uint ReadU32(uint address)
+     {
+         var phys = MemoryMap.ToPhysical(address);
++        if (RamProbe.On) RamProbe.Note(phys);
+         var off = phys & _ramMask;
+         if (phys < MemoryMap.RamWindow && off + 4u <= (uint)_ram.Length && !RamLogger.TrackReads)
+         {
+@@ -245,6 +250,7 @@ public sealed class PSMemory : IMemory
+     public void WriteU8(uint address, byte value)
+     {
+         var phys = MemoryMap.ToPhysical(address);
++        if (RamProbe.On) RamProbe.Note(phys);
+         var off = phys & _ramMask;
+         if (_frozenCount == 0 && phys < MemoryMap.RamWindow && off < (uint)_ram.Length && !RamLogger.TrackWrites)
+         {
+@@ -267,6 +273,7 @@ public sealed class PSMemory : IMemory
+     public void WriteU16(uint address, ushort value)
+     {
+         var phys = MemoryMap.ToPhysical(address);
++        if (RamProbe.On) RamProbe.Note(phys);
+         var off = phys & _ramMask;
+         if (_frozenCount == 0 && phys < MemoryMap.RamWindow && off + 2u <= (uint)_ram.Length && !RamLogger.TrackWrites)
+         {
+@@ -290,6 +297,7 @@ public sealed class PSMemory : IMemory
+     public void WriteU32(uint address, uint value)
+     {
+         var phys = MemoryMap.ToPhysical(address);
++        if (RamProbe.On) RamProbe.Note(phys);
+         var off = phys & _ramMask;
+         if (_frozenCount == 0 && phys < MemoryMap.RamWindow && off + 4u <= (uint)_ram.Length && !RamLogger.TrackWrites)
+         {
+diff --git a/tools/RecompOne/RecompOne.Runtime/Memory/RamProbe.cs b/tools/RecompOne/RecompOne.Runtime/Memory/RamProbe.cs
+new file mode 100644
+index 0000000..892ddd6
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Memory/RamProbe.cs
+@@ -0,0 +1,26 @@
++using System.Runtime.CompilerServices;
++
++namespace RecompOne.Runtime.Memory;
++
++/// <summary>
++/// Counts guest RAM accesses above the retail 2 MB, per 64 KiB page. With 2 MB of
++/// RAM those addresses mirror the low 2 MB; with more they are separate memory, so
++/// a game that reads through the mirror changes behaviour when the RAM grows.
++/// <c>KF2_RAM_PROBE=1</c> arms it at boot; otherwise the JIT folds the test away.
++/// </summary>
++public static class RamProbe
++{
++    public static readonly bool On = Environment.GetEnvironmentVariable("KF2_RAM_PROBE") is { } v && v.Trim() != "0";
++
++    const int PageShift = 16;
++
++    /// <summary>Accesses in [2 MB, 8 MB), indexed by (phys - 2 MB) >> 16.</summary>
++    public static readonly long[] Pages = new long[(MemoryMap.RamWindow - MemoryMap.RetailRamSize) >> PageShift];
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static void Note(uint phys)
++    {
++        uint o = phys - MemoryMap.RetailRamSize;
++        if (o < MemoryMap.RamWindow - MemoryMap.RetailRamSize) Pages[o >> PageShift]++;
++    }
++}

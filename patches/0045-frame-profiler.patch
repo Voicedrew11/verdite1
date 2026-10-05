@@ -1,0 +1,800 @@
+diff --git a/RecompOne.Runtime/Diagnostics/Profiler.cs b/RecompOne.Runtime/Diagnostics/Profiler.cs
+new file mode 100644
+index 0000000..d30d9ae
+--- /dev/null
++++ b/RecompOne.Runtime/Diagnostics/Profiler.cs
+@@ -0,0 +1,415 @@
++using System.Diagnostics;
++using System.Reflection;
++
++namespace RecompOne.Runtime.Diagnostics;
++
++/// <summary>What a section's time is spent on, which is what decides whether it is
++/// a cost to chase: <see cref="Wait"/> is a deliberate sleep to a deadline, and
++/// <see cref="Gpu"/> is the thread blocked on the driver, not running code.</summary>
++public enum ProfileGroup : byte
++{
++    /// <summary>Recompiled MIPS: the frame's unattributed remainder, and the body of
++    /// every hooked game function.</summary>
++    Game,
++    /// <summary>A port or mod hook -- a pre, post or replace delegate's own time.</summary>
++    Hook,
++    /// <summary>The runtime's own work: HLE, GL submission, the interface.</summary>
++    Runtime,
++    /// <summary>Blocked on the GL driver: the buffer swap.</summary>
++    Gpu,
++    /// <summary>Sleeping or spinning to a deadline.</summary>
++    Wait,
++}
++
++/// <summary>
++/// 0045. A per-frame, per-section profiler for the game thread.
++///
++/// Sections nest: <see cref="Begin"/> returns a token and <see cref="End"/> closes
++/// everything down to it, so an exception that skipped an inner End is repaired by
++/// the next outer one. Each close charges its section with *self* time (elapsed
++/// minus its children) and, for the outermost instance of a section on the stack,
++/// *inclusive* time. Whatever no section claims is charged to <see cref="Root"/>,
++/// which is the recompiled game itself, so a frame's self times sum exactly to its
++/// length.
++///
++/// The frame boundary is <see cref="FrameMark"/>, called at the end of
++/// <c>Runtime.PresentFrame</c> -- the present, not a hook, so the boundary does not
++/// depend on anything this is meant to be measuring. Sections still open at the
++/// boundary (a hooked stage running a modal loop that presents its own frames, the
++/// VSync that is presenting) are split there: the time so far goes to the frame
++/// that ends, and the rest to the next.
++///
++/// Off, every site costs one static bool test. Only the thread that presents is
++/// profiled; a Begin from any other thread returns -1 and its End does nothing.
++/// </summary>
++public static class Profiler
++{
++    public const int MaxSections = 2048;
++    const int MaxDepth = 128;
++    public const int HistoryFrames = 2048;
++
++    /// <summary>Whether sections are recorded. Checked at every site.</summary>
++    public static bool Enabled;
++
++    public static readonly double TicksToMs = 1000.0 / Stopwatch.Frequency;
++
++    // ---- the section registry ------------------------------------------------
++
++    static readonly object _registry = new();
++    static readonly Dictionary<string, int> _byName = new(StringComparer.Ordinal);
++    static readonly string[] _names = new string[MaxSections];
++    static readonly string?[] _labels = new string?[MaxSections];
++    static readonly ProfileGroup[] _groups = new ProfileGroup[MaxSections];
++    static int _count;
++
++    public static int SectionCount => _count;
++    public static string Name(int id) => _names[id];
++    public static string? Label(int id) => _labels[id];
++    public static ProfileGroup Group(int id) => _groups[id];
++
++    /// <summary>The name to show: the label if one was set, then the name.</summary>
++    public static string DisplayName(int id) => _labels[id] is { } l ? $"{l} ({_names[id]})" : _names[id];
++
++    /// <summary>The section for <paramref name="name"/>, created on first use. The same
++    /// name is always the same id, so a hook re-added after a mod reload keeps its row.
++    /// Past <see cref="MaxSections"/> everything lands in one overflow section.</summary>
++    public static int Register(string name, ProfileGroup group)
++    {
++        lock (_registry)
++        {
++            if (_byName.TryGetValue(name, out var id)) return id;
++            if (_count >= MaxSections - 1)
++                return _byName.TryGetValue("(too many sections)", out var o) ? o : Add("(too many sections)", group);
++            return Add(name, group);
++        }
++
++        static int Add(string name, ProfileGroup group)
++        {
++            var id = _count;
++            _names[id] = name;
++            _groups[id] = group;
++            _byName[name] = id;
++            _count = id + 1;
++            return id;
++        }
++    }
++
++    /// <summary>A human name for a section, shown beside its own -- for a recompiled
++    /// function, what the address is known to do.</summary>
++    public static void SetLabel(string name, string label, ProfileGroup group = ProfileGroup.Game)
++        => _labels[Register(name, group)] = label;
++
++    /// <summary>The section name for a recompiled function. Overlays that load at the
++    /// same address share function names, so it carries the overlay class's suffix:
++    /// <c>func_80060818@game</c>.</summary>
++    public static string FunctionName(MethodInfo target)
++    {
++        var type = target.DeclaringType?.Name ?? "";
++        var cut = type.LastIndexOf('_');
++        return $"{target.Name}@{(cut >= 0 ? type[(cut + 1)..] : type)}";
++    }
++
++    public static int Find(string name)
++    {
++        lock (_registry) return _byName.TryGetValue(name, out var id) ? id : -1;
++    }
++
++    // The runtime's own sections. Root must be registered first: it is id 0.
++    public static readonly int Root = Register("game code (no section)", ProfileGroup.Game);
++    public static readonly int VSync = Register("LibEtc.VSync", ProfileGroup.Runtime);
++    public static readonly int VBlank = Register("vblank grid (IRQ 0, VSyncEvent listeners)", ProfileGroup.Runtime);
++    public static readonly int VBlankWait = Register("LibEtc.WaitVBlanks (blocking timeline)", ProfileGroup.Wait);
++    public static readonly int Present = Register("Runtime.PresentFrame", ProfileGroup.Runtime);
++    public static readonly int HostEvents = Register("window events + input poll", ProfileGroup.Runtime);
++    public static readonly int HostRender = Register("buffer swap + driver", ProfileGroup.Gpu);
++    public static readonly int ImGuiUpdate = Register("ImGui new frame", ProfileGroup.Runtime);
++    public static readonly int Display = Register("GlCore.PresentDisplay (compose the picture)", ProfileGroup.Runtime);
++    public static readonly int Panels = Register("menu bar + panels + popups", ProfileGroup.Runtime);
++    public static readonly int ImGuiRender = Register("ImGui render", ProfileGroup.Runtime);
++    public static readonly int GlFlush = Register("GlCore.Flush (GL batch submit)", ProfileGroup.Runtime);
++    public static readonly int DrawOTag = Register("LibGpu.DrawOTag (packet walk)", ProfileGroup.Runtime);
++    public static readonly int Throttle = Register("FrameClock.Throttle (host ceiling)", ProfileGroup.Wait);
++    public static readonly int Ticks = Register("CD, card and pad ticks", ProfileGroup.Runtime);
++    public static readonly int Self = Register("profiler (its own reporting)", ProfileGroup.Runtime);
++
++    // ---- the open stack, and this frame's accumulators --------------------------
++
++    static readonly int[] _stId = new int[MaxDepth];
++    static readonly long[] _stStart = new long[MaxDepth];
++    static readonly long[] _stChild = new long[MaxDepth];
++    static int _depth;
++    static long _rootChild;
++
++    static readonly long[] _self = new long[MaxSections];
++    static readonly long[] _incl = new long[MaxSections];
++    static readonly int[] _calls = new int[MaxSections];
++    static readonly int[] _open = new int[MaxSections];
++    static readonly bool[] _touched = new bool[MaxSections];
++    static readonly int[] _touchedIds = new int[MaxSections];
++    static int _touchedCount;
++
++    static int _thread = -1;
++    static long _frameStart;
++    static long _frameIndex;
++
++    static TimeSpan _gcPause;
++    static int _gc0, _gc1, _gc2;
++    static long _alloc;
++    static TimeSpan _jit;
++    static long _jitMethods;
++
++    public static int Begin(int id)
++    {
++        if (!Enabled || _depth >= MaxDepth || Environment.CurrentManagedThreadId != _thread) return -1;
++
++        var d = _depth++;
++        _stId[d] = id;
++        _stChild[d] = 0;
++        _open[id]++;
++        if (!_touched[id]) Touch(id);
++        _calls[id]++;
++        _stStart[d] = Stopwatch.GetTimestamp();
++        return d;
++    }
++
++    public static void End(int token)
++    {
++        if (token < 0 || token >= _depth || Environment.CurrentManagedThreadId != _thread) return;
++
++        var now = Stopwatch.GetTimestamp();
++        while (_depth > token)
++        {
++            var d = --_depth;
++            var id = _stId[d];
++            var el = now - _stStart[d];
++            if (!_touched[id]) Touch(id);
++            _self[id] += el - _stChild[d];
++            if (--_open[id] <= 0)
++            {
++                _open[id] = 0;
++                _incl[id] += el;
++            }
++
++            if (d > 0) _stChild[d - 1] += el;
++            else _rootChild += el;
++        }
++    }
++
++    static void Touch(int id)
++    {
++        _touched[id] = true;
++        _touchedIds[_touchedCount++] = id;
++    }
++
++    // ---- frames ----------------------------------------------------------------
++
++    public readonly struct Sample(int id, long self, long incl, int calls)
++    {
++        public readonly int Id = id;
++        public readonly long Self = self;
++        public readonly long Incl = incl;
++        public readonly int Calls = calls;
++        public double SelfMs => Self * TicksToMs;
++        public double InclMs => Incl * TicksToMs;
++    }
++
++    public sealed class Frame
++    {
++        public long Index;
++        /// <summary>Stopwatch timestamp the frame started at.</summary>
++        public long Start;
++        public long Ticks;
++        public Sample[] Samples = new Sample[64];
++        public int Count;
++        public long WaitTicks, GpuTicks;
++        public double GcPauseMs;
++        public int Gc0, Gc1, Gc2;
++        public long AllocBytes;
++        public double JitMs;
++        public long JitMethods;
++
++        public double Ms => Ticks * TicksToMs;
++        /// <summary>The frame less its sleeps and its swap: the time something ran.</summary>
++        public double WorkMs => (Ticks - WaitTicks - GpuTicks) * TicksToMs;
++        public double WaitMs => WaitTicks * TicksToMs;
++        public double GpuMs => GpuTicks * TicksToMs;
++        public ReadOnlySpan<Sample> Span => Samples.AsSpan(0, Count);
++    }
++
++    static readonly Frame[] _history = CreateHistory();
++    static int _head;          // the slot the next frame is written to
++    static int _filled;
++
++    static Frame[] CreateHistory()
++    {
++        var h = new Frame[HistoryFrames];
++        for (var i = 0; i < h.Length; i++) h[i] = new Frame();
++        return h;
++    }
++
++    /// <summary>Frames recorded, up to <see cref="HistoryFrames"/>.</summary>
++    public static int HistoryCount => _filled;
++
++    /// <summary>A recorded frame, 0 being the most recent. The history is written on
++    /// the game thread, which is also the thread the interface draws on.</summary>
++    public static Frame GetFrame(int ago) => _history[(_head - 1 - ago + 2 * HistoryFrames) % HistoryFrames];
++
++    /// <summary>Raised on the game thread for each finished frame, inside the
++    /// <see cref="Self"/> section of the next one.</summary>
++    public static event Action<Frame>? FrameCompleted;
++
++    public static void ClearHistory()
++    {
++        _filled = 0;
++        _head = 0;
++    }
++
++    public static void FrameMark()
++    {
++        if (!Enabled)
++        {
++            _frameStart = 0;
++            return;
++        }
++
++        var tid = Environment.CurrentManagedThreadId;
++        if (_thread < 0) _thread = tid;
++        else if (tid != _thread) return;
++
++        var now = Stopwatch.GetTimestamp();
++        if (_frameStart == 0)
++        {
++            // The first mark after being switched on: nothing before it was a
++            // whole frame, so throw it away and start here.
++            Discard();
++            Snapshot(out _, out _, out _, out _, out _, out _, out _);
++            _frameStart = now;
++            return;
++        }
++
++        Split(now);
++        var frame = Commit(now);
++        _frameStart = now;
++
++        if (FrameCompleted is { } handlers)
++        {
++            var t = Begin(Self);
++            try
++            {
++                handlers(frame);
++            }
++            catch (Exception e)
++            {
++                FrameCompleted = null;
++                Console.Error.WriteLine($"[Profiler] a frame listener threw and was removed: {e}");
++            }
++            finally
++            {
++                End(t);
++            }
++        }
++    }
++
++    /// <summary>Charge every open section with its time up to <paramref name="now"/>
++    /// and restart it there, innermost first so each parent sees its children.</summary>
++    static void Split(long now)
++    {
++        for (var d = _depth - 1; d >= 0; d--)
++        {
++            var id = _stId[d];
++            var el = now - _stStart[d];
++            if (!_touched[id]) Touch(id);
++            _self[id] += el - _stChild[d];
++
++            var outermost = true;
++            for (var p = 0; p < d; p++)
++                if (_stId[p] == id)
++                {
++                    outermost = false;
++                    break;
++                }
++
++            if (outermost) _incl[id] += el;
++            if (d > 0) _stChild[d - 1] += el;
++            else _rootChild += el;
++        }
++
++        for (var d = 0; d < _depth; d++)
++        {
++            _stStart[d] = now;
++            _stChild[d] = 0;
++        }
++    }
++
++    static Frame Commit(long now)
++    {
++        var f = _history[_head];
++        _head = (_head + 1) % HistoryFrames;
++        if (_filled < HistoryFrames) _filled++;
++
++        var ticks = now - _frameStart;
++        f.Index = _frameIndex++;
++        f.Start = _frameStart;
++        f.Ticks = ticks;
++
++        if (!_touched[Root]) Touch(Root);
++        _self[Root] += Math.Max(0, ticks - _rootChild);
++        _incl[Root] = ticks;
++
++        if (f.Samples.Length < _touchedCount) f.Samples = new Sample[Math.Max(_touchedCount, f.Samples.Length * 2)];
++
++        long wait = 0, gpu = 0;
++        var n = 0;
++        for (var i = 0; i < _touchedCount; i++)
++        {
++            var id = _touchedIds[i];
++            f.Samples[n++] = new Sample(id, _self[id], _incl[id], _calls[id]);
++            if (_groups[id] == ProfileGroup.Wait) wait += _self[id];
++            else if (_groups[id] == ProfileGroup.Gpu) gpu += _self[id];
++        }
++
++        f.Count = n;
++        f.WaitTicks = wait;
++        f.GpuTicks = gpu;
++
++        Snapshot(out var pause, out var g0, out var g1, out var g2, out var alloc, out var jit, out var jitN);
++        f.GcPauseMs = (pause - _gcPause).TotalMilliseconds;
++        f.Gc0 = g0 - _gc0;
++        f.Gc1 = g1 - _gc1;
++        f.Gc2 = g2 - _gc2;
++        f.AllocBytes = alloc - _alloc;
++        f.JitMs = (jit - _jit).TotalMilliseconds;
++        f.JitMethods = jitN - _jitMethods;
++        (_gcPause, _gc0, _gc1, _gc2, _alloc, _jit, _jitMethods) = (pause, g0, g1, g2, alloc, jit, jitN);
++
++        Discard();
++        return f;
++    }
++
++    static void Discard()
++    {
++        for (var i = 0; i < _touchedCount; i++)
++        {
++            var id = _touchedIds[i];
++            _self[id] = 0;
++            _incl[id] = 0;
++            _calls[id] = 0;
++            _touched[id] = false;
++        }
++
++        _touchedCount = 0;
++        _rootChild = 0;
++    }
++
++    static void Snapshot(out TimeSpan pause, out int g0, out int g1, out int g2, out long alloc,
++                         out TimeSpan jit, out long jitMethods)
++    {
++        pause = GC.GetTotalPauseDuration();
++        g0 = GC.CollectionCount(0);
++        g1 = GC.CollectionCount(1);
++        g2 = GC.CollectionCount(2);
++        alloc = GC.GetAllocatedBytesForCurrentThread();
++        jit = System.Runtime.JitInfo.GetCompilationTime();
++        jitMethods = System.Runtime.JitInfo.GetCompiledMethodCount();
++    }
++}
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 8b43402..f2242cc 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -852,6 +852,15 @@ public sealed class GlCore : IGpuBackend
+     {
+         if (_count == 0) return;
+ 
++        //0045.
++        var profile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.GlFlush);
++        FlushCore();
++        Diagnostics.Profiler.End(profile);
++    }
++
++    private void FlushCore()
++    {
++
+         var rt = _kTarget;
+         uint destTex;
+         if (rt == null)
+diff --git a/RecompOne.Runtime/Host/FrameClock.cs b/RecompOne.Runtime/Host/FrameClock.cs
+index ba0eaf8..2e3de9d 100644
+--- a/RecompOne.Runtime/Host/FrameClock.cs
++++ b/RecompOne.Runtime/Host/FrameClock.cs
+@@ -135,6 +135,14 @@ internal static class FrameClock
+     public static double LastWaitMs { get; private set; }
+ 
+     public static void Throttle()
++    {
++        //0045.
++        var profile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Throttle);
++        ThrottleCore();
++        Diagnostics.Profiler.End(profile);
++    }
++
++    private static void ThrottleCore()
+     {
+         var now = Now;
+ 
+diff --git a/RecompOne.Runtime/Host/Window/HostWindow.cs b/RecompOne.Runtime/Host/Window/HostWindow.cs
+index c7708f0..c45999f 100644
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -6,6 +6,7 @@ using Silk.NET.OpenGL;
+ using Silk.NET.OpenGL.Extensions.ImGui;
+ using Silk.NET.Windowing;
+ using RecompOne.Runtime.Config;
++using RecompOne.Runtime.Diagnostics;
+ using RecompOne.Runtime.Hardware;
+ using RecompOne.Runtime.Host.Window;
+ 
+@@ -282,6 +283,7 @@ public static class HostWindow
+         // 0007. The pad is polled outside the frame loop, so a game that waits
+         // on it without vsyncing does not read one frozen snapshot forever.
+         _pumpedAt = _renderedAt = _pumpClock.Elapsed.TotalMilliseconds;
++        var events = Profiler.Begin(Profiler.HostEvents);
+         try
+         {
+             _window.DoEvents();
+@@ -311,7 +313,13 @@ public static class HostWindow
+             ConfigManager.SaveView(PanelManager.Panels);
+         }
+ 
++        Profiler.End(events);
++
++        // 0045. What OnRender does not claim for itself is Silk's own swap, which
++        // is where the thread waits on the driver.
++        var render = Profiler.Begin(Profiler.HostRender);
+         _window.DoRender();
++        Profiler.End(render);
+         FrameClock.MarkPresent();
+     }
+ 
+@@ -708,7 +716,9 @@ public static class HostWindow
+     private static void OnRender(double dt)
+     {
+         var gl = _gl!;
++        var update = Profiler.Begin(Profiler.ImGuiUpdate);
+         _imgui!.Update((float)dt);
++        Profiler.End(update);
+ 
+         // 0018. Silk's ImGuiController computes io.DisplayFramebufferScale as
+         // FramebufferSize / window size with both sides int, so the ratio
+@@ -758,11 +768,13 @@ public static class HostWindow
+             if (Hle.GpuHle.Active && _glBackend is { Ready: true } && gpu.DisplayEnabled)
+             {
+                 var wf = _window!.FramebufferSize;
++                var display = Profiler.Begin(Profiler.Display);
+                 var (tex, tw, th, aspect) = _glBackend.PresentDisplay(
+                     gpu.DisplayX, gpu.DisplayY,
+                     gpu.DisplayWidth, gpu.DisplayHeight,
+                     gpu.Display24Bit,
+                     wf.X, wf.Y);
++                Profiler.End(display);
+                 if (tex != 0) OutputPanel.SetTexture(tex, tw, th, aspect);
+                 gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                 gl.Viewport(0, 0, (uint)wf.X, (uint)wf.Y);
+@@ -782,15 +794,19 @@ public static class HostWindow
+             if (_ramReady) FlushRamTexture(gl);
+         }
+ 
++        var panels = Profiler.Begin(Profiler.Panels);
+         if (!ConfigManager.View.HideTopBar)
+             MainMenuBar.Draw();
+ 
+         DrawDockspace();
+         PanelManager.DrawPanels();
+         PopupManager.Draw();
++        Profiler.End(panels);
+         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+         gl.Viewport(0, 0, (uint)fbDef.X, (uint)fbDef.Y);
++        var imgui = Profiler.Begin(Profiler.ImGuiRender);
+         _imgui.Render();
++        Profiler.End(imgui);
+     }
+ 
+     private static void DrawDockspace()
+diff --git a/RecompOne.Runtime/Modding/HookManager.cs b/RecompOne.Runtime/Modding/HookManager.cs
+index 63259d2..b1bcaf2 100644
+--- a/RecompOne.Runtime/Modding/HookManager.cs
++++ b/RecompOne.Runtime/Modding/HookManager.cs
+@@ -1,6 +1,7 @@
+ using System.Reflection;
+ using MonoMod.RuntimeDetour;
+ using RecompOne.Runtime.Context;
++using RecompOne.Runtime.Diagnostics;
+ using RecompOne.Runtime.Memory;
+ 
+ namespace RecompOne.Runtime.Modding;
+@@ -11,6 +12,7 @@ public static class HookManager
+     {
+         public ModInfo Mod = null!;
+         public T Fn = default!;
++        public int Profile;
+     }
+ 
+     private sealed class FunctionHooks
+@@ -20,6 +22,8 @@ public static class HookManager
+         public Action<Action<CpuContext, IMemory>, CpuContext, IMemory>? Replace;
+         public ModInfo? ReplaceOwner;
+         public Hook? Hook;
++        public int Profile;
++        public int ReplaceProfile;
+ 
+         public bool Empty => Pres.Length == 0 && Posts.Length == 0 && Replace == null;
+     }
+@@ -91,6 +95,7 @@ public static class HookManager
+ 
+             hooks.Replace = replace;
+             hooks.ReplaceOwner = mod;
++            hooks.ReplaceProfile = HookSection(impl, "replace");
+         }
+ 
+         return true;
+@@ -121,7 +126,7 @@ public static class HookManager
+         lock (_gate)
+         {
+             var hooks = Get(target);
+-            hooks.Pres = [.. hooks.Pres, new Entry<Func<CpuContext, IMemory, bool>> { Mod = mod, Fn = pre }];
++            hooks.Pres = [.. hooks.Pres, new Entry<Func<CpuContext, IMemory, bool>> { Mod = mod, Fn = pre, Profile = HookSection(impl, "pre") }];
+         }
+ 
+         return true;
+@@ -139,7 +144,7 @@ public static class HookManager
+         lock (_gate)
+         {
+             var hooks = Get(target);
+-            hooks.Posts = [.. hooks.Posts, new Entry<Action<CpuContext, IMemory>> { Mod = mod, Fn = post }];
++            hooks.Posts = [.. hooks.Posts, new Entry<Action<CpuContext, IMemory>> { Mod = mod, Fn = post, Profile = HookSection(impl, "post") }];
+         }
+ 
+         return true;
+@@ -218,6 +223,12 @@ public static class HookManager
+ 
+     private static void Invoke(FunctionHooks hooks, Action<CpuContext, IMemory> orig, CpuContext c, IMemory m)
+     {
++        if (Profiler.Enabled)
++        {
++            InvokeProfiled(hooks, orig, c, m);
++            return;
++        }
++
+         var pres = hooks.Pres;
+         var posts = hooks.Posts;
+         var replace = hooks.Replace;
+@@ -236,10 +247,67 @@ public static class HookManager
+             posts[i].Fn(c, m);
+     }
+ 
++    //0045. The same calls as Invoke, each inside a profiler section: the hooked
++    //function as a whole (whose self time is the recompiled body), and every
++    //delegate on its own, named for the method that implements it. The finally is
++    //what keeps an exception thrown through a hook -- a hard reset unwinding the
++    //game -- from leaving sections open under the frame for good.
++    private static void InvokeProfiled(FunctionHooks hooks, Action<CpuContext, IMemory> orig, CpuContext c,
++                                       IMemory m)
++    {
++        var pres = hooks.Pres;
++        var posts = hooks.Posts;
++        var replace = hooks.Replace;
++
++        var fn = Profiler.Begin(hooks.Profile);
++        try
++        {
++            var skip = false;
++            for (var i = 0; i < pres.Length; i++)
++            {
++                var t = Profiler.Begin(pres[i].Profile);
++                if (!pres[i].Fn(c, m))
++                    skip = true;
++                Profiler.End(t);
++            }
++
++            if (!skip)
++            {
++                if (replace != null)
++                {
++                    var t = Profiler.Begin(hooks.ReplaceProfile);
++                    replace(orig, c, m);
++                    Profiler.End(t);
++                }
++                else orig(c, m);
++            }
++
++            for (var i = 0; i < posts.Length; i++)
++            {
++                var t = Profiler.Begin(posts[i].Profile);
++                posts[i].Fn(c, m);
++                Profiler.End(t);
++            }
++        }
++        finally
++        {
++            Profiler.End(fn);
++        }
++    }
++
++    private static int HookSection(MethodInfo impl, string kind)
++    {
++        return Profiler.Register($"{kind} {impl.DeclaringType?.Name}.{impl.Name}", ProfileGroup.Hook);
++    }
++
+     private static FunctionHooks Get(MethodInfo target)
+     {
+         if (!_hooks.TryGetValue(target, out var hooks))
++        {
+             _hooks[target] = hooks = new FunctionHooks();
++            hooks.Profile = Profiler.Register(Profiler.FunctionName(target), ProfileGroup.Game);
++        }
++
+         return hooks;
+     }
+ 
+diff --git a/RecompOne.Runtime/Runtime.cs b/RecompOne.Runtime/Runtime.cs
+index 14643cd..0c5f2e4 100644
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -358,6 +358,22 @@ public static class Runtime
+             throw new HardResetSignal();
+         }
+ 
++        //0045. The frame boundary is the end of this call, not a hook, so the
++        //profiler's frames do not depend on anything it is meant to be measuring.
++        var profile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Present);
++        try
++        {
++            PresentFrameCore();
++        }
++        finally
++        {
++            Diagnostics.Profiler.End(profile);
++            Diagnostics.Profiler.FrameMark();
++        }
++    }
++
++    private static void PresentFrameCore()
++    {
+         Interp.Interp.Backend?.Publish();
+ 
+         // The port presents from inside the game's own VSync, on one thread:
+@@ -374,6 +390,7 @@ public static class Runtime
+         FrameClock.MarkFrame();
+         // Upstream throttles in PresentLoop, which this port never enters.
+         FrameClock.Throttle();
++        var ticks = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Ticks);
+         Sdk.LibCd.Tick();
+         if (Cpu != null && Mem != null) Sdk.LibMcrd.Tick(Cpu, Mem);
+         if (Mem != null)
+@@ -381,6 +398,7 @@ public static class Runtime
+             Bios.BiosB.RefreshPad(Mem);
+             Sdk.LibPad.Refresh(Mem);
+         } //is this correct?
++        Diagnostics.Profiler.End(ticks);
+ 
+         // Only on upstream's blocking timeline. On the pin's, LibEtc.TickVBlank
+         // delivers IRQ 0 on its own wall-clock grid and a present is not a
+diff --git a/RecompOne.Runtime/sdk/LibEtc.cs b/RecompOne.Runtime/sdk/LibEtc.cs
+index bc4c65e..3c1d1d7 100644
+--- a/RecompOne.Runtime/sdk/LibEtc.cs
++++ b/RecompOne.Runtime/sdk/LibEtc.cs
+@@ -1,5 +1,6 @@
+ using System.Diagnostics;
+ using RecompOne.Runtime.Context;
++using RecompOne.Runtime.Diagnostics;
+ using RecompOne.Runtime.Events;
+ using RecompOne.Runtime.Hardware;
+ using RecompOne.Runtime.Memory;
+@@ -93,6 +94,22 @@ public static class LibEtc
+         //is inert unless Interp is enabled.
+         Interp.VideoRate.Push(mode == 0 ? 1 : mode);
+ 
++        //0045. Only the presenting call is a section; the queries above return at
++        //once. Not a try/finally: PresentFrame's hard reset is thrown before it
++        //opens a section, and anything left open is closed by the next outer End.
++        var profile = Profiler.Begin(Profiler.VSync);
++        try
++        {
++            Present(c, m, mode);
++        }
++        finally
++        {
++            Profiler.End(profile);
++        }
++    }
++
++    private static void Present(CpuContext c, IMemory m, int mode)
++    {
+         Runtime.PresentFrame();
+ 
+         if (BlockingVSync)
+@@ -116,7 +133,9 @@ public static class LibEtc
+             return;
+         }
+ 
++        var vblank = Profiler.Begin(Profiler.VBlank);
+         AdvanceVBlanks(c, m);
++        Profiler.End(vblank);
+         c.V0 = 0;
+     }
+ 
+@@ -180,6 +199,13 @@ public static class LibEtc
+     private const double SleepMarginMs = 2.0;
+ 
+     private static void WaitVBlanks(CpuContext c, IMemory m, int count)
++    {
++        var profile = Profiler.Begin(Profiler.VBlankWait);
++        WaitVBlanksCore(c, m, count);
++        Profiler.End(profile);
++    }
++
++    private static void WaitVBlanksCore(CpuContext c, IMemory m, int count)
+     {
+         var target = _lastVSyncCount + count;
+ 
+diff --git a/RecompOne.Runtime/sdk/LibGpu.cs b/RecompOne.Runtime/sdk/LibGpu.cs
+index dac22f9..fdcd6cb 100644
+--- a/RecompOne.Runtime/sdk/LibGpu.cs
++++ b/RecompOne.Runtime/sdk/LibGpu.cs
+@@ -1,4 +1,5 @@
+ using RecompOne.Runtime.Context;
++using RecompOne.Runtime.Diagnostics;
+ using RecompOne.Runtime.Events;
+ using RecompOne.Runtime.Hle;
+ using RecompOne.Runtime.Memory;
+@@ -11,6 +12,14 @@ public static class LibGpu
+     private static readonly DispEnvEvent _dispEnvEvent = new();
+ 
+     public static void DrawOTag(CpuContext c, IMemory m)
++    {
++        //0045.
++        var profile = Profiler.Begin(Profiler.DrawOTag);
++        DrawOTagCore(c, m);
++        Profiler.End(profile);
++    }
++
++    private static void DrawOTagCore(CpuContext c, IMemory m)
+     {
+         var gpu = Runtime.Gpu;
+         if (gpu == null) return;

@@ -1,0 +1,215 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index b77e741..b72167f 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -569,6 +569,160 @@ public sealed class GlCore : IGpuBackend
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+     }
+ 
++    // ---- framebuffer readback snapshots -------------------------------------
++    // A modal sub-loop -- the in-game menu, a shop, an NPC's message box -- keeps
++    // the world behind it by reading the finished frame out of VRAM into system
++    // RAM once (StoreImage) and blitting it back at the head of every iteration
++    // (LoadImage), so each pass erases the last one's drawing without redrawing
++    // the world. That roundtrip goes through the console's own resolution: VRAM
++    // is read at 1x whatever the render scale is, so the restore stamped a 1x
++    // picture over the display area every frame and every one of those scenes
++    // rendered at one sample per game pixel. It shows as exactly the game's own
++    // 320 columns dropping to 1x with the widescreen margin -- which never goes
++    // through VRAM (Writeback copies a target's middle W columns only) -- staying
++    // at full scale beside them.
++    //
++    // So a readback also takes a *scaled* copy of the region on the GPU, and an
++    // upload whose 1x pixels are byte-identical to that readback is served by
++    // blitting the copy back rather than by uploading. The key is the content and
++    // the size, not the address, because the frame may be restored into either
++    // display buffer. Anything the game actually changed in RAM between the read
++    // and the write fails the compare and takes the 1x path, which is what every
++    // upload did before -- so a texture built in RAM, an MDEC frame or a decoded
++    // sprite is untouched.
++    sealed class VramSnap
++    {
++        public int W, H, Scale;
++        public uint Tex, Fbo;
++        public ushort[] Data = [];
++        public long Stamp;
++    }
++
++    readonly VramSnap?[] _snaps = new VramSnap?[2];
++    long _snapStamp;
++    static int _snapHit, _snapMiss;
++    bool _snapVerified;
++    static double _snapWindow;
++
++    // Below this a readback is a sprite or a small tile rather than a frame, and
++    // a snapshot of it would evict the one that matters.
++    const int SnapMinArea = 64 * 64;
++
++    void SnapProbe()
++    {
++        if (!GlVram.SnapshotProbe) return;
++        double now = Environment.TickCount64 / 1000.0;
++        if (now - _snapWindow < 2.0) return;
++        Console.WriteLine($"[vramsnap] restored {_snapHit}, uploaded 1x {_snapMiss}");
++        _snapHit = _snapMiss = 0;
++        _snapWindow = now;
++    }
++
++    void SnapTake(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
++    {
++        if (!GlVram.Snapshots) return;
++        int n = w * h;
++        if (w <= 0 || h <= 0 || n < SnapMinArea || px.Length < n) return;
++        // Neither ReadRect nor WriteRect wraps, so a rect off the end of VRAM is
++        // already undefined; do not carry one into a copy that could be restored
++        // somewhere else entirely.
++        if (x < 0 || y < 0 || x + w > VramShadow.Width || y + h > VramShadow.Height) return;
++
++        int s = GlVram.Scale;
++        int slot = -1;
++        for (int i = 0; i < _snaps.Length; i++)
++            if (_snaps[i] is { } fit && fit.W == w && fit.H == h && fit.Scale == s) { slot = i; break; }
++        if (slot < 0)
++        {
++            slot = 0;
++            for (int i = 1; i < _snaps.Length; i++)
++            {
++                if (_snaps[i] == null) { slot = i; break; }
++                if (_snaps[slot] != null && _snaps[i]!.Stamp < _snaps[slot]!.Stamp) slot = i;
++            }
++        }
++
++        var snap = _snaps[slot];
++        if (snap == null || snap.W != w || snap.H != h || snap.Scale != s)
++        {
++            if (snap != null) SnapDestroy(snap);
++            snap = new VramSnap { W = w, H = h, Scale = s, Data = new ushort[n] };
++            snap.Tex = _gl.GenTexture();
++            _gl.BindTexture(TextureTarget.Texture2D, snap.Tex);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++            _gl.TexImage2D<ushort>(TextureTarget.Texture2D, 0, InternalFormat.Rgb5A1, (uint)(w * s), (uint)(h * s), 0,
++                PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, new ushort[(long)w * s * h * s].AsSpan());
++            snap.Fbo = _gl.GenFramebuffer();
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, snap.Fbo);
++            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++                TextureTarget.Texture2D, snap.Tex, 0);
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++            _snaps[slot] = snap;
++        }
++
++        px[..n].CopyTo(snap.Data);
++        snap.Stamp = ++_snapStamp;
++
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _vram.Fbo);
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, snap.Fbo);
++        _gl.BlitFramebuffer(x * s, y * s, (x + w) * s, (y + h) * s,
++            0, 0, w * s, h * s, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++    }
++
++    bool SnapRestore(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
++    {
++        if (!GlVram.Snapshots) return false;
++        int n = w * h;
++        if (w <= 0 || h <= 0 || n < SnapMinArea || px.Length < n) return false;
++
++        int s = GlVram.Scale;
++        foreach (var snap in _snaps)
++        {
++            if (snap is null || snap.W != w || snap.H != h || snap.Scale != s) continue;
++            if (!px[..n].SequenceEqual(snap.Data)) continue;
++
++            _gl.Disable(EnableCap.ScissorTest);
++            _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, snap.Fbo);
++            _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _vram.Fbo);
++            _gl.BlitFramebuffer(0, 0, w * s, h * s,
++                x * s, y * s, (x + w) * s, (y + h) * s,
++                ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++            snap.Stamp = ++_snapStamp;
++            _snapHit++;
++            // Counting restores says the path fires, not that it wrote the right
++            // pixels. Under the probe the first one is read straight back out of
++            // VRAM at 1x and compared against the upload it replaced: a scaled
++            // copy of the same frame must downsample to the same picture, so any
++            // disagreement is the blit's geometry and not the resolution.
++            if (GlVram.SnapshotProbe && !_snapVerified)
++            {
++                _snapVerified = true;
++                var back = new ushort[n];
++                _vram.ReadRect(x, y, w, h, back);
++                int diff = 0;
++                for (int i = 0; i < n; i++) if (back[i] != px[i]) diff++;
++                Console.WriteLine($"[vramsnap] verify {w}x{h} at {x},{y}: {diff} of {n} pixels differ " +
++                                  $"({diff * 100.0 / n:F2}%)");
++            }
++            return true;
++        }
++        _snapMiss++;
++        return false;
++    }
++
++    void SnapDestroy(VramSnap snap)
++    {
++        if (snap.Fbo != 0) _gl.DeleteFramebuffer(snap.Fbo);
++        if (snap.Tex != 0) _gl.DeleteTexture(snap.Tex);
++        snap.Fbo = snap.Tex = 0;
++    }
++
+     public void CopyVram(int sx, int sy, int dx, int dy, int w, int h)
+     {
+         Flush();
+@@ -580,8 +734,12 @@ public sealed class GlCore : IGpuBackend
+     public void WriteVram(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
+     {
+         Flush();
+-        _vram.WriteRect(x, y, w, h, px);
++        // A restore of a frame this backend read out at scale writes the scaled
++        // copy instead of the 1x pixels the game is handing back; everything else
++        // uploads as it always did.
++        if (!SnapRestore(x, y, w, h, px)) _vram.WriteRect(x, y, w, h, px);
+         SyncRtsFromVram(x, y, w, h);
++        SnapProbe();
+     }
+ 
+     public void ReadVram(int x, int y, int w, int h, Span<ushort> px)
+@@ -589,6 +747,7 @@ public sealed class GlCore : IGpuBackend
+         Flush();
+         WritebackDirtyIntersecting(x, y, w, h);
+         _vram.ReadRect(x, y, w, h, px);
++        SnapTake(x, y, w, h, px);
+     }
+ 
+     public int RegisterImage(ReadOnlySpan<byte> rgba, int width, int height)
+@@ -1110,6 +1269,7 @@ public sealed class GlCore : IGpuBackend
+     public void Dispose()
+     {
+         foreach (var rt in _rts) rt?.Destroy(_gl);
++        foreach (var snap in _snaps) if (snap != null) SnapDestroy(snap);
+         _vram.Dispose();
+         if (_vbo != 0) _gl.DeleteBuffer(_vbo);
+         if (_presentVbo != 0) _gl.DeleteBuffer(_presentVbo);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs
+index c81db6d..ae5f4ad 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs
+@@ -5,4 +5,14 @@ public static class GlVram
+     public static int Scale { get; set; } = 4;
+     public static int Width => VramShadow.Width * Scale;
+     public static int Height => VramShadow.Height * Scale;
++
++    /// <summary>Keep a scaled copy of every framebuffer readback, so an upload of
++    /// the same pixels back into VRAM is served by that copy instead of by the 1x
++    /// data the game read. See GlCore's snapshot block. On by default;
++    /// KF2_VRAMSNAP=0 is the comparison.</summary>
++    public static bool Snapshots { get; set; } = true;
++
++    /// <summary>KF2_VRAMSNAP_PROBE=1: restores served against uploads that missed,
++    /// a line every two seconds.</summary>
++    public static bool SnapshotProbe { get; set; }
+ }
+\ No newline at end of file
