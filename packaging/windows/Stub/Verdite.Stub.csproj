@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tiny Framework executable that sits at the root of a port's Windows package
+    and launches bin\<name>.exe. The self-contained apphost has to live next to
+    its DLLs, so those all go in bin/; this stub is the thing shortcuts and
+    Explorer see. It targets net48 so it stays a few KB and does not ship a
+    second .NET runtime: every supported Windows already has Framework 4.8.
+    ReferenceAssemblies is what lets the Linux SDK produce that PE at all.
+
+    build-windows.ps1 names it after the launcher and gives it the game's icon:
+        dotnet publish Verdite.Stub.csproj -p:StubName=Verdite2 -p:StubIcon=<ico>
+  -->
+  <PropertyGroup>
+    <StubName Condition="'$(StubName)' == ''">Verdite</StubName>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AssemblyName>$(StubName)</AssemblyName>
+    <RootNamespace>Verdite.Stub</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationIcon Condition="'$(StubIcon)' != ''">$(StubIcon)</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

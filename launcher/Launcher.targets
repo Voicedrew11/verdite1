@@ -1,0 +1,189 @@
+<Project>
+
+    <!--
+      The shared half of a game's launcher project.
+
+      A game's launcher csproj (Verdite2.Launcher/Verdite2.Launcher.csproj) sets
+      its own names -
+          AssemblyName       Verdite2, the shipped executable
+          RootNamespace      Verdite2.Launcher
+          ApplicationIcon    the .ico Windows reads out of the executable
+          VerditeAppId       verdite2, the shipped PNG's name
+          VerditeEnvPrefix   VERDITE2_, read for <prefix>BUILD below
+      - then imports this file, and holds one Program.cs that hands
+      Verdite.Launcher.Launcher.Run a LauncherGame record. Everything else is here.
+
+      The one property that matters about the launcher is that IT BUILDS WITHOUT
+      THE DISC. generated/ is a derivative of copyrighted code, so it can be neither
+      committed nor shipped; the launcher therefore carries the *inputs* to a build
+      (config/, the port's own C#) and produces the game assembly on the player's
+      machine from the dump they supply. That is also why CI can build a release at
+      all: it has no disc and never needs one.
+
+      The game's own csproj (the developer path, where generated/ and patches/ are
+      compiled by the SDK and iteration is incremental) is unchanged by this. Both
+      compile the same sources; see Build/GameCompile.cs for the options that have
+      to be kept in step between the two.
+    -->
+    <PropertyGroup>
+        <VerditeGameRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '..'))</VerditeGameRoot>
+        <VerditeCore>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</VerditeCore>
+
+        <!--
+          WinExe, not Exe: on Windows a console-subsystem binary opens a console
+          window behind the game on every launch, which is right for the developer
+          build (the game's csproj stays Exe) and wrong for a release. It costs
+          nothing on Linux, where the two are the same thing, and it costs no
+          diagnostics either: ConsoleAttach reattaches to a parent console when
+          there is one, and RecompOne mirrors console output into its own panel.
+        -->
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+        <!--
+          The version is NOT declared in a csproj: VERSION at the game's root is the
+          single source of it, because four other things need to read the same
+          number and only one of them can parse XML: the AppImage script, the
+          Windows script, the Inno installer and the release workflow's tag check.
+
+          The cache key is derived from it, so a released build that changes how
+          the build is done must bump it or a player keeps the game.dll they
+          already have. BuildKey hashes the shipped sources too, which catches the
+          ordinary case on its own; this covers a change in the launcher itself.
+        -->
+        <VersionFile>$(VerditeGameRoot)VERSION</VersionFile>
+        <VersionRaw>$([System.IO.File]::ReadAllText('$(VersionFile)'))</VersionRaw>
+        <Version>$(VersionRaw.Trim())</Version>
+
+        <!--
+          Trimming would break a port three ways over: MonoMod.RuntimeDetour builds
+          its detours at run time, ModCompiler hands Roslyn the loaded assemblies as
+          its reference set, and the agent harness reflects over runtime internals.
+          Single-file is off too: the payload below is read as loose files beside
+          the executable.
+        -->
+        <PublishTrimmed>false</PublishTrimmed>
+        <PublishSingleFile>false</PublishSingleFile>
+
+        <!--
+          QuickJit off, and it must match the game's csproj: the game runs in this
+          process, so this runtimeconfig is the one that decides. Tier-up recompiles
+          a hooked method and MonoMod's detour does not reliably follow, which lost
+          Verdite2's frame boundary for whole sessions (the title and areas at twice
+          the chosen rate).
+        -->
+        <TieredCompilationQuickJit>false</TieredCompilationQuickJit>
+
+        <!--
+          The recompiler is an Exe, and the SDK refuses an Exe-to-Exe reference
+          across a self-contained boundary (NETSDK1150) because the referenced
+          project's apphost would be built framework-dependent and shipped beside a
+          self-contained one. We never ship or run that apphost: Recompile.cs loads
+          the assembly and calls its entry point in this process. So the check has
+          nothing to protect here, and this is the property that says so.
+        -->
+        <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+
+        <!--
+          InvariantGlobalization is deliberately NOT set. It would drop ICU and a
+          few MB with it, and it would also make CultureInfo.CurrentUICulture the
+          invariant culture, whose Name is "". That is the only thing the runtime
+          has to pick a language with: Localization.SetLanguage(null) resolves the
+          configured code, then CurrentUICulture.Name, then falls back to English,
+          so an invariant build starts every player in English however their
+          desktop is set. The launcher ships pt-BR and es-419 strings for the
+          first-run build popup specifically because that first launch is before
+          anyone can reach the language setting.
+        -->
+        <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="$(VerditeGameRoot)tools/RecompOne/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+        <!--
+          The recompiler is referenced as an assembly, not shelled out to. It is an
+          Exe with top-level statements, so its entry point is Program.<Main>$ and
+          Recompile.cs invokes it through Assembly.EntryPoint, which needs no
+          upstream change and, more to the point, no `dotnet` on the player's
+          machine to run a second process with.
+        -->
+        <ProjectReference Include="$(VerditeGameRoot)tools/RecompOne/RecompOne.Recompiler/RecompOne.Recompiler.csproj" />
+    </ItemGroup>
+
+    <!-- The shared shell. The game's project directory adds its Program.cs by the default glob. -->
+    <ItemGroup>
+        <Compile Include="$(VerditeCore)launcher/**/*.cs" />
+    </ItemGroup>
+
+    <!--
+      The build payload, staged into content/ beside the executable.
+      Nothing here contains a byte of disc data:
+        config/    addresses, names and sizes swept from the disc, plus the SDK
+                   address map. Metadata about the code, not the code.
+        src/       the port's own C# - Program.cs, patches/** and Verdite Core's
+                   src/ (tools/verdite-core/src) - MIT and already public in the
+                   game's repository - compiled at first run together with the
+                   recompiler's output. See GameCompile.cs for why they are
+                   compiled together rather than precompiled, and BuildKey.cs for
+                   why everything under src/ is hashed: a core change rebuilds the
+                   game like a patch change.
+        mods/      seeded into the data directory on first run.
+    -->
+    <ItemGroup>
+        <Content Include="$(VerditeGameRoot)config/**/*.json" LinkBase="content/config" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)Program.cs" Link="content/src/Program.cs" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)patches/**/*.cs" LinkBase="content/src/patches" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeCore)src/**/*.cs" LinkBase="content/src/verdite-core" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)mods/**/*" Exclude="$(VerditeGameRoot)mods/.cache/**;$(VerditeGameRoot)mods/**/bin/**;$(VerditeGameRoot)mods/**/obj/**" LinkBase="content/mods" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)packaging/shared/$(VerditeAppId).png" Link="$(VerditeAppId).png" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <!--
+      Program.cs, patches/** and core's src/** are payload, NOT sources of this
+      assembly: they call into Recompiled.<Game>, which does not exist until a disc
+      has been recompiled. They sit outside this project's directory, so the
+      default glob never reaches them; these removes keep a staged copy from being
+      picked up either.
+    -->
+    <ItemGroup>
+        <Compile Remove="content/**" />
+        <Compile Remove="bin/**" />
+    </ItemGroup>
+
+    <!--
+      What a bug report needs and a version number cannot carry: WHICH build.
+      0.1.0 is every commit between one release and the next, so the assembly also
+      records the commit it was published in InformationalVersion, read back
+      by Ver.cs and printed at startup and on a crash.
+
+      Deliberately not part of BuildKey: hashing it would make every commit, a
+      docs-only one included, throw away the player's built game and recompile.
+      What goes into the game is the shipped sources, and BuildKey hashes those.
+
+      <prefix>BUILD (VERDITE2_BUILD) overrides it, which is how a build made
+      outside a git checkout (a source tarball, a distro package) can still say
+      what it is.
+    -->
+    <Target Name="StampBuild" BeforeTargets="GetAssemblyAttributes">
+        <PropertyGroup>
+            <BuildOverride>$([System.Environment]::GetEnvironmentVariable('$(VerditeEnvPrefix)BUILD'))</BuildOverride>
+        </PropertyGroup>
+        <Exec Command="git -C &quot;$(VerditeGameRoot).&quot; rev-parse --short=9 HEAD"
+              Condition="'$(BuildOverride)' == '' And Exists('$(VerditeGameRoot).git')"
+              ConsoleToMSBuild="true" StandardOutputImportance="low"
+              ContinueOnError="true" IgnoreExitCode="true">
+            <Output TaskParameter="ConsoleOutput" PropertyName="GitSha" />
+        </Exec>
+        <PropertyGroup>
+            <BuildTag>$(BuildOverride)</BuildTag>
+            <BuildTag Condition="'$(BuildTag)' == '' And '$(GitSha)' != ''">$(GitSha.Trim())</BuildTag>
+            <BuildTag Condition="'$(BuildTag)' == ''">local</BuildTag>
+            <InformationalVersion>$(Version)+$(BuildTag)</InformationalVersion>
+        </PropertyGroup>
+    </Target>
+
+</Project>
