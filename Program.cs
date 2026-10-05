@@ -100,6 +100,16 @@ Mouse.Configure(Kf1.MouseLook.Game);
 Mouse.Install();
 Kf1.MouseLook.Install();
 
+// Widescreen: off (4:3) unless KF1_WIDESCREEN or the saved aspect asks. See
+// docs/WIDESCREEN.md.
+Kf1.Widescreen.Configure(Environment.GetEnvironmentVariable("KF1_WIDESCREEN"),
+                         Environment.GetEnvironmentVariable("KF1_WIDESCREEN_PROBE"),
+                         Environment.GetEnvironmentVariable("KF1_WIDESCREEN_EFFECTS"));
+Kf1.Widescreen.Install();
+Kf1.CullCone.Configure(Environment.GetEnvironmentVariable("KF1_CULLCONE"),
+                       Environment.GetEnvironmentVariable("KF1_CULLCONE_PROBE"));
+Kf1.CullCone.Install();
+
 // The Testing tab in Settings: every switch above, live.
 Kf1.TestingSection.Install();
 

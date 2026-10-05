@@ -38,6 +38,7 @@ in `docs/TODO.md`.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build, run and diagnose.
 - [docs/RECOMPILATION.md](docs/RECOMPILATION.md) — config, overlays, function maps, SDK addresses.
 - [docs/GAME_INTERNALS.md](docs/GAME_INTERNALS.md) — the game's own addresses and routines.
+- [docs/WIDESCREEN.md](docs/WIDESCREEN.md) — the margin, the tints, the widened cull.
 - [docs/INPUT.md](docs/INPUT.md) — the pad, the keyboard layout, mouse look.
 - [docs/SMOOTHING.md](docs/SMOOTHING.md) — drawing between ticks: what is carried, and how.
 - [docs/PICTURE.md](docs/PICTURE.md) — 24-bit colour, no dither, perspective, sub-pixel, the Z-buffer.

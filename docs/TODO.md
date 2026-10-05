@@ -33,6 +33,8 @@ recompiled and running, following Verdite3's method but applied to this disc.
 - **Keyboard and mouse** (2026-10-05, `docs/INPUT.md`): the WASD layout and mouse
   look through stage A's own velocities, measured with a synthetic hand. To judge:
   the pitch direction, sensitivity, the lead. Twin-stick is not ported yet.
+- **Widescreen** (2026-10-05, `docs/WIDESCREEN.md`): the margin, the tints and
+  the cull stencils widened with the aspect, measured, off until judged.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

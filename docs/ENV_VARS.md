@@ -42,3 +42,8 @@ switch is added.
 | `KF1_MOUSE_LEAD` | on | `0`: the view shows the mouse when the tick spends it |
 | `KF1_MOUSE_BUTTONS` | `Triangle,Square,Circle` | left, right, middle, as pad buttons |
 | `KF1_MOUSE_KEY` | `Escape` | the key that captures and releases the pointer |
+| `KF1_WIDESCREEN` | off | `16:9`, `16:10`, `21:9`, a ratio, or `off` (`docs/WIDESCREEN.md`) |
+| `KF1_WIDESCREEN_PROBE` | off | `1`: the margin census; `2` also lists screen-wide primitives |
+| `KF1_WIDESCREEN_EFFECTS` | on | `0`: leave full-screen tints 320 wide |
+| `KF1_CULLCONE` | on | `0`: the game's stencils at any aspect |
+| `KF1_CULLCONE_PROBE` | off | `1`: cells drawn a frame, cells added |

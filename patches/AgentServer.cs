@@ -54,6 +54,7 @@ public static class AgentServer
         "peek <addr> [bytes=16] - read guest memory, hex",
         "dump <file> - write the 2 MB of guest RAM to a file",
         "poke <addr> <hex bytes> - write guest memory (a diagnostic: it moves the game's own state)",
+        "aspect [4:3|16:9|16:10|21:9|<ratio>] - the widescreen aspect, or the current one",
     ];
 
     public static void Configure(string? spec)
@@ -173,7 +174,7 @@ public static class AgentServer
 
         switch (cmd.Name)
         {
-            case "state" or "press" or "help" or "peek" or "dump" or "poke":
+            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect":
                 Enqueue(_fast, cmd);
                 break;
             default:
@@ -214,6 +215,7 @@ public static class AgentServer
         "peek" => DoPeek(cmd.Arg1, cmd.Arg2),
         "dump" => DoDump(cmd.Arg1),
         "poke" => DoPoke(cmd.Arg1, cmd.Arg2),
+        "aspect" => Widescreen.Shell(cmd.Arg1),
         _ => Err($"unknown command '{cmd.Name}'; try help"),
     };
 
