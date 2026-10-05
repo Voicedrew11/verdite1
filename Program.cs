@@ -51,6 +51,20 @@ Kf1.AgentServer.Install();
 Kf1.AutoStart.Configure(Environment.GetEnvironmentVariable("KF1_AUTOSTART"));
 Kf1.AutoStart.Install();
 
+// Frame pacing: off unless KF1_FPS is set. See "Frame pacing" in docs/DEVELOPMENT.md.
+Kf1.FramePacing.Configure(Environment.GetEnvironmentVariable("KF1_FPS"),
+                          Environment.GetEnvironmentVariable("KF1_TICKRATE"),
+                          Environment.GetEnvironmentVariable("KF1_FPS_PROBE"));
+Kf1.FramePacing.Install();
+Kf1.RateCensus.Install();
+
+// VSync calls outside the renderer wait a real vblank, as the console's did. On by
+// default; KF1_VBLANKPACING=0 compares against the runtime's clock. See "Menus wait
+// for a vblank" in docs/DEVELOPMENT.md.
+Kf1.VBlankPacing.Configure(Environment.GetEnvironmentVariable("KF1_VBLANKPACING"),
+                           Environment.GetEnvironmentVariable("KF1_VBLANKPACING_PROBE"));
+Kf1.VBlankPacing.Install();
+
 // Scripted pad input, seconds:button:holdMs, timed from GAME.EXE's load, or from
 // OPEN.EXE's with KF1_AUTOPAD_FROM=open (the title needs input to reach the game):
 //     KF1_AUTOPAD=5:Start:1000,8:Circle:200

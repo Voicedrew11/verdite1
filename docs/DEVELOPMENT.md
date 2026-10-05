@@ -133,3 +133,60 @@ KF1_AUTOPAD=8:Start:300,11:Start:300,14:Start:300 \
 ```
 
 The `SDL_` variable hides a DualSense, which stalled Verdite3's scripted boot.
+
+## Frame pacing
+
+`patches/FramePacing.cs`, **off unless `KF1_FPS` is set**, because the picture
+has not been judged. Verdite3's mechanism on this game's loop:
+
+- **The main loop's call of the frame gate** `func_800149F4` (return address
+  `0x800148D0`) is skipped, and the count it would have stored (`0x80057B10`)
+  is. Its other callers, the modal loops (an examine, a door, the area
+  transition), keep it, and draw at the game's own 20.
+- **The frame boundary** is the `DrawOTag` after a `VSync` call: the renderer's
+  flip `func_8001C050` is `DrawSync`, `VSync`, `PutDrawEnv`, `PutDispEnv`,
+  `DrawOTag`. The frame is paced there to `KF1_FPS`, and the world clock advanced
+  by wall time.
+- **Stages A-H run only on a tick of the 20 Hz world clock**, decided once per
+  loop iteration at stage A. Only calls from the main loop's own call sites are
+  gated. Stage I, the renderer, runs every frame.
+- **A watchdog**: no boundary for 500 ms and stage A ticks the world off the wall
+  clock and paces the loop itself. `KF1_PACING_NOBOUNDARY=1` removes the
+  boundary to test it.
+- OPEN.EXE keeps the runtime's 60 Hz throttle and its own waits.
+
+Measured 2026-10-05, a New Game in area 1, `KF1_FPS_PROBE=1`, and turning and
+walking by holding Left and then Up for a second on the command channel:
+
+| `KF1_FPS` | drawn | world ticks/s | yaw per s | walked per s | packets a frame, ticked / idle |
+|---|---|---|---|---|---|
+| unset (pacing off) | 20 | 20 | 560 | 3968 | — |
+| 60 | 60.0 | 19.7-20.7 | | | 447 / 447 |
+| 144 | 144.0 | 19.9-20.0 | 560 | 3968 | 478 / 478 |
+| off (uncapped) | 1276-1287 | 20.0 | 560 | 3968 | 447 / 447 |
+| 144, boundary removed | — | 19.6-20.0 (watchdog) | | | — |
+
+Equal packet counts on ticked and idle frames say no skipped stage feeds the
+picture. **Not judged by eye: the picture at any rate.** Expected and not fixed
+here: the picture only changes 20 times a second, since nothing is carried
+between ticks yet.
+
+`KF1_RATECENSUS=<seconds>` (`patches/RateCensus.cs`, with `KF1_FPS` above 20)
+prints the RAM words that change between two frames on which no stage ran; the
+reading is in "What runs at the render rate" in `docs/GAME_INTERNALS.md`.
+
+## Menus wait for a vblank
+
+`patches/VBlankPacing.cs`, **on by default** (`KF1_VBLANKPACING=0` compares),
+Verdite3's rule: **in GAME.EXE, with frame pacing on, a `VSync` call that is not
+inside the renderer `func_8001FDE4` waits a real vblank** (mode 0 one, mode
+`n >= 2` n; queries pass). The runtime's `VSync` presents and returns at once, so
+without it the in-game menu, which presents through its own flip
+`func_8002AC34` (`DrawSync`, `VSync(0)`), ran at the host ceiling, twice
+`KF1_FPS`. The renderer's own call is the pacing boundary, and in a modal loop
+the frame gate after it times it, so it is exempt.
+
+Measured 2026-10-05 at `KF1_FPS=144`, the menu open (Cross),
+`KF1_VBLANKPACING_PROBE=1`: **60.0 held `VSync(0)` calls a second**, mean wait
+16.1-16.2 ms, and the pacing probe reads 60.0 fps drawn in the menu. **Not judged
+by eye**: the menu's cursor and its windows.

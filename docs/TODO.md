@@ -21,6 +21,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
 
 ## Phase 3: the enhancements
 
+- **Frame pacing** (2026-10-05): built and measured, off until judged
+  (`KF1_FPS`); menus wait a vblank under it. Nothing is carried between ticks
+  yet, so the picture changes 20 times a second at any rate.
+
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
 ticks, the picture (24-bit, perspective, sub-pixel, Z-buffer), widescreen,

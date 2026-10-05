@@ -129,3 +129,24 @@ four frames and spun in the gate for good (the managed stack: `func_800149F4`
 under `func_80036618` under `func_80014674`). `Program.cs` sets
 `LibEtc.VBlankFromPoll` (fork `0091`), and the interrupt poll the spin makes
 delivers the vblanks that are due: about 20 frames a second in the first area.
+
+## What runs at the render rate
+
+With pacing on, stage I runs on every frame and stages A-H only on a tick, so
+anything the renderer advances itself would run at the drawn rate.
+`KF1_RATECENSUS=12` at `KF1_FPS=144`, standing at a New Game in area 1 (229 pairs
+of idle frames, 2026-10-05), finds:
+
+- the frame's own working memory: the double-buffer index `0x80070E98`, the two
+  ordering tables and packet buffers (`0x80070EA8`-`0x80076BB8`,
+  `0x80080EC0`-`0x80086BB8`, `0x80090EBC`), the projected-vertex cache
+  `0x800911B0`-`0x800912A0` (`func_8001C60C` fills it each frame from the vertex
+  list `0x800910BC`), and the stack;
+- the vblank count `0x80057B0C` and the gate's `0x80057B10`, and the sound
+  handler's private stack round `0x80063254`;
+- `0x800597DC`, `0x8005B280`-`0x8005B2A0`, `0x8009522C` and
+  `0x800A8FD0`-`0x800A8FEC`, which no GAME.EXE instruction addresses directly
+  (DMA, the BIOS pad buffers, or a pointer); unread.
+
+**Nothing a frame shows advances at the render rate while standing.** A census
+with creatures and objects moving has not been taken.

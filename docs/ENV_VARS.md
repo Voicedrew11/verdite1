@@ -12,3 +12,10 @@ switch is added.
 | `KF1_AUTOSTART` | off | `new`: Start through the title into a New Game |
 | `KF1_AUTOPAD` | off | scripted pad input, `seconds:button:holdMs,…` (`docs/DEVELOPMENT.md`) |
 | `KF1_AUTOPAD_FROM` | `game` | the overlay whose load starts `KF1_AUTOPAD`'s clock: `open` or `game` |
+| `KF1_FPS` | off | `60`, `144`, … or `off` (uncapped): frame pacing, the picture's rate (`docs/DEVELOPMENT.md`) |
+| `KF1_TICKRATE` | `20` | the world's rate under pacing, a comparison only |
+| `KF1_FPS_PROBE` | off | `1`: a pacing line a second |
+| `KF1_PACING_NOBOUNDARY` | off | `1`: leave `DrawOTag` unhooked, to test the watchdog |
+| `KF1_VBLANKPACING` | on | `0`: menus' `VSync` calls on the runtime's clock, a comparison |
+| `KF1_VBLANKPACING_PROBE` | off | `1`: a line a second of held `VSync` calls |
+| `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
