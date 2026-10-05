@@ -70,6 +70,22 @@ Kf1.ModelSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH_MODE
                              Environment.GetEnvironmentVariable("KF1_SMOOTH_MODELS_PROBE"));
 Kf1.ModelSmoothing.Install();
 
+// The picture: 24-bit shading, no dither, perspective, sub-pixel and the Z-buffer,
+// each off until judged. See docs/PICTURE.md.
+Kf1.TrueColor.Configure(Environment.GetEnvironmentVariable("KF1_TRUECOLOR"));
+Kf1.NoDither.Configure(Environment.GetEnvironmentVariable("KF1_NODITHER"),
+                       Environment.GetEnvironmentVariable("KF1_NODITHER_PROBE"));
+Kf1.NoDither.Install();
+Kf1.Perspective.Configure(Environment.GetEnvironmentVariable("KF1_PERSPECTIVE"),
+                          Environment.GetEnvironmentVariable("KF1_PERSPECTIVE_PROBE"));
+Kf1.Perspective.Install();
+Kf1.Subpixel.Configure(Environment.GetEnvironmentVariable("KF1_SUBPIXEL"),
+                       Environment.GetEnvironmentVariable("KF1_SUBPIXEL_PROBE"));
+Kf1.Subpixel.Install();
+Kf1.ZBuffer.Configure(Environment.GetEnvironmentVariable("KF1_ZBUFFER"),
+                      Environment.GetEnvironmentVariable("KF1_ZBUFFER_PROBE"));
+Kf1.ZBuffer.Install();
+
 // VSync calls outside the renderer wait a real vblank, as the console's did. On by
 // default; KF1_VBLANKPACING=0 compares against the runtime's clock. See "Menus wait
 // for a vblank" in docs/DEVELOPMENT.md.

@@ -24,3 +24,14 @@ switch is added.
 | `KF1_SMOOTH_MODELS` | on | `0`: creatures, objects and clips not carried under pacing |
 | `KF1_SMOOTH_MODELS_PROBE` | off | `1`: a model-smoothing line a second |
 | `KF1_SMOOTH_MODELS_DEBUG` | off | `1`: print each backward pose the probe counts |
+| `KF1_NODITHER` | off | `1`: no ordered dither (`docs/PICTURE.md`) |
+| `KF1_NODITHER_PROBE` | off | `1`: a dither line every 2 s |
+| `KF1_TRUECOLOR` | off | `1`: 24-bit output |
+| `KF1_PERSPECTIVE` | off | `1`: perspective-correct textures |
+| `KF1_PERSPECTIVE_PROBE` | off | `1`: the address map's counters every 2 s |
+| `KF1_SUBPIXEL` | off | `1`: sub-pixel vertices |
+| `KF1_SUBPIXEL_PROBE` | off | `1`: the fractions carried every 2 s |
+| `KF1_ZBUFFER` | off | `1`: per-pixel occlusion from the address map's depths |
+| `KF1_ZBUFFER_PROBE` | off | `1`: triangles tested every 2 s |
+| `KF1_BLENDORDER` | on | `0`: blended surfaces in table order (`0079`) |
+| `KF1_ZBUFFER_THRESHOLD` | `0` | restart the depth buffer on a step this large (`0051`) |

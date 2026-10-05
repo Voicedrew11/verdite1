@@ -27,6 +27,9 @@ recompiled and running, following Verdite3's method but applied to this disc.
   under pacing (`docs/SMOOTHING.md`). So are creatures, objects and their clip
   times, measured on two animated objects; a walking creature is still to
   measure.
+- **The picture** (2026-10-05, `docs/PICTURE.md`): no dither, 24-bit,
+  perspective, sub-pixel and a Z-buffer from the address map, built and measured,
+  all off until judged.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
