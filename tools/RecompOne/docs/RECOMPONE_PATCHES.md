@@ -1693,6 +1693,19 @@ Four files in the directory have no entry below:
   executable. King's Field (`SLPS-00017`, Verdite1) has no `SYSTEM.CNF`. A disc
   with one reads it as before. **Forces a recompile** only for such a disc.
 
+- `0091-vblank-from-the-poll.patch` — on `0021`'s timeline the vblank is delivered
+  only from inside `LibEtc.VSync`, so a game that waits for its own vblank handler
+  without calling `VSync` waits forever: King's Field (`SLPS-00017`) spins in its
+  frame gate on a counter its `RCntCNT3` handler bumps, and drew four frames after
+  the first area loaded. `LibEtc.VBlankFromPoll` (off by default; the port sets it)
+  has `Interrupts.PollSlow` deliver the vblanks that are due on the same wall-clock
+  grid, inside the poll's register snapshot and exception stack, before draining
+  pending IRQs. `AdvanceVBlanks` marks itself running, and a poll that arrives from
+  inside a delivery (a handler is recompiled code, and polls too) does not deliver
+  again. With the switch off the only change is that mark, so a game that does not
+  set it runs as before. Measured in Verdite1: about 20 frames a second in the first
+  area, the gate's three vblanks a frame. **No recompile.**
+
 ## Retained contract additions under verification (2026-10-04)
 
 The depth-linear cue is curve 5 in `LinearDepthCue`, composed into the actual

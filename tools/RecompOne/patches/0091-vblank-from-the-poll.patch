@@ -1,0 +1,48 @@
+diff --git a/RecompOne.Runtime/Hardware/Interrupts.cs b/RecompOne.Runtime/Hardware/Interrupts.cs
+index 65041c3..475f7ea 100644
+--- a/RecompOne.Runtime/Hardware/Interrupts.cs
++++ b/RecompOne.Runtime/Hardware/Interrupts.cs
+@@ -139,6 +139,7 @@ public static class Interrupts
+         TakeExceptionStack(cpu);
+         try
+         {
++            if (Sdk.LibEtc.VBlankFromPoll) Sdk.LibEtc.PollVBlanks(cpu, mem);
+             DrainPending(cpu, mem);
+             BiosB.PumpCardEvents(cpu, mem);
+             Sdk.LibCd.Pump();
+diff --git a/RecompOne.Runtime/sdk/LibEtc.cs b/RecompOne.Runtime/sdk/LibEtc.cs
+index 875abd1..36cef76 100644
+--- a/RecompOne.Runtime/sdk/LibEtc.cs
++++ b/RecompOne.Runtime/sdk/LibEtc.cs
+@@ -139,7 +139,31 @@ public static class LibEtc
+         c.V0 = 0;
+     }
+ 
++    //0091. A game that waits for its vblank handler without calling VSync gets its
++    //vblanks from the interrupt poll instead. Off unless the port sets it.
++    public static bool VBlankFromPoll;
++    private static bool _advancing;
++
++    internal static void PollVBlanks(CpuContext c, IMemory m)
++    {
++        if (BlockingVSync || _advancing) return;
++        AdvanceVBlanks(c, m);
++    }
++
+     private static void AdvanceVBlanks(CpuContext c, IMemory m)
++    {
++        _advancing = true;
++        try
++        {
++            AdvanceVBlanksOnGrid(c, m);
++        }
++        finally
++        {
++            _advancing = false;
++        }
++    }
++
++    private static void AdvanceVBlanksOnGrid(CpuContext c, IMemory m)
+     {
+         var now = VBlankClock.Elapsed.TotalMilliseconds;
+         if (!_timelineStarted)
