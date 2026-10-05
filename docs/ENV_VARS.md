@@ -35,3 +35,10 @@ switch is added.
 | `KF1_ZBUFFER_PROBE` | off | `1`: triangles tested every 2 s |
 | `KF1_BLENDORDER` | on | `0`: blended surfaces in table order (`0079`) |
 | `KF1_ZBUFFER_THRESHOLD` | `0` | restart the depth buffer on a step this large (`0051`) |
+| `KF1_KEYS` | `fps` | `stock` leaves RecompOne's keyboard bindings (`docs/INPUT.md`) |
+| `KF1_MOUSE` | on | `0`: no mouse look |
+| `KF1_MOUSE_TURN`, `KF1_MOUSE_LOOK` | `1.0` | the mouse's sensitivities |
+| `KF1_MOUSE_INVERTY` | off | `1`: invert the look |
+| `KF1_MOUSE_LEAD` | on | `0`: the view shows the mouse when the tick spends it |
+| `KF1_MOUSE_BUTTONS` | `Triangle,Square,Circle` | left, right, middle, as pad buttons |
+| `KF1_MOUSE_KEY` | `Escape` | the key that captures and releases the pointer |

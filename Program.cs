@@ -27,6 +27,13 @@ if (channels.Count > 0)
     Console.WriteLine($"[KF1] log channels: {string.Join(",", channels)}");
 }
 
+// The keyboard layout the port ships, as the default bindings rather than an
+// override: Configure must run before ConfigManager.Load so a fresh install gets
+// it and a later launch keeps the player's file. See "The keyboard layout" in
+// docs/INPUT.md.
+Kf1.KeyLayout.Configure();
+Kf1.KeyLayout.Install();
+
 // libapi's interrupt-callback table, per executable: the table InterruptCallback
 // indexes by irq*4. See "The interrupt-callback table" in docs/RECOMPILATION.md.
 RecompOne.Runtime.Events.Event.AddListener<RecompOne.Runtime.Events.OverlayLoadedEvent>(e =>
@@ -85,6 +92,13 @@ Kf1.Subpixel.Install();
 Kf1.ZBuffer.Configure(Environment.GetEnvironmentVariable("KF1_ZBUFFER"),
                       Environment.GetEnvironmentVariable("KF1_ZBUFFER_PROBE"));
 Kf1.ZBuffer.Install();
+
+// Mouse look and the mouse buttons: Verdite Core's Mouse with this game's values,
+// spent through stage A's own turn and look. Escape captures the pointer. See
+// "Mouse look" in docs/INPUT.md.
+Mouse.Configure(Kf1.MouseLook.Game);
+Mouse.Install();
+Kf1.MouseLook.Install();
 
 // The Testing tab in Settings: every switch above, live.
 Kf1.TestingSection.Install();

@@ -57,6 +57,8 @@ public sealed class TestingSection : ISettingsSection
         new("kf1.perspective", "KF1_PERSPECTIVE", () => Perspective.Enabled, v => Perspective.Enabled = v),
         new("kf1.subpixel", "KF1_SUBPIXEL", () => Subpixel.Enabled, v => Subpixel.Enabled = v),
         new("kf1.zbuffer", "KF1_ZBUFFER", () => ZBuffer.Enabled, v => ZBuffer.Enabled = v),
+        new(Mouse.OnKey, "KF1_MOUSE", () => Mouse.Enabled, v => Mouse.Enabled = v),
+        new(Mouse.LeadKey, "KF1_MOUSE_LEAD", () => Mouse.Lead, v => Mouse.Lead = v),
     ];
 
     const string FpsKey = "kf1.fps", TickRateKey = "kf1.tickrate", ShadingKey = "kf1.shading";
@@ -217,6 +219,12 @@ public sealed class TestingSection : ISettingsSection
             "Corners keep the fraction of a pixel the GTE dropped, so edges stop jittering as the view moves.");
         Toggle("Z-buffer", K("kf1.zbuffer"),
             "Per-pixel occlusion from the depths the address map recovers; a triangle it missed keeps painter's order.");
+
+        ImGui.SeparatorText("Mouse");
+        Toggle("Mouse look", K(Mouse.OnKey),
+            "Steers with the mouse and presses pad buttons with its buttons; Escape captures the pointer.");
+        Toggle("Instant mouse look", K(Mouse.LeadKey),
+            "Turns the view the frame you move the mouse, instead of on the game's next tick.");
 
         ImGui.SeparatorText("Console probes");
         bool p = FramePacing.ProbeOn;

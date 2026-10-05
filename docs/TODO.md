@@ -30,6 +30,9 @@ recompiled and running, following Verdite3's method but applied to this disc.
 - **The picture** (2026-10-05, `docs/PICTURE.md`): no dither, 24-bit,
   perspective, sub-pixel and a Z-buffer from the address map, built and measured,
   all off until judged.
+- **Keyboard and mouse** (2026-10-05, `docs/INPUT.md`): the WASD layout and mouse
+  look through stage A's own velocities, measured with a synthetic hand. To judge:
+  the pitch direction, sensitivity, the lead. Twin-stick is not ported yet.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

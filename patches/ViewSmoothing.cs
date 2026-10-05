@@ -68,9 +68,6 @@ public static class ViewSmoothing
     /// <summary>The camera the last main-loop frame was drawn with.</summary>
     public static Camera Drawn => _drawn;
 
-    /// <summary>Set by another carrier before the renderer runs: the view to draw instead.</summary>
-    public static Func<Camera, double, Camera>? Lead;
-
     public static void Configure(string? mode, string? probe)
     {
         Enabled = mode?.Trim() is not ("0" or "off");
@@ -101,14 +98,14 @@ public static class ViewSmoothing
         if (!Active)
         {
             _primed = false;
-            if (Lead == null) return;
-            var led = Lead(handed, 1.0);
-            if (led == handed) return;
-            Draw(m, handed, led);
+            // Carrying off under pacing, the mouse still leads: the tick's view plus
+            // what the hand has moved since.
+            if (Leading && Lead(m, handed, 1.0, false) is { } led && led != handed) Draw(m, handed, led);
             return;
         }
 
         long tick = FramePacing.Ticks;
+        bool ticked = false, snapped = false;
         if (!_primed)
         {
             _prev = _cur = handed;
@@ -121,18 +118,25 @@ public static class ViewSmoothing
             _prev = _cur;
             _cur = handed;
             _samples++;
-            if (Jump(_prev, _cur)) { _prev = _cur; _snaps++; }
+            ticked = true;
+            if (Jump(_prev, _cur)) { _prev = _cur; _snaps++; snapped = true; }
         }
         else if (handed != _cur)
         {
             // Moved without a tick of the world: no pair to carry.
             _prev = _cur = handed;
             _snaps++;
+            snapped = true;
         }
 
         double frac = FramePacing.TickFraction;
         var view = Lerp(_prev, _cur, frac);
-        if (Lead != null) view = Lead(view, frac);
+        if (Leading)
+        {
+            if (snapped) _tickYaw = _tickPitch = 0;
+            else if (ticked) TakeSpent(m);
+            view = Lead(m, view, frac, true) ?? view;
+        }
         Draw(m, handed, view);
         if (_probe) Probe(view);
     }
@@ -150,6 +154,49 @@ public static class ViewSmoothing
         if (!_restore) return;
         _restore = false;
         _handed.Write(m, CamPos, CamRot);
+    }
+
+    // ---- the mouse leads the tick ------------------------------------------------
+    //
+    // Stage A spends the mouse once a tick, and the lerp reaches that turn only at
+    // the next tick: up to two ticks from hand to picture. A mouse asks for a
+    // displacement the game adds unchanged (patches/MouseLook.cs), so the view can
+    // show it the frame it happens: the lerp's share of the last tick's mouse turn
+    // is replaced by all of it, and the motion not yet spent is added on top.
+    // Verdite3's ViewSmoothing lead; see "The mouse leads the tick" in docs/INPUT.md.
+
+    static bool Leading => Mouse.Lead && FramePacing.Enabled;
+    static int _tickYaw, _tickPitch;
+
+    static void TakeSpent(IMemory m)
+    {
+        var spent = Mouse.SpentThisFrame(m);
+        (_tickYaw, _tickPitch) = spent is { } t ? (t.Yaw, t.Pitch) : (0, 0);
+    }
+
+    /// <summary>The view with the mouse's lead added, or null when there is none.
+    /// <paramref name="frac"/> is the lerp's phase, 1 when nothing is carried.</summary>
+    static Camera? Lead(IMemory m, Camera view, double frac, bool carried)
+    {
+        Mouse.Poll();
+        var (turn, look) = Mouse.Pending;
+
+        double keep = 1.0 - frac;
+        double yaw = (carried ? _tickYaw * keep : 0) + turn;
+
+        // Held inside the game's pitch limit, off the angle the next tick adds to.
+        int basePitch = (short)m.ReadU16(MouseLook.Game.PitchAddress);
+        int ahead = Math.Clamp(basePitch + (int)Math.Round(look), -Mouse.PitchLimit, Mouse.PitchLimit) - basePitch;
+        double pitch = (carried ? _tickPitch * keep : 0) + ahead;
+
+        int dy = (int)Math.Round(yaw), dp = (int)Math.Round(pitch);
+        if (dy == 0 && dp == 0) return carried ? view : null;
+        // Yaw stays in 0..0xFFF; pitch is a signed angle here, not a 12-bit one.
+        return view with
+        {
+            Yaw = (uint)view.Yaw < 0x1000u ? (short)((view.Yaw + dy) & 0xFFF) : (short)(view.Yaw + dy),
+            Pitch = (short)Math.Clamp(view.Pitch + dp, -Mouse.PitchLimit, Mouse.PitchLimit),
+        };
     }
 
     static bool Jump(in Camera a, in Camera b) =>
