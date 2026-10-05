@@ -1,0 +1,52 @@
+# Nothing copyrighted enters this repository. This file keeps out the disc image
+# and data extracted from it, the recompiler output (a translation of
+# FromSoftware's MIPS), and the runtime's own generated files. See "Repository
+# conventions" in AGENTS.md.
+
+# Copyrighted game data -- never commit these.
+disc/*
+!disc/README.md
+
+# Recompiler output: derived from the disc, so it is also copyrighted.
+generated/
+
+# .NET build artifacts
+bin/
+obj/
+
+# tools/RecompOne is a subtree of the fork (see scripts/setup_tools.sh); its own
+# .gitignore covers bin/ and obj/ there. The 15.7 MB PSY-Q signature bank is read
+# only by the standalone --autoconfigure command; setup_tools.sh --signatures
+# fetches it on demand.
+tools/RecompOne/RecompOne.Recompiler/AutoConfigure/signatures/psyq.json
+
+# Written by the runtime at play time: memory card saves and host settings.
+*.sav
+settings.json
+interface.ini
+
+# Upstream's texture dumper writes the disc's textures here, and the census its reports.
+dump/
+
+__pycache__/
+*.pyc
+
+# Working files: extracted disc executables and probe logs.
+scratch/
+
+# Captured stdout from a run, kept while a defect is being read. A reading of
+# one session, not source.
+*.log
+
+# Release artefacts.
+dist/
+
+# Kept from Verdite2's list though nothing writes them yet: map-fog saves, texture
+# packs and remaster exports (derived from the disc's textures), the mod compile
+# cache and the rate census.
+*.fog
+*.fog.tmp
+packs/
+exports/
+mods/.cache/
+ratecensus.txt
