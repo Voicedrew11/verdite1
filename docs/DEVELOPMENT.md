@@ -190,3 +190,21 @@ Measured 2026-10-05 at `KF1_FPS=144`, the menu open (Cross),
 `KF1_VBLANKPACING_PROBE=1`: **60.0 held `VSync(0)` calls a second**, mean wait
 16.1-16.2 ms, and the pacing probe reads 60.0 fps drawn in the menu. **Not judged
 by eye**: the menu's cursor and its windows.
+
+## The Testing tab
+
+Settings ▸ **Testing** (`patches/TestingSection.cs`, Verdite3's) holds every
+switch the port has, live, so a change can be compared without a restart: frame
+pacing (on or off, the frame rate 30-360 or uncapped, the live tick rate 5-60 Hz
+with a reset to the original 20, and a readout), the menus' vblank hold, the
+camera and the models carried, the Shading combo, perspective, sub-pixel, the
+Z-buffer, and the console probes. Every patch behind it attaches in every state
+and checks its switch on each call.
+
+**Kept**: the on/off choices, the frame rate (`kf1.fps`), the tick rate
+(`kf1.tickrate`) and the shading go in `interface.ini`'s `[RecompOne]` section
+as `kf1.*` and come back at the next boot, applied on `RuntimeReadyEvent` (the
+config loads after `Program.cs`). **A `KF1_*` variable that is set wins** over a
+kept value. Checked 2026-10-05: `kf1.pacing=1`, `kf1.fps=120` and `kf1.zbuffer=1`
+with no variables boot to 120.0 fps at 20.0 ticks/s with 97.1% of triangles
+depth-tested.
