@@ -1,0 +1,26 @@
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -79,6 +79,23 @@
+ 
+     public static void WaitForValidDisc() => HostWindow.WaitForValidDisc();
+ 
++    /// <summary>
++    /// Take in host events and draw one frame, from outside the game's own frame
++    /// loop.
++    ///
++    /// WaitForValidDisc already runs exactly this loop, but only ever for its own
++    /// condition, so anything else that has to keep the window alive while it
++    /// works had nothing to call. A port that must build its game assembly before
++    /// there is a game to run is the case: the work is seconds long, it happens
++    /// after Initialize and before the first frame, and a window that stops
++    /// pumping for that long is a hung window as far as the desktop is concerned.
++    ///
++    /// HostWindow.Pump is internal and this is the same call, so a caller drives
++    /// its own loop and owns its own progress UI -- Popup and PopupManager.Register
++    /// are already public, so that UI needs nothing further from here.
++    /// </summary>
++    public static void Pump() => HostWindow.Pump();
++
+     public static string Title
+     {
+         get => HostWindow.Title;

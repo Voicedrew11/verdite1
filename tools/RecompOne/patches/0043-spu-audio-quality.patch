@@ -1,0 +1,867 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs b/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs
+index 081fb13..d7a19fd 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs
+@@ -1,9 +1,38 @@
++using System.Diagnostics;
+ using System.Runtime.CompilerServices;
+ 
+ namespace RecompOne.Runtime;
+ 
++public enum SpuInterpolation
++{
++    Gaussian,
++    Cubic,
++    Sinc
++}
++
++public enum SpuReverbMode
++{
++    Legacy,
++    Hardware,
++    Enhanced
++}
++
+ public sealed class Spu
+ {
++    public static SpuInterpolation Interpolation { get; set; } = SpuInterpolation.Gaussian;
++    public static SpuReverbMode ReverbMode { get; set; } = SpuReverbMode.Legacy;
++
++    // The final mix and the reverb return, interleaved stereo, after each Mix call.
++    public static event Action<short[], short[], int>? Mixed;
++
++    public sealed class Counters
++    {
++        public long VoiceClamps, MixClamps, Frames, Ticks;
++        public int ActiveVoicesPeak;
++    }
++
++    public readonly Counters Stats = new();
++
+     public const int RamSize = 512 * 1024;
+     public readonly byte[] Ram = new byte[RamSize];
+ 
+@@ -131,7 +160,7 @@ public sealed class Spu
+         public short CurVolL, CurVolR;
+         public int VolCycL, VolCycR;
+ 
+-        public readonly short[] Buf = new short[31];
++        public readonly short[] Buf = new short[History + 28];
+     }
+ 
+     private readonly Voice[] _v = new Voice[24];
+@@ -147,7 +176,27 @@ public sealed class Spu
+     private bool _revRight;
+     private int _revInL, _revInR, _revOutL, _revOutR;
+ 
+-    private const int dAPF1 = 0,
++    private int _revVersion;
++    private int _revPath;
++    private int _wetL, _wetR;
++    private int _resamplePos;
++    private readonly short[] _downL = new short[128], _downR = new short[128];
++    private readonly short[] _upL = new short[64], _upR = new short[64];
++    private readonly SpuReverb _enhanced;
++
++    // psx-spx "Reverb Buffer Resampling": the non-zero taps of the 39-tap half-band FIR, without its 0x4000 centre.
++    private static readonly int[] HalfBand =
++    {
++        -0x0001, 0x0002, -0x000A, 0x0023, -0x0067, 0x010A, -0x0268, 0x0534, -0x0B90, 0x2806,
++        0x2806, -0x0B90, 0x0534, -0x0268, 0x010A, -0x0067, 0x0023, -0x000A, 0x0002, -0x0001
++    };
++
++    private const int History = SincKernel.Taps - 1;
++
++    // The 4-tap kernels read the newest four samples of the sinc's eight-sample window.
++    private const int GaussTap = History - 3;
++
++    internal const int dAPF1 = 0,
+         dAPF2 = 1,
+         vIIR = 2,
+         vCOMB1 = 3,
+@@ -279,6 +328,113 @@ public sealed class Spu
+         _revCur = _revCur + 2 >= RamSize ? b : Math.Max(b, _revCur + 2);
+     }
+ 
++    public string ReverbPreset
++    {
++        get
++        {
++            lock (_sync)
++            {
++                return SpuReverb.Identify(_rev);
++            }
++        }
++    }
++
++    public string ReverbPath => _revPath switch { 0 => "legacy", 1 => "hardware", _ => "enhanced" };
++
++    private void ReverbTick()
++    {
++        var path = ReverbMode switch
++        {
++            SpuReverbMode.Legacy => 0,
++            SpuReverbMode.Hardware => 1,
++            _ => _enhanced.Handles(_revVersion) ? 2 : 1
++        };
++
++        if (path != _revPath)
++        {
++            // The hardware network reads its own past output back out of SPU RAM; a stale tail would replay.
++            if (_revPath == 2) ClearReverbWorkArea();
++            if (path == 2) _enhanced.Reset();
++            Array.Clear(_downL);
++            Array.Clear(_downR);
++            Array.Clear(_upL);
++            Array.Clear(_upR);
++            _revPath = path;
++        }
++
++        switch (path)
++        {
++            case 0:
++                _revRight = !_revRight;
++                if (_revRight) ReverbStep(_revInL, _revInR);
++                _wetL = _revOutL;
++                _wetR = _revOutR;
++                break;
++            case 1:
++                HardwareReverbTick();
++                break;
++            default:
++                var on = (_spucnt & 0x80) != 0;
++                _enhanced.Process(on ? RevMul(Clamp16(_revInL), R(vLIN)) : 0, on ? RevMul(Clamp16(_revInR), R(vRIN)) : 0,
++                    out _wetL, out _wetR);
++                break;
++        }
++    }
++
++    // Both rings are stored twice, the second copy offset by their length, so a window never wraps.
++    private void HardwareReverbTick()
++    {
++        var p = _resamplePos;
++        _downL[p] = _downL[p | 0x40] = (short)Clamp16(_revInL);
++        _downR[p] = _downR[p | 0x40] = (short)Clamp16(_revInR);
++
++        var u = p >> 1;
++        var window = (u - 19) & 0x1F;
++        if ((p & 1) != 0)
++        {
++            var start = (p - 38) & 0x3F;
++            ReverbStep(Downsample(_downL, start), Downsample(_downR, start));
++            _upL[u] = _upL[u | 0x20] = (short)_revOutL;
++            _upR[u] = _upR[u | 0x20] = (short)_revOutR;
++            _wetL = Upsample(_upL, window);
++            _wetR = Upsample(_upR, window);
++        }
++        else
++        {
++            // Between 22.05 kHz samples every tap but the centre lands on a zero, and the centre is the stored sample.
++            _wetL = _upL[window + 9];
++            _wetR = _upR[window + 9];
++        }
++
++        _resamplePos = (p + 1) & 0x3F;
++    }
++
++    private static int Downsample(short[] ring, int start)
++    {
++        var acc = 0x4000 * ring[start + 19];
++        for (var i = 0; i < 20; i++) acc += HalfBand[i] * ring[start + i * 2];
++        return Clamp16(acc >> 15);
++    }
++
++    private static int Upsample(short[] ring, int start)
++    {
++        var acc = 0;
++        for (var i = 0; i < 20; i++) acc += HalfBand[i] * ring[start + i];
++        return Clamp16(acc >> 14);
++    }
++
++    private void ClearReverbWorkArea()
++    {
++        var b = (int)RevBase;
++        if (b > 0 && b < RamSize) Array.Clear(Ram, b, RamSize - b);
++        _revOutL = _revOutR = 0;
++    }
++
++    private static int Clamp16(int v)
++    {
++        return Math.Clamp(v, -32768, 32767);
++    }
++
+     private ushort _kon, _konHi;
+     private ushort _koff, _koffHi;
+     private ushort _pmon, _pmonHi;
+@@ -315,6 +471,7 @@ public sealed class Spu
+     public Spu()
+     {
+         for (var i = 0; i < 24; i++) _v[i] = new Voice();
++        _enhanced = new SpuReverb(_rev);
+     }
+ 
+     public ushort ReadReg16(uint phys)
+@@ -454,7 +611,12 @@ public sealed class Spu
+             case 0x1B4: _extVolL = val; break;
+             case 0x1B6: _extVolR = val; break;
+             default:
+-                if (off >= 0x1C0 && off <= 0x1FE) _rev[(off - 0x1C0) >> 1] = val;
++                if (off >= 0x1C0 && off <= 0x1FE)
++                {
++                    _rev[(off - 0x1C0) >> 1] = val;
++                    _revVersion++;
++                }
++
+                 break;
+         }
+     }
+@@ -592,17 +754,22 @@ public sealed class Spu
+     }
+ 
+     private short[] _xaL = [], _xaR = [];
++    private short[] _wet = [];
+ 
+     private const int MixChunk = 16;
+ 
+     public void Mix(short[] dst, int frames)
+     {
++        var started = Stopwatch.GetTimestamp();
+         if (_xaL.Length < frames)
+         {
+             _xaL = new short[frames];
+             _xaR = new short[frames];
+         }
+ 
++        var tap = Mixed;
++        if (tap != null && _wet.Length < frames * 2) _wet = new short[frames * 2];
++
+         var xaCount = XaAudio.NextBlock(_xaL, _xaR, frames);
+ 
+         for (var chunk = 0; chunk < frames; chunk += MixChunk)
+@@ -634,17 +801,28 @@ public sealed class Spu
+                         }
+                     }
+ 
+-                    _revRight = !_revRight;
+-                    if (_revRight) ReverbStep(_revInL, _revInR);
+-                    mixL += RevMul(_revOutL, (short)_reverbVolL);
+-                    mixR += RevMul(_revOutR, (short)_reverbVolR);
++                    ReverbTick();
++                    var wetL = RevMul(_wetL, (short)_reverbVolL);
++                    var wetR = RevMul(_wetR, (short)_reverbVolR);
++                    mixL += wetL;
++                    mixR += wetR;
++                    if (mixL is < -32768 or > 32767 || mixR is < -32768 or > 32767) Stats.MixClamps++;
+                     mixL = (Math.Clamp(mixL, -32768, 32767) * _mainCurL) >> 15;
+                     mixR = (Math.Clamp(mixR, -32768, 32767) * _mainCurR) >> 15;
+                     dst[n * 2] = (short)mixL;
+                     dst[n * 2 + 1] = (short)mixR;
++                    if (tap != null)
++                    {
++                        _wet[n * 2] = (short)Clamp16(wetL);
++                        _wet[n * 2 + 1] = (short)Clamp16(wetR);
++                    }
+                 }
+             }
+         }
++
++        Stats.Frames += frames;
++        Stats.Ticks += Stopwatch.GetTimestamp() - started;
++        tap?.Invoke(dst, _wet, frames);
+     }
+ 
+     private (short L, short R) Tick()
+@@ -659,6 +837,8 @@ public sealed class Spu
+         var nonMask = (uint)(_non | (_nonHi << 16));
+         var pmonMask = (uint)(_pmon | (_pmonHi << 16));
+         var prevOutx = 0;
++        var interpolation = Interpolation;
++        var active = 0;
+ 
+         for (var i = 0; i < 24; i++)
+         {
+@@ -669,6 +849,7 @@ public sealed class Spu
+                 continue;
+             }
+ 
++            active++;
+             TickAdsr(v);
+             SweepTick(v.VolL, ref v.CurVolL, ref v.VolCycL);
+             SweepTick(v.VolR, ref v.CurVolR, ref v.VolCycR);
+@@ -680,6 +861,15 @@ public sealed class Spu
+                 v.HasBlock = true;
+             }
+ 
++            int step = v.Pitch;
++            if (i > 0 && (pmonMask & (1u << i)) != 0)
++            {
++                var factor = Math.Clamp(prevOutx, -0x8000, 0x7FFF) + 0x8000;
++                step = (((short)(ushort)step * factor) >> 15) & 0xFFFF;
++            }
++
++            if (step > 0x3FFF) step = 0x4000;
++
+             int sample;
+             if ((nonMask & (1u << i)) != 0)
+             {
+@@ -689,23 +879,16 @@ public sealed class Spu
+             {
+                 var idx = (int)(v.PitchCounter >> 12);
+                 var fi = (int)((v.PitchCounter >> 4) & 0xFF);
+-                sample = ((Gauss[0x0FF - fi] * v.Buf[idx]) >> 15)
+-                         + ((Gauss[0x1FF - fi] * v.Buf[idx + 1]) >> 15)
+-                         + ((Gauss[0x100 + fi] * v.Buf[idx + 2]) >> 15)
+-                         + ((Gauss[0x000 + fi] * v.Buf[idx + 3]) >> 15);
++                sample = interpolation switch
++                {
++                    SpuInterpolation.Cubic => SincKernel.Cubic(v.Buf, idx + GaussTap, fi),
++                    SpuInterpolation.Sinc => SincKernel.Apply(v.Buf, idx, SincKernel.BandFor(step), fi),
++                    _ => Gaussian(v.Buf, idx + GaussTap, fi)
++                };
+             }
+ 
+             var amp = (sample * v.AdsrVol) >> 15;
+ 
+-            int step = v.Pitch;
+-            if (i > 0 && (pmonMask & (1u << i)) != 0)
+-            {
+-                var factor = Math.Clamp(prevOutx, -0x8000, 0x7FFF) + 0x8000;
+-                step = (((short)(ushort)step * factor) >> 15) & 0xFFFF;
+-            }
+-
+-            if (step > 0x3FFF) step = 0x4000;
+-
+             v.PitchCounter += (uint)step;
+             if (v.PitchCounter >> 12 >= 28)
+             {
+@@ -726,11 +909,21 @@ public sealed class Spu
+             }
+         }
+ 
++        if (active > Stats.ActiveVoicesPeak) Stats.ActiveVoicesPeak = active;
++        if (sumL is < -32768 or > 32767 || sumR is < -32768 or > 32767) Stats.VoiceClamps++;
+         sumL = Math.Clamp(sumL, -32768, 32767);
+         sumR = Math.Clamp(sumR, -32768, 32767);
+         return ((short)sumL, (short)sumR);
+     }
+ 
++    private static int Gaussian(short[] b, int s, int fi)
++    {
++        return ((Gauss[0x0FF - fi] * b[s]) >> 15)
++               + ((Gauss[0x1FF - fi] * b[s + 1]) >> 15)
++               + ((Gauss[0x100 + fi] * b[s + 2]) >> 15)
++               + ((Gauss[0x000 + fi] * b[s + 3]) >> 15);
++    }
++
+     private static void SweepTick(ushort reg, ref short level, ref int cycleCount)
+     {
+         if ((reg & 0x8000) == 0)
+@@ -771,9 +964,7 @@ public sealed class Spu
+ 
+     private void DecodeBlock(Voice v, int index)
+     {
+-        v.Buf[0] = v.Buf[28];
+-        v.Buf[1] = v.Buf[29];
+-        v.Buf[2] = v.Buf[30];
++        Array.Copy(v.Buf, 28, v.Buf, 0, History);
+ 
+         var addr = v.CurAddr & (uint)(RamSize - 1);
+         var hdr = Ram[addr];
+@@ -787,7 +978,7 @@ public sealed class Spu
+         var k0 = K0[filter];
+         var k1 = K1[filter];
+ 
+-        var pos = 3;
++        var pos = History;
+         for (var i = 0; i < 14; i++)
+         {
+             var b = Ram[(addr + 2 + (uint)i) & (RamSize - 1)];
+diff --git a/tools/RecompOne/RecompOne.Runtime/Hardware/XaAudio.cs b/tools/RecompOne/RecompOne.Runtime/Hardware/XaAudio.cs
+index 1de4b36..e5ed2e8 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Hardware/XaAudio.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/XaAudio.cs
+@@ -20,6 +20,7 @@ public static class XaAudio
+ 
+     private static double _pos;
+     private static short _s0L, _s0R, _s1L, _s1R;
++    private static readonly short[] _hL = new short[SincKernel.Taps], _hR = new short[SincKernel.Taps];
+     private static int _underrun;
+ 
+     public static void Reset()
+@@ -31,6 +32,8 @@ public static class XaAudio
+             _playing = false;
+             _pos = 0;
+             _s0L = _s0R = _s1L = _s1R = 0;
++            Array.Clear(_hL);
++            Array.Clear(_hR);
+             _underrun = 0;
+         }
+     }
+@@ -216,12 +219,31 @@ public static class XaAudio
+                     _s1R = (short)(_s1R * 31 / 32);
+                 }
+ 
++                Array.Copy(_hL, 1, _hL, 0, SincKernel.Taps - 1);
++                Array.Copy(_hR, 1, _hR, 0, SincKernel.Taps - 1);
++                _hL[SincKernel.Taps - 1] = _s1L;
++                _hR[SincKernel.Taps - 1] = _s1R;
+                 _pos -= 1.0;
+             }
+ 
+             var f = _pos;
+-            left = (short)(_s0L + (_s1L - _s0L) * f);
+-            right = (short)(_s0R + (_s1R - _s0R) * f);
++            var phase = Math.Min((int)(f * SincKernel.Phases), SincKernel.Phases - 1);
++            switch (Spu.Interpolation)
++            {
++                case SpuInterpolation.Cubic:
++                    left = (short)SincKernel.Cubic(_hL, SincKernel.Taps - 4, phase);
++                    right = (short)SincKernel.Cubic(_hR, SincKernel.Taps - 4, phase);
++                    break;
++                case SpuInterpolation.Sinc:
++                    left = (short)SincKernel.Apply(_hL, 0, 0, phase);
++                    right = (short)SincKernel.Apply(_hR, 0, 0, phase);
++                    break;
++                default:
++                    left = (short)(_s0L + (_s1L - _s0L) * f);
++                    right = (short)(_s0R + (_s1R - _s0R) * f);
++                    break;
++            }
++
+             _pos += (double)_srcRate / 44100.0;
+             return true;
+         }
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Audio.cs b/tools/RecompOne/RecompOne.Runtime/Host/Audio.cs
+index 26aa204..1e36998 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Audio.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Audio.cs
+@@ -1,9 +1,17 @@
++using System.Runtime.InteropServices;
+ using Silk.NET.OpenAL;
+ using ALDevice = Silk.NET.OpenAL.Device;
+ using ALCtx = Silk.NET.OpenAL.Context;
+ 
+ namespace RecompOne.Runtime.Host;
+ 
++public static class AudioStats
++{
++    public static long Underruns, Stalls;
++    public static int DeviceRate;
++    public static string Resampler = "default";
++}
++
+ internal static unsafe class Audio
+ {
+     private static ALContext? _alc;
+@@ -42,6 +50,8 @@ internal static unsafe class Audio
+ 
+             _source = _al.GenSource();
+             _al.SetSourceProperty(_source, SourceFloat.Gain, _masterVolume);
++            ReadDeviceRate();
++            ChooseResampler();
+             fixed (uint* ptr = _buffers)
+             {
+                 _al.GenBuffers(NumBuffers, ptr);
+@@ -87,6 +97,42 @@ internal static unsafe class Audio
+             _al.SetSourceProperty(_source, SourceFloat.Gain, _masterVolume);
+     }
+ 
++    private const int AlcFrequency = 0x1007;
++    private const int AlNumResamplersSoft = 0x1210;
++    private const int AlSourceResamplerSoft = 0x1212;
++    private const int AlResamplerNameSoft = 0x1213;
++
++    private static void ReadDeviceRate()
++    {
++        var rate = 0;
++        _alc!.GetContextProperty(_device, (GetContextInteger)AlcFrequency, 1, &rate);
++        AudioStats.DeviceRate = rate;
++    }
++
++    // AL_SOFT_source_resampler lists its resamplers in rising quality, so the last one is the best on offer.
++    private static void ChooseResampler()
++    {
++        if (!_al!.IsExtensionPresent("AL_SOFT_source_resampler")) return;
++        var count = _al.GetStateProperty((StateInteger)AlNumResamplersSoft);
++        if (count <= 0) return;
++        _al.SetSourceProperty(_source, (SourceInteger)AlSourceResamplerSoft, count - 1);
++        AudioStats.Resampler = ResamplerName(count - 1) ?? $"#{count - 1}";
++    }
++
++    // Silk binds no alGetStringiSOFT; only the copy of OpenAL holding our context answers, the others return null.
++    private static string? ResamplerName(int index)
++    {
++        foreach (var name in new[] { "libopenal.so", "libopenal.so.1", "soft_oal.dll", "openal32.dll", "libopenal.dylib" })
++        {
++            if (!NativeLibrary.TryLoad(name, typeof(AL).Assembly, null, out var lib)) continue;
++            if (!NativeLibrary.TryGetExport(lib, "alGetStringiSOFT", out var fn)) continue;
++            var text = Marshal.PtrToStringUTF8((IntPtr)((delegate* unmanaged<int, int, byte*>)fn)(AlResamplerNameSoft, index));
++            if (text != null) return text;
++        }
++
++        return null;
++    }
++
+     private static readonly int BufferMs = Math.Max(1, FramesPerBuffer * 1000 / 44100);
+ 
+     private static void MixerLoop()
+@@ -102,6 +148,7 @@ internal static unsafe class Audio
+     private static void FillBuffers(Spu spu)
+     {
+         _al!.GetSourceProperty(_source, GetSourceInteger.BuffersProcessed, out var processed);
++        if (processed >= NumBuffers) AudioStats.Underruns++;
+         while (processed > 0)
+         {
+             uint buf = 0;
+@@ -116,7 +163,10 @@ internal static unsafe class Audio
+ 
+         _al.GetSourceProperty(_source, GetSourceInteger.SourceState, out var state);
+         if (state != (int)SourceState.Playing)
++        {
++            AudioStats.Stalls++;
+             _al.SourcePlay(_source);
++        }
+     }
+ 
+     public static void Shutdown()
+diff --git a/tools/RecompOne/RecompOne.Runtime/Hardware/SincKernel.cs b/tools/RecompOne/RecompOne.Runtime/Hardware/SincKernel.cs
+new file mode 100644
+index 0000000..4354950
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/SincKernel.cs
+@@ -0,0 +1,102 @@
++namespace RecompOne.Runtime;
++
++public static class SincKernel
++{
++    public const int Taps = 8;
++    public const int Phases = 256;
++
++    private const double Beta = 5.0;
++
++    // Fraction of the source's Nyquist each band passes; a voice stepping faster than its source needs a lower one.
++    private static readonly double[] Cutoffs = { 1.0, 0.75, 0.5, 0.25 };
++
++    private static readonly int[][] Bands = Build();
++
++    public static int BandFor(int step)
++    {
++        return step <= 0x1000 ? 0 : step <= 0x1555 ? 1 : step <= 0x2000 ? 2 : 3;
++    }
++
++    // The interpolated point lies between src[start + 3] and src[start + 4].
++    public static int Apply(short[] src, int start, int band, int phase)
++    {
++        var w = Bands[band];
++        var row = phase * Taps;
++        long acc = 0;
++        for (var k = 0; k < Taps; k++) acc += (long)w[row + k] * src[start + k];
++        return Clamp16((int)(acc >> 15));
++    }
++
++    // Catmull-Rom between src[start + 1] and src[start + 2]; phase is in 1/256ths.
++    public static int Cubic(short[] src, int start, int phase)
++    {
++        long p0 = src[start], p1 = src[start + 1], p2 = src[start + 2], p3 = src[start + 3];
++        long t = phase;
++        var a = -p0 + 3 * p1 - 3 * p2 + p3;
++        var b = 2 * p0 - 5 * p1 + 4 * p2 - p3;
++        var c = p2 - p0;
++        return Clamp16((int)(p1 + ((a * t * t * t + ((b * t * t) << 8) + ((c * t) << 16)) >> 25)));
++    }
++
++    private static int Clamp16(int v)
++    {
++        return v < -32768 ? -32768 : v > 32767 ? 32767 : v;
++    }
++
++    private static int[][] Build()
++    {
++        var bands = new int[Cutoffs.Length][];
++        var w = new double[Taps];
++        for (var b = 0; b < Cutoffs.Length; b++)
++        {
++            var fc = Cutoffs[b];
++            var table = bands[b] = new int[Phases * Taps];
++            for (var p = 0; p < Phases; p++)
++            {
++                var t = p / (double)Phases;
++                double sum = 0;
++                for (var k = 0; k < Taps; k++)
++                {
++                    var x = k - (Taps / 2 - 1) - t;
++                    w[k] = fc * Sinc(fc * x) * Kaiser(x / (Taps / 2.0));
++                    sum += w[k];
++                }
++
++                var total = 0;
++                for (var k = 0; k < Taps; k++)
++                {
++                    table[p * Taps + k] = (int)Math.Round(w[k] / sum * 32768);
++                    total += table[p * Taps + k];
++                }
++
++                // Rounding residue goes on the nearer centre tap, so every row passes DC at exactly unity.
++                table[p * Taps + (t < 0.5 ? Taps / 2 - 1 : Taps / 2)] += 32768 - total;
++            }
++        }
++
++        return bands;
++    }
++
++    private static double Sinc(double x)
++    {
++        return x == 0 ? 1 : Math.Sin(Math.PI * x) / (Math.PI * x);
++    }
++
++    private static double Kaiser(double u)
++    {
++        return u is < -1 or > 1 ? 0 : BesselI0(Beta * Math.Sqrt(1 - u * u)) / BesselI0(Beta);
++    }
++
++    private static double BesselI0(double x)
++    {
++        double sum = 1, term = 1;
++        for (var k = 1; k < 32; k++)
++        {
++            var h = x / (2 * k);
++            term *= h * h;
++            sum += term;
++        }
++
++        return sum;
++    }
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Hardware/SpuReverb.cs b/tools/RecompOne/RecompOne.Runtime/Hardware/SpuReverb.cs
+new file mode 100644
+index 0000000..abfa88a
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/SpuReverb.cs
+@@ -0,0 +1,227 @@
++namespace RecompOne.Runtime;
++
++// A feedback delay network standing in for the SPU's comb/allpass reverb, sized from the game's own reverb registers.
++internal sealed class SpuReverb
++{
++    private const int Fs = 44100;
++    private const int Lines = 8;
++    private const int SettleSamples = 2048;
++    private const int FadeSamples = 1102;
++    private const int ModDepth = 12;
++    private const int PreSize = 8192;
++    private const float Diffusion = 0.6f;
++    // Matches the hardware network's wet RMS on the same room, measured with KF2_AUDIO_DUMP.
++    private const float OutputGain = 0.48f;
++
++    private static readonly double[] Spread = { 0.4471, 0.5143, 0.5821, 0.6563, 0.7331, 0.8127, 0.8941, 1.0 };
++    private static readonly int[] DiffuserL = { 142, 107, 379, 277 };
++    private static readonly int[] DiffuserR = { 165, 130, 402, 300 };
++
++    private sealed record Params(bool Discrete, int[] Lengths, float[] Gains, float Damp, int PreDelay);
++
++    private readonly ushort[] _reg;
++    private int _seenVersion = -1, _settled;
++    private Params? _active, _pending;
++    private float _fade = 1f;
++
++    private readonly float[][] _line = new float[Lines][];
++    private readonly int[] _linePos = new int[Lines];
++    private readonly float[] _lp = new float[Lines];
++    private float _lfoA, _lfoB;
++
++    private readonly float[][] _apL = DiffuserL.Select(n => new float[n]).ToArray();
++    private readonly float[][] _apR = DiffuserR.Select(n => new float[n]).ToArray();
++    private readonly int[] _apPosL = new int[4], _apPosR = new int[4];
++
++    private readonly float[] _preL = new float[PreSize], _preR = new float[PreSize];
++    private int _prePos;
++
++    public SpuReverb(ushort[] reverbRegisters)
++    {
++        _reg = reverbRegisters;
++    }
++
++    public static string Identify(ushort[] r)
++    {
++        return (r[Spu.dAPF1], r[Spu.dAPF2]) switch
++        {
++            (0, 0) => "off",
++            (0x7D, 0x5B) => "room",
++            (0x33, 0x25) => "studio small",
++            (0xB1, 0x7F) => "studio medium",
++            (0xE3, 0xA9) => "studio large",
++            (0x1A5, 0x139) => "hall",
++            (0x33D, 0x231) => "space echo",
++            (0x17, 0x13) => "pipe",
++            (1, 1) => r[Spu.vWALL] != 0 ? "echo" : "delay",
++            var (a, b) => $"custom {a:X}/{b:X}"
++        };
++    }
++
++    // False until a register block has held still long enough to size from, and for the discrete echo presets.
++    public bool Handles(int version)
++    {
++        if (version != _seenVersion)
++        {
++            _seenVersion = version;
++            _settled = 0;
++        }
++
++        if (_settled < SettleSamples && ++_settled == SettleSamples)
++        {
++            var next = Derive(_reg);
++            if (_active is not { Discrete: false } || next is not { Discrete: false })
++            {
++                _active = next;
++                _pending = null;
++            }
++            else if (_active.Lengths.AsSpan().SequenceEqual(next.Lengths))
++            {
++                _active = next;
++            }
++            else
++            {
++                _pending = next;
++            }
++        }
++
++        return _active is { Discrete: false };
++    }
++
++    public void Reset()
++    {
++        if (_active == null) return;
++        for (var i = 0; i < Lines; i++)
++        {
++            _line[i] = new float[_active.Lengths[i] + ModDepth + 2];
++            _linePos[i] = 0;
++            _lp[i] = 0;
++        }
++
++        foreach (var a in _apL) Array.Clear(a);
++        foreach (var a in _apR) Array.Clear(a);
++        Array.Clear(_preL);
++        Array.Clear(_preR);
++        _fade = 1f;
++    }
++
++    public void Process(int inL, int inR, out int outL, out int outR)
++    {
++        if (_pending != null)
++        {
++            _fade -= 1f / FadeSamples;
++            if (_fade <= 0f)
++            {
++                _active = _pending;
++                _pending = null;
++                Reset();
++                _fade = 0f;
++            }
++        }
++        else if (_fade < 1f)
++        {
++            _fade = MathF.Min(1f, _fade + 1f / FadeSamples);
++        }
++
++        var p = _active!;
++
++        _preL[_prePos] = inL / 32768f;
++        _preR[_prePos] = inR / 32768f;
++        var rp = (_prePos - p.PreDelay) & (PreSize - 1);
++        var xl = _preL[rp];
++        var xr = _preR[rp];
++        _prePos = (_prePos + 1) & (PreSize - 1);
++
++        for (var k = 0; k < 4; k++)
++        {
++            xl = Allpass(_apL[k], ref _apPosL[k], xl);
++            xr = Allpass(_apR[k], ref _apPosR[k], xr);
++        }
++
++        _lfoA += 2f * MathF.PI * 0.31f / Fs;
++        _lfoB += 2f * MathF.PI * 0.47f / Fs;
++        if (_lfoA > 2f * MathF.PI) _lfoA -= 2f * MathF.PI;
++        if (_lfoB > 2f * MathF.PI) _lfoB -= 2f * MathF.PI;
++
++        float sum = 0;
++        for (var i = 0; i < Lines; i++)
++        {
++            var delay = (float)p.Lengths[i];
++            if (i == 0) delay += ModDepth * MathF.Sin(_lfoA);
++            else if (i == 5) delay += ModDepth * MathF.Sin(_lfoB);
++
++            var lp = _lp[i] + (1f - p.Damp) * (Read(i, delay) - _lp[i]);
++            if (MathF.Abs(lp) < 1e-12f) lp = 0f;
++            _lp[i] = lp;
++            sum += lp;
++        }
++
++        sum *= 2f / Lines;
++        for (var i = 0; i < Lines; i++)
++        {
++            var buf = _line[i];
++            buf[_linePos[i]] = p.Gains[i] * (_lp[i] - sum) + ((i & 1) == 0 ? xl : xr);
++            if (++_linePos[i] == buf.Length) _linePos[i] = 0;
++        }
++
++        var g = OutputGain * _fade * 32768f;
++        outL = (int)Math.Clamp((_lp[0] - _lp[2] + _lp[4] - _lp[6]) * g, -32768f, 32767f);
++        outR = (int)Math.Clamp((_lp[1] - _lp[3] + _lp[5] - _lp[7]) * g, -32768f, 32767f);
++    }
++
++    private float Read(int i, float delay)
++    {
++        var buf = _line[i];
++        var at = _linePos[i] - delay;
++        if (at < 0) at += buf.Length;
++        var i0 = (int)at;
++        var i1 = i0 + 1 == buf.Length ? 0 : i0 + 1;
++        return buf[i0] + (buf[i1] - buf[i0]) * (at - i0);
++    }
++
++    private static float Allpass(float[] buf, ref int pos, float x)
++    {
++        var delayed = buf[pos];
++        var w = x + Diffusion * delayed;
++        buf[pos] = w;
++        if (++pos == buf.Length) pos = 0;
++        return delayed - Diffusion * w;
++    }
++
++    // Offsets are in words of 22.05 kHz reverb buffer, times four: one word is 8 samples at 44.1 kHz.
++    private static Params? Derive(ushort[] r)
++    {
++        if (r[Spu.dAPF1] <= 1 && r[Spu.dAPF2] <= 1)
++            return r[Spu.dAPF1] == 0 ? null : new Params(true, [], [], 0, 0);
++
++        var loops = new List<int>();
++        if (r[Spu.mLSAME] > r[Spu.dLSAME]) loops.Add(r[Spu.mLSAME] - r[Spu.dLSAME]);
++        if (r[Spu.mLDIFF] > r[Spu.dRDIFF]) loops.Add(r[Spu.mLDIFF] - r[Spu.dRDIFF]);
++        if (loops.Count == 0) return null;
++
++        var loopSeconds = loops.Average() * 8 / Fs;
++
++        // The loop feeds back through vWALL once per pass; vIIR is a one-pole low-pass in the same loop.
++        var wall = Math.Abs((short)r[Spu.vWALL]) / 32768.0;
++        var rt60 = wall < 0.01 ? 0.3 : Math.Clamp(loopSeconds * 3 / -Math.Log10(Math.Min(wall, 0.999)), 0.3, 6.0);
++        var a = Math.Clamp((short)r[Spu.vIIR] / 32768.0, 0.01, 0.99);
++        var cutoff = Math.Clamp(-Math.Log(1 - a) * 22050 / (2 * Math.PI), 1000, 16000);
++
++        var size = Math.Clamp(loopSeconds, 0.03, 0.25);
++        var lengths = Spread.Select(s => Math.Max(64, (int)Math.Round(size * s * Fs))).ToArray();
++        var gains = lengths.Select(n => (float)Math.Pow(10, -3.0 * n / Fs / rt60)).ToArray();
++
++        var firstEcho = int.MaxValue;
++        (int From, int Tap, int Gain)[] combs =
++        {
++            (Spu.mLSAME, Spu.mLCOMB1, Spu.vCOMB1), (Spu.mLSAME, Spu.mLCOMB2, Spu.vCOMB2),
++            (Spu.mLDIFF, Spu.mLCOMB3, Spu.vCOMB3), (Spu.mLDIFF, Spu.mLCOMB4, Spu.vCOMB4)
++        };
++        foreach (var (from, tap, gain) in combs)
++            if (r[gain] != 0 && r[tap] != 0 && r[from] > r[tap])
++                firstEcho = Math.Min(firstEcho, (r[from] - r[tap]) * 8);
++
++        var pre = firstEcho == int.MaxValue ? 0 : Math.Clamp(firstEcho - lengths.Min(), 0, PreSize - 1);
++        return new Params(false, lengths, gains, (float)Math.Exp(-2 * Math.PI * cutoff / Fs), pre);
++    }
++}

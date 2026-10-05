@@ -1,0 +1,272 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index 754b72b..f5892f9 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -276,6 +276,55 @@ public static class GteDepth
+     /// texel and produce nothing but noise.</summary>
+     public static float AoMaxDepth = 24000f;
+ 
++    // ---- 0059: occluders the camera cannot see --------------------------------
++
++    /// <summary>0059. Occlude against the area's own floor plan as well as against
++    /// the picture. A screen-space pass can only be occluded by what is on screen,
++    /// so standing in a corner facing one wall, the wall behind the camera
++    /// contributes nothing and the shading changes as the view turns. The port reads
++    /// the game's 80x80 tile grid, so the geometry that is not on screen is
++    /// available to it. Off by default: it is a look nobody has seen.</summary>
++    public static bool AoWorld;
++
++    /// <summary>How dark the world term goes, and how far it reaches in world units
++    /// (a floor tile is 2048).</summary>
++    public static float AoWorldStrength = 0.6f, AoWorldRadius = 3072f;
++
++    /// <summary>The camera's rotation as the game loaded it (world to view, the
++    /// GTE's 4096 scale removed) and its world position. Published by the port from
++    /// the view matrix the tile walk loads, which is the camera's own: the game hands
++    /// the GTE positions already relative to the camera, so this matrix carries no
++    /// translation and no per-object rotation.</summary>
++    public static readonly float[] AoViewR = new float[9];
++    public static float AoCamX, AoCamY, AoCamZ;
++
++    /// <summary>Whether the two above have been filled since the last area load.</summary>
++    public static bool AoWorldReady;
++
++    /// <summary>The area's floor plan: 80x80 tiles, four bytes each -- the lower
++    /// half's height byte, the upper's, whether the tile stops sight, and padding.
++    /// Height is up in units of 128, as the game's own <c>(0 - height) &lt;&lt; 7</c>
++    /// makes it. The generation is bumped when the port refills it, which is what
++    /// makes the backend re-upload.</summary>
++    public static byte[]? AoHeight;
++    public static int AoHeightGen;
++
++    /// <summary>The grid's span and a tile's world size, so nothing has to agree with
++    /// the port about them by coincidence.</summary>
++    public const int AoHeightSpan = 80, AoTileUnits = 2048;
++
++    /// <summary>World-term pixels shaded, and frames the term could not run for want
++    /// of a transform or a grid.</summary>
++    public static long AoWorldFrames, AoWorldUnready;
++
++    /// <summary>Tiles in the last grid read that stop sight. Zero is a grid that
++    /// cannot occlude anything and the term will measure as doing nothing.</summary>
++    public static int AoHeightBlockers;
++
++    /// <summary>How tall a blocking tile is taken to be, in world units above its
++    /// own floor. A tile is 2048 across.</summary>
++    public static float AoWallHeight = 2048f;
++
+     /// <summary>0058. Take the pass's normals from the frame's own geometry, redrawn
+     /// into a normal buffer once the frame is finished (<see cref="AoGeometry"/>),
+     /// instead of differencing four depth texels. A pixel the normal buffer did not
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 789d7d4..9525a87 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -115,6 +115,21 @@ internal static class GlShaders
+         uniform float uMaxDepth;
+         uniform int   uSamples;
+ 
++        // 0059. The area's floor plan, and the transform that reaches it. uViewR is
++        // the game's own world-to-view rotation uploaded untransposed, which GLSL
++        // reads column-major and so hands back already inverted: uViewR * v takes a
++        // view vector to a world one. The game's Y is negative upwards, so
++        // everything below works in "up" = -y.
++        uniform float     uWorldOn;
++        uniform sampler2D uHeight;
++        uniform mat3      uViewR;
++        uniform vec3      uCam;
++        uniform float     uWorldStrength;
++        uniform float     uWorldRadius;
++        uniform float     uTileUnits;
++        uniform float     uSpan;
++        uniform float     uWallHeight;
++
+         const float FAR = 65536.0;
+         const float GOLDEN = 2.39996323;
+ 
+@@ -141,6 +156,65 @@ internal static class GlShaders
+             return abs(a.z - p.z) < abs(b.z - p.z) ? a - p : p - b;
+         }
+ 
++        // A tile: its two floors as heights above the world's zero, and whether it
++        // stops sight. Zero in a floor channel is no tile there.
++        // x and y are the two halves' floor heights, z the flag byte: bit 0 the
++        // lower half is drawn, bit 1 the upper is, bit 2 the tile stops sight. A
++        // height of zero is a real floor, which is why being drawn is its own bit.
++        vec3 tileAt(vec2 wxz) {
++            vec2 tile = floor(wxz / uTileUnits);
++            if (tile.x < 0.0 || tile.y < 0.0 || tile.x >= uSpan || tile.y >= uSpan) return vec3(0.0, 0.0, 0.0);
++            vec3 t = texture(uHeight, (tile + 0.5) / uSpan).rgb;
++            return vec3(t.r * (255.0 * 128.0), t.g * (255.0 * 128.0), floor(t.b * 255.0 + 0.5));
++        }
++
++        // How much of this surface's sky the room takes, marched over the floor plan
++        // in world space -- so a wall behind the camera occludes exactly as one in
++        // front of it does, which is the whole point and is the one thing a
++        // screen-space pass cannot be made to do.
++        float worldOcclusion(vec3 pv, vec3 nv) {
++            vec3 w = uCam + uViewR * pv;
++            vec3 nw = uViewR * nv;
++            vec3 nUp = vec3(nw.x, -nw.y, nw.z);
++            float pu = -w.y;
++
++            float occ = 0.0;
++            for (int k = 0; k < 8; k++) {
++                float a = (float(k) + 0.5) * (6.28318531 / 8.0);
++                vec2 dir = vec2(cos(a), sin(a));
++
++                // The highest thing this direction puts against the sky, as a
++                // slope. A step in the floor is one; a tile that stops sight is a
++                // wall standing on its own floor, which is what a corridor is made
++                // of and what the heights alone never show.
++                float best = 0.0;
++                for (int j = 1; j <= 3; j++) {
++                    float t = uWorldRadius * float(j) / 3.0;
++                    vec3 f = tileAt(w.xz + dir * t);
++                    int flags = int(f.z);
++                    // A drawn floor is a step: where it stands above this surface it
++                    // is what a wall is made of.
++                    if ((flags & 1) != 0) best = max(best, (f.x - pu) / t);
++                    if ((flags & 2) != 0) best = max(best, (f.y - pu) / t);
++                    // A tile with no floor at all is solid rock -- there is nowhere
++                    // to stand there, which is what the edge of a room is in this
++                    // grid. It stands its own height above whatever is being shaded.
++                    if ((flags & 3) == 0 || (flags & 4) != 0)
++                        best = max(best, uWallHeight / t);
++                }
++                if (best <= 0.0) continue;
++
++                // Weighted by how much of this surface actually faces the horizon
++                // it found, and averaged over every direction rather than over the
++                // occluding ones -- a floor faces no horizontal direction at all,
++                // so weighting on the flat direction would leave every floor in the
++                // game unshaded.
++                vec3 hdir = normalize(vec3(dir.x, best, dir.y));
++                occ += max(0.0, dot(nUp, hdir)) * (best / sqrt(1.0 + best * best));
++            }
++            return occ / 8.0;
++        }
++
+         void main() {
+             // Red is the occlusion factor the present multiplies by. Green says
+             // whether there was a surface here at all -- it is not used to draw
+@@ -224,6 +298,9 @@ internal static class GlShaders
+             }
+ 
+             float ao = 1.0 - uStrength * (occ / float(uSamples));
++            // 0059. The room the surface is in, on top of the picture it is in.
++            if (uWorldOn > 0.5)
++                ao *= 1.0 - uWorldStrength * clamp(worldOcclusion(p, n), 0.0, 1.0);
+             oColor = vec4(clamp(ao, 0.0, 1.0), 1.0, geo, 1.0);
+         }
+         """;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 496571d..ca0906e 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -56,6 +56,10 @@ public sealed class GlCore : IGpuBackend
+     int _uAoRadius, _uAoStrength, _uAoBias, _uAoMaxDepth, _uAoSamples;
+     int _uAoBOrigin, _uAoBSize, _uAoBTexSize, _uAoBTexel, _uAoBEdge;
+     int _uAoNormalOn;
++    // 0059. The floor-plan term.
++    int _uAoWorldOn, _uAoViewR, _uAoCam, _uAoWorldStrength, _uAoWorldRadius, _uAoTileUnits, _uAoSpan, _uAoWallHeight;
++    uint _aoHeightTex;
++    int _aoHeightGen = -1;
+     int _uPresentAoOn;
+ 
+     // 0058. The normal buffer the occlusion pass reads: the frame's own geometry,
+@@ -228,10 +232,20 @@ public sealed class GlCore : IGpuBackend
+                 _uAoMaxDepth = _gl.GetUniformLocation(_progAo, "uMaxDepth");
+                 _uAoSamples = _gl.GetUniformLocation(_progAo, "uSamples");
+                 _uAoNormalOn = _gl.GetUniformLocation(_progAo, "uNormalOn");
++                _uAoWorldOn = _gl.GetUniformLocation(_progAo, "uWorldOn");
++                _uAoViewR = _gl.GetUniformLocation(_progAo, "uViewR");
++                _uAoCam = _gl.GetUniformLocation(_progAo, "uCam");
++                _uAoWorldStrength = _gl.GetUniformLocation(_progAo, "uWorldStrength");
++                _uAoWorldRadius = _gl.GetUniformLocation(_progAo, "uWorldRadius");
++                _uAoTileUnits = _gl.GetUniformLocation(_progAo, "uTileUnits");
++                _uAoSpan = _gl.GetUniformLocation(_progAo, "uSpan");
++                _uAoWallHeight = _gl.GetUniformLocation(_progAo, "uWallHeight");
+                 _gl.UseProgram(_progAo);
+                 _gl.Uniform1(_gl.GetUniformLocation(_progAo, "uDepth"), 0);
+                 _gl.Uniform1(_gl.GetUniformLocation(_progAo, "uNormal"), 1);
++                _gl.Uniform1(_gl.GetUniformLocation(_progAo, "uHeight"), 2);
+                 if (_uAoNormalOn >= 0) _gl.Uniform1(_uAoNormalOn, 0f);
++                if (_uAoWorldOn >= 0) _gl.Uniform1(_uAoWorldOn, 0f);
+             }
+             if (_progAoBlur != 0)
+             {
+@@ -1872,6 +1886,26 @@ public sealed class GlCore : IGpuBackend
+             _gl.ActiveTexture(TextureUnit.Texture1);
+             _gl.BindTexture(TextureTarget.Texture2D, src.Normal);
+         }
++
++        // 0059. The floor plan, and the transform back into it.
++        bool world = GteDepth.AoWorld && GteDepth.AoWorldReady && UploadHeightfield();
++        if (world) GteDepth.AoWorldFrames++;
++        else if (GteDepth.AoWorld) GteDepth.AoWorldUnready++;
++        if (_uAoWorldOn >= 0) _gl.Uniform1(_uAoWorldOn, world ? 1f : 0f);
++        if (world)
++        {
++            // Uploaded untransposed on purpose: GLSL reads it column-major, which
++            // is the inverse of the row-major world-to-view matrix the game keeps.
++            if (_uAoViewR >= 0) _gl.UniformMatrix3(_uAoViewR, 1, false, GteDepth.AoViewR);
++            if (_uAoCam >= 0) _gl.Uniform3(_uAoCam, GteDepth.AoCamX, GteDepth.AoCamY, GteDepth.AoCamZ);
++            if (_uAoWorldStrength >= 0) _gl.Uniform1(_uAoWorldStrength, Math.Clamp(GteDepth.AoWorldStrength, 0f, 1f));
++            if (_uAoWorldRadius >= 0) _gl.Uniform1(_uAoWorldRadius, Math.Max(1f, GteDepth.AoWorldRadius));
++            if (_uAoTileUnits >= 0) _gl.Uniform1(_uAoTileUnits, (float)GteDepth.AoTileUnits);
++            if (_uAoSpan >= 0) _gl.Uniform1(_uAoSpan, (float)GteDepth.AoHeightSpan);
++            if (_uAoWallHeight >= 0) _gl.Uniform1(_uAoWallHeight, GteDepth.AoWallHeight);
++            _gl.ActiveTexture(TextureUnit.Texture2);
++            _gl.BindTexture(TextureTarget.Texture2D, _aoHeightTex);
++        }
+         _gl.ActiveTexture(TextureUnit.Texture0);
+         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
+         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+@@ -1960,6 +1994,38 @@ public sealed class GlCore : IGpuBackend
+         return true;
+     }
+ 
++    /// <summary>0059. The area's floor plan as an 80x80 two-channel texture, uploaded
++    /// only when the port has refilled it.</summary>
++    unsafe bool UploadHeightfield()
++    {
++        var h = GteDepth.AoHeight;
++        if (h == null) return false;
++        if (_aoHeightTex != 0 && _aoHeightGen == GteDepth.AoHeightGen) return true;
++
++        if (_aoHeightTex == 0)
++        {
++            _aoHeightTex = _gl.GenTexture();
++            _gl.BindTexture(TextureTarget.Texture2D, _aoHeightTex);
++            // Nearest: a tile is a step, and an interpolated step is a ramp that is
++            // not in the room.
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        }
++        else
++            _gl.BindTexture(TextureTarget.Texture2D, _aoHeightTex);
++
++        _gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
++        fixed (byte* p = h)
++            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8,
++                           (uint)GteDepth.AoHeightSpan, (uint)GteDepth.AoHeightSpan, 0,
++                           PixelFormat.Rgba, PixelType.UnsignedByte, p);
++        _gl.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
++        _aoHeightGen = GteDepth.AoHeightGen;
++        return true;
++    }
++
+     unsafe void EnsureNormalTarget(GlDisplayRt rt)
+     {
+         if (rt.Normal != 0 && rt.NormalW == rt.TexW && rt.NormalH == rt.TexH) return;
+@@ -2052,6 +2118,7 @@ public sealed class GlCore : IGpuBackend
+         foreach (var rt in _rts) rt?.Destroy(_gl);
+         foreach (var snap in _snaps) if (snap != null) SnapDestroy(snap);
+         _vram.Dispose();
++        if (_aoHeightTex != 0) _gl.DeleteTexture(_aoHeightTex);
+         if (_nrmVbo != 0) _gl.DeleteBuffer(_nrmVbo);
+         if (_nrmVao != 0) _gl.DeleteVertexArray(_nrmVao);
+         if (_vbo != 0) _gl.DeleteBuffer(_vbo);

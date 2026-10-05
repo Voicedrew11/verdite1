@@ -1,0 +1,523 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 5b736cf..f95131c 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -289,6 +289,12 @@ public sealed partial class GlCore : IGpuBackend
+         if (uMip >= 0) _gl.Uniform1(uMip, 5);
+         int uMatPrim = _gl.GetUniformLocation(_progPrim, "uMatTable");
+         if (uMatPrim >= 0) _gl.Uniform1(uMatPrim, MatUnit);
++        // 0088. Never read for a packet, but an integer sampler left on unit 0 beside
++        // uVram's float one makes every draw invalid.
++        int uRecPrim = _gl.GetUniformLocation(_progPrim, "uRecords");
++        if (uRecPrim >= 0) _gl.Uniform1(uRecPrim, RecordsUnit);
++        int uNbPrim = _gl.GetUniformLocation(_progPrim, "uNbHalves");
++        if (uNbPrim >= 0) _gl.Uniform1(uNbPrim, NbHalvesUnit);
+         InitShadowUniforms(_progPrim, true);
+         _uPrimScale = _gl.GetUniformLocation(_progPrim, "uScale");
+         SetScaleUniform(_progPrim, GlVram.Scale);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+index 226a89d..33168a8 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+@@ -431,6 +431,8 @@ public sealed partial class GlCore
+         if (_uwSnap >= 0) _gl.Uniform1(_uwSnap, GteDepth.Subpixel ? 0 : 1);
+         if (_uwPerPixel >= 0) _gl.Uniform1(_uwPerPixel, GteLightMap.Enabled ? 1 : 0);
+         if (_uwDither >= 0) _gl.Uniform1(_uwDither, _env.Dither ? 1 : 0);
++        if (_uwNeighbour >= 0) _gl.Uniform1(_uwNeighbour, NeighbourBlend.Mode);
++        if (_uwNbTile >= 0) _gl.Uniform1(_uwNbTile, NeighbourBlend.Tile);
+         // Fogged at each pixel's own depth: a face clipped at the eye has no corner
+         // whose screen-affine fog holds at the clip.
+         if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, RetainedScene.MainFogFromZ ? Math.Max(1f, f.View.H) : 0f);
+@@ -527,6 +529,7 @@ public sealed partial class GlCore
+         if (_uwSnap >= 0) _gl.Uniform1(_uwSnap, 0);
+         if (_uwPerPixel >= 0) _gl.Uniform1(_uwPerPixel, 1);
+         if (_uwDither >= 0) _gl.Uniform1(_uwDither, 0);
++        if (_uwNeighbour >= 0) _gl.Uniform1(_uwNeighbour, 0);
+         if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, 0f);
+         if (_uwSwellOn >= 0) _gl.Uniform1(_uwSwellOn, 0);
+         if (_uwClipOn >= 0) _gl.Uniform1(_uwClipOn, 0);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+index 8a2b768..71fa86f 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+@@ -75,7 +75,8 @@ public sealed partial class GlCore
+         void Unit(string n, int u) { int l = L(n); if (l >= 0) _gl.Uniform1(l, u); }
+         Unit("uVram", 0); Unit("uDest", 1); Unit("uExtTex", 2); Unit("uRepTex", 3); Unit("uRepClut", 4);
+         Unit("uMip", 5); Unit("uMatTable", MatUnit); Unit("uMaskSurface", MaskUnit); Unit("uHalves", HalvesUnit);
+-        Unit("uRecords", RecordsUnit);
++        Unit("uRecords", RecordsUnit); Unit("uNbHalves", NbHalvesUnit);
++        _uwNeighbour = L("uNeighbour"); _uwNbTile = L("uNbTile");
+         void I(string n, int v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         void F(string n, float v) { int l = L(n); if (l >= 0) _gl.Uniform1(l, v); }
+         int tw = L("uTexWindow");
+@@ -83,7 +84,7 @@ public sealed partial class GlCore
+         F("uSetMask", 0f); I("uCheckMask", 0); I("uOpaqueDepth", 0); F("uDepthBias", 0f); F("uDepthSlope", 0f);
+         I("uClipOn", 0); I("uLightN", 0); I("uEmitOn", 0); F("uMipOn", 0f); F("uTrueColor", 1f); F("uFluidN", 0f);
+         I("uMaskOn", 0); I("uHalfGate", 0); I("uAtmosOn", 0); I("uAtmosSkip", 0); I("uWorldLit", 0);
+-        I("uWorldSnap", 0); I("uWorldPerPixel", 1); I("uWorldDither", 0);
++        I("uWorldSnap", 0); I("uWorldPerPixel", 1); I("uWorldDither", 0); I("uNeighbour", 0);
+         InitShadowUniforms(_progWorld, false);
+         if (_uwBlendOpaque >= 0) _gl.Uniform4(_uwBlendOpaque, 1f, 1f, 1f, 0f);
+         int pb = L("uPosBias");
+@@ -265,10 +266,39 @@ public sealed partial class GlCore
+         RetainedScene.RecordUploads++;
+     }
+ 
++    // 0088. Each map half's record for NeighbourBlend, one byte a half.
++    const int NbHalvesUnit = 22;
++    uint _nbHalvesTex;
++    int _nbHalvesGen = -1, _uwNeighbour = -1, _uwNbTile = -1;
++
++    unsafe void UploadNbHalves()
++    {
++        if (_nbHalvesGen == NeighbourBlend.Generation) return;
++        _nbHalvesGen = NeighbourBlend.Generation;
++        _gl.ActiveTexture(TextureUnit.Texture0 + NbHalvesUnit);
++        if (_nbHalvesTex == 0)
++        {
++            _nbHalvesTex = _gl.GenTexture();
++            _gl.BindTexture(TextureTarget.Texture2D, _nbHalvesTex);
++            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8ui, RetainedScene.HalvesW, RetainedScene.HalvesH, 0,
++                PixelFormat.RedInteger, PixelType.UnsignedByte, null);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++        }
++        else _gl.BindTexture(TextureTarget.Texture2D, _nbHalvesTex);
++        fixed (byte* p = NeighbourBlend.Halves)
++            _gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, RetainedScene.HalvesW, RetainedScene.HalvesH,
++                PixelFormat.RedInteger, PixelType.UnsignedByte, p);
++        // Nothing else takes this unit either.
++        _gl.ActiveTexture(TextureUnit.Texture0);
++        NeighbourBlend.Uploads++;
++    }
++
+     /// <summary>The static map, when it was rebuilt since the last upload.</summary>
+     void UploadStatic()
+     {
+         UploadRecords();
++        UploadNbHalves();
+         if (_worldGen == RetainedScene.StaticGeneration) return;
+         var s = RetainedScene.Static;
+         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldVbo);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index fb3842b..6e512cb 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -1544,6 +1544,14 @@ internal static class GlShaders
+         // 0072, amended. A half's weight in the gate, faded in and out by the port;
+         // PrimFs dithers it away. 1 for everything the gate does not weigh.
+         flat out float vFade;
++        // 0088. A record-lit map corner while NeighbourBlend is on: x bit 31 set, 30
++        // the fog on, 29 and 28 the fog and the light blended, bits 14-19 the half's
++        // record, 0-13 its half flag; y its RGBC. Its world X and Z, and its own
++        // record's light dots. 0 for everything else.
++        flat out uvec2 vNb;
++        out vec2 vNbXZ;
++        noperspective out vec3 vNbDots;
++        uniform int uNeighbour;
+ 
+         uniform mat3  uR;
+         uniform vec3  uCam;
+@@ -1625,7 +1633,7 @@ internal static class GlShaders
+             return true;
+         }
+ 
+-        void recordLit(uint l, vec3 normal, float ax, float az, uint rgbc, out vec3 color, out vec3 cue) {
++        void recordLit(uint l, vec3 normal, float ax, float az, uint rgbc, out vec3 color, out vec3 cue, out ivec3 dots) {
+             int own = int(l & 63u), rot = int((l >> 6) & 3u);
+             ivec3 nb = ivec3(int((l >> 8) & 63u), int((l >> 14) & 63u), int((l >> 20) & 63u));
+             // TileWeights: own, along X, along Z, the diagonal; 0 where there is no half.
+@@ -1649,6 +1657,7 @@ internal static class GlShaders
+                       + recInt(own, rot * 9 + 3 * j + 2) * n.z;
+                 a[j] = clamp(v >> 12, 0, 0x7FFF);
+             }
++            dots = a;
+             for (int c = 0; c < 3; c++) {
+                 int bk = recInt(own, 45 + c);
+                 if (mixL) bk = mixExact(k, ivec4(bk, recInt(rec.y, 45 + c), recInt(rec.z, 45 + c), recInt(rec.w, 45 + c)), t);
+@@ -1705,7 +1714,21 @@ internal static class GlShaders
+         void main() {
+             vec3 w = inWorld, color = inColorF, cue = inCue;
+             uint flags = inFlags, rgbc = inRgbc;
+-            if (uDepthOnly == 0 && (inLight & 0x80000000u) != 0u) recordLit(inLight, inColorF, inCue.x, inCue.y, inRgbc, color, cue);
++            ivec3 litDots = ivec3(0);
++            vNb = uvec2(0u);
++            vNbXZ = vec2(0.0);
++            vNbDots = vec3(0.0);
++            if (uDepthOnly == 0 && (inLight & 0x80000000u) != 0u) {
++                recordLit(inLight, inColorF, inCue.x, inCue.y, inRgbc, color, cue, litDots);
++                uint nbHid = (inFlags >> 13) & 0x3FFFu;
++                if (uNeighbour != 0 && uModel == 0 && nbHid != 0u) {
++                    vNb = uvec2(0x80000000u | (uFogOn != 0 ? 0x40000000u : 0u)
++                        | ((uNeighbour & 1) != 0 ? 0x20000000u : 0u) | ((uNeighbour & 2) != 0 ? 0x10000000u : 0u)
++                        | (inLight & 63u) << 14 | nbHid, inRgbc);
++                    vNbXZ = inWorld.xz;
++                    vNbDots = vec3(litDots);
++                }
++            }
+             if (uModel != 0) {
+                 if (!modelFaceKept(inCue, inRgbc)) {
+                     gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+@@ -1780,6 +1803,8 @@ internal static class GlShaders
+                 vLit = color;
+                 vLight = (vLight & 0x07000000u) | 0x80000000u | (rgbc & 0xFFFFFFu);
+             }
++            // 0088. A blended pixel is shaded from the lit colour, per pixel lighting or not.
++            if (vNb.x != 0u && vLight == 0u) vLit = color;
+             uint mip = inMip;
+             if (uMipIndirect != 0) mip = inMip == 0u ? 0u : texelFetch(uMipTable, int(inMip) - 1).r;
+             vTex = uvec2(inRect, (flags & 0x80000000u) | mip);
+@@ -1845,6 +1870,10 @@ internal static class GlShaders
+         flat out uvec2 vTex;
+         flat out uint vMat;
+         flat out float vFade;
++        // 0088. The world program's; no packet is blended.
++        flat out uvec2 vNb;
++        out vec2 vNbXZ;
++        noperspective out vec3 vNbDots;
+ 
+         uniform vec2 uVertexOffset;
+         uniform vec2 uPosBias;
+@@ -1878,6 +1907,9 @@ internal static class GlShaders
+             vTex = inTex;
+             vMat = inMat;
+             vFade = 1.0;
++            vNb = uvec2(0u);
++            vNbXZ = vec2(0.0);
++            vNbDots = vec3(0.0);
+             vDither = (inTexpage >> 10) & 1;
+             vRepClut = (inTexpage >> 12) & 1;
+ 
+@@ -1920,6 +1952,10 @@ internal static class GlShaders
+         flat in uvec2 vTex;
+         flat in uint vMat;
+         flat in float vFade;
++        // 0088. NeighbourBlend's corner word, world X and Z, and own light dots (WorldVs).
++        flat in uvec2 vNb;
++        in vec2 vNbXZ;
++        noperspective in vec3 vNbDots;
+ 
+         layout(location = 0, index = 0) out vec4 FragColor;
+         layout(location = 0, index = 1) out vec4 BlendColor;
+@@ -2310,6 +2346,34 @@ internal static class GlShaders
+ 
+         // The depth cue's weight, 0..4096, from the raw MAC0 through the curve.
+         //@linearDepthCue
++        //@neighbourBlend
++
++        // 0088. A pixel some neighbour of whose half lights or fogs otherwise: its lit
++        // colour (when the light blends) and its cue weight from the records around
++        // it, at its own depth. Every other pixel is drawn as before.
++        bool gNbOn = false, gNbLit = false;
++        float gNbW = 0.0;
++        vec3 gNbColor = vec3(0.0);
++        void nbPrepare() {
++            if (vNb.x == 0u || vDepth <= 0.0) return;
++            ivec4 rec;
++            vec4 k;
++            nbAround(int((vNb.x >> 14) & 63u), int(vNb.x & 0x3FFFu), vNbXZ, rec, k);
++            float z = vDepth * 65536.0, w = 0.0;
++            bool fogOn = (vNb.x & 0x40000000u) != 0u;
++            bool fog = fogOn && (vNb.x & 0x20000000u) != 0u && nbFog(rec, k, z, w);
++            gNbLit = (vNb.x & 0x10000000u) != 0u && nbLight(rec, k, ivec3(round(vNbDots)), vNb.y, gNbColor);
++            if (!fog && !gNbLit) return;
++            // The light alone blended: the own record's cue, at this pixel too, on a
++            // curve this blends.
++            if (!fog && fogOn) {
++                w = nbRecordFog(rec.x, z);
++                if (w < 0.0) { gNbLit = false; return; }
++            }
++            gNbOn = true;
++            gNbW = w;
++        }
++
+         float fogRaw() {
+             if (((vLight >> 24) & 7u) == 5u) return linearDepthCue(vDepth * 65536.0, vCue);
+             if (uCueFromZ <= 0.0 || vDepth <= 0.0) return vFog;
+@@ -2320,10 +2384,11 @@ internal static class GlShaders
+         float cueWeight() {
+             uint curve = (vLight >> 24) & 7u;
+             bool level = gCueScale < 1.0 && curve != 0u && curve != 5u;
+-            float fog = fogRaw();
++            float fog = gNbOn ? gNbW : fogRaw();
+             float raw = level ? levelCue(fog, curve) : fog;
+             float ir0 = clamp(raw, 0.0, 4096.0);
+-            float w = curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
++            float w = gNbOn ? fog
++                 : curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
+                  : curve == 2u ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
+                  : curve == 3u ? ir0 * 0.5
+                  : curve == 4u ? (level ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0) : fog)
+@@ -2349,9 +2414,9 @@ internal static class GlShaders
+         }
+ 
+         ivec3 shade8(vec3 extra) {
+-            if (vLight == 0u) return ivec3(levelColour(vColor.rgb) * 255.0 + 0.5);
++            if (vLight == 0u && !gNbOn) return ivec3(levelColour(vColor.rgb) * 255.0 + 0.5);
+             uint mode = vLight >> 24;
+-            vec3 lit = vLit;
++            vec3 lit = gNbLit ? gNbColor : vLit;
+             if ((mode & 0x80u) != 0u) {
+                 vec3 rgbc = vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u));
+                 vec3 a = clamp(vLit, 0.0, 32767.0);
+@@ -2474,6 +2539,7 @@ internal static class GlShaders
+             }
+             // 0071. Not into a planar reflection: its view is the mirrored camera's.
+             vec3 extra = vec3(0.0);
++            nbPrepare();
+             bool mat = uEmitOn != 0 && vMat != 0u && vLight != 0u;
+             vec4 m0 = mat ? texelFetch(uMatTable, ivec2(int(vMat), 0), 0) : vec4(0.0);
+             float spec = mat ? texelFetch(uMatTable, ivec2(int(vMat), 2), 0).r : 0.0;
+@@ -2653,7 +2719,7 @@ internal static class GlShaders
+             FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
+             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
+         }
+-        """.Replace("//@linearDepthCue", LinearDepthCue.Glsl);
++        """.Replace("//@linearDepthCue", LinearDepthCue.Glsl).Replace("//@neighbourBlend", NeighbourBlend.Glsl);
+     
+     public const string FullscreenVs120 = """
+         #version 120
+diff --git a/RecompOne.Runtime/Gpu/NeighbourBlend.cs b/RecompOne.Runtime/Gpu/NeighbourBlend.cs
+new file mode 100644
+index 0000000..44553fd
+--- /dev/null
++++ b/RecompOne.Runtime/Gpu/NeighbourBlend.cs
+@@ -0,0 +1,238 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0088. A static map pixel lit and fogged from the light record of the half it lies
++/// on blended with its neighbours', so the light runs smoothly across a tile edge
++/// instead of stepping there. Per pixel, in PrimFs: the weights are bilinear between
++/// the centres of the four tiles around the pixel's world position (its own at its
++/// centre, half and half on an edge, a quarter each at a corner), on the half's own
++/// level, and a missing half weighs nothing, so every tile meeting at a point blends
++/// the same set.
++///
++/// <para>The fog blends the records' **results**: each record's cue weight at the
++/// pixel's own depth, clamped where the colour it leaves goes black (4096), averaged.
++/// That is the average of the pictures the tiles would draw, and a record with no fog
++/// (curve 0) weighs in as no fog. Only curve-5 (<see cref="LinearDepthCue"/>) and
++/// curve-0 records blend; a pixel whose records use another curve is drawn as before.
++/// The light blends the records' **inputs**, as 0085's <c>recordLit</c> does: the
++/// colour matrix and back colour, rounded to integers, under the own record's light
++/// matrix (the corner's dots, <c>vNbDots</c>), then <c>NormalColorCol</c>'s integers.
++/// Where nothing around the pixel differs it is drawn exactly as before.</para>
++///
++/// <para>The port sets <see cref="Mode"/> and fills <see cref="Halves"/>; 0 is off,
++/// and off the programs draw what they drew before. A corner opts in by 0085's
++/// <see cref="RetainedScene.Vertex.Light"/> and its half flag.</para>
++/// </summary>
++public static class NeighbourBlend
++{
++    public const int Fog = 1, Light = 2;
++
++    /// <summary><see cref="Fog"/> | <see cref="Light"/>; 0 off.</summary>
++    public static int Mode;
++
++    /// <summary>A tile's side in world units; the map's tile (x, z) is centred at
++    /// ((x + 0.5) * Tile, (z + 0.5) * Tile), as <see cref="RetainedScene.HalfFlag"/>
++    /// numbers it.</summary>
++    public static float Tile = 2048f;
++
++    /// <summary>Each half's record plus one, 0 for no half: index (z * 80 + x) * 2 +
++    /// upper, laid out as <see cref="RetainedScene.HalvesW"/> x
++    /// <see cref="RetainedScene.HalvesH"/>.</summary>
++    public static readonly byte[] Halves = new byte[RetainedScene.HalvesW * RetainedScene.HalvesH];
++
++    /// <summary>Bumped by <see cref="SetHalves"/> when a half changed; the backend
++    /// re-uploads.</summary>
++    public static int Generation { get; private set; }
++
++    /// <summary>The probe's: the half table's uploads.</summary>
++    public static long Uploads;
++
++    public static void SetHalves(ReadOnlySpan<byte> halves)
++    {
++        if (halves[..Halves.Length].SequenceEqual(Halves)) return;
++        halves[..Halves.Length].CopyTo(Halves);
++        Generation++;
++    }
++
++    // ---- the CPU reference, the same arithmetic as Glsl ---------------------------
++
++    static int Rec(ReadOnlySpan<int> records, int r, int i) => records[r * RetainedScene.RecordInts + i];
++
++    static int Half(ReadOnlySpan<byte> halves, int tx, int tz, int upper)
++    {
++        int side = RetainedScene.HalvesW / 2;
++        if (tx < 0 || tz < 0 || tx >= side || tz >= RetainedScene.HalvesH) return -1;
++        return halves[tz * RetainedScene.HalvesW + tx * 2 + upper] - 1;
++    }
++
++    /// <summary>The records weighing in at world (x, z) on half <paramref name="hid"/>
++    /// (the half flag's value, one-based) and their weights: own, along X, along Z,
++    /// the diagonal; -1 and 0 where there is no half.</summary>
++    public static void Around(ReadOnlySpan<byte> halves, int own, int hid, float x, float z,
++                              Span<int> rec, Span<float> k)
++    {
++        int i = hid - 1, tile = i >> 1, upper = i & 1, side = RetainedScene.HalvesW / 2;
++        int tx = tile % side, tz = tile / side;
++        float ox = x - (tx + 0.5f) * Tile, oz = z - (tz + 0.5f) * Tile;
++        float ax = Math.Min(Math.Abs(ox), 0.5f * Tile) / Tile, az = Math.Min(Math.Abs(oz), 0.5f * Tile) / Tile;
++        int sx = ox < 0f ? -1 : 1, sz = oz < 0f ? -1 : 1;
++        rec[0] = own;
++        rec[1] = Half(halves, tx + sx, tz, upper);
++        rec[2] = Half(halves, tx, tz + sz, upper);
++        rec[3] = Half(halves, tx + sx, tz + sz, upper);
++        k[0] = (1f - ax) * (1f - az);
++        k[1] = rec[1] >= 0 ? ax * (1f - az) : 0f;
++        k[2] = rec[2] >= 0 ? (1f - ax) * az : 0f;
++        k[3] = rec[3] >= 0 ? ax * az : 0f;
++    }
++
++    /// <summary>A record's fog weight at view depth z, 0..4096; -1 for a curve this
++    /// does not blend.</summary>
++    public static float RecordFog(ReadOnlySpan<int> records, int r, float z)
++    {
++        int curve = Rec(records, r, RetainedScene.RecCurve);
++        if (curve == 0) return 0f;
++        if (curve != LinearDepthCue.Curve) return -1f;
++        return Math.Min(LinearDepthCue.Weight(z, Rec(records, r, RetainedScene.RecDqa), Rec(records, r, RetainedScene.RecDqb)), 4096f);
++    }
++
++    /// <summary>The blended fog weight, or false where no record weighing in has a
++    /// fog word of its own's or one uses a curve this does not blend.</summary>
++    public static bool BlendFog(ReadOnlySpan<int> records, ReadOnlySpan<int> rec, ReadOnlySpan<float> k, float z, out float w)
++    {
++        w = 0f;
++        int word = Rec(records, rec[0], RetainedScene.RecWord);
++        bool mixed = false;
++        for (int i = 1; i < 4; i++) mixed |= k[i] > 0f && Rec(records, rec[i], RetainedScene.RecWord) != word;
++        if (!mixed) return false;
++        float t = 0f, s = 0f;
++        for (int i = 0; i < 4; i++)
++        {
++            if (k[i] <= 0f) continue;
++            float f = RecordFog(records, rec[i], z);
++            if (f < 0f) return false;
++            t += k[i]; s += k[i] * f;
++        }
++        w = s / t;
++        return true;
++    }
++
++    static bool SameLight(ReadOnlySpan<int> records, int a, int b)
++    {
++        for (int i = RetainedScene.RecLcm; i < RetainedScene.RecWord; i++)
++            if (Rec(records, a, i) != Rec(records, b, i)) return false;
++        return true;
++    }
++
++    /// <summary>The weighted mean of four values, half away from zero.</summary>
++    static int Mix(ReadOnlySpan<float> k, float t, int v0, int v1, int v2, int v3)
++    {
++        float m = (k[0] * v0 + k[1] * v1 + k[2] * v2 + k[3] * v3) / t;
++        return (int)(MathF.Sign(m) * MathF.Floor(MathF.Abs(m) + 0.5f));
++    }
++
++    /// <summary>The lit colour from the corner's dots under the blended colour matrix
++    /// and back colour, or false where every record weighing in lights alike.</summary>
++    public static bool BlendLight(ReadOnlySpan<int> records, ReadOnlySpan<int> rec, ReadOnlySpan<float> k,
++                                  int ax, int ay, int az, uint rgbc, out int r, out int g, out int b)
++    {
++        r = g = b = 0;
++        bool mixed = false;
++        for (int i = 1; i < 4; i++) mixed |= k[i] > 0f && !SameLight(records, rec[i], rec[0]);
++        if (!mixed) return false;
++        float t = k[0] + k[1] + k[2] + k[3];
++        Span<int> c3 = stackalloc int[3];
++        Span<int> a = [ax, ay, az];
++        int r0 = Math.Max(rec[0], 0), r1 = Math.Max(rec[1], 0), r2 = Math.Max(rec[2], 0), r3 = Math.Max(rec[3], 0);
++        for (int c = 0; c < 3; c++)
++        {
++            int at = RetainedScene.RecBk + c;
++            int v = Mix(k, t, Rec(records, r0, at), Rec(records, r1, at), Rec(records, r2, at), Rec(records, r3, at)) << 12;
++            for (int j = 0; j < 3; j++)
++            {
++                int i = RetainedScene.RecLcm + 3 * c + j;
++                v += Mix(k, t, Rec(records, r0, i), Rec(records, r1, i), Rec(records, r2, i), Rec(records, r3, i)) * a[j];
++            }
++            int ir = Math.Clamp(v >> 12, 0, 0x7FFF);
++            int mac = (((int)((rgbc >> (8 * c)) & 255u) * ir) << 4) >> 12;
++            c3[c] = Math.Clamp(mac >> 4, 0, 255);
++        }
++        (r, g, b) = (c3[0], c3[1], c3[2]);
++        return true;
++    }
++
++    /// <summary>PrimFs's half: the same functions, after <see cref="LinearDepthCue.Glsl"/>.
++    /// uRecords is 0085's record texture, uNbHalves <see cref="Halves"/>, uNbTile
++    /// <see cref="Tile"/>.</summary>
++    public const string Glsl = """
++        uniform isampler2D uRecords;
++        uniform usampler2D uNbHalves;
++        uniform float uNbTile;
++        int nbRecInt(int r, int i) { return texelFetch(uRecords, ivec2(i >> 2, r), 0)[i & 3]; }
++        int nbHalf(int tx, int tz, int upper) {
++            ivec2 size = textureSize(uNbHalves, 0);
++            if (tx < 0 || tz < 0 || tx >= size.x / 2 || tz >= size.y) return -1;
++            return int(texelFetch(uNbHalves, ivec2(tx * 2 + upper, tz), 0).r) - 1;
++        }
++        void nbAround(int own, int hid, vec2 xz, out ivec4 rec, out vec4 k) {
++            int i = hid - 1, tile = i >> 1, upper = i & 1, side = textureSize(uNbHalves, 0).x / 2;
++            int tx = tile % side, tz = tile / side;
++            vec2 o = xz - (vec2(tx, tz) + 0.5) * uNbTile;
++            vec2 a = min(abs(o), vec2(0.5 * uNbTile)) / uNbTile;
++            ivec2 s = ivec2(o.x < 0.0 ? -1 : 1, o.y < 0.0 ? -1 : 1);
++            rec = ivec4(own, nbHalf(tx + s.x, tz, upper), nbHalf(tx, tz + s.y, upper), nbHalf(tx + s.x, tz + s.y, upper));
++            k = vec4((1.0 - a.x) * (1.0 - a.y), rec.y >= 0 ? a.x * (1.0 - a.y) : 0.0,
++                     rec.z >= 0 ? (1.0 - a.x) * a.y : 0.0, rec.w >= 0 ? a.x * a.y : 0.0);
++        }
++        float nbRecordFog(int r, float z) {
++            int curve = nbRecInt(r, 51);
++            if (curve == 0) return 0.0;
++            if (curve != 5) return -1.0;
++            return min(linearDepthCue(z, vec2(float(nbRecInt(r, 49)), float(nbRecInt(r, 50)))), 4096.0);
++        }
++        bool nbFog(ivec4 rec, vec4 k, float z, out float w) {
++            w = 0.0;
++            int word = nbRecInt(rec.x, 48);
++            bool mixed = false;
++            for (int i = 1; i < 4; i++) mixed = mixed || (k[i] > 0.0 && nbRecInt(rec[i], 48) != word);
++            if (!mixed) return false;
++            float t = 0.0, s = 0.0;
++            for (int i = 0; i < 4; i++) {
++                if (k[i] <= 0.0) continue;
++                float f = nbRecordFog(rec[i], z);
++                if (f < 0.0) return false;
++                t += k[i]; s += k[i] * f;
++            }
++            w = s / t;
++            return true;
++        }
++        bool nbSameLight(int a, int b) {
++            for (int i = 9; i < 12; i++)
++                if (texelFetch(uRecords, ivec2(i, a), 0) != texelFetch(uRecords, ivec2(i, b), 0)) return false;
++            return true;
++        }
++        int nbMix(vec4 k, float t, ivec4 v) {
++            float m = (k.x * float(v.x) + k.y * float(v.y) + k.z * float(v.z) + k.w * float(v.w)) / t;
++            return int(sign(m) * floor(abs(m) + 0.5));
++        }
++        bool nbLight(ivec4 rec, vec4 k, ivec3 a, uint rgbc, out vec3 color) {
++            color = vec3(0.0);
++            bool mixed = false;
++            for (int i = 1; i < 4; i++) mixed = mixed || (k[i] > 0.0 && !nbSameLight(rec[i], rec.x));
++            if (!mixed) return false;
++            float t = k.x + k.y + k.z + k.w;
++            ivec4 r = max(rec, ivec4(0));
++            for (int c = 0; c < 3; c++) {
++                int v = nbMix(k, t, ivec4(nbRecInt(r.x, 45 + c), nbRecInt(r.y, 45 + c), nbRecInt(r.z, 45 + c), nbRecInt(r.w, 45 + c))) << 12;
++                for (int j = 0; j < 3; j++) {
++                    int i = 36 + 3 * c + j;
++                    v += nbMix(k, t, ivec4(nbRecInt(r.x, i), nbRecInt(r.y, i), nbRecInt(r.z, i), nbRecInt(r.w, i))) * a[j];
++                }
++                int ir = clamp(v >> 12, 0, 0x7FFF);
++                int mac = ((int((rgbc >> uint(8 * c)) & 255u) * ir) << 4) >> 12;
++                color[c] = float(clamp(mac >> 4, 0, 255));
++            }
++            return true;
++        }
++        """;
++}

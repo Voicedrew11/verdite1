@@ -1,0 +1,342 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index b72167f..cf23049 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -68,6 +68,7 @@ public sealed class GlCore : IGpuBackend
+     int _kRepClutCount;
+     int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv;
+     int _uTrueColor;
++    int _uAniso;
+     // The true-color flag the live display targets were built with. When it drifts
+     // from GteDepth.TrueColor the targets carry the wrong pixel format, so they are
+     // torn down at the next present and rebuilt (their content survives in VRAM).
+@@ -115,6 +116,7 @@ public sealed class GlCore : IGpuBackend
+         _uPosBias = _gl.GetUniformLocation(_progPrim, "uPosBias");
+         _uFbInv = _gl.GetUniformLocation(_progPrim, "uFbInv");
+         _uTrueColor = _gl.GetUniformLocation(_progPrim, "uTrueColor");
++        _uAniso = _gl.GetUniformLocation(_progPrim, "uAniso");
+         _rtsTrueColor = GteDepth.TrueColor;
+         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
+         _uRepClutCount = _gl.GetUniformLocation(_progPrim, "uRepClutCount");
+@@ -892,6 +894,10 @@ public sealed class GlCore : IGpuBackend
+             _gl.Uniform2(_uFbInv, 2f / VramShadow.Width, 2f / VramShadow.Height);
+         }
+         if (_uTrueColor >= 0) _gl.Uniform1(_uTrueColor, GteDepth.TrueColor ? 1f : 0f);
++        // A plain uniform the next batch reads: unlike true color, changing the
++        // anisotropy rebuilds nothing.
++        GteDepth.AnisotropyLive = _uAniso >= 0;
++        if (_uAniso >= 0) _gl.Uniform1(_uAniso, (float)GteDepth.Anisotropy);
+         if (_legacy)
+         {
+             _gl.Uniform4(_uTexWindow, (float)_kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 996bf39..e177e7d 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -148,6 +148,7 @@ internal static class GlShaders
+         uniform int   uCheckMask;
+         uniform int   uScale;
+         uniform vec2  uPosBias;
++        uniform float uAniso;
+ 
+         const int ditherTbl[16] = int[16](
+             -4,  0, -3,  1,
+@@ -161,6 +162,30 @@ internal static class GlShaders
+             vec4 p = fetch(c);
+             return u5(p.r) | (u5(p.g) << 5) | (u5(p.b) << 10) | (int(ceil(p.a)) << 15);
+         }
++        // One texel, exactly as the unfiltered path reads it: texture window, the
++        // 8-bit page wrap, the page fetch, the nibble/byte extract and the CLUT
++        // lookup. A paletted texel is an *index*, so none of this can be filtered
++        // before the lookup -- the average of index 3 and index 4 is index 3.5,
++        // a different colour with no relation to either. The kernel below calls
++        // this per tap, which is what puts the filter after the palette.
++        vec4 decode(ivec2 raw) {
++            ivec2 uv = ((raw & uTexWindow.xy) | uTexWindow.zw) & ivec2(0xff);
++            if (texMode == 0) {
++                int s = fetch16(ivec2(pageBase.x + (uv.x >> 2), pageBase.y + uv.y));
++                int idx = (s >> ((uv.x & 3) << 2)) & 0xf;
++                return vRepClut != 0
++                    ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
++                    : fetch(ivec2(clutBase.x + idx, clutBase.y));
++            } else if (texMode == 1) {
++                int s = fetch16(ivec2(pageBase.x + (uv.x >> 1), pageBase.y + uv.y));
++                int idx = (s >> ((uv.x & 1) << 3)) & 0xff;
++                return vRepClut != 0
++                    ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
++                    : fetch(ivec2(clutBase.x + idx, clutBase.y));
++            }
++            return fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
++        }
++
+         uniform float uTrueColor;
+         vec3 quant5(ivec3 c8) {
+             // True color: keep all eight bits, so the smooth shaded gradient is not
+@@ -198,10 +223,14 @@ internal static class GlShaders
+                 return;
+             }
+ 
+-            int rawU = dFdx(vUV.x) < 0.0 ? int(ceil(vUV.x - 0.0001)) : int(floor(vUV.x + 0.0001));
+-            int rawV = dFdy(vUV.y) < 0.0 ? int(ceil(vUV.y - 0.0001)) : int(floor(vUV.y + 0.0001));
+-            ivec2 uv = (ivec2(rawU, rawV) & uTexWindow.xy) | uTexWindow.zw;
+-            uv &= ivec2(0xff);
++            // The two screen derivatives of the texture coordinate span the
++            // pixel's footprint in texture space. They already decided which way
++            // the console's truncation rounds; the kernel below reads the same
++            // pair as the shape of the area this pixel actually covers.
++            vec2 dUVdx = dFdx(vUV);
++            vec2 dUVdy = dFdy(vUV);
++            int rawU = dUVdx.x < 0.0 ? int(ceil(vUV.x - 0.0001)) : int(floor(vUV.x + 0.0001));
++            int rawV = dUVdy.y < 0.0 ? int(ceil(vUV.y - 0.0001)) : int(floor(vUV.y + 0.0001));
+ 
+             if (texMode == 6) {
+                 vec2 win = vec2(uTexWindow.xy) + 1.0;
+@@ -216,22 +245,79 @@ internal static class GlShaders
+                 return;
+             }
+ 
+-            vec4 texel;
+-
+-            if (texMode == 0) {
+-                int s = fetch16(ivec2(pageBase.x + (uv.x >> 2), pageBase.y + uv.y));
+-                int idx = (s >> ((uv.x & 3) << 2)) & 0xf;
+-                texel = vRepClut != 0
+-                    ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
+-                    : fetch(ivec2(clutBase.x + idx, clutBase.y));
+-            } else if (texMode == 1) {
+-                int s = fetch16(ivec2(pageBase.x + (uv.x >> 1), pageBase.y + uv.y));
+-                int idx = (s >> ((uv.x & 1) << 3)) & 0xff;
+-                texel = vRepClut != 0
+-                    ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
+-                    : fetch(ivec2(clutBase.x + idx, clutBase.y));
+-            } else {
+-                texel = fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
++            vec4 texel = decode(ivec2(rawU, rawV));
++
++            // Anisotropic filtering. The footprint is a square looked at square-on
++            // and a long thin sliver on a floor running away to the horizon, and
++            // one point sample of a sliver is what makes such a floor crawl and
++            // sparkle as the camera moves. Sample along the sliver's long axis
++            // instead and average. Each tap truncates the way the hardware did, so
++            // the short axis stays exactly as hard as the console left it and only
++            // the axis that was being undersampled is averaged.
++            //
++            // **The taps are one texel apart, and the span is what is capped.**
++            // Spreading the taps across the whole axis instead -- which is what
++            // this first did -- is a fair estimator of the footprint's mean, and
++            // it is still wrong here, because of what lies at the far end of a
++            // long footprint. A derivative is in unclamped texture-space units,
++            // so a distant floor reads tens or hundreds of texels per pixel while
++            // its texture is 64 wide: past that the taps wrap, by the texture
++            // window or by the page, into whatever else shares the 256x256 sheet
++            // -- and in the 4- and 8-bit modes a tap that lands on another
++            // texture's *indices* is read through this primitive's CLUT, which is
++            // an arbitrary colour with no relation to either texture. That is the
++            // white speckle on a receding floor and the neighbouring sprite
++            // arriving at a billboard's edge. So the kernel covers min(len,
++            // uAniso) texels centred on the pixel: every tap stays on the texture
++            // the pixel is actually on, and the cost is that past uAniso texels of
++            // footprint it filters a *part* of the footprint rather than
++            // estimating the whole of it, degrading toward nearest rather than
++            // toward a full box filter. There is no mip chain and there cannot be
++            // one, so that is the honest limit of a fixed tap budget.
++            //
++            // This needs no test for "is this 3D": a HUD sprite, a menu box or a
++            // font glyph is drawn at or near 1:1 and axis-aligned, so both
++            // derivatives are about one texel, the axis spans one texel, taps
++            // comes out 1 and the fragment takes the line above unchanged.
++            // A transparent centre texel is a pixel the console did not draw, and
++            // the filter must not make it one that is: deciding the silhouette by
++            // how many taps came back solid grows the sprite outward by up to half
++            // a footprint, which on an atlas page is the neighbouring sprite
++            // arriving at this one's edge.
++            if (uAniso > 1.5 && vRepClut == 0
++                    && !(texel.rgb == vec3(0.0) && texel.a < 0.5)) {
++                vec2 axis = dot(dUVdx, dUVdx) >= dot(dUVdy, dUVdy) ? dUVdx : dUVdy;
++                float len = length(axis);
++                int taps = int(min(ceil(len), uAniso));
++                // `len > 0.0` is false for a NaN, which is what a degenerate
++                // triangle at the horizon hands dFdx; such a fragment takes the
++                // single sample rather than reading from wherever int(NaN) lands.
++                if (taps > 1 && len > 0.0) {
++                    vec2 stride = axis / len;
++                    vec3 sum = vec3(0.0);
++                    float solid = 0.0;
++                    for (int i = 0; i < 16; ++i) {
++                        if (i >= taps) break;
++                        vec2 t = vUV + stride * (float(i) + 0.5 - 0.5 * float(taps));
++                        vec4 c = decode(ivec2(
++                            dUVdx.x < 0.0 ? int(ceil(t.x - 0.0001)) : int(floor(t.x + 0.0001)),
++                            dUVdy.y < 0.0 ? int(ceil(t.y - 0.0001)) : int(floor(t.y + 0.0001))));
++                        // A transparent texel is stored as black with the STP bit
++                        // clear, so averaging it in as a colour draws a dark fringe
++                        // round every grate, torch and bush in the game. Weigh it
++                        // zero and renormalise by what survived.
++                        float w = (c.rgb == vec3(0.0) && c.a < 0.5) ? 0.0 : 1.0;
++                        sum += c.rgb * w;
++                        solid += w;
++                    }
++                    // The silhouette is the centre tap's, tested above, so it is
++                    // exactly where truncation put it. The semi-transparency bit
++                    // selects a blend equation rather than being a colour, so it
++                    // too is taken whole from the centre tap and never averaged.
++                    // An even tap count puts no tap at the centre, so every one of
++                    // them can still come back transparent.
++                    if (solid > 0.0) texel = vec4(sum / solid, texel.a);
++                }
+             }
+ 
+             if (vRepClut != 0 && texMode != 2) {
+@@ -417,6 +503,7 @@ internal static class GlShaders
+         uniform vec2  uDestSize;
+         uniform float uSemiTrans;
+         uniform float uBlendMode;
++        uniform float uAniso;
+ 
+         float u5(float f) { return floor(f * 31.0 + 0.5); }
+ 
+@@ -430,6 +517,31 @@ internal static class GlShaders
+             return u5(p.r) + u5(p.g) * 32.0 + u5(p.b) * 1024.0 + ceil(p.a) * 32768.0;
+         }
+ 
++        // One texel, the whole per-texel job -- see the core-profile shader for
++        // why a paletted texel cannot be filtered before the CLUT lookup.
++        vec4 decode(vec2 raw) {
++            vec2 win = uTexWindow.xy + 1.0;
++            vec2 uv = vec2(mod(raw.x, win.x), mod(raw.y, win.y)) + uTexWindow.zw;
++            uv = vec2(mod(uv.x, 256.0), mod(uv.y, 256.0));
++            if (vTexMode < 0.5) {
++                float s = fetch16(vec2(vPageBase.x + floor(uv.x / 4.0), vPageBase.y + uv.y));
++                float lane = mod(uv.x, 4.0);
++                float div = lane < 0.5 ? 1.0 : (lane < 1.5 ? 16.0 : (lane < 2.5 ? 256.0 : 4096.0));
++                float idx = mod(floor(s / div), 16.0);
++                return vRepClut > 0.5
++                    ? texture2D(uRepClut, vec2((idx + 0.5) / uRepClutCount, 0.5))
++                    : fetch(vec2(vClutBase.x + idx, vClutBase.y));
++            } else if (vTexMode < 1.5) {
++                float s = fetch16(vec2(vPageBase.x + floor(uv.x / 2.0), vPageBase.y + uv.y));
++                float div = mod(uv.x, 2.0) < 0.5 ? 1.0 : 256.0;
++                float idx = mod(floor(s / div), 256.0);
++                return vRepClut > 0.5
++                    ? texture2D(uRepClut, vec2((idx + 0.5) / uRepClutCount, 0.5))
++                    : fetch(vec2(vClutBase.x + idx, vClutBase.y));
++            }
++            return fetch(vec2(vPageBase.x + uv.x, vPageBase.y + uv.y));
++        }
++
+         uniform float uTrueColor;
+         vec3 quant5(vec3 c8) {
+             if (uTrueColor > 0.5) return clamp(c8, 0.0, 255.0) / 255.0;
+@@ -479,8 +591,10 @@ internal static class GlShaders
+                 vec2 fuv = vec2(mod(vUV.x, win.x), mod(vUV.y, win.y)) + uTexWindow.zw;
+ 
+         
+-                float rawU = dFdx(vUV.x) < 0.0 ? ceil(vUV.x - 0.0001) : floor(vUV.x + 0.0001);
+-                float rawV = dFdy(vUV.y) < 0.0 ? ceil(vUV.y - 0.0001) : floor(vUV.y + 0.0001);
++                vec2 dUVdx = dFdx(vUV);
++                vec2 dUVdy = dFdy(vUV);
++                float rawU = dUVdx.x < 0.0 ? ceil(vUV.x - 0.0001) : floor(vUV.x + 0.0001);
++                float rawV = dUVdy.y < 0.0 ? ceil(vUV.y - 0.0001) : floor(vUV.y + 0.0001);
+ 
+                 if (vTexMode > 5.5) {
+                     vec2 t = (fuv - uRepRect.xy) / uRepRect.zw;
+@@ -490,27 +604,36 @@ internal static class GlShaders
+                     stp = img.a < 0.95 ? 1.0 : 0.0;
+                     mask = max(stp, uSetMask);
+                 } else {
+-                    vec2 uv = vec2(mod(rawU, win.x), mod(rawV, win.y)) + uTexWindow.zw;
+-                    uv = vec2(mod(uv.x, 256.0), mod(uv.y, 256.0));
+-                    vec4 texel;
+-
+-                    if (vTexMode < 0.5) {
+-                        float s = fetch16(vec2(vPageBase.x + floor(uv.x / 4.0), vPageBase.y + uv.y));
+-                        float lane = mod(uv.x, 4.0);
+-                        float div = lane < 0.5 ? 1.0 : (lane < 1.5 ? 16.0 : (lane < 2.5 ? 256.0 : 4096.0));
+-                        float idx = mod(floor(s / div), 16.0);
+-                        texel = vRepClut > 0.5
+-                            ? texture2D(uRepClut, vec2((idx + 0.5) / uRepClutCount, 0.5))
+-                            : fetch(vec2(vClutBase.x + idx, vClutBase.y));
+-                    } else if (vTexMode < 1.5) {
+-                        float s = fetch16(vec2(vPageBase.x + floor(uv.x / 2.0), vPageBase.y + uv.y));
+-                        float div = mod(uv.x, 2.0) < 0.5 ? 1.0 : 256.0;
+-                        float idx = mod(floor(s / div), 256.0);
+-                        texel = vRepClut > 0.5
+-                            ? texture2D(uRepClut, vec2((idx + 0.5) / uRepClutCount, 0.5))
+-                            : fetch(vec2(vClutBase.x + idx, vClutBase.y));
+-                    } else {
+-                        texel = fetch(vec2(vPageBase.x + uv.x, vPageBase.y + uv.y));
++                    vec4 texel = decode(vec2(rawU, rawV));
++
++                    // Anisotropic filtering -- see the core-profile shader for what
++                    // the footprint is, why the taps are one texel apart rather
++                    // than spread over the whole span, why the transparent texels
++                    // are weighed out and why the centre tap alone decides the
++                    // silhouette. Identical arithmetic; only the types differ.
++                    if (uAniso > 1.5 && vRepClut < 0.5
++                            && !(texel.r == 0.0 && texel.g == 0.0
++                                 && texel.b == 0.0 && texel.a < 0.5)) {
++                        vec2 axis = dot(dUVdx, dUVdx) >= dot(dUVdy, dUVdy) ? dUVdx : dUVdy;
++                        float len = length(axis);
++                        float taps = min(ceil(len), uAniso);
++                        if (taps > 1.5 && len > 0.0) {
++                            vec2 stride = axis / len;
++                            vec3 sum = vec3(0.0);
++                            float solid = 0.0;
++                            for (int i = 0; i < 16; ++i) {
++                                if (float(i) >= taps) break;
++                                vec2 t = vUV + stride * (float(i) + 0.5 - 0.5 * taps);
++                                vec4 c = decode(vec2(
++                                    dUVdx.x < 0.0 ? ceil(t.x - 0.0001) : floor(t.x + 0.0001),
++                                    dUVdy.y < 0.0 ? ceil(t.y - 0.0001) : floor(t.y + 0.0001)));
++                                float w = (c.r == 0.0 && c.g == 0.0 && c.b == 0.0 && c.a < 0.5)
++                                    ? 0.0 : 1.0;
++                                sum += c.rgb * w;
++                                solid += w;
++                            }
++                            if (solid > 0.0) texel = vec4(sum / solid, texel.a);
++                        }
+                     }
+ 
+                     if (vRepClut > 0.5 && vTexMode < 1.5) {
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index a5ab806..20ea556 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -218,6 +218,37 @@ public static class GteDepth
+     /// other. Wired to KF2_PERSPECTIVE_FALLBACK.</summary>
+     public static bool PositionFallback;
+ 
++    /// <summary>
++    /// Anisotropic filtering: how many texels of the pixel's footprint may be
++    /// sampled along its longest axis. 1 is off and is the console's own single
++    /// point sample.
++    ///
++    /// The footprint of a screen pixel in texture space is the parallelogram
++    /// spanned by the two screen derivatives of the texture coordinate. Square-on
++    /// to a wall it is roughly a square; on a floor running away to the horizon it
++    /// is long and thin, covering many texels along one axis and barely one across
++    /// the other. Reading a single texel out of that is what makes a receding floor
++    /// crawl and sparkle as the camera moves. The fragment shader takes up to this
++    /// many samples along the long axis instead and averages them, which is the
++    /// only mip-free way to do it — the VRAM sheet cannot carry a mip chain, since
++    /// one page's lower level would average in its neighbours and a CLUT's would
++    /// average in the palette beside it.
++    ///
++    /// Clamped to 1..16 by <c>Kf2.Anisotropic</c>. GL backend only; the software
++    /// rasterizer is always a single sample. Safe to change at run time — it is a
++    /// plain uniform the next batch reads, with nothing rebuilt.
++    /// </summary>
++    public static int Anisotropy = 1;
++
++    /// <summary>True once the GL backend has found <c>uAniso</c> on the prim
++    /// program and is uploading it. This is the counter that matters: the port has
++    /// twice shipped a picture switch that printed "on" at boot while the mechanism
++    /// underneath it was dead — the RAM fast path went round the vertex map's
++    /// hooks, and a hook summary counted registrations rather than detours. A
++    /// setting that cannot reach the shader should say so rather than be believed.
++    /// </summary>
++    public static bool AnisotropyLive;
++
+     const int Bits = 14;
+     const int Size = 1 << Bits;
+     const int Mask = Size - 1;

@@ -1,0 +1,34 @@
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -480,7 +480,30 @@
+     {
+         var gl = _gl!;
+         _imgui!.Update((float)dt);
+-    
++
++        // Silk's ImGuiController computes io.DisplayFramebufferScale as
++        // FramebufferSize / window size with both sides int, so the ratio
++        // truncates before it is ever a float. On a display the compositor runs
++        // at a fractional scale -- KDE's 1.15, say -- the framebuffer is 1.15x
++        // the logical window and 1.15 becomes 1. RenderImDrawData then sizes
++        // both its GL viewport and every scissor rect from DisplaySize *
++        // FramebufferScale, so the whole interface is drawn into a logical-sized
++        // box in the bottom-left of a larger framebuffer: dead margins along the
++        // top and right, and the panels clipped where they cross them. An
++        // integer scale divides exactly, which is why this is invisible on a
++        // 1:1 monitor and only appears on the fractionally scaled one.
++        //
++        // Update() has already run NewFrame, so layout for this frame is fixed
++        // and still in logical units -- input is untouched, and this only
++        // restores the mapping onto the framebuffer. Render() reads
++        // io.DisplayFramebufferScale when it fills the draw data, so setting it
++        // anywhere between the two is what the backend sees.
++        var wsz = _window!.Size;
++        var wfb = _window.FramebufferSize;
++        if (wsz.X > 0 && wsz.Y > 0)
++            ImGui.GetIO().DisplayFramebufferScale =
++                new Vector2((float)wfb.X / wsz.X, (float)wfb.Y / wsz.Y);
++
+         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+         var fbDef = _window!.FramebufferSize;
+         gl.Viewport(0, 0, (uint)fbDef.X, (uint)fbDef.Y);

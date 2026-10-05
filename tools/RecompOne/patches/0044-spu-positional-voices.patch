@@ -1,0 +1,249 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs b/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs
+index d7a19fd..fc477a0 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/Spu.cs
+@@ -29,6 +29,9 @@ public sealed class Spu
+     {
+         public long VoiceClamps, MixClamps, Frames, Ticks;
+         public int ActiveVoicesPeak;
++
++        // Voices rendered from a position (SpuSpatialVoice), peak per mixed tick.
++        public int SpatialVoicesPeak;
+     }
+ 
+     public readonly Counters Stats = new();
+@@ -161,6 +164,10 @@ public sealed class Spu
+         public int VolCycL, VolCycR;
+ 
+         public readonly short[] Buf = new short[History + 28];
++
++        // Counts key-ons, so a positional tag belongs to one note and not to the voice.
++        public int KonSerial;
++        public readonly SpuSpatialVoice Sp = new();
+     }
+ 
+     private readonly Voice[] _v = new Voice[24];
+@@ -623,9 +630,54 @@ public sealed class Spu
+ 
+     private uint _konPending, _koffPending;
+ 
++    /// <summary>Each voice's key-on count, for tagging a note that is being keyed on now.</summary>
++    public void CopyKeyOnSerials(int[] dst)
++    {
++        lock (_sync)
++        {
++            for (var i = 0; i < 24 && i < dst.Length; i++) dst[i] = _v[i].KonSerial;
++        }
++    }
++
++    /// <summary>
++    /// Render key-on <paramref name="serial"/> of <paramref name="voice"/> from a
++    /// position (see <see cref="SpuSpatialVoice"/>). Levels are per ear in the
++    /// game's 0..127 volume units, <paramref name="keyOnSum"/> is the left plus right
++    /// the game asked for at key-on, delays are in samples and the shelves are the
++    /// head-shadow gain at Nyquist (1 is flat). A new serial snaps to the targets
++    /// rather than gliding from the last note's. Serial -1 hands the voice back to
++    /// its registers.
++    /// </summary>
++    public void SetSpatial(int voice, int serial, float keyOnSum, float levelL, float levelR, float delayL,
++        float delayR, float shelfL, float shelfR, float rear)
++    {
++        if ((uint)voice >= 24) return;
++        lock (_sync)
++        {
++            var sp = _v[voice].Sp;
++            sp.KeyOnSum = keyOnSum;
++            sp.TgtL = levelL;
++            sp.TgtR = levelR;
++            sp.TgtDl = delayL;
++            sp.TgtDr = delayR;
++            sp.TgtAl = shelfL;
++            sp.TgtAr = shelfR;
++            sp.TgtRear = rear;
++            if (sp.Serial != serial)
++            {
++                sp.Serial = serial;
++                sp.Snap();
++                sp.ClearHistory();
++            }
++        }
++    }
++
+     private void KeyOn(ushort mask, bool hi)
+     {
+         var bits = (uint)mask << (hi ? 16 : 0);
++        for (var i = 0; i < 24; i++)
++            if ((bits & (1u << i)) != 0)
++                _v[i].KonSerial++;
+         _konPending |= bits;
+         _koffPending &= ~bits;
+         _endx &= ~bits;
+@@ -657,6 +709,7 @@ public sealed class Spu
+                 v.HasBlock = false;
+                 v.EndX = false;
+                 _endx &= ~bit;
++                if (v.Sp.Serial == v.KonSerial) v.Sp.ClearHistory();
+             }
+             else if ((_koffPending & bit) != 0)
+             {
+@@ -839,6 +892,7 @@ public sealed class Spu
+         var prevOutx = 0;
+         var interpolation = Interpolation;
+         var active = 0;
++        var spatial = 0;
+ 
+         for (var i = 0; i < 24; i++)
+         {
+@@ -898,8 +952,18 @@ public sealed class Spu
+ 
+             prevOutx = amp;
+ 
+-            var vl = (amp * v.CurVolL) >> 15;
+-            var vr = (amp * v.CurVolR) >> 15;
++            int vl, vr;
++            if (v.Sp.Serial == v.KonSerial)
++            {
++                v.Sp.Render(amp, v.CurVolL, v.CurVolR, out vl, out vr);
++                spatial++;
++            }
++            else
++            {
++                vl = (amp * v.CurVolL) >> 15;
++                vr = (amp * v.CurVolR) >> 15;
++            }
++
+             sumL += vl;
+             sumR += vr;
+             if ((eonMask & (1u << i)) != 0)
+@@ -910,6 +974,7 @@ public sealed class Spu
+         }
+ 
+         if (active > Stats.ActiveVoicesPeak) Stats.ActiveVoicesPeak = active;
++        if (spatial > Stats.SpatialVoicesPeak) Stats.SpatialVoicesPeak = spatial;
+         if (sumL is < -32768 or > 32767 || sumR is < -32768 or > 32767) Stats.VoiceClamps++;
+         sumL = Math.Clamp(sumL, -32768, 32767);
+         sumR = Math.Clamp(sumR, -32768, 32767);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Hardware/SpuSpatial.cs b/tools/RecompOne/RecompOne.Runtime/Hardware/SpuSpatial.cs
+new file mode 100644
+index 0000000..47b0731
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Hardware/SpuSpatial.cs
+@@ -0,0 +1,118 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// One voice rendered from a position rather than from its volume registers.
++///
++/// The port decides *which* voices are positional and *where* they are (the game
++/// thread knows the listener and the source); this is only the per-sample half, so
++/// every target is in the game's own units and the mixer knows nothing about the
++/// world. The chain is mono in, then a rear low-pass, a fractional delay per ear
++/// (the interaural time difference) and a first-order head-shadow shelf per ear
++/// (Brown and Duda's spherical head, 1998), then a broadband gain per ear. A
++/// speaker target is the same chain with no delay and flat shelves.
++///
++/// Targets move once a frame; everything is smoothed per sample over ~15 ms so a
++/// turn of the head is not a zipper. Loudness follows the registers: the game's
++/// VAB scaling reaches the voice's volume registers, never the port, so the
++/// registers' magnitude divided by what the game asked for at key-on is the scale
++/// every target is multiplied by.
++/// </summary>
++public sealed class SpuSpatialVoice
++{
++    // Head radius 8.75 cm, sound 343 m/s; bilinear transform at 44.1 kHz.
++    const float W = 2f * 343f / 0.0875f;
++    const float K = 2f * 44100f;
++    static readonly float Inv = 1f / (W + K);
++    static readonly float A1 = (W - K) * Inv;
++    static readonly float WInv = W * Inv;
++    static readonly float KInv = K * Inv;
++
++    static readonly float Smooth = 1f - MathF.Exp(-1f / (0.015f * 44100f));
++    static readonly float RearLp = 1f - MathF.Exp(-2f * MathF.PI * 2500f / 44100f);
++
++    const int Ring = 64;
++
++    /// <summary>A delay can be at most this many samples; the ring and the
++    /// four-tap read need the rest.</summary>
++    public const float MaxDelay = Ring / 2 - 3;
++
++    /// <summary>The key-on this voice's targets belong to; the mixer renders the voice
++    /// positionally only while it is the voice's current key-on.</summary>
++    internal int Serial = -1;
++
++    /// <summary>What the game asked for at key-on, left plus right, 0..254.</summary>
++    internal float KeyOnSum;
++
++    internal float TgtL, TgtR, TgtDl, TgtDr, TgtAl = 1, TgtAr = 1, TgtRear;
++    float _l, _r, _dl, _dr, _al = 1, _ar = 1, _rear;
++
++    readonly float[] _ring = new float[Ring * 2];
++    int _pos;
++    float _lp, _xl, _yl, _xr, _yr;
++
++    internal void Snap()
++    {
++        _l = TgtL;
++        _r = TgtR;
++        _dl = TgtDl;
++        _dr = TgtDr;
++        _al = TgtAl;
++        _ar = TgtAr;
++        _rear = TgtRear;
++    }
++
++    internal void ClearHistory()
++    {
++        Array.Clear(_ring);
++        _pos = 0;
++        _lp = _xl = _yl = _xr = _yr = 0;
++    }
++
++    internal void Render(int amp, short curL, short curR, out int outL, out int outR)
++    {
++        _l += (TgtL - _l) * Smooth;
++        _r += (TgtR - _r) * Smooth;
++        _dl += (TgtDl - _dl) * Smooth;
++        _dr += (TgtDr - _dr) * Smooth;
++        _al += (TgtAl - _al) * Smooth;
++        _ar += (TgtAr - _ar) * Smooth;
++        _rear += (TgtRear - _rear) * Smooth;
++
++        float x = amp;
++        _lp += (x - _lp) * RearLp;
++        x -= _rear * (x - _lp);
++
++        _pos = (_pos + 1) & (Ring - 1);
++        _ring[_pos] = x;
++        _ring[_pos + Ring] = x;
++
++        var el = Tap(_dl);
++        var er = Tap(_dr);
++
++        var yl = (WInv + _al * KInv) * el + (WInv - _al * KInv) * _xl - A1 * _yl;
++        var yr = (WInv + _ar * KInv) * er + (WInv - _ar * KInv) * _xr - A1 * _yr;
++        _xl = el;
++        _xr = er;
++        _yl = MathF.Abs(yl) < 1e-12f ? 0 : yl;
++        _yr = MathF.Abs(yr) < 1e-12f ? 0 : yr;
++
++        var k = KeyOnSum > 0 ? (Math.Abs((int)curL) + Math.Abs((int)curR)) / (KeyOnSum * 32768f) : 0f;
++        outL = (int)(yl * _l * k);
++        outR = (int)(yr * _r * k);
++    }
++
++    // Catmull-Rom between the samples `delay` and `delay + 1` old. One sample of
++    // latency is added so the newer neighbour always exists.
++    float Tap(float delay)
++    {
++        delay = Math.Clamp(delay, 0f, MaxDelay) + 1f;
++        var i = (int)delay;
++        var f = delay - i;
++        var b = _pos + Ring - i;
++        float ym1 = _ring[b + 1], y0 = _ring[b], y1 = _ring[b - 1], y2 = _ring[b - 2];
++        var c1 = 0.5f * (y1 - ym1);
++        var c2 = ym1 - 2.5f * y0 + 2f * y1 - 0.5f * y2;
++        var c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
++        return ((c3 * f + c2) * f + c1) * f + y0;
++    }
++}

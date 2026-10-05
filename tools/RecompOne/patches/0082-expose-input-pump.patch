@@ -1,0 +1,11 @@
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -559,7 +559,7 @@ public static class HostWindow
+     /// never change under it. Does nothing if the host was pumped less than
+     /// minIntervalMs ago, so a caller in a tight loop is free to ask every time.
+     /// </summary>
+-    internal static void PumpInput(double minIntervalMs)
++    public static void PumpInput(double minIntervalMs)
+     {
+         if (_headless || _window == null) return;
+         double now = _pumpClock.Elapsed.TotalMilliseconds;

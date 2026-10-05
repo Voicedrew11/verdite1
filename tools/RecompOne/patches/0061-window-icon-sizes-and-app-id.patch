@@ -1,0 +1,145 @@
+diff --git a/RecompOne.Runtime/Host/Window/HostWindow.cs b/RecompOne.Runtime/Host/Window/HostWindow.cs
+index c45999f..b7fd566 100644
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -108,6 +108,33 @@ public static class HostWindow
+         };
+     }
+ 
++    /// <summary>
++    /// What the window calls itself to the desktop, which is how a compositor
++    /// finds its desktop entry -- and so its icon -- on Wayland.
++    /// </summary>
++    public static string AppId = "recompone";
++
++    /// <summary>
++    /// GLFW leaves the Wayland app id and the X11 class empty, so a compositor has
++    /// nothing to match a desktop entry against. Silk 2.22 has no name for the
++    /// Wayland hint, which is GLFW 3.4's <c>GLFW_WAYLAND_APP_ID</c> (0x00026001).
++    /// </summary>
++    private static void HintAppId(string id)
++    {
++        if (string.IsNullOrWhiteSpace(id)) return;
++        try
++        {
++            var glfw = Silk.NET.GLFW.Glfw.GetApi();
++            glfw.WindowHintString(0x00026001, id);
++            glfw.WindowHintString((int)Silk.NET.GLFW.WindowHintString.X11ClassName, id);
++            glfw.WindowHintString((int)Silk.NET.GLFW.WindowHintString.X11InstanceName, id);
++        }
++        catch (Exception e)
++        {
++            Console.Error.WriteLine($"[Host] app id: {e.Message}");
++        }
++    }
++
+     public static void Initialize(string title)
+     {
+         ConfigManager.Load();
+@@ -136,6 +163,7 @@ public static class HostWindow
+                 _window.Load += OnLoad;
+                 _window.Render += OnRender;
+                 _window.Closing += OnClosing;
++                HintAppId(AppId);
+                 _window.Initialize();
+                 Console.WriteLine($"[Host] gl context {api.Version.MajorVersion}.{api.Version.MinorVersion} {api.Profile}");
+                 return;
+@@ -165,7 +193,7 @@ public static class HostWindow
+         Title = title;
+     }
+ 
+-    private static Silk.NET.Core.RawImage? _pendingIcon;
++    private static Silk.NET.Core.RawImage[]? _pendingIcons;
+ 
+     public static void SetIcon(byte[] data)
+     {
+@@ -194,14 +222,35 @@ public static class HostWindow
+             return;
+         }
+ 
+-        var image = new Silk.NET.Core.RawImage(width, height, rgba);
+-        _pendingIcon = image;
+-        Apply(image);
++        SetIcons([(rgba, width, height)]);
++    }
++
++    /// <summary>
++    /// Several sizes of one icon. GLFW picks the nearest to what the desktop asks
++    /// for, so a pixel-art icon supplied at its exact multiples is never resampled.
++    /// </summary>
++    public static void SetIcons(IReadOnlyList<(byte[] Rgba, int Width, int Height)> images)
++    {
++        var list = new List<Silk.NET.Core.RawImage>(images.Count);
++        foreach (var (rgba, w, h) in images)
++        {
++            if (w <= 0 || h <= 0 || rgba.Length < w * h * 4)
++            {
++                Console.Error.WriteLine("[Host] icon pixel buffer does not match its size");
++                continue;
++            }
++
++            list.Add(new Silk.NET.Core.RawImage(w, h, rgba));
++        }
++
++        if (list.Count == 0) return;
++        _pendingIcons = list.ToArray();
++        Apply(_pendingIcons);
+     }
+ 
+     public static void ClearIcon()
+     {
+-        _pendingIcon = null;
++        _pendingIcons = null;
+         if (_window == null) return;
+         try
+         {
+@@ -213,12 +262,11 @@ public static class HostWindow
+         }
+     }
+ 
+-    private static void Apply(Silk.NET.Core.RawImage image)
++    private static void Apply(Silk.NET.Core.RawImage[] icons)
+     {
+         if (_window == null) return;
+         try
+         {
+-            var icons = new[] { image };
+             _window.SetWindowIcon(icons);
+         }
+         catch (Exception e)
+@@ -555,7 +603,7 @@ public static class HostWindow
+         var input = _window!.CreateInput();
+         InputManager.Initialize(input);
+ 
+-        if (_pendingIcon is { } icon) Apply(icon);
++        if (_pendingIcons is { } icons) Apply(icons);
+ 
+         _gl = GL.GetApi(_window);
+         _gl.ClearColor(0.08f, 0.08f, 0.08f, 1f);
+diff --git a/RecompOne.Runtime/Runtime.cs b/RecompOne.Runtime/Runtime.cs
+index 0c5f2e4..aa1f289 100644
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -162,6 +162,22 @@ public static class Runtime
+         HostWindow.SetIcon(rgba, width, height);
+     }
+ 
++    /// <summary>
++    /// What the window calls itself to the desktop. On Wayland it is the whole of
++    /// how a compositor finds the window's desktop entry, and so its icon; set it
++    /// before <see cref="Initialize"/>.
++    /// </summary>
++    public static string AppId
++    {
++        get => HostWindow.AppId;
++        set => HostWindow.AppId = value;
++    }
++
++    public static void SetIcons(IReadOnlyList<(byte[] Rgba, int Width, int Height)> images)
++    {
++        HostWindow.SetIcons(images);
++    }
++
+     public static void ClearIcon()
+     {
+         HostWindow.ClearIcon();

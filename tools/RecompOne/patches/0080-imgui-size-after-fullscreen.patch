@@ -1,0 +1,44 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+index c5711b2..4b3d722 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -1031,10 +1031,39 @@ public static class HostWindow
+         }
+     }
+ 
++    private static Action<Vector2D<int>>? _imguiResized;
++    private static bool _imguiResizedMissing;
++
++    // 0080. Silk's ImGuiController learns the window's size only from the Resize
++    // event, and GLFW on Wayland raises no window-size callback on leaving
++    // fullscreen (only the framebuffer one), so the interface stayed laid out
++    // for the fullscreen size with its top -- the menu bar -- off the window.
++    // io.DisplaySize still holds what the controller last applied.
++    private static void SyncImGuiSize()
++    {
++        var size = _window!.Size;
++        if (size.X <= 0 || size.Y <= 0 || _imguiResizedMissing) return;
++        var io = ImGui.GetIO().DisplaySize;
++        if (io.X <= 0 || ((int)io.X == size.X && (int)io.Y == size.Y)) return;
++
++        _imguiResized ??= typeof(ImGuiController)
++            .GetMethod("WindowResized", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
++            ?.CreateDelegate<Action<Vector2D<int>>>(_imgui);
++        if (_imguiResized == null)
++        {
++            _imguiResizedMissing = true;
++            Console.WriteLine("[Host] ImGuiController has no WindowResized; a missed resize cannot be recovered");
++            return;
++        }
++
++        _imguiResized(size);
++    }
++
+     private static void OnRender(double dt)
+     {
+         var gl = _gl!;
+         var update = Profiler.Begin(Profiler.ImGuiUpdate);
++        SyncImGuiSize();
+         _imgui!.Update((float)dt);
+         Profiler.End(update);
+ 

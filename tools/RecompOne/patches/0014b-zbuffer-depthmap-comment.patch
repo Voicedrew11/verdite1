@@ -1,0 +1,15 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 79ebec0..a43cf70 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -756,6 +756,10 @@ public sealed class GlCore : IGpuBackend
+                 if (src == null || rt.LastDrawFrame > src.LastDrawFrame) src = rt;
+             }
+ 
++        // The target the frame's depth batches actually went to — not the one being
++        // presented (with two buffers that is last frame's) and not the most
++        // recently drawn (a full-screen fill stamps LastDrawFrame too, so that can
++        // be a buffer which was just cleared).
+         int w1x = src != null ? w + src.Margin * 2 : w;
+         int h1x = h;
+         float aspect = src is { Margin: > 0 } ? GpuHle.WideAspect : src != null ? GpuHle.SourceAspect : GpuHle.OutputAspect;

@@ -1,0 +1,100 @@
+--- a/RecompOne.Runtime/Dispatch/Dispatcher.cs
++++ b/RecompOne.Runtime/Dispatch/Dispatcher.cs
+@@ -173,6 +173,9 @@
+         Runtime.OverlayLog.Record(name, OverlayEventKind.Unloaded);
+     }
+ 
++    /// <summary>Is addr the entry point of a function in a resident overlay?</summary>
++    public static bool HasFunction(uint addr) => _funcMap.ContainsKey(addr);
++
+     public static void Call(CpuContext c, IMemory m, uint addr)
+     {
+         if (BiosKernel.TryDispatch(c, m, addr)) return;
+--- a/RecompOne.Runtime/Hardware/Interrupts.cs
++++ b/RecompOne.Runtime/Hardware/Interrupts.cs
+@@ -7,19 +7,79 @@
+ 
+ public static class Interrupts
+ {
++    static readonly HashSet<string> _reported = new();
++
++    static void ReportOnce(int irq, string kind, string what)
++    {
++        lock (_reported)
++            if (_reported.Add($"{irq}:{kind}"))
++                Log.Bios($"IRQ {irq} {what}");
++    }
++
++    /// <summary>
++    /// Address of the game's PSY-Q interrupt-callback table, indexed by irq*4 --
++    /// what libapi's InterruptCallback(irq, func) writes into.
++    ///
++    /// Zero means "derive it from the HookEntryInt argument", which only holds
++    /// for libraries whose interrupt environment matches the offset below. The
++    /// argument is really a jmp_buf, and where the callback table sits relative
++    /// to it is a property of one link of one library version, so a game whose
++    /// layout differs reads unrelated data here. Set this per resident overlay
++    /// when the table has been identified.
++    /// </summary>
++    public static uint CallbackTable;
++
+     public static void Deliver(int irq, CpuContext cpu, IMemory mem)
+     {
+-        uint intrEnv = BiosB.IntrEnvInInterruptAddr;
+-        if (intrEnv == 0) return;
++        uint slot;
++        if (CallbackTable != 0)
++        {
++            slot = CallbackTable + (uint)irq * 4u;
++        }
++        else
++        {
++            uint intrEnv = BiosB.IntrEnvInInterruptAddr;
++            if (intrEnv == 0) { ReportOnce(irq, "env", "dropped: no intr env (HookEntryInt never ran)"); return; }
++            slot = intrEnv + 2u + (uint)irq * 4u;
++        }
++
++        uint handler = mem.ReadU32(slot);
++        // Worth saying out loud: a missing handler is silent otherwise, and the
++        // symptom lands somewhere else entirely -- a callback that never fires,
++        // not an error. The interrupt-environment layout differs between PSY-Q
++        // versions, so a run where every IRQ misses usually means the offset
++        // BiosB derives from HookEntryInt does not fit this game's library.
++        if (handler == 0) { ReportOnce(irq, "empty", $"dropped: no handler at 0x{slot:X8}"); return; }
++
++        // The other half of that: a table address that is wrong does not read as
++        // zero, it reads as whatever the game keeps there, and calling that
++        // jumps into the middle of nothing -- an "unmapped call" on a data word,
++        // or worse, a real function run once a frame for no reason. Anything
++        // that is not a word-aligned function the dispatcher knows is not a
++        // callback, so drop it and say which slot it came from.
++        if ((handler & 3u) != 0 || !Dispatcher.HasFunction(handler))
++        {
++            ReportOnce(irq, "bogus",
++                $"dropped: handler 0x{handler:X8} at 0x{slot:X8} is not a known " +
++                "function (the callback table address is wrong)");
++            return;
++        }
+ 
+-        uint handler = mem.ReadU32(intrEnv + 2u + (uint)irq * 4u);
+-        if (handler == 0) return;
++        // The counterpart of the drops: which callback an IRQ actually reaches,
++        // once per handler. A delivery that starts happening where none used to
++        // is as much a change in behaviour as one that stops.
++        ReportOnce(irq, $"deliver:{handler:X8}", $"-> 0x{handler:X8} from 0x{slot:X8}");
+ 
+         //takes a snap, apparently interrupt callbacks dont operate at the same context? could be wrong in mips3000, need to check furter TODO, seens to be accurate
+         var snap = cpu.Snapshot();
+-        mem.WriteU16(intrEnv, 1);
++        // The in-interrupt flag lives at the base of the same derived structure,
++        // so it is only known to be that when the structure is what located the
++        // handler in the first place. Setting it from a table address instead
++        // would be writing 1 into an address nothing identified.
++        uint intrFlag = CallbackTable == 0 ? BiosB.IntrEnvInInterruptAddr : 0u;
++        if (intrFlag != 0) mem.WriteU16(intrFlag, 1);
+         Dispatcher.Call(cpu, mem, handler);
+-        mem.WriteU16(intrEnv, 0);
++        if (intrFlag != 0) mem.WriteU16(intrFlag, 0);
+         cpu.Restore(snap);
+     }
+ }

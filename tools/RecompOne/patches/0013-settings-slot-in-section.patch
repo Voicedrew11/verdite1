@@ -1,0 +1,43 @@
+diff --git a/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs b/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
+index 42fd032..9f188e3 100644
+--- a/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
++++ b/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
+@@ -48,6 +48,11 @@ internal sealed class DisplaySettingsSection : ISettingsSection
+         if (scale != Hle.GlVram.Scale)
+             ImGui.TextDisabled(Localization.T("settings.display.restart_pending"));
+ 
++        // How big the picture is drawn, and how wide it is presented, are the same
++        // kind of choice, so a port offering an aspect ratio has somewhere to put it
++        // that is not a group appended below the whole section.
++        SettingsRegistry.DrawSlot("display.render_scale");
++
+         ImGui.Separator();
+ 
+         int index = Array.IndexOf(Backends, ConfigManager.View.GpuBackend);
+diff --git a/RecompOne.Runtime/Host/Window/Settings/SettingsRegistry.cs b/RecompOne.Runtime/Host/Window/Settings/SettingsRegistry.cs
+index 99ec9c5..70b666f 100644
+--- a/RecompOne.Runtime/Host/Window/Settings/SettingsRegistry.cs
++++ b/RecompOne.Runtime/Host/Window/Settings/SettingsRegistry.cs
+@@ -32,6 +32,22 @@ public static class SettingsRegistry
+     internal static IReadOnlyList<Action> GetExtensions(string sectionId)
+         => _extensions.TryGetValue(sectionId, out var list) ? list : [];
+ 
++    /// <summary>
++    /// Draw whatever was registered against <paramref name="slotId"/>, from inside
++    /// a section's own body.
++    ///
++    /// <see cref="Extend"/> appends after a section has drawn everything it has,
++    /// which is the right place for a group of its own but the wrong one for an
++    /// option that belongs beside an existing control -- an aspect ratio next to
++    /// the render scale, say. A section that wants to offer that calls this at the
++    /// point it means, with an id of its own (<c>"display.render_scale"</c>), and
++    /// anything registered there draws in line with the section's own widgets.
++    /// </summary>
++    public static void DrawSlot(string slotId)
++    {
++        foreach (var draw in GetExtensions(slotId)) draw();
++    }
++
+     public static IReadOnlyList<ISettingsSection> Sections
+     {
+         get

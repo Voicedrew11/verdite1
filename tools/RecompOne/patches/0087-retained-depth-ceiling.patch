@@ -1,0 +1,170 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+index 95ec3eb..226a89d 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+@@ -31,7 +31,7 @@ public sealed partial class GlCore
+         _uwDither = _gl.GetUniformLocation(_progWorld, "uWorldDither");
+         _uwCueFromZ = _gl.GetUniformLocation(_progWorld, "uCueFromZ");
+         int L(string n) => _gl.GetUniformLocation(_progWorld, n);
+-        _uwDepthBias = L("uDepthBias"); _uwDepthSlope = L("uDepthSlope"); _uwDepthOnly = L("uDepthOnly");
++        _uwDepthBias = L("uDepthBias"); _uwDepthSlope = L("uDepthSlope"); _uwDepthOnly = L("uDepthOnly"); _uwDepthCap = L("uDepthCap"); _uwDepthCapZ = L("uDepthCapZ");
+         _uwOpaqueDepth = L("uOpaqueDepth"); _uwSwellOn = L("uSwellOn"); _uwSwell = L("uSwell");
+         _uwWaveOn = L("uWaveOn"); _uwWaveN = L("uWaveN"); _uwWaveRect = L("uWaveRect"); _uwWaveR = L("uWaveR");
+         _uwWaveCam = L("uWaveCam"); _uwWaveT = L("uWaveT"); _uwWaveCentre = L("uWaveCentre"); _uwWaveH = L("uWaveH");
+@@ -59,7 +59,7 @@ public sealed partial class GlCore
+     bool _wMips;
+     // The view depth the normal pass's last water slice reached.
+     float _wDone;
+-    int _uwDepthBias, _uwDepthSlope, _uwDepthOnly, _uwSwellOn, _uwSwell;
++    int _uwDepthBias, _uwDepthSlope, _uwDepthOnly, _uwSwellOn, _uwSwell, _uwDepthCap = -1, _uwDepthCapZ = -1;
+     int _uwWaveOn, _uwWaveN, _uwWaveRect, _uwWaveR, _uwWaveCam, _uwWaveT, _uwWaveCentre, _uwWaveH, _uwWaveTime, _uwWaveParams;
+     int _uwnSwellOn, _uwnSwell, _uwnZSlice;
+     // The world normal program is set up for this pass's frame (DrawWorldNormals).
+@@ -279,6 +279,7 @@ public sealed partial class GlCore
+         _gl.DepthMask(false);
+         if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, GteDepth.DepthBias / 65536f);
+         if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, GteDepth.DepthSlope);
++        ProbeTolerance(0, () => DrawRange(0, null));
+         int drawn = DrawRange(0, null);
+         if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, 0f);
+         if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, 0f);
+@@ -287,6 +288,34 @@ public sealed partial class GlCore
+         return drawn;
+     }
+ 
++    /// <summary>The tolerance probe (<see cref="RetainedScene.ToleranceProbe"/>), in a
++    /// colour pass's state, before it draws: <paramref name="draw"/> again with colour
++    /// off, its samples counted with the tolerance whole and capped at each of
++    /// <see cref="RetainedScene.ToleranceCaps"/>. Writes nothing.</summary>
++    void ProbeTolerance(int pass, Action draw)
++    {
++        if (!RetainedScene.ToleranceProbe || _uwDepthCap < 0) return;
++        _gl.ColorMask(false, false, false, false);
++        long Count(float cap)
++        {
++            _gl.Uniform1(_uwDepthCap, cap / 65536f);
++            uint q = _gl.GenQuery();
++            _gl.BeginQuery(QueryTarget.SamplesPassed, q);
++            draw();
++            _gl.EndQuery(QueryTarget.SamplesPassed);
++            _gl.GetQueryObject(q, QueryObjectParameterName.Result, out long n);
++            _gl.DeleteQuery(q);
++            return n;
++        }
++        long all = Count(1e9f);
++        RetainedScene.ToleranceSamples[pass] += all;
++        var caps = RetainedScene.ToleranceCaps;
++        for (int k = 0; k < caps.Length; k++)
++            RetainedScene.ToleranceBehind[pass * caps.Length + k] += all - Count(caps[k]);
++        _gl.Uniform1(_uwDepthCap, 1e9f / 65536f);
++        _gl.ColorMask(true, true, true, true);
++    }
++
+     // 0086. The main view's models are drawing, and mark the stencil where they land.
+     bool _maskModels;
+ 
+@@ -392,6 +421,8 @@ public sealed partial class GlCore
+         if (_uwTrueColor >= 0) _gl.Uniform1(_uwTrueColor, GteDepth.TrueColor ? 1f : 0f);
+         if (_uwPlainZ >= 0) _gl.Uniform1(_uwPlainZ, GteDepth.PlainDepth);
+         if (_uwMirror >= 0) _gl.Uniform1(_uwMirror, 0);
++        if (_uwDepthCapZ >= 0)
++            _gl.Uniform1(_uwDepthCapZ, RetainedScene.DepthCapPixels > 0f ? RetainedScene.DepthCapPixels / Math.Max(1f, f.View.H) : 0f);
+         if (_uwMaskOn >= 0) _gl.Uniform1(_uwMaskOn, 0);
+         if (_uwAtmosSkip >= 0) _gl.Uniform1(_uwAtmosSkip, 0);
+         // The frame's own settings, as its packets take them: the GTE's whole pixels
+@@ -499,6 +530,7 @@ public sealed partial class GlCore
+         if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, 0f);
+         if (_uwSwellOn >= 0) _gl.Uniform1(_uwSwellOn, 0);
+         if (_uwClipOn >= 0) _gl.Uniform1(_uwClipOn, 0);
++        if (_uwDepthCapZ >= 0) _gl.Uniform1(_uwDepthCapZ, 0f);
+         EndWorldLights();
+     }
+ 
+@@ -1178,6 +1210,7 @@ public sealed partial class GlCore
+             if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, GteDepth.DepthBias / 65536f);
+             if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, GteDepth.DepthSlope);
+         }
++        if (bias) ProbeTolerance(1, () => DrawModelRuns(f));
+         MarkModels(true);
+         foreach (var g in f.Groups)
+         {
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
+index 1455d0d..ad0b061 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
+@@ -390,6 +390,16 @@ public sealed partial class GlCore
+             if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, GteDepth.DepthBias / 65536f);
+             if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, GteDepth.DepthSlope);
+         }
++        if (bias)
++            ProbeTolerance(2, () =>
++            {
++                foreach (var m in list)
++                {
++                    if (m.MeshGen != _meshGen) continue;
++                    SendInstance(m, true);
++                    _gl.DrawArrays(PrimitiveType.Triangles, m.MeshStart, (uint)m.MeshCount);
++                }
++            });
+         MarkModels(true);
+         foreach (var m in list)
+         {
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 9494a4d..fb3842b 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -1942,6 +1942,11 @@ internal static class GlShaders
+         uniform int   uOpaqueDepth;
+         uniform float uDepthBias;
+         uniform float uDepthSlope;
++        // The tolerance probe's ceiling on the tolerance (RetainedScene.ToleranceProbe).
++        uniform float uDepthCap = 1.0e9;
++        // RetainedScene.DepthCapPixels over H: the main view's ceiling on the slope term,
++        // per unit of depth. 0 is none.
++        uniform float uDepthCapZ;
+         uniform int   uScale;
+         uniform vec2  uPosBias;
+         uniform float uAniso;
+@@ -2406,6 +2411,13 @@ internal static class GlShaders
+             // punch-through discard cannot occlude whatever is behind the hole.
+             // 0051. The tolerance is on the test only; GlCore draws the true depth first.
+             float dz = uDepthBias + uDepthSlope * max(abs(dFdx(vDepth)), abs(dFdy(vDepth)));
++            // The slope term grows without bound on a face seen edge-on, where half a
++            // pixel spans the face's whole depth: a model's silhouette then drew over a
++            // surface hundreds of units in front of it. A coplanar partner's offset is a
++            // unit or two of world, which at depth z moves the depth by at most a few
++            // game pixels' width there (z / H each), so the term stops at that.
++            if (uDepthCapZ > 0.0) dz = min(dz, uDepthBias + vDepth * uDepthCapZ);
++            dz = min(dz, uDepthCap);
+             gl_FragDepth = vDepth > 0.0 ? max(vDepth - dz, 0.0) : 1.0;
+             if (uFarPlane != 0) gl_FragDepth = 1.0;
+             if (uClipOn != 0 && vDepth > 0.0) {
+diff --git a/RecompOne.Runtime/Gpu/RetainedScene.cs b/RecompOne.Runtime/Gpu/RetainedScene.cs
+index eab5b14..6c54d78 100644
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -1082,6 +1082,24 @@ public static class RetainedScene
+     public static readonly float[] MapSlacks = [8, 32, 128, 512, 0xF0 * 4];
+     public static readonly long[] ModelUnderSlack = new long[5];
+ 
++    /// <summary>The tolerance probe: before each colour pass of the main view's map and
++    /// models, the samples the tolerant test passes, and of those the ones it passes
++    /// only because the tolerance exceeded each of <see cref="ToleranceCaps"/> -- colour
++    /// drawn over a nearer surface by more than that many view-depth units. Occlusion
++    /// queries (a stall each); off by default; cumulative.</summary>
++    public static bool ToleranceProbe;
++    public static readonly float[] ToleranceCaps = [0.25f, 1, 4, 16, 64, 512];
++    /// <summary>Per pass: 0 the map, 1 the frame's posed models, 2 the instances.</summary>
++    public static readonly long[] ToleranceSamples = new long[3];
++    /// <summary>Pass * <see cref="ToleranceCaps"/>.Length + cap.</summary>
++    public static readonly long[] ToleranceBehind = new long[18];
++
++    /// <summary>The main view's ceiling on 0051's slope term, in the game's pixels: a
++    /// fragment of the map or a model is pulled towards the camera by at most the
++    /// constant bias plus the world width of this many pixels at its own depth
++    /// (z / H each). 0, the default, leaves the term unbounded.</summary>
++    public static float DepthCapPixels;
++
+     /// <summary>The planes the current frame mirrors in, nearest-first by the
+     /// port's own ranking; at most <see cref="MaxPlanes"/>.</summary>
+     public static void SetPlanes(ReadOnlySpan<float> worldY)

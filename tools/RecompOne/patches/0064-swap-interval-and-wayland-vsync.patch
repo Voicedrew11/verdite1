@@ -1,0 +1,151 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+index 005e960..090ad11 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -149,7 +149,8 @@ public static class HostWindow
+                 {
+                     Size = new Vector2D<int>(1280, 720),
+                     Title = title,
+-                    VSync = ConfigManager.View.VSync,
++                    // 0064. ApplySwapInterval owns the interval; Silk's puts 1 back over it.
++                    VSync = false,
+                     UpdatesPerSecond = 0,
+                     FramesPerSecond = 0,
+                     WindowState = ConfigManager.View.Fullscreen ? WindowState.Fullscreen : WindowState.Normal,
+@@ -363,11 +364,20 @@ public static class HostWindow
+ 
+         Profiler.End(events);
+ 
++        // 0064. VSync on Wayland is held here, since the swap there does not wait.
++        if (_cpuVSync)
++        {
++            var wait = Profiler.Begin(Profiler.VSyncWait);
++            FrameClock.WaitRefresh(Interp.Interp.RefreshRate);
++            Profiler.End(wait);
++        }
++
+         // 0045. What OnRender does not claim for itself is Silk's own swap, which
+         // is where the thread waits on the driver.
+         var render = Profiler.Begin(Profiler.HostRender);
+         _window.DoRender();
+         Profiler.End(render);
++        GlDebug.Poll(_gl);
+         FrameClock.MarkPresent();
+     }
+ 
+@@ -698,8 +709,6 @@ public static class HostWindow
+ 
+     public static void SetVSync(bool on)
+     {
+-        if (_window != null) _window.VSync = on;
+-        FrameClock.VSync = on;
+         Interp.Interp.VSync = on;
+         ApplySwapInterval();
+         FrameClock.Resync();
+@@ -726,19 +735,49 @@ public static class HostWindow
+             Console.WriteLine($"[Host] monitor refresh: {refresh} hz");
+         }
+         
+-        var interval = Interp.Interp.VSync ? -1 : 0;
+-        if (!SetSwapInterval(interval)) interval = SetSwapInterval(1) ? 1 : 0;
+-        
++        // 0064. Silk's own VSync set interval 1 over the -1 (adaptive) asked for
++        // here, so 1 is what ran, and it stays 1 off Wayland. On Wayland a swap on
++        // a hidden window waits until it is shown, and the game presents from
++        // inside its own VSync, so minimising stopped everything. The compositor
++        // never tears, so the swap stays at 0 there and the refresh is held on the
++        // CPU instead.
++        var vsync = Interp.Interp.VSync;
++        var wayland = IsWayland();
++        var interval = vsync && !wayland ? 1 : 0;
++        _cpuVSync = vsync && wayland;
++        FrameClock.VSync = vsync && !wayland;
++        SetSwapInterval(interval);
++
+         Console.WriteLine($"[Host] swap interval: {interval}" +
+-                          (interval == -1 ? " (adaptive)" : ""));
++                          (_cpuVSync ? $" (Wayland: vsync held on the CPU at {RefreshHz()} hz)" : ""));
+     }
+-    
+-    private static bool SetSwapInterval(int interval)
++
++    private static bool _cpuVSync;
++
++    private static int RefreshHz() => Interp.Interp.RefreshRate > 0 ? Interp.Interp.RefreshRate : 60;
++
++    private static void SetSwapInterval(int interval)
+     {
+         try
+         {
+             Silk.NET.GLFW.Glfw.GetApi().SwapInterval(interval);
+-            return true;
++        }
++        catch (Exception e)
++        {
++            Console.Error.WriteLine($"[Host] swap interval {interval}: {e.Message}");
++        }
++    }
++
++    // GLFW 3.4's glfwGetPlatform, which Silk 2.22 does not bind.
++    private const int GlfwPlatformWayland = 0x00060003;
++
++    private static unsafe bool IsWayland()
++    {
++        try
++        {
++            var glfw = Silk.NET.GLFW.Glfw.GetApi();
++            if (!glfw.Context.TryGetProcAddress("glfwGetPlatform", out var fn) || fn == 0) return false;
++            return ((delegate* unmanaged<int>)fn)() == GlfwPlatformWayland;
+         }
+         catch
+         {
+diff --git a/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs b/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs
+index 104a04e..45556b1 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Diagnostics/Profiler.cs
+@@ -149,6 +149,7 @@ public static class Profiler
+     public static readonly int GlFlush = Register("GlCore.Flush (GL batch submit)", ProfileGroup.Runtime);
+     public static readonly int DrawOTag = Register("LibGpu.DrawOTag (packet walk)", ProfileGroup.Runtime);
+     public static readonly int Throttle = Register("FrameClock.Throttle (host ceiling)", ProfileGroup.Wait);
++    public static readonly int VSyncWait = Register("FrameClock.WaitRefresh (Wayland vsync on the CPU)", ProfileGroup.Wait);
+     public static readonly int Ticks = Register("CD, card and pad ticks", ProfileGroup.Runtime);
+     public static readonly int Self = Register("profiler (its own reporting)", ProfileGroup.Runtime);
+     public static readonly int Ao = Register("GlCore ambient occlusion pass", ProfileGroup.Runtime);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Host/FrameClock.cs b/tools/RecompOne/RecompOne.Runtime/Host/FrameClock.cs
+index 2e3de9d..52c6648 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Host/FrameClock.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Host/FrameClock.cs
+@@ -190,4 +190,33 @@ internal static class FrameClock
+ 
+         LastWaitMs = wait;
+     }
++
++    //0064. VSync on Wayland, where the swap is left at interval 0 so a hidden
++    //window cannot block the game: one present per refresh, on its own grid.
++    private static double _nextRefreshMs;
++
++    public static void WaitRefresh(int hz)
++    {
++        var periodMs = 1000.0 / (hz > 0 ? hz : 60);
++        var now = Now;
++
++        _nextRefreshMs += periodMs;
++        var wait = _nextRefreshMs - now;
++        if (wait <= 0)
++        {
++            //A late frame is not paid back with a burst.
++            if (wait < -periodMs) _nextRefreshMs = now;
++            return;
++        }
++
++        var sleepUntil = _nextRefreshMs - SpinMs;
++        if (now < sleepUntil)
++        {
++            var ms = (int)(sleepUntil - now);
++            if (ms > 0) Thread.Sleep(ms);
++        }
++
++        while (Now < _nextRefreshMs)
++            Thread.SpinWait(48);
++    }
+ }

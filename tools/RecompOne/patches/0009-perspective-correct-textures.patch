@@ -1,0 +1,393 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 79ebec0..46f2a21 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -6,7 +6,10 @@ namespace RecompOne.Runtime.Hle;
+ public sealed class GlCore : IGpuBackend
+ {
+     [StructLayout(LayoutKind.Sequential)]
+-    struct GlVertex { public float X, Y; public float R, G, B; public float Clut, Texpage; public float U, V; }
++    // W is the clip W the vertex shader divides by: the view depth GteDepth
++    // recovered, or exactly 1 for everything that had none, which is every vertex
++    // this renderer ever saw before.
++    struct GlVertex { public float X, Y; public float R, G, B; public float Clut, Texpage; public float U, V; public float W; }
+ 
+     const int MaxVerts = 0x40000;
+ 
+@@ -125,6 +128,7 @@ public sealed class GlCore : IGpuBackend
+         _gl.EnableVertexAttribArray(2); _gl.VertexAttribPointer(2, 1, VertexAttribPointerType.Float, false, stride, (void*)20);
+         _gl.EnableVertexAttribArray(3); _gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, stride, (void*)24);
+         _gl.EnableVertexAttribArray(4); _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)28);
++        _gl.EnableVertexAttribArray(5); _gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, (void*)36);
+ 
+         // fullscreen quad for present, real vbo since gl_VertexID without arrays does not draw on mesa for some reason?? or i did it wrong?
+         _presentVao = _gl.GenVertexArray();
+@@ -415,6 +419,7 @@ public sealed class GlCore : IGpuBackend
+             Clut = f.Clut & 0x7FFF,
+             Texpage = tpage,
+             U = v.U, V = v.V,
++            W = v.HasGteZ && v.Z > 0f ? v.Z : 1f,
+         };
+     }
+ 
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index ffab4bf..3ab42c2 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -63,8 +63,14 @@ internal static class GlShaders
+         layout(location = 2) in float inClutF;
+         layout(location = 3) in float inTexpageF;
+         layout(location = 4) in vec2  inUV;
+-
+-        out vec4 vColor;
++        layout(location = 5) in float inW;
++
++        // vUV is the one thing that wants correcting: handing gl_Position a real W
++        // makes the rasterizer interpolate it in 1/W, which is exactly the
++        // perspective-correct mapping the PlayStation could not afford. vColor is
++        // marked noperspective so that Gouraud shading stays as flat-interpolated
++        // as the hardware's, and so an untextured primitive is bit-identical.
++        noperspective out vec4 vColor;
+         out vec2 vUV;
+         flat out ivec2 clutBase;
+         flat out ivec2 pageBase;
+@@ -78,7 +84,10 @@ internal static class GlShaders
+ 
+         void main() {
+             vec2 p = (inPos + uVertexOffset + uPosBias) * uFbInv - 1.0;
+-            gl_Position = vec4(p, 0.0, 1.0);
++            // Exactly 1 is the "no depth was recovered" case, and it is written out
++            // as the original expression rather than as p*1/1, so a primitive
++            // without perspective data lands on the same pixels to the last bit.
++            gl_Position = inW == 1.0 ? vec4(p, 0.0, 1.0) : vec4(p * inW, 0.0, inW);
+ 
+             int inClut = int(inClutF + 0.5);
+             int inTexpage = int(inTexpageF + 0.5);
+@@ -106,7 +115,7 @@ internal static class GlShaders
+ 
+     public const string PrimFs = """
+         #version 330 core
+-        in vec4 vColor;
++        noperspective in vec4 vColor;
+         in vec2 vUV;
+         flat in ivec2 clutBase;
+         flat in ivec2 pageBase;
+@@ -307,6 +316,7 @@ internal static class GlShaders
+         attribute float inClutF;
+         attribute float inTexpageF;
+         attribute vec2  inUV;
++        attribute float inW;
+ 
+         varying vec4  vColor;
+         varying vec2  vUV;
+@@ -324,7 +334,11 @@ internal static class GlShaders
+ 
+         void main() {
+             vec2 p = (inPos + uVertexOffset + uPosBias) * uFbInv - 1.0;
+-            gl_Position = vec4(p, 0.0, 1.0);
++            // As in the core profile: a real W makes vUV interpolate perspective
++            // correctly. GLSL 120 has no `noperspective`, so on this backend alone
++            // vColor is corrected along with it -- visible only as a slightly
++            // different Gouraud gradient on a steeply angled textured polygon.
++            gl_Position = inW == 1.0 ? vec4(p, 0.0, 1.0) : vec4(p * inW, 0.0, inW);
+ 
+             float tp = floor(inTexpageF + 0.5);
+             float clut = floor(inClutF + 0.5);
+@@ -493,7 +507,7 @@ internal static class GlShaders
+ 
+     static readonly (uint Index, string Name)[] PrimAttribs =
+     [
+-        (0, "inPos"), (1, "inColorF"), (2, "inClutF"), (3, "inTexpageF"), (4, "inUV"),
++        (0, "inPos"), (1, "inColorF"), (2, "inClutF"), (3, "inTexpageF"), (4, "inUV"), (5, "inW"),
+     ];
+ 
+     public static uint BuildPrim(GL gl, string vsSrc, string fsSrc, string name)
+diff --git a/RecompOne.Runtime/Gpu/GpuHleForward.cs b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+index 07ded1a..aaabc34 100644
+--- a/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -16,9 +16,10 @@ public sealed partial class Gpu
+         SetMask = _setMask, CheckMask = _checkMask, Dither = _dither,
+     };
+ 
+-    static HleVertex HV(in Vert v) => new()
++    static HleVertex HV(in Vert v, bool persp) => new()
+     {
+         X = v.X, Y = v.Y, R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
++        Z = v.W, HasGteZ = persp,
+     };
+ 
+     PrimFlags PrimOf(bool tex, bool semi, bool raw, int clut, bool gouraud = false) => new()
+@@ -32,9 +33,14 @@ public sealed partial class Gpu
+         int spanY = Math.Max(a.Y, Math.Max(b.Y, c.Y)) - Math.Min(a.Y, Math.Min(b.Y, c.Y));
+         if (spanX > 1023 || spanY > 511) return;
+ 
++        // All three or none, as in the software path: the backend turns a vertex's
++        // depth into gl_Position.w, and one vertex left at 1 would tear the
++        // triangle's texture in half.
++        bool persp = tex && a.HasW && b.HasW && c.HasW;
++
+         var be = GpuHle.Backend!;
+         be.SetDrawEnv(CurEnv());
+-        be.DrawTri(HV(a), HV(b), HV(c), PrimOf(tex, semi, raw, clut, gouraud));
++        be.DrawTri(HV(a, persp), HV(b, persp), HV(c, persp), PrimOf(tex, semi, raw, clut, gouraud));
+     }
+ 
+     void HleRect(int x, int y, int w, int h, int u, int v, int clut, int r, int g, int b, bool tex, bool semi, bool raw)
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index 6f7a426..e988d2f 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -5,7 +5,10 @@ namespace RecompOne.Runtime;
+ //old soft raster
+ public sealed partial class Gpu
+ {
+-    struct Vert { public int X, Y, R, G, B, U, V; }
++    // W is the view depth GteDepth recovered for this vertex, and HasW says
++    // whether it found one at all. Without it the vertex interpolates affinely,
++    // exactly as the GPU did.
++    struct Vert { public int X, Y, R, G, B, U, V; public float W; public bool HasW; }
+ 
+     static readonly RenderPrimEvent _primEvent = new();
+ 
+@@ -42,11 +45,23 @@ public sealed partial class Gpu
+             v[i].R = cr; v[i].G = cg; v[i].B = cb;
+ 
+             uint vw = _fifo[idx++];
+-            v[i].X = _drawOffsetX + CoordX(vw);
+-            v[i].Y = _drawOffsetY + CoordY(vw);
++            int rawX = CoordX(vw), rawY = CoordY(vw);
++            v[i].X = _drawOffsetX + rawX;
++            v[i].Y = _drawOffsetY + rawY;
++            v[i].W = 1f;
+ 
+             if (tex)
+             {
++                // Asked for before the draw offset and before the prim event, since
++                // the key is the coordinate as the GTE produced it. A mod is then
++                // free to move X afterwards -- widescreen does -- and the depth
++                // stays attached to the vertex.
++                if (GteDepth.TryGet(rawX, rawY, out float w) && w > 0f)
++                {
++                    v[i].W = w;
++                    v[i].HasW = true;
++                }
++
+                 uint uvw = _fifo[idx++];
+                 v[i].U = (int)(uvw & 0xFF);
+                 v[i].V = (int)((uvw >> 8) & 0xFF);
+@@ -101,6 +116,20 @@ public sealed partial class Gpu
+         int bias2 = IsTopLeft(a, b) ? 0 : -1;
+         bool ditherTex = _dither && !raw;
+ 
++        // All three or none: a triangle that mixed a recovered W with a fallback of
++        // 1 would shear along the vertex that missed. U/W, V/W and 1/W are all
++        // linear in screen space, so the barycentrics below interpolate those and
++        // the divide per pixel undoes it.
++        bool persp = tex && a.HasW && b.HasW && c.HasW;
++        float ia = 0f, ib = 0f, ic = 0f, au = 0f, av = 0f, bu = 0f, bv = 0f, cu = 0f, cv = 0f;
++        if (persp)
++        {
++            ia = 1f / a.W; ib = 1f / b.W; ic = 1f / c.W;
++            au = a.U * ia; av = a.V * ia;
++            bu = b.U * ib; bv = b.V * ib;
++            cu = c.U * ic; cv = c.V * ic;
++        }
++
+         int sx0 = b.Y - c.Y, sy0 = c.X - b.X;
+         int sx1 = c.Y - a.Y, sy1 = a.X - c.X;
+         int sx2 = a.Y - b.Y, sy2 = b.X - a.X;
+@@ -127,8 +156,18 @@ public sealed partial class Gpu
+ 
+                 if (tex)
+                 {
+-                    int u = (int)((w0 * a.U + w1 * b.U + w2 * c.U) / area);
+-                    int tv = (int)((w0 * a.V + w1 * b.V + w2 * c.V) / area);
++                    int u, tv;
++                    if (persp)
++                    {
++                        float iw = w0 * ia + w1 * ib + w2 * ic;
++                        u = (int)((w0 * au + w1 * bu + w2 * cu) / iw);
++                        tv = (int)((w0 * av + w1 * bv + w2 * cv) / iw);
++                    }
++                    else
++                    {
++                        u = (int)((w0 * a.U + w1 * b.U + w2 * c.U) / area);
++                        tv = (int)((w0 * a.V + w1 * b.V + w2 * c.V) / area);
++                    }
+                     ushort texel = FetchTexel(u, tv, clut);
+                     if (texel == 0) continue;
+                     bool stp = (texel & 0x8000) != 0;
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+new file mode 100644
+index 0000000..e99effd
+--- /dev/null
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -0,0 +1,142 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// Per-vertex view depth, recovered from the GTE and looked up again by screen
++/// position — the one piece of information the GPU never gets, and the reason
++/// PlayStation textures swim.
++///
++/// The GTE does the perspective divide itself: <c>RTPS</c>/<c>RTPT</c> project a
++/// vertex to a 2D screen coordinate and the game copies that coordinate into a
++/// GP0 packet. By the time the GPU sees a polygon there is no depth left in it, so
++/// it can only interpolate U and V linearly across the screen — affine mapping,
++/// which is exact only for a surface parallel to the screen and increasingly wrong
++/// the more a surface is foreshortened. That is the swimming, and the diagonal
++/// crease down a quad where its two triangles disagree.
++///
++/// So the depth has to be caught upstream and carried forward. <c>Gte.Rtp</c> knows
++/// both halves at once — it computes the screen coordinate and the view depth SZ3
++/// in the same call — and the screen coordinate is exactly what turns up in the
++/// packet: <c>SatX</c>/<c>SatY</c> clamp it to 11 bits signed, which is the same
++/// 11 bits <c>GpuRaster.CoordX</c> decodes. That makes the screen position a key
++/// the two ends can share without tracking a single register or store.
++///
++/// Hence a small hash table: the GTE writes (x, y) -> z as it projects, and the
++/// GPU asks for it again as it decodes a vertex word. A hit gives the polygon a W
++/// per vertex and both renderers switch to perspective-correct interpolation; a
++/// miss leaves the vertex exactly as it was. **2D work therefore corrects itself**
++/// — a HUD sprite whose coordinates the CPU computed was never in the table, so it
++/// keeps the affine mapping it wants.
++///
++/// Three properties of the table are deliberate:
++///
++///   * **Nothing is cleared per frame.** Entries carry a monotonic sequence number
++///     and expire once the table's own capacity of vertices has been written past
++///     them, which is a frame or two of geometry. That keeps the frame boundary
++///     out of this file entirely — there is no hook to place and nothing to keep
++///     in step with double buffering.
++///   * **Saturated coordinates are not recorded.** A vertex projecting off screen
++///     clamps to ±1024, so several different vertices at different depths collapse
++///     onto one key. Recording those would hand one of them the other's depth,
++///     which is a worse picture than affine; dropping them just means the polygon
++///     misses and stays as it was.
++///   * **A primitive is all-or-nothing.** The caller only interpolates
++///     perspectively when *every* vertex of the triangle hit, so a polygon can
++///     never mix a real W with a fallback of 1 and shear itself apart.
++/// </summary>
++public static class GteDepth
++{
++    /// <summary>
++    /// While false nothing is recorded and every lookup misses, so both renderers
++    /// take the same path they took before this existed. Safe to change at run
++    /// time: the table simply starts or stops filling.
++    /// </summary>
++    public static bool Enabled;
++
++    const int Bits = 14;
++    const int Size = 1 << Bits;
++    const int Mask = Size - 1;
++
++    // Linear probing, bounded. A key that cannot be placed within this many slots
++    // displaces the oldest of them rather than searching further, so both Record
++    // and TryGet are constant time no matter how full the table is.
++    const int Probe = 8;
++
++    // An entry is stale once a table's worth of vertices has been recorded since.
++    // At a few thousand projected vertices a frame that is the last frame or two.
++    const long MaxAge = Size;
++
++    struct Slot { public int Key; public long Seq; public float Z; }
++
++    static readonly Slot[] _slots = new Slot[Size];
++    static long _seq;
++
++    /// <summary>Vertices recorded, and lookups that found one or did not. The
++    /// hit rate is the only real evidence that the two ends agree on the key.</summary>
++    public static long Recorded, Hits, Misses;
++
++    public static void ResetCounters() => Recorded = Hits = Misses = 0;
++
++    // +1 so that 0 can mean "never written", which is what lets TryGet stop early.
++    static int KeyOf(int x, int y) => (((y & 0x7FF) << 11) | (x & 0x7FF)) + 1;
++
++    static int Bucket(int key) => (int)(((uint)key * 2654435761u) >> (32 - Bits));
++
++    /// <summary>Called from <c>Gte.Rtp</c> with the projected screen position and
++    /// the view depth that produced it. <paramref name="z"/> is SZ3, the same
++    /// quantity the divider used, so it is proportional to view-space W.</summary>
++    public static void Record(int x, int y, int z)
++    {
++        if (!Enabled || z <= 0) return;
++
++        int key = KeyOf(x, y);
++        int bucket = Bucket(key);
++        long now = ++_seq;
++
++        int oldest = bucket;
++        long oldestSeq = long.MaxValue;
++
++        for (int i = 0; i < Probe; i++)
++        {
++            int s = (bucket + i) & Mask;
++            ref var slot = ref _slots[s];
++            if (slot.Key == key || slot.Key == 0 || now - slot.Seq > MaxAge)
++            {
++                slot.Key = key;
++                slot.Seq = now;
++                slot.Z = z;
++                Recorded++;
++                return;
++            }
++            if (slot.Seq < oldestSeq) { oldestSeq = slot.Seq; oldest = s; }
++        }
++
++        _slots[oldest] = new Slot { Key = key, Seq = now, Z = z };
++        Recorded++;
++    }
++
++    /// <summary>The depth last projected to this screen position, if it is recent
++    /// enough to belong to the geometry being drawn now.</summary>
++    public static bool TryGet(int x, int y, out float z)
++    {
++        z = 0f;
++        if (!Enabled) return false;
++
++        int key = KeyOf(x, y);
++        int bucket = Bucket(key);
++        long now = _seq;
++
++        for (int i = 0; i < Probe; i++)
++        {
++            ref var slot = ref _slots[(bucket + i) & Mask];
++            if (slot.Key == 0) break;          // insertion would have stopped here too
++            if (slot.Key != key) continue;
++            if (now - slot.Seq > MaxAge) break;
++            z = slot.Z;
++            Hits++;
++            return true;
++        }
++
++        Misses++;
++        return false;
++    }
++}
+diff --git a/RecompOne.Runtime/Hardware/Gte.cs b/RecompOne.Runtime/Hardware/Gte.cs
+index 2bbab60..eec3eb1 100644
+--- a/RecompOne.Runtime/Hardware/Gte.cs
++++ b/RecompOne.Runtime/Hardware/Gte.cs
+@@ -182,11 +182,18 @@ public static class Gte
+         uint div = Divide(H, SZ[3]);
+         long sx = CheckMac0((long)div * IR1 + OFX); MAC0 = (int)sx;
+         long sy = CheckMac0((long)div * IR2 + OFY); MAC0 = (int)sy;
+-        int nx = SatX((int)(sx >> 16));
+-        int ny = SatY((int)(sy >> 16));
++        int rx = (int)(sx >> 16), ry = (int)(sy >> 16);
++        int nx = SatX(rx);
++        int ny = SatY(ry);
+         SX[0] = SX[1]; SX[1] = SX[2]; SX[2] = (short)nx;
+         SY[0] = SY[1]; SY[1] = SY[2]; SY[2] = (short)ny;
+ 
++        // The one place the screen position and the depth that made it are both in
++        // hand. GteDepth keys on the position because that is what survives into
++        // the GP0 packet; a saturated coordinate is not a key -- several vertices
++        // clamp onto it -- so those are left out and simply miss later.
++        if (GteDepth.Enabled && rx == nx && ry == ny) GteDepth.Record(nx, ny, sz);
++
+         if (last)
+         {
+             long dp = CheckMac0((long)div * DQA + DQB);

@@ -1,0 +1,607 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/AoGeometry.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/AoGeometry.cs
+new file mode 100644
+index 0000000..857272d
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/AoGeometry.cs
+@@ -0,0 +1,85 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0058. The frame's depth-carrying triangles, kept per display target.
++///
++/// <para>The occlusion pass needs a normal at every pixel and has never had one: it
++/// differences the depth buffer across four neighbours and takes a cross product,
++/// which straddles a silhouette wherever two surfaces meet and is quantised by the
++/// depth everywhere else. That was the only source available while the geometry was
++/// something that went past — GP0 words arriving in a stream nothing held.</para>
++///
++/// <para>It is held now. The port assembles the polygons itself
++/// (<c>patches/PolyAssembler.cs</c>) and enumerates the scene
++/// (<c>patches/TileWalk.cs</c>, <c>patches/ModelWalk.cs</c>), so the frame's geometry
++/// can simply be kept as it is submitted and drawn again into a normal buffer once
++/// the frame is finished. A triangle's normal is then the plane's own, exact and
++/// constant across the face, rather than a guess made from its neighbours' depths.</para>
++///
++/// <para>The list is <b>per render target</b> and not per frame, because with two
++/// display buffers the target being presented is the one drawn a frame ago — the same
++/// reason the depth attachment lives on the target. It is dropped the first time a
++/// target is drawn in a new frame, which is the condition its depth is cleared on.</para>
++///
++/// <para>Order is the whole of the correctness argument. The triangles are kept in
++/// submission order and redrawn with no depth test, so the last normal written at a
++/// pixel belongs to the last triangle drawn there — which under painter's order is
++/// the same surface whose depth the pass reads. No test, no sort, and nothing to
++/// disagree with the depth buffer about.</para>
++/// </summary>
++public sealed class AoGeometry
++{
++    /// <summary>A vertex as the colour pass drew it: the target's own coordinates
++    /// and the view depth. The depth is also the W the redraw projects with, which
++    /// is what makes the reconstructed surface the polygon's own plane.</summary>
++    public struct V
++    {
++        public float X, Y, Z;
++    }
++
++    /// <summary>The port's switch.</summary>
++    public static bool Enabled = true;
++
++    /// <summary>Collecting costs nothing when nothing will read it.</summary>
++    public static bool Active => Enabled && GteDepth.AmbientOcclusion;
++
++    /// <summary>Triangles kept, triangles refused for want of room, and the normal
++    /// passes actually drawn. Never reset except by the probe.</summary>
++    public static long Triangles, Dropped, Passes;
++
++    public static void ResetCounters() => Triangles = Dropped = Passes = 0;
++
++    // A view of fdat02's water is about 2,000 triangles; the ceiling is well past
++    // anything measured and exists so a pathological frame drops geometry rather
++    // than growing the buffer without bound.
++    const int MaxVerts = 3 * 32768;
++
++    V[] _v = new V[3 * 2048];
++    int _n;
++    long _frame = -1;
++    int _gen = -1;
++
++    public int Count => _n;
++
++    public ReadOnlySpan<V> Verts => _v.AsSpan(0, _n);
++
++    /// <summary>Start this target's list over when it is first drawn in a new frame,
++    /// or when the depth generation moved under it.</summary>
++    public void Frame(long frame, int gen)
++    {
++        if (frame == _frame && gen == _gen) return;
++        _frame = frame;
++        _gen = gen;
++        _n = 0;
++    }
++
++    public void Add(in V a, in V b, in V c)
++    {
++        if (_n + 3 > MaxVerts) { Dropped++; return; }
++        if (_n + 3 > _v.Length) Array.Resize(ref _v, Math.Min(MaxVerts, _v.Length * 2));
++        _v[_n++] = a;
++        _v[_n++] = b;
++        _v[_n++] = c;
++        Triangles++;
++    }
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 57f2d67..496571d 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -55,8 +55,15 @@ public sealed class GlCore : IGpuBackend
+     int _uAoOrigin, _uAoSize, _uAoTexSize, _uAoTexel, _uAoProjH, _uAoCentre;
+     int _uAoRadius, _uAoStrength, _uAoBias, _uAoMaxDepth, _uAoSamples;
+     int _uAoBOrigin, _uAoBSize, _uAoBTexSize, _uAoBTexel, _uAoBEdge;
++    int _uAoNormalOn;
+     int _uPresentAoOn;
+ 
++    // 0058. The normal buffer the occlusion pass reads: the frame's own geometry,
++    // redrawn into the target's own coordinates once the frame is finished.
++    uint _progNormal, _nrmVao, _nrmVbo;
++    int _nrmVboVerts;
++    int _uNrmPosBias, _uNrmFbInv, _uNrmProjH, _uNrmCentre, _uNrmScale;
++
+     uint _postProg, _postFbo, _postTex;
+     int _postW, _postH, _postVersion = -1;
+     int _uPostTexSize, _uPostOutputSize, _uPostTime, _uPostFrame;
+@@ -220,8 +227,11 @@ public sealed class GlCore : IGpuBackend
+                 _uAoBias = _gl.GetUniformLocation(_progAo, "uBias");
+                 _uAoMaxDepth = _gl.GetUniformLocation(_progAo, "uMaxDepth");
+                 _uAoSamples = _gl.GetUniformLocation(_progAo, "uSamples");
++                _uAoNormalOn = _gl.GetUniformLocation(_progAo, "uNormalOn");
+                 _gl.UseProgram(_progAo);
+                 _gl.Uniform1(_gl.GetUniformLocation(_progAo, "uDepth"), 0);
++                _gl.Uniform1(_gl.GetUniformLocation(_progAo, "uNormal"), 1);
++                if (_uAoNormalOn >= 0) _gl.Uniform1(_uAoNormalOn, 0f);
+             }
+             if (_progAoBlur != 0)
+             {
+@@ -234,6 +244,30 @@ public sealed class GlCore : IGpuBackend
+                 _gl.Uniform1(_gl.GetUniformLocation(_progAoBlur, "uAo"), 0);
+                 _gl.Uniform1(_gl.GetUniformLocation(_progAoBlur, "uDepth"), 1);
+             }
++
++            // 0058. The normal buffer's own program and vertex array. It shares
++            // nothing with the prim VAO: three floats and a position, drawn once a
++            // frame from a list the port kept.
++            _progNormal = GlShaders.Build(_gl, GlShaders.NormalVs, GlShaders.NormalFs, "aonormal",
++                [(0, "inPos"), (1, "inZ")]);
++            if (_progNormal != 0)
++            {
++                _uNrmPosBias = _gl.GetUniformLocation(_progNormal, "uPosBias");
++                _uNrmFbInv = _gl.GetUniformLocation(_progNormal, "uFbInv");
++                _uNrmProjH = _gl.GetUniformLocation(_progNormal, "uProjH");
++                _uNrmCentre = _gl.GetUniformLocation(_progNormal, "uCentre");
++                _uNrmScale = _gl.GetUniformLocation(_progNormal, "uScale");
++
++                _nrmVao = _gl.GenVertexArray();
++                _nrmVbo = _gl.GenBuffer();
++                _gl.BindVertexArray(_nrmVao);
++                _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _nrmVbo);
++                uint ns = (uint)sizeof(AoGeometry.V);
++                _gl.EnableVertexAttribArray(0); _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, ns, (void*)0);
++                _gl.EnableVertexAttribArray(1); _gl.VertexAttribPointer(1, 1, VertexAttribPointerType.Float, false, ns, (void*)8);
++                _gl.BindVertexArray(0);
++                _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
++            }
+         }
+ 
+         _uPresent24Origin = _gl.GetUniformLocation(_progPresent24, "uOrigin");
+@@ -661,6 +695,15 @@ public sealed class GlCore : IGpuBackend
+         int lightGen = (a.Light & (GteLightMap.Directional << 24)) != 0 ? a.LightGen : -1;
+         if (lightGen >= 0 && _kLightGen >= 0 && lightGen != _kLightGen) Flush(FlushReason.StateLight);
+         Begin(f, 3, zMode);
++        // 0058. Keep the triangle for the normal buffer. zMode 1 is exactly the
++        // geometry that writes depth and is opaque, which is the geometry the
++        // occlusion pass shades; the order it is kept in is the order it is drawn
++        // in, and that is what makes the redraw agree with painter's order.
++        if (zMode == 1 && _kTarget != null && AoGeometry.Active)
++        {
++            _kTarget.Geo.Frame(_frame, GteDepth.Generation);
++            _kTarget.Geo.Add(GeoVert(a), GeoVert(b), GeoVert(c));
++        }
+         if (lightGen >= 0) _kLightGen = lightGen;
+         if (a.Light != 0 && _vboLight != 0)
+         {
+@@ -674,6 +717,10 @@ public sealed class GlCore : IGpuBackend
+         _verts[_count++] = V(a, f, dith); _verts[_count++] = V(b, f, dith); _verts[_count++] = V(c, f, dith);
+     }
+ 
++    /// <summary>0058. A vertex as the normal pass wants it: the position the colour
++    /// pass is about to draw, and the view depth the plane is reconstructed from.</summary>
++    static AoGeometry.V GeoVert(in HleVertex v) => new() { X = v.X, Y = v.Y, Z = v.Z };
++
+     /// <summary>The zMode a primitive with no recovered depth takes: 3 (stamp the
+     /// far plane) while the occlusion pass is on and the primitive is opaque, 0 --
+     /// which is what everything did before this existed -- otherwise.</summary>
+@@ -1764,6 +1811,13 @@ public sealed class GlCore : IGpuBackend
+         EnsureAoSize(fbW, fbH);
+         if (_aoTex == 0 || _aoBlurTex == 0) return;
+ 
++        // 0058. The frame's own geometry, drawn again as normals before the pass
++        // that reads them. It has to happen here rather than with the colour: the
++        // prim shader's second output is a dual-source blend factor, and a program
++        // with one of those may not render to more than one draw buffer, so there
++        // is no MRT to hang a G-buffer off.
++        bool normals = RenderNormals(src);
++
+         // The GTE's projection centre, as a fraction of the display area, so the
+         // shader needs no pixel arithmetic of its own.
+         //
+@@ -1812,6 +1866,12 @@ public sealed class GlCore : IGpuBackend
+         if (_uAoBias >= 0) _gl.Uniform1(_uAoBias, GteDepth.AoBias);
+         if (_uAoMaxDepth >= 0) _gl.Uniform1(_uAoMaxDepth, GteDepth.AoMaxDepth);
+         if (_uAoSamples >= 0) _gl.Uniform1(_uAoSamples, Math.Clamp(GteDepth.AoSamples, 1, 64));
++        if (_uAoNormalOn >= 0) _gl.Uniform1(_uAoNormalOn, normals ? 1f : 0f);
++        if (normals)
++        {
++            _gl.ActiveTexture(TextureUnit.Texture1);
++            _gl.BindTexture(TextureTarget.Texture2D, src.Normal);
++        }
+         _gl.ActiveTexture(TextureUnit.Texture0);
+         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
+         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+@@ -1840,14 +1900,97 @@ public sealed class GlCore : IGpuBackend
+         if (GteDepth.WantAoMap) CaptureAoMap(fbW, fbH);
+     }
+ 
++    /// <summary>
++    /// 0058. The frame's depth-carrying triangles, drawn again into the target's own
++    /// normal buffer.
++    ///
++    /// No depth test and no depth write: the list is in submission order, so the
++    /// last normal written at a pixel belongs to the last triangle drawn there,
++    /// which under painter's order is the surface whose depth the occlusion pass is
++    /// about to read. Agreeing with the depth buffer is therefore a property of the
++    /// order rather than of a test that could disagree with it.
++    ///
++    /// The one place it can be wrong is a textured polygon that discarded a texel:
++    /// it wrote no depth there and does write a normal. That costs a wrong normal on
++    /// the see-through parts of a grate, never a wrong depth, and the pass's own
++    /// fallback is what those pixels used to get.
++    /// </summary>
++    unsafe bool RenderNormals(GlDisplayRt src)
++    {
++        if (!GteDepth.AoNormals || _progNormal == 0 || src.Geo.Count == 0) return false;
++        EnsureNormalTarget(src);
++        if (src.Normal == 0) return false;
++
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, src.NormalFbo);
++        _gl.Viewport(0, 0, (uint)src.TexW, (uint)src.TexH);
++        _gl.Disable(EnableCap.DepthTest);
++        _gl.Disable(EnableCap.Blend);
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.Disable(EnableCap.CullFace);
++        _gl.DepthMask(false);
++        _gl.ColorMask(true, true, true, true);
++        // Alpha 0 is "no normal here", which is the pass's own reconstruction.
++        _gl.ClearColor(0f, 0f, 0f, 0f);
++        _gl.Clear(ClearBufferMask.ColorBufferBit);
++
++        _gl.UseProgram(_progNormal);
++        // The same transform the colour pass used on this target, so a triangle
++        // lands on the pixels it landed on there.
++        if (_uNrmPosBias >= 0) _gl.Uniform2(_uNrmPosBias, (float)(src.Margin - src.X), (float)(-src.Y));
++        if (_uNrmFbInv >= 0) _gl.Uniform2(_uNrmFbInv, 2f / src.Wide1x, 2f / src.H);
++        if (_uNrmProjH >= 0) _gl.Uniform1(_uNrmProjH, Math.Max(1f, GteDepth.ProjH));
++        // The GTE's centre, in the target's own 1x pixels: its column 0 sits a
++        // margin to the left of the game's.
++        if (_uNrmCentre >= 0) _gl.Uniform2(_uNrmCentre, GteDepth.ProjCx + src.Margin, GteDepth.ProjCy);
++        if (_uNrmScale >= 0) _gl.Uniform1(_uNrmScale, (float)GlVram.Scale);
++
++        var verts = src.Geo.Verts;
++        _gl.BindVertexArray(_nrmVao);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _nrmVbo);
++        if (verts.Length > _nrmVboVerts)
++        {
++            _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(verts.Length * sizeof(AoGeometry.V)), null,
++                           BufferUsageARB.DynamicDraw);
++            _nrmVboVerts = verts.Length;
++        }
++        _gl.BufferSubData<AoGeometry.V>(BufferTargetARB.ArrayBuffer, 0, verts);
++        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)verts.Length);
++        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
++        AoGeometry.Passes++;
++        return true;
++    }
++
++    unsafe void EnsureNormalTarget(GlDisplayRt rt)
++    {
++        if (rt.Normal != 0 && rt.NormalW == rt.TexW && rt.NormalH == rt.TexH) return;
++        if (rt.Normal == 0)
++        {
++            rt.Normal = _gl.GenTexture();
++            rt.NormalFbo = _gl.GenFramebuffer();
++        }
++        _gl.BindTexture(TextureTarget.Texture2D, rt.Normal);
++        // Nearest: this is a G-buffer, and a filtered normal between two surfaces
++        // is a direction neither of them faces.
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)rt.TexW, (uint)rt.TexH, 0,
++                       PixelFormat.Rgba, PixelType.UnsignedByte, null);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, rt.NormalFbo);
++        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++                                 TextureTarget.Texture2D, rt.Normal, 0);
++        rt.NormalW = rt.TexW; rt.NormalH = rt.TexH;
++    }
++
+     unsafe void CaptureAoMap(int w, int h)
+     {
+         if (w <= 0 || h <= 0) return;
+-        var buf = new byte[(long)w * h * 2];
++        var buf = new byte[(long)w * h * 3];
+         _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _aoBlurFbo);
+         _gl.PixelStore(PixelStoreParameter.PackAlignment, 1);
+         fixed (byte* p = buf)
+-            _gl.ReadPixels(0, 0, (uint)w, (uint)h, PixelFormat.RG, PixelType.UnsignedByte, p);
++            _gl.ReadPixels(0, 0, (uint)w, (uint)h, PixelFormat.Rgb, PixelType.UnsignedByte, p);
+         _gl.PixelStore(PixelStoreParameter.PackAlignment, 4);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+         GteDepth.SetAoMap(buf, w, h);
+@@ -1872,8 +2015,8 @@ public sealed class GlCore : IGpuBackend
+             _gl.BindTexture(TextureTarget.Texture2D, tex);
+             // RG8: red is the occlusion the present multiplies by, green is the
+             // "there was a surface here" mask the census reads. See AoFs.
+-            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.RG8, (uint)w, (uint)h, 0,
+-                PixelFormat.RG, PixelType.UnsignedByte, null);
++            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgb8, (uint)w, (uint)h, 0,
++                PixelFormat.Rgb, PixelType.UnsignedByte, null);
+             _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
+             _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                 TextureTarget.Texture2D, tex, 0);
+@@ -1909,6 +2052,8 @@ public sealed class GlCore : IGpuBackend
+         foreach (var rt in _rts) rt?.Destroy(_gl);
+         foreach (var snap in _snaps) if (snap != null) SnapDestroy(snap);
+         _vram.Dispose();
++        if (_nrmVbo != 0) _gl.DeleteBuffer(_nrmVbo);
++        if (_nrmVao != 0) _gl.DeleteVertexArray(_nrmVao);
+         if (_vbo != 0) _gl.DeleteBuffer(_vbo);
+         if (_vboLight != 0) _gl.DeleteBuffer(_vboLight);
+         if (_presentVbo != 0) _gl.DeleteBuffer(_presentVbo);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+index cc9724e..798acaf 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -14,6 +14,13 @@ public sealed class GlDisplayRt
+     // draws to this target, and ReadPixels off the FBO (the KF2_ZBUFFER_PROBE=2
+     // census) reads it exactly as before.
+     public uint Depth;
++    // 0058. The occlusion pass's normals, and the geometry they are drawn from.
++    // Both belong to the target rather than to the frame, for the same reason the
++    // depth does: with two display buffers the target being presented was drawn a
++    // frame ago. Created on demand, so a run with the pass off allocates neither.
++    public uint Normal, NormalFbo;
++    public int NormalW, NormalH;
++    public readonly AoGeometry Geo = new();
+     public bool Dirty;
+     public long Stamp;
+     public long LastDrawFrame;
+@@ -103,6 +110,8 @@ public sealed class GlDisplayRt
+         if (Fbo != 0) gl.DeleteFramebuffer(Fbo);
+         if (Tex != 0) gl.DeleteTexture(Tex);
+         if (Depth != 0) gl.DeleteTexture(Depth);
+-        Fbo = Tex = Depth = 0;
++        if (NormalFbo != 0) gl.DeleteFramebuffer(NormalFbo);
++        if (Normal != 0) gl.DeleteTexture(Normal);
++        Fbo = Tex = Depth = Normal = NormalFbo = 0;
+     }
+ }
+\ No newline at end of file
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index d3720db..789d7d4 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -89,6 +89,11 @@ internal static class GlShaders
+         out vec4 oColor;
+ 
+         uniform sampler2D uDepth;
++        // 0058. The frame's geometry, redrawn as normals. uNormalOn is 0 when the
++        // pass is off or nothing was collected, and a texel's alpha says whether
++        // this particular pixel was reached.
++        uniform sampler2D uNormal;
++        uniform float uNormalOn;
+         // The display area inside the render target, and the target's size, both
+         // in the game's own 1x pixels -- the same three numbers the present shader
+         // is given, so the two passes address the same rectangle.
+@@ -117,6 +122,10 @@ internal static class GlShaders
+             return texture(uDepth, (uOrigin + clamp(uv, 0.0, 1.0) * uSize) / uTexSize).r;
+         }
+ 
++        vec4 normalAt(vec2 uv) {
++            return texture(uNormal, (uOrigin + clamp(uv, 0.0, 1.0) * uSize) / uTexSize);
++        }
++
+         // The view position of the point this pass's uv names, given its depth.
+         // Screen X and Y are in the game's own pixels measured from the projection
+         // centre, which is what uCentre and uSize turn a uv into.
+@@ -147,22 +156,38 @@ internal static class GlShaders
+             vec3 p = viewAt(vUv, d);
+             if (p.z > uMaxDepth) { oColor = vec4(1.0, 0.0, 0.0, 1.0); return; }
+ 
+-            vec2 sx = vec2(uTexel.x, 0.0), sy = vec2(0.0, uTexel.y);
+-            float dl = depthAt(vUv - sx), dr = depthAt(vUv + sx);
+-            float du = depthAt(vUv - sy), dd = depthAt(vUv + sy);
+-            // A neighbour with no depth is not a position; fall back to this
+-            // pixel's own so the difference is taken against the other side.
+-            vec3 l = dl > 0.0 && dl < 1.0 ? viewAt(vUv - sx, dl) : p;
+-            vec3 r = dr > 0.0 && dr < 1.0 ? viewAt(vUv + sx, dr) : p;
+-            vec3 u = du > 0.0 && du < 1.0 ? viewAt(vUv - sy, du) : p;
+-            vec3 b = dd > 0.0 && dd < 1.0 ? viewAt(vUv + sy, dd) : p;
+-
+-            vec3 n = cross(nearer(p, r, l), nearer(p, b, u));
+-            if (dot(n, n) < 1e-12) { oColor = vec4(1.0, 1.0, 0.0, 1.0); return; }
+-            n = normalize(n);
+-            // The camera is at the origin looking down +Z, so a surface facing it
+-            // has a negative dot with its own position.
+-            if (dot(n, p) > 0.0) n = -n;
++            // 0058. The polygon's own plane, where the frame's geometry reached
++            // this pixel. It is exact and constant across a face, where the
++            // reconstruction below straddles every silhouette and carries the
++            // depth buffer's quantisation into every flat wall.
++            vec3 n;
++            float geo = 0.0;
++            if (uNormalOn > 0.5) {
++                vec4 nb = normalAt(vUv);
++                if (nb.a > 0.5) {
++                    n = normalize(nb.xyz * 2.0 - 1.0);
++                    geo = 1.0;
++                }
++            }
++
++            if (geo < 0.5) {
++                vec2 sx = vec2(uTexel.x, 0.0), sy = vec2(0.0, uTexel.y);
++                float dl = depthAt(vUv - sx), dr = depthAt(vUv + sx);
++                float du = depthAt(vUv - sy), dd = depthAt(vUv + sy);
++                // A neighbour with no depth is not a position; fall back to this
++                // pixel's own so the difference is taken against the other side.
++                vec3 l = dl > 0.0 && dl < 1.0 ? viewAt(vUv - sx, dl) : p;
++                vec3 r = dr > 0.0 && dr < 1.0 ? viewAt(vUv + sx, dr) : p;
++                vec3 u = du > 0.0 && du < 1.0 ? viewAt(vUv - sy, du) : p;
++                vec3 b = dd > 0.0 && dd < 1.0 ? viewAt(vUv + sy, dd) : p;
++
++                n = cross(nearer(p, r, l), nearer(p, b, u));
++                if (dot(n, n) < 1e-12) { oColor = vec4(1.0, 1.0, 0.0, 1.0); return; }
++                n = normalize(n);
++                // The camera is at the origin looking down +Z, so a surface facing
++                // it has a negative dot with its own position.
++                if (dot(n, p) > 0.0) n = -n;
++            }
+ 
+             // The world radius as it projects at this depth, in uv. Clamped at the
+             // near end because a sphere a hand's width across fills the screen when
+@@ -199,7 +224,7 @@ internal static class GlShaders
+             }
+ 
+             float ao = 1.0 - uStrength * (occ / float(uSamples));
+-            oColor = vec4(clamp(ao, 0.0, 1.0), 1.0, 0.0, 1.0);
++            oColor = vec4(clamp(ao, 0.0, 1.0), 1.0, geo, 1.0);
+         }
+         """;
+ 
+@@ -244,7 +269,83 @@ internal static class GlShaders
+                     wsum += 1.0;
+                 }
+             }
+-            oColor = vec4(wsum > 0.0 ? sum / wsum : texture(uAo, vUv).r, 1.0, 0.0, 1.0);
++            // Blue is carried through from the centre tap rather than blurred: it
++            // is the census's "this pixel's normal came from the geometry", which
++            // is a fact about one pixel and not a quantity to average.
++            oColor = vec4(wsum > 0.0 ? sum / wsum : texture(uAo, vUv).r, 1.0, texture(uAo, vUv).b, 1.0);
++        }
++        """;
++
++    /// <summary>
++    /// 0058. The frame's own geometry, redrawn into a normal buffer after the frame
++    /// is finished. The colour pass cannot write this itself: its fragment shader
++    /// has a dual-source output (index 1) for the console's blend modes, and a
++    /// program with one of those may not render to more than one draw buffer, so
++    /// there is no MRT to hang a G-buffer off. Drawing the triangles again is what
++    /// the port can do now that it assembles and enumerates them
++    /// (<see cref="AoGeometry"/>).
++    ///
++    /// Position is <c>PrimVs</c>'s arithmetic to the letter, so a triangle lands on
++    /// the same pixels. W is the view depth rather than the colour pass's 1 for an
++    /// untextured polygon: nothing here has to match that pass's interpolation, and
++    /// a perspective-correct depth is what makes the reconstructed surface the
++    /// polygon's actual plane instead of a curve through its corners.
++    /// </summary>
++    public const string NormalVs = """
++        #version 330 core
++        layout(location = 0) in vec2  inPos;
++        layout(location = 1) in float inZ;
++
++        uniform vec2 uPosBias;
++        uniform vec2 uFbInv;
++
++        out float vDepth;
++
++        void main() {
++            vec2 p = (inPos + uPosBias) * uFbInv - 1.0;
++            float w = max(inZ, 1.0);
++            gl_Position = vec4(p * w, 0.0, w);
++            vDepth = inZ * (1.0/65536.0);
++        }
++        """;
++
++    /// <summary>
++    /// 0058. One polygon's plane, as a normal. The view position is reconstructed
++    /// exactly as the occlusion pass reconstructs it — the same H and the same
++    /// centre, read off the GTE — and the normal is the cross product of its two
++    /// screen derivatives, which across a plane is constant and exact. That is the
++    /// whole difference from the pass's own reconstruction: this one is taken
++    /// *inside* one primitive, so it can never straddle a silhouette or average two
++    /// surfaces, and it does not have the depth buffer's quantisation in it.
++    ///
++    /// Alpha is the "there is a normal here" bit the pass tests, so a pixel this
++    /// never reached falls back to the old cross product rather than to a wrong
++    /// normal.
++    /// </summary>
++    public const string NormalFs = """
++        #version 330 core
++        in float vDepth;
++        out vec4 oColor;
++
++        uniform float uProjH;
++        // The projection centre and the render scale, in the target's own pixels:
++        // gl_FragCoord / uScale is where this fragment is in the game's.
++        uniform vec2  uCentre;
++        uniform float uScale;
++
++        void main() {
++            float z = vDepth * 65536.0;
++            if (z <= 0.0) { oColor = vec4(0.0); return; }
++            vec2 s = gl_FragCoord.xy / uScale;
++            vec3 p = vec3((s - uCentre) * (z / uProjH), z);
++            vec3 n = cross(dFdx(p), dFdy(p));
++            // A polygon edge-on to the camera, or one degenerate after projection:
++            // no plane to report, and alpha 0 leaves the pass its own answer.
++            if (dot(n, n) < 1e-12) { oColor = vec4(0.0); return; }
++            n = normalize(n);
++            // The camera is at the origin looking down +Z.
++            if (dot(n, p) > 0.0) n = -n;
++            oColor = vec4(n * 0.5 + 0.5, 1.0);
+         }
+         """;
+ 
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+index 4ad29c3..754b72b 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -276,6 +276,13 @@ public static class GteDepth
+     /// texel and produce nothing but noise.</summary>
+     public static float AoMaxDepth = 24000f;
+ 
++    /// <summary>0058. Take the pass's normals from the frame's own geometry, redrawn
++    /// into a normal buffer once the frame is finished (<see cref="AoGeometry"/>),
++    /// instead of differencing four depth texels. A pixel the normal buffer did not
++    /// reach falls back to the depth cross product, so this is additive: turning it
++    /// off is the picture exactly as it was.</summary>
++    public static bool AoNormals = true;
++
+     /// <summary>The projection the GTE is actually using, published from
+     /// <c>Gte.Rtp</c>: the projection distance H and the screen-space centre
+     /// OFX/OFY the divide is offset by. The pass has to undo the game's own
+@@ -356,14 +363,22 @@ public static class GteDepth
+     /// than when 100% does.</summary>
+     public static float AoMin = 1f, AoMean = 1f, AoShadedPct, AoCoveragePct;
+ 
+-    /// <summary>Two bytes a pixel: red the occlusion factor, green the mask.</summary>
++    /// <summary>0058. The share of the surfaces the pass shaded whose normal came
++    /// from the geometry rather than from the depth cross product. It is the one
++    /// number that says whether the normal buffer reached the picture: everything
++    /// else reads the same with an empty one, because the fallback is the old
++    /// mechanism and produces a perfectly plausible frame.</summary>
++    public static float AoGeoNormalPct;
++
++    /// <summary>Three bytes a pixel: red the occlusion factor, green the mask, blue
++    /// whether the normal came from the geometry.</summary>
+     public static void SetAoMap(ReadOnlySpan<byte> ao, int w, int h)
+     {
+         var map = AoMap ??= new float[AoMapCols * AoMapRows];
+         var cov = AoCoverage ??= new float[AoMapCols * AoMapRows];
+         Array.Fill(map, 1f);
+         Array.Fill(cov, 0f);
+-        AoMin = 1f; AoMean = 1f; AoShadedPct = 0f; AoCoveragePct = 0f;
++        AoMin = 1f; AoMean = 1f; AoShadedPct = 0f; AoCoveragePct = 0f; AoGeoNormalPct = 0f;
+         WantAoMap = false;
+         if (w <= 0 || h <= 0) return;
+ 
+@@ -371,17 +386,18 @@ public static class GteDepth
+         Span<int> cellHit = stackalloc int[AoMapCols * AoMapRows];
+         Span<float> cellSum = stackalloc float[AoMapCols * AoMapRows];
+         double sum = 0;
+-        long shaded = 0, covered = 0, n = 0;
++        long shaded = 0, covered = 0, geoNormal = 0, n = 0;
+ 
+         for (int y = 0; y < h; y++)
+         {
+             // The readback is bottom-up, the picture is top-down.
+             int row = (h - 1 - y) * AoMapRows / h;
+-            int rowBase = y * w * 2;
++            int rowBase = y * w * 3;
+             for (int x = 0; x < w; x++)
+             {
+-                float v = ao[rowBase + x * 2] * (1f / 255f);
+-                bool surface = ao[rowBase + x * 2 + 1] >= 128;
++                float v = ao[rowBase + x * 3] * (1f / 255f);
++                bool surface = ao[rowBase + x * 3 + 1] >= 128;
++                if (surface && ao[rowBase + x * 3 + 2] >= 128) geoNormal++;
+                 sum += v;
+                 n++;
+                 // A pixel is "shaded" once it is more than one 8-bit step from
+@@ -404,6 +420,7 @@ public static class GteDepth
+             AoMean = (float)(sum / n);
+             AoShadedPct = 100f * shaded / n;
+             AoCoveragePct = 100f * covered / n;
++            AoGeoNormalPct = covered > 0 ? 100f * geoNormal / covered : 0f;
+         }
+     }
+ 

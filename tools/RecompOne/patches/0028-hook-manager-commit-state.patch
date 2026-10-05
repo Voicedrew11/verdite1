@@ -1,0 +1,21 @@
+--- a/RecompOne.Runtime/Modding/HookManager.cs
++++ b/RecompOne.Runtime/Modding/HookManager.cs
+@@ -140,6 +140,18 @@ public static class HookManager
+         }
+     }
+ 
++    public static bool IsRegistered(MethodInfo target)
++    {
++        lock (_gate)
++            return _hooks.ContainsKey(target);
++    }
++
++    public static bool IsCommitted(MethodInfo target)
++    {
++        lock (_gate)
++            return _hooks.TryGetValue(target, out var hooks) && hooks.Hook != null;
++    }
++
+     //Installing a detour is the one step here that is not bookkeeping, and it is
+     //the one that can throw. It used to throw straight out of this loop, which
+     //abandoned every function after it in the dictionary -- silently, because a

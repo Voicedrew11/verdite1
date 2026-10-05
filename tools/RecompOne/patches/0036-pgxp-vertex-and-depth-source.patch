@@ -1,0 +1,526 @@
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index d448e6b..53470e9 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -21,6 +21,11 @@ public sealed partial class Gpu
+         public int X, Y, R, G, B, U, V;
+         public float W; public bool HasW, HasZ, Clamped;
+         public float Fx, Fy; public bool HasSub;
++        // PGXP's answer, before it is folded into the fields above: the precise
++        // screen position it recovered, whether it recovered one at all, and
++        // whether the W that came with it is a real view depth rather than the
++        // vertex cache's 1.0 stand-in.
++        public float Px, Py; public bool Precise, PreciseW;
+     }
+ 
+     static readonly RenderPrimEvent _primEvent = new();
+@@ -89,16 +94,23 @@ public sealed partial class Gpu
+         // vertex. Each vertex is asked for by the address its coordinate word was
+         // read out of, which is the vertex itself and not merely the pixel it landed
+         // on, so nothing has to be picked between and a miss is simply affine.
+-        if (GteDepth.Active && (tex || GteDepth.Subpixel || GteDepth.ZBuffer))
++        //
++        // There are two mechanisms that can answer, and exactly one of them does.
++        // GteVertexMap follows the value through memory with a ring keyed on the
++        // word itself; PGXP follows it through the CPU's registers with hooks the
++        // recompiler emitted. PGXP wins whenever it is on -- that is what the
++        // switch means -- and everything below this block is shared.
++        bool pgxp = Pgxp.Pgxp.Enabled;
++        if ((GteDepth.Active || pgxp) && (tex || GteDepth.Subpixel || GteDepth.ZBuffer))
+         {
+-            bool wantW = tex && GteDepth.Enabled;
++            bool wantW = tex && (pgxp ? Pgxp.Pgxp.TextureCorrection : GteDepth.Enabled);
+             bool wantZ = GteDepth.ZBuffer;
+             bool wantSub = GteDepth.Subpixel;
+ 
+             // The old screen-position table, kept only as a comparison: it answers
+             // for whatever last projected to this pixel, which is what the exact map
+             // exists to stop doing. Off unless KF2_PERSPECTIVE_FALLBACK asks for it.
+-            if (GteDepth.PositionFallback)
++            if (!pgxp && GteDepth.PositionFallback)
+             {
+                 Span<GteDepth.Attr> a = stackalloc GteDepth.Attr[4];
+                 for (int i = 0; i < n; i++)
+@@ -114,17 +126,19 @@ public sealed partial class Gpu
+                 }
+             }
+ 
+-            for (int i = 0; i < n; i++)
+-            {
+-                if (!GteVertexMap.TryGet(_fifoSrc[vwAt[i]], _fifo[vwAt[i]], out var a)) continue;
+-                v[i].W = a.Z;
+-                v[i].HasW = wantW && a.Z > 0f;
+-                v[i].HasZ = wantZ && a.Z > 0f;
+-                v[i].Fx = wantSub ? a.Fx : 0f;
+-                v[i].Fy = wantSub ? a.Fy : 0f;
+-                v[i].HasSub = wantSub;
+-                v[i].Clamped = a.Clipped;
+-            }
++            if (pgxp) ApplyPgxp(v, vwAt, n, wantW, wantZ, wantSub);
++            else
++                for (int i = 0; i < n; i++)
++                {
++                    if (!GteVertexMap.TryGet(_fifoSrc[vwAt[i]], _fifo[vwAt[i]], out var a)) continue;
++                    v[i].W = a.Z;
++                    v[i].HasW = wantW && a.Z > 0f;
++                    v[i].HasZ = wantZ && a.Z > 0f;
++                    v[i].Fx = wantSub ? a.Fx : 0f;
++                    v[i].Fy = wantSub ? a.Fy : 0f;
++                    v[i].HasSub = wantSub;
++                    v[i].Clamped = a.Clipped;
++                }
+         }
+ 
+         //dispatch the render event for prims
+@@ -169,6 +183,8 @@ public sealed partial class Gpu
+                                  v[0].R, v[0].G, v[0].B);
+         }
+ 
++        MaybeClearDepth(v, n);
++
+         if (HleOn)
+         {
+             HleTri(v[0], v[1], v[2], tex, gouraud, semi, raw, clut);
+@@ -528,6 +544,37 @@ public sealed partial class Gpu
+         return true;
+     }
+ 
++    float _lastDepthMean;
++
++    // The scene-break test. It has to run before the primitive is submitted and
++    // after the batch it would join, so the GL backend is flushed first: the clear
++    // happens inside the next batch's flush, and a batch still holding this frame's
++    // earlier triangles would otherwise be cleared out from under them.
++    void MaybeClearDepth(ReadOnlySpan<Vert> v, int n)
++    {
++        if (!GteDepth.ZBuffer) return;
++
++        float thr = GteDepth.DepthClearThreshold;
++        if (thr <= 0f) return;
++
++        float sum = 0f;
++        int c = 0;
++        for (int i = 0; i < n; i++)
++            if (v[i].HasZ) { sum += v[i].W; c++; }
++
++        if (c == 0) return;
++
++        float mean = sum / c;
++        if (_lastDepthMean - mean >= thr)
++        {
++            if (HleOn) Hle.GpuHle.Backend?.Flush();
++            GteDepth.Generation++;
++            GteDepth.ZClears++;
++        }
++
++        _lastDepthMean = mean;
++    }
++
+     void EnsureZClear()
+     {
+         _zbuf ??= new float[VramWidth * VramHeight];
+@@ -573,6 +620,128 @@ public sealed partial class Gpu
+         _texDisable = (tp & (1u << 11)) != 0;
+     }
+ 
++    // PGXP asks two places in order. The RAM shadow is the exact answer -- this
++    // word, at this address, put there by a tracked store -- and it is what carries
++    // a vertex through the game's own copy out of its transform cache and into the
++    // packet. The screen-position cache underneath it is the inexact one, kept for
++    // the vertices no tracked instruction ever touched; it can only offer a W when
++    // the "cache W" option says its stand-in is worth having.
++    void ApplyPgxp(Span<Vert> v, ReadOnlySpan<int> vwAt, int n, bool wantW, bool wantZ, bool wantSub)
++    {
++        Span<uint> words = stackalloc uint[4];
++        Span<uint> seqs = stackalloc uint[4];
++
++        for (int i = 0; i < n; i++)
++        {
++            uint word = _fifo[vwAt[i]];
++            words[i] = word;
++
++            float px = 0f, py = 0f, pw = 1f;
++            bool validW = false;
++            uint seq = 0u;
++
++            Pgxp.PgxpStats.Asked++;
++
++            uint src = _fifoSrc[vwAt[i]];
++            bool found = src != 0u &&
++                         Pgxp.PgxpMemory.TryLoad(src, word, out px, out py, out pw, out validW, out seq, out _);
++            bool fromMemory = found;
++
++            if (!found)
++                found = Pgxp.PgxpGpu.TryGetVertex(word, 0u, false, out px, out py, out pw, out validW, out seq, out _);
++
++            if (!found) continue;
++
++            if (!WithinTolerance(px, py, word)) { Pgxp.PgxpStats.Refused++; continue; }
++
++            if (fromMemory) Pgxp.PgxpStats.FromMemory++; else Pgxp.PgxpStats.FromCache++;
++            if (!validW || pw <= 0f) Pgxp.PgxpStats.NoDepth++;
++
++            v[i].Precise = true;
++            v[i].PreciseW = validW;
++            v[i].Px = px;
++            v[i].Py = py;
++            v[i].W = pw;
++            seqs[i] = seq;
++        }
++
++        ResolveAmbiguous(v, words, seqs, n);
++
++        for (int i = 0; i < n; i++)
++        {
++            if (!v[i].Precise) continue;
++
++            bool depth = v[i].PreciseW && v[i].W > 0f;
++            v[i].HasW = wantW && depth;
++            v[i].HasZ = wantZ && depth;
++
++            // Downstream keeps the packet's whole-pixel position and adds a
++            // fraction to it, so that a RenderPrimEvent listener -- widescreen --
++            // still sees the coordinates the packet carried and can move them.
++            // PGXP produces an absolute position instead, so the fraction is the
++            // difference. It is only meaningful where the packet word and the
++            // 11-bit coordinate the GPU decodes are the same number; a game that
++            // wrote something else into the top bits is not describing this vertex.
++            if (!wantSub) continue;
++
++            int rawX = CoordX(words[i]), rawY = CoordY(words[i]);
++            if (rawX != (short)(words[i] & 0xFFFFu) || rawY != (short)(words[i] >> 16)) continue;
++
++            v[i].Fx = v[i].Px - rawX;
++            v[i].Fy = v[i].Py - rawY;
++            v[i].HasSub = true;
++        }
++    }
++
++    // Upstream defines a tolerance and never spends it. It is the guard this arm
++    // wants: a recovered position that disagrees with the packet by more than a
++    // couple of pixels is not a more precise version of this vertex, it is a
++    // different vertex, and believing it moves geometry. Negative turns it off.
++    static bool WithinTolerance(float px, float py, uint word)
++    {
++        float tol = Pgxp.Pgxp.Tolerance;
++        if (tol < 0f) return true;
++
++        return Math.Abs(px - CoordX(word)) < tol && Math.Abs(py - CoordY(word)) < tol;
++    }
++
++    // A primitive that recovered some of its vertices and not others is the case
++    // the vertex cache exists for, and the sequence number of a vertex that *was*
++    // recovered says which of an ambiguous cell's candidates belongs to the same
++    // batch. A primitive that recovered none of them, or all of them, has nothing
++    // to disambiguate with or nothing left to ask.
++    void ResolveAmbiguous(Span<Vert> v, ReadOnlySpan<uint> words, ReadOnlySpan<uint> seqs, int n)
++    {
++        uint hint = 0u;
++        int resolved = 0;
++
++        for (int i = 0; i < n; i++)
++        {
++            if (!v[i].Precise) continue;
++            if (resolved == 0) hint = seqs[i];
++            resolved++;
++        }
++
++        if (resolved == 0 || resolved == n) return;
++
++        for (int i = 0; i < n; i++)
++        {
++            if (v[i].Precise) continue;
++            if (!Pgxp.PgxpGpu.TryGetVertex(words[i], hint, true, out float px, out float py, out float pw,
++                    out bool validW, out _, out _)) continue;
++            if (!WithinTolerance(px, py, words[i])) { Pgxp.PgxpStats.Refused++; continue; }
++
++            Pgxp.PgxpStats.Resolved++;
++            if (!validW || pw <= 0f) Pgxp.PgxpStats.NoDepth++;
++
++            v[i].Precise = true;
++            v[i].PreciseW = validW;
++            v[i].Px = px;
++            v[i].Py = py;
++            v[i].W = pw;
++        }
++    }
++
+     static int CoordX(uint w) { int x = (int)(w & 0x7FF); return (x & 0x400) != 0 ? x - 0x800 : x; }
+     static int CoordY(uint w) { int y = (int)((w >> 16) & 0x7FF); return (y & 0x400) != 0 ? y - 0x800 : y; }
+     static ushort To15(int r, int g, int b) => (ushort)(((r >> 3) & 0x1F) | (((g >> 3) & 0x1F) << 5) | (((b >> 3) & 0x1F) << 10));
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+index 6310ea6..c02a306 100644
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -147,6 +147,30 @@ public static class GteDepth
+     /// than test against whatever was sitting there while the setting was off.</summary>
+     public static int Generation;
+ 
++    /// <summary>
++    /// How far the mean view depth of a primitive may fall below the previous
++    /// primitive's before the depth buffer is cleared, in GTE view-depth units.
++    /// DuckStation's <c>pgxp_depth_clear_threshold</c>, and its default of 300.
++    ///
++    /// A frame is not one scene. A game that draws the world, then a weapon in the
++    /// player's hand, then a menu behind the same projection hands the depth buffer
++    /// three ranges that have nothing to do with each other, and testing the second
++    /// against the first hides it. The console had no depth buffer and so no such
++    /// problem: everything took its turn on the ordering table. The break is
++    /// detected the only way it can be without knowing what the game means -- a
++    /// large step towards the camera between consecutive primitives -- and the
++    /// clear is the existing per-frame one, reached by bumping
++    /// <see cref="Generation"/> rather than by a clear path of its own.
++    ///
++    /// Zero or less turns it off, which is one depth buffer for the whole frame.
++    /// </summary>
++    public static float DepthClearThreshold = 300f;
++
++    /// <summary>How many times the threshold above has fired. A rate rather than a
++    /// picture: several a frame means the threshold is too small and the buffer is
++    /// being thrown away, none at all means it is doing nothing.</summary>
++    public static long ZClears;
++
+     /// <summary>
+     /// True color (24-bit). While false the GL backend renders into an RGB5A1
+     /// display target and the fragment shader crushes every shaded pixel to five
+diff --git a/RecompOne.Runtime/Pgxp/PgxpStats.cs b/RecompOne.Runtime/Pgxp/PgxpStats.cs
+new file mode 100644
+index 0000000..91b3612
+--- /dev/null
++++ b/RecompOne.Runtime/Pgxp/PgxpStats.cs
+@@ -0,0 +1,46 @@
++namespace RecompOne.Runtime.Pgxp;
++
++/// <summary>
++/// Not upstream's. PGXP answers or it does not, and the difference between the two
++/// mechanisms this port carries is entirely a difference in <i>how often</i> they
++/// answer — so the coverage has to be countable or there is no way to say whether
++/// the backport was worth taking.
++///
++/// Counted where the answer is used (<c>Gpu.ApplyPgxp</c>) rather than inside PGXP,
++/// so a vertex refused by the tolerance guard is a miss here even though PGXP found
++/// something for it. Free when nothing reads them: they are plain longs on a path
++/// that already exists, and the port's probe resets them each window.
++/// </summary>
++public static class PgxpStats
++{
++    /// <summary>Vertices asked about.</summary>
++    public static long Asked;
++
++    /// <summary>Answered out of the RAM shadow: this word, at this address, put
++    /// there by a tracked store. The exact answer.</summary>
++    public static long FromMemory;
++
++    /// <summary>Answered out of the screen-position vertex cache, which is keyed on
++    /// where the vertex landed rather than on which vertex it is.</summary>
++    public static long FromCache;
++
++    /// <summary>Recovered by the per-primitive ambiguity pass, using a sibling
++    /// vertex's sequence number to pick between a cell's candidates.</summary>
++    public static long Resolved;
++
++    /// <summary>Found, then thrown away for disagreeing with the packet coordinate
++    /// by more than the tolerance. A rising number here means PGXP is answering with
++    /// the wrong vertex, which is worth knowing before the picture is blamed.</summary>
++    public static long Refused;
++
++    /// <summary>Answered with a position but no usable view depth, so the polygon
++    /// stays affine and untested even though its position improved.</summary>
++    public static long NoDepth;
++
++    public static long Hits => FromMemory + FromCache + Resolved;
++
++    public static void Reset()
++    {
++        Asked = FromMemory = FromCache = Resolved = Refused = NoDepth = 0;
++    }
++}
+diff --git a/RecompOne.Runtime/Gpu/GpuHleForward.cs b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+index e8dfaff..97c283d 100644
+--- a/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -47,8 +47,24 @@ public sealed partial class Gpu
+         // depth into gl_Position.w, and one vertex left at 1 would tear the
+         // triangle's texture in half. The Z-buffer is the same rule for a different
+         // reason — a corner at ndc.z = 0 among two real depths would punch a hole.
+-        bool persp = tex && a.HasW && b.HasW && c.HasW;
+         bool z = GteDepth.ZBuffer && a.HasZ && b.HasZ && c.HasZ;
++
++        // **A depth-tested triangle gets a real clip W whether or not its texture
++        // is being corrected**, and that is a fix rather than tidiness. `vDepth` is
++        // an ordinary varying, so OpenGL interpolates it in 1/w -- which is exact
++        // when w is the view depth and *screen-linear* when w is 1. An untextured
++        // wall never asked for texture correction, so it used to arrive with w = 1
++        // and its interior depths came out linear in screen space, which is the one
++        // thing a view depth is not: it is 1/z that is affine across a pixel row.
++        // The software rasterizer has always interpolated the reciprocals and taken
++        // one back (see `useZ` in DrawPolygon); this is the same arithmetic, done by
++        // the rasterizer instead of by hand, and it makes the two agree.
++        //
++        // The visible cost is that a textured triangle drawn with the depth buffer
++        // on and perspective correction off is now corrected anyway. That pair is a
++        // comparison rather than a picture anyone ships, and a depth buffer fed
++        // wrong depths is not a comparison of anything.
++        bool persp = z || (tex && a.HasW && b.HasW && c.HasW);
+         if (GteDepth.ZBuffer) { if (z) GteDepth.ZTris++; else GteDepth.ZSkipped++; }
+ 
+         var be = GpuHle.Backend!;
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index 53470e9..2aeead2 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -554,8 +554,11 @@ public sealed partial class Gpu
+     {
+         if (!GteDepth.ZBuffer) return;
+ 
++        // The threshold is read after the census, not before it: at zero the clear
++        // must not fire, but the drops still have to be counted or the one setting
++        // that turns the guard off also turns off the measurement that would say
++        // whether it should be off.
+         float thr = GteDepth.DepthClearThreshold;
+-        if (thr <= 0f) return;
+ 
+         float sum = 0f;
+         int c = 0;
+@@ -565,7 +568,22 @@ public sealed partial class Gpu
+         if (c == 0) return;
+ 
+         float mean = sum / c;
+-        if (_lastDepthMean - mean >= thr)
++        float drop = _lastDepthMean - mean;
++
++        // Every drop is censused, fired on or not, because the question the
++        // threshold answers is whether this game *has* two populations of drop --
++        // ordinary depth sorting within one scene, and a scene the game began
++        // afresh -- or only the first, in which case any threshold that fires is
++        // throwing away the world's own depth mid-frame.
++        if (drop > 0f)
++        {
++            if (drop > GteDepth.ZDropMax) GteDepth.ZDropMax = drop;
++            int bucket = drop < 10f ? 0 : drop < 50f ? 1 : drop < 150f ? 2
++                       : drop < 300f ? 3 : drop < 1000f ? 4 : 5;
++            GteDepth.ZDrops[bucket]++;
++        }
++
++        if (thr > 0f && drop >= thr)
+         {
+             if (HleOn) Hle.GpuHle.Backend?.Flush();
+             GteDepth.Generation++;
+@@ -699,10 +717,13 @@ public sealed partial class Gpu
+     // different vertex, and believing it moves geometry. Negative turns it off.
+     static bool WithinTolerance(float px, float py, uint word)
+     {
++        float dx = px - CoordX(word), dy = py - CoordY(word);
++        Pgxp.PgxpStats.NoteDisagreement(dx, dy);
++
+         float tol = Pgxp.Pgxp.Tolerance;
+         if (tol < 0f) return true;
+ 
+-        return Math.Abs(px - CoordX(word)) < tol && Math.Abs(py - CoordY(word)) < tol;
++        return Math.Abs(dx) < tol && Math.Abs(dy) < tol;
+     }
+ 
+     // A primitive that recovered some of its vertices and not others is the case
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+index c02a306..a5ab806 100644
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -162,15 +162,38 @@ public static class GteDepth
+     /// clear is the existing per-frame one, reached by bumping
+     /// <see cref="Generation"/> rather than by a clear path of its own.
+     ///
+-    /// Zero or less turns it off, which is one depth buffer for the whole frame.
++    /// Zero or less turns it off, which is one depth buffer for the whole frame,
++    /// **and that is the default here.** DuckStation's 300 is for games that draw
++    /// several 3D scenes in one frame; King's Field draws one world and a 2D HUD,
++    /// and 2D never recovers a depth so it never enters the mean. Measured over a
++    /// walk through area 2, the forward steps between consecutive primitives are a
++    /// single smoothly decaying population with no gap in it — 39.4% under 10
++    /// units, 47.7% under 50, 9.2% under 150, 2.8% under 300, 0.9% beyond, widest
++    /// 318 — which is ordinary depth sorting inside one scene and nothing else.
++    /// With no second population there is no scene break to detect, and at 300 the
++    /// guard fired **2575 times a second**, some twenty times a frame, throwing the
++    /// world's own depth away mid-frame and taking the frame rate from 144 to
++    /// 34-76 fps with it (each clear flushes the GL batch). Left in the code
++    /// because it is the right mechanism for a game that needs it; set to zero
++    /// because this one does not.
+     /// </summary>
+-    public static float DepthClearThreshold = 300f;
++    public static float DepthClearThreshold;
+ 
+     /// <summary>How many times the threshold above has fired. A rate rather than a
+     /// picture: several a frame means the threshold is too small and the buffer is
+     /// being thrown away, none at all means it is doing nothing.</summary>
+     public static long ZClears;
+ 
++    /// <summary>Every positive step towards the camera between consecutive
++    /// primitives, bucketed at &lt;10, &lt;50, &lt;150, &lt;300, &lt;1000, &gt;=1000 view-depth
++    /// units, and the largest seen. Censused whether or not the threshold fired,
++    /// so the two populations — ordinary sorting inside one scene, and a genuine
++    /// scene break — can be told apart if they exist.</summary>
++    public static readonly long[] ZDrops = new long[6];
++
++    /// <summary>Largest drop seen in the window, in view-depth units.</summary>
++    public static float ZDropMax;
++
+     /// <summary>
+     /// True color (24-bit). While false the GL backend renders into an RGB5A1
+     /// display target and the fragment shader crushes every shaded pixel to five
+@@ -273,7 +296,12 @@ public static class GteDepth
+     /// back, so <see cref="ZRejects"/> stays at zero there.</summary>
+     public static long ZTris, ZSkipped, ZRejects;
+ 
+-    public static void ResetZCounters() => ZTris = ZSkipped = ZRejects = 0;
++    public static void ResetZCounters()
++    {
++        ZTris = ZSkipped = ZRejects = ZClears = 0;
++        Array.Clear(ZDrops);
++        ZDropMax = 0f;
++    }
+ 
+     /// <summary>A census of the frame's <i>large</i> polygons, in the order the
+     /// ordering table submitted them, with the depth each one recovered. It exists
+diff --git a/RecompOne.Runtime/Pgxp/PgxpStats.cs b/RecompOne.Runtime/Pgxp/PgxpStats.cs
+index 91b3612..f04992a 100644
+--- a/RecompOne.Runtime/Pgxp/PgxpStats.cs
++++ b/RecompOne.Runtime/Pgxp/PgxpStats.cs
+@@ -37,10 +37,39 @@ public static class PgxpStats
+     /// stays affine and untested even though its position improved.</summary>
+     public static long NoDepth;
+ 
++    /// <summary>
++    /// How far each recovered position sat from the coordinate in the packet,
++    /// bucketed, and taken **before** the tolerance test rather than after — the
++    /// point is to see both populations at once.
++    ///
++    /// PGXP recovering *this* vertex more precisely can only disagree by the
++    /// fraction the GTE truncated, so it lands under one pixel. PGXP recovering
++    /// *a different* vertex can disagree by anything. The right tolerance is the
++    /// gap between the two, and if there is no gap there is no safe tolerance and
++    /// the answer is that the guard is doing something other than what it claims.
++    ///
++    /// Buckets are &lt;0.5, &lt;1, &lt;2, &lt;4, &lt;8, &gt;=8 pixels, on the larger of the two axes.
++    /// </summary>
++    public static readonly long[] Disagree = new long[6];
++
++    /// <summary>The largest disagreement seen in the window, in pixels.</summary>
++    public static float DisagreeMax;
++
++    public static void NoteDisagreement(float dx, float dy)
++    {
++        float d = Math.Max(Math.Abs(dx), Math.Abs(dy));
++        if (d > DisagreeMax) DisagreeMax = d;
++
++        int bucket = d < 0.5f ? 0 : d < 1f ? 1 : d < 2f ? 2 : d < 4f ? 3 : d < 8f ? 4 : 5;
++        Disagree[bucket]++;
++    }
++
+     public static long Hits => FromMemory + FromCache + Resolved;
+ 
+     public static void Reset()
+     {
+         Asked = FromMemory = FromCache = Resolved = Refused = NoDepth = 0;
++        Array.Clear(Disagree);
++        DisagreeMax = 0f;
+     }
+ }

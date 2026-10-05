@@ -1,0 +1,56 @@
+diff --git a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+--- a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
++++ b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+@@ -19,14 +19,26 @@
+     public static bool PresentProbe;
+     public static long PresentWide, PresentPlain, PresentFallback;
+     public static double PresentWindowStart = Environment.TickCount64 / 1000.0;
++    // Whether the margin is showing anything the game actually drew. DisplayFlip
++    // counts genuine display-area flips (NotifyDisplay seeing a different X,Y --
++    // the per-frame flip, not the GP1(06)/(07)/(08) re-notifications of the same
++    // rect). Writers stamp LastMarginContentFlip with it; PresentDisplay refuses
++    // a wide target whose margin has been idle for more than two flips, which is
++    // what keeps scenes whose picture arrives by MDEC -- the boot splash -- at
++    // their authored width instead of flapping between a wide target and the
++    // 4:3 fallback.
++    public static int DisplayFlip = 0;
++    public static int LastMarginContentFlip = -1000;
+ 
+     public struct DispRect { public int X, Y, W, H; public long Stamp; public bool Valid; }
+ 
+     static readonly DispRect[] _rects = new DispRect[2];
+     static long _stamp;
++    static int _lastNotifiedX = -1, _lastNotifiedY = -1;
+ 
+     public static void NotifyDisplay(int x, int y, int w, int h)
+     {
++        if (x != _lastNotifiedX || y != _lastNotifiedY) { DisplayFlip++; _lastNotifiedX = x; _lastNotifiedY = y; }
+         if (w <= 0 || h <= 0) return;
+         int slot = -1;
+         for (int i = 0; i < _rects.Length; i++)
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -509,6 +509,7 @@
+                 FillRtFull(rt, color15);
+                 rt.Dirty = false;
+                 rt.LastDrawFrame = _frame;
++                if (rt.Margin > 0) GpuHle.LastMarginContentFlip = GpuHle.DisplayFlip;
+             }
+             else SyncRtFromVram(rt, x, y, w, h);
+         }
+@@ -847,6 +848,14 @@
+                 if (dispX < rt.X || dispY < rt.Y || dispX + w > rt.X + rt.W || dispY + h > rt.Y + rt.H) continue;
+                 if (src == null || rt.LastDrawFrame > src.LastDrawFrame) src = rt;
+             }
++        // A wide target whose margin columns this scene never draws presents a
++        // 16:9 frame with black sides -- and when only one of the game's two flip
++        // buffers has such a target (STR playback draws one OT, MDECs the other),
++        // the present flaps between it and the 4:3 VRAM fallback: the picture
++        // breathes horizontally. Demote before the census so the counters report
++        // what was actually presented.
++        if (src is { Margin: > 0 } && GpuHle.DisplayFlip - GpuHle.LastMarginContentFlip > 2)
++            src = null;
+         // Only the non-rgb24 path searches for a target, so src is meaningful only
+         // there; an rgb24 present (FMV) draws raw VRAM by a different route and would
+         // otherwise be miscounted as the 4:3 margin fallback the census is watching for.

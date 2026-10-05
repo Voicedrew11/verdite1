@@ -1,0 +1,380 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 7ddc838..d1d8bc8 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -2011,12 +2011,12 @@ public sealed partial class GlCore : IGpuBackend
+         if (_legacy)
+         {
+             _gl.Disable(EnableCap.Blend);
+-            _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)_count);
++            DrawTested(rt, zBias, first, _count, true);
+         }
+         else if (!_kTransparent)
+         {
+             _gl.Disable(EnableCap.Blend);
+-            _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)_count);
++            DrawTested(rt, zBias, first, _count, true);
+         }
+         else
+         {
+@@ -2026,20 +2026,20 @@ public sealed partial class GlCore : IGpuBackend
+             {
+                 _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
+                 SetBlend(0f, 1f);
+-                _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)_count);
++                DrawTested(rt, zBias, first, _count, true);
+ 
+                 _vram.BeginDestRead(destTex, destW, destH, readX, readY, readW, readH);
+                 RebindTarget(rt);
+                 _gl.BlendEquationSeparate(BlendEquationModeEXT.FuncReverseSubtract, BlendEquationModeEXT.FuncAdd);
+                 SetBlend(1f, 1f);
+                 _gl.Uniform4(_uBlendOpaque, 0f, 0f, 0f, 1f);
+-                _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)_count);
++                DrawTested(rt, zBias, first, _count, false);
+             }
+             else
+             {
+                 _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
+                 SetBlend(_kBlend switch { 0 => 0.5f, 3 => 0.25f, _ => 1f }, _kBlend == 0 ? 0.5f : 1f);
+-                _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)_count);
++                DrawTested(rt, zBias, first, _count, true);
+             }
+ 
+             // Texels without the semi-transparency bit draw opaque, so they must hide what is behind them from the occlusion pass.
+@@ -2180,6 +2180,80 @@ public sealed partial class GlCore : IGpuBackend
+         _gl.ActiveTexture(TextureUnit.Texture0);
+     }
+ 
++    /// <summary>
++    /// 0086. A batch's colour. Tested (<paramref name="zBias"/>, 0051) over the pixels
++    /// the main view's retained models marked this frame, it draws there against the
++    /// true depth: the models went in at slot 1, ahead of every packet the walk sends
++    /// after, so the tolerance that gives a coplanar overlap to the later table entry
++    /// gave a model's pixels to anything up to the tolerance behind it, such as the
++    /// floor behind a creature, whose slope term is large at a grazing angle.
++    /// An opaque packet that draws there takes the pixel, and the tolerance with it.
++    /// <paramref name="probe"/> once per batch: <see cref="RetainedScene.ModelMaskProbe"/>.
++    /// </summary>
++    void DrawTested(GlDisplayRt? rt, bool zBias, int first, int count, bool probe)
++    {
++        if (!zBias || rt is not { IsPlanar: false } || rt.ModelMaskFrame != _frame)
++        {
++            _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
++            return;
++        }
++        if (probe) RetainedScene.MaskBatches++;
++        if (probe && RetainedScene.ModelMaskProbe) ProbeModelMask(first, count);
++        if (!RetainedScene.ModelMask)
++        {
++            _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
++            return;
++        }
++        _gl.Enable(EnableCap.StencilTest);
++        _gl.StencilMask(0);
++        _gl.StencilFunc(StencilFunction.Equal, 0, 1);
++        _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
++        SetDepthBias(false);
++        _gl.StencilFunc(StencilFunction.Equal, 1, 1);
++        if (_kZMode == 1)
++        {
++            _gl.StencilMask(1);
++            _gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Zero);
++        }
++        _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
++        _gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
++        _gl.StencilMask(0xFF);
++        _gl.Disable(EnableCap.StencilTest);
++        SetDepthBias(true);
++    }
++
++    /// <summary>0086. Over the models' pixels, the samples of this batch the tolerant
++    /// test passes; of those the ones behind the stored depth, and the ones in front of
++    /// it by less than the tolerance. Writes nothing.</summary>
++    void ProbeModelMask(int first, int count)
++    {
++        _gl.Enable(EnableCap.StencilTest);
++        _gl.StencilMask(0);
++        _gl.StencilFunc(StencilFunction.Equal, 1, 1);
++        _gl.ColorMask(false, false, false, false);
++        long Count(float sign)
++        {
++            if (_uDepthBias >= 0) _gl.Uniform1(_uDepthBias, sign * GteDepth.DepthBias / 65536f);
++            if (_uDepthSlope >= 0) _gl.Uniform1(_uDepthSlope, sign * GteDepth.DepthSlope);
++            uint q = _gl.GenQuery();
++            _gl.BeginQuery(QueryTarget.SamplesPassed, q);
++            _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
++            _gl.EndQuery(QueryTarget.SamplesPassed);
++            _gl.GetQueryObject(q, QueryObjectParameterName.Result, out long n);
++            _gl.DeleteQuery(q);
++            return n;
++        }
++        long tolerant = Count(1f), held = Count(0f), clear = _kZMode != 1 ? Count(-1f) : held;
++        SetDepthBias(true);
++        _gl.ColorMask(true, true, true, true);
++        _gl.StencilMask(0xFF);
++        _gl.Disable(EnableCap.StencilTest);
++        RetainedScene.MaskSamples += tolerant;
++        RetainedScene.MaskBehind += tolerant - held;
++        // An opaque batch's own depth went in first, so only a blended one's tells.
++        if (_kZMode != 1) RetainedScene.MaskAhead += held - clear;
++    }
++
+     void SetDepthBias(bool on)
+     {
+         if (_uDepthBias >= 0) _gl.Uniform1(_uDepthBias, on ? GteDepth.DepthBias / 65536f : 0f);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+index be906ba..56a96aa 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlDisplayRt.cs
+@@ -10,7 +10,7 @@ public sealed class GlDisplayRt
+     // A texture rather than a renderbuffer, because the ambient-occlusion pass
+     // reads the finished buffer back in a full-screen shader and a renderbuffer
+     // cannot be sampled. Nothing else changes: it is still the same
+-    // DEPTH_COMPONENT24 attachment, still cleared at the head of a frame that
++    // 24-bit depth attachment (with 0086's stencil), still cleared at the head of a frame that
+     // draws to this target, and ReadPixels off the FBO (the KF2_ZBUFFER_PROBE=2
+     // census) reads it exactly as before.
+     public uint Depth;
+@@ -53,6 +53,9 @@ public sealed class GlDisplayRt
+     public int MarginVerts;
+     public int MarginVertFlip = -1;
+     public int ZGen = -1;
++    // 0086. The frame whose retained models marked this target's stencil; the
++    // packets drawn after them in that frame test against their true depth there.
++    public long ModelMaskFrame = -1;
+     // Upstream's own, kept beside ours rather than in place of it.
+     public long LastMarginFrame = -1;
+ 
+@@ -112,9 +115,11 @@ public sealed class GlDisplayRt
+         // the driver defaults to, an ordinary sampler2D read of this texture is
+         // undefined rather than the stored depth.
+         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureCompareMode, (int)GLEnum.None);
+-        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.DepthComponent24, (uint)TexW, (uint)TexH, 0,
+-            PixelFormat.DepthComponent, PixelType.Float, null);
+-        gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment,
++        // 0086. With a stencil beside it: the retained models' pixels (ModelMaskFrame).
++        // Sampled, it still reads as depth (DEPTH_STENCIL_TEXTURE_MODE's default).
++        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Depth24Stencil8, (uint)TexW, (uint)TexH, 0,
++            PixelFormat.DepthStencil, PixelType.UnsignedInt248, null);
++        gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthStencilAttachment,
+             TextureTarget.Texture2D, Depth, 0);
+         gl.BindTexture(TextureTarget.Texture2D, 0);
+ 
+@@ -122,7 +127,9 @@ public sealed class GlDisplayRt
+         gl.ClearDepth(1.0);
+         gl.Disable(EnableCap.ScissorTest);
+         gl.DepthMask(true);
+-        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
++        gl.ClearStencil(0);
++        gl.StencilMask(0xFF);
++        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+     }
+ 
+     public void Destroy(GL gl)
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+index 41604aa..95ec3eb 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+@@ -102,6 +102,14 @@ public sealed partial class GlCore
+         }
+         long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+         int drawn = DrawMapOpaque();
++        // 0086. The models' pixels, for the packets the walk sends after them.
++        _maskModels = RetainedScene.ModelMask || RetainedScene.ModelMaskProbe;
++        if (_maskModels && RetainedScene.MainModelsShown && (models >= 0 || inst >= 0))
++        {
++            ClearModelMask();
++            rt.ModelMaskFrame = _frame;
++            RetainedScene.MaskFrames++;
++        }
+         if (models >= 0 && RetainedScene.MainModelsShown)
+         {
+             DrawWorldModels(f.Models, models);
+@@ -113,6 +121,7 @@ public sealed partial class GlCore
+             DrawInstances(f.Instances, inst);
+             RetainedScene.InstancesDrawn += f.Instances.Count;
+         }
++        _maskModels = false;
+         EndWorldState();
+         EndGpuTimer(query, GpuWork.Batch, 0, Diagnostics.GpuTimes.Pass.World);
+ 
+@@ -278,6 +287,76 @@ public sealed partial class GlCore
+         return drawn;
+     }
+ 
++    // 0086. The main view's models are drawing, and mark the stencil where they land.
++    bool _maskModels;
++
++    /// <summary>0086. The target's stencil cleared to "no model here", whatever the
++    /// scissor; the models then set it where their colour lands (MarkModels).</summary>
++    void ClearModelMask()
++    {
++        bool scissor = _gl.IsEnabled(EnableCap.ScissorTest);
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.StencilMask(0xFF);
++        _gl.ClearStencil(0);
++        _gl.Clear(ClearBufferMask.StencilBufferBit);
++        if (scissor) _gl.Enable(EnableCap.ScissorTest);
++    }
++
++    /// <summary>0086. Around a model colour pass of the main view: each pixel it draws
++    /// is marked. Nothing is rejected by the stencil.</summary>
++    void MarkModels(bool on)
++    {
++        if (!_maskModels) return;
++        if (on)
++        {
++            _gl.Enable(EnableCap.StencilTest);
++            _gl.StencilFunc(StencilFunction.Always, 1, 1);
++            _gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Replace);
++            _gl.StencilMask(1);
++        }
++        else
++        {
++            _gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
++            _gl.StencilMask(0xFF);
++            _gl.Disable(EnableCap.StencilTest);
++        }
++    }
++
++    /// <summary>0086's probe, before a model list writes depth: its samples against the
++    /// map's depth with the tolerance, and those that only a test pulled the map's
++    /// slack towards the camera passes. Writes nothing.</summary>
++    void ProbeModelsUnderMap(Action draw)
++    {
++        if (!_maskModels || !RetainedScene.ModelMaskProbe || _uwDepthBias < 0) return;
++        _gl.ColorMask(false, false, false, false);
++        _gl.DepthMask(false);
++        long Count(float bias, float slope)
++        {
++            _gl.Uniform1(_uwDepthBias, bias / 65536f);
++            if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, slope);
++            uint q = _gl.GenQuery();
++            _gl.BeginQuery(QueryTarget.SamplesPassed, q);
++            draw();
++            _gl.EndQuery(QueryTarget.SamplesPassed);
++            _gl.GetQueryObject(q, QueryObjectParameterName.Result, out long n);
++            _gl.DeleteQuery(q);
++            return n;
++        }
++        long tolerant = Count(GteDepth.DepthBias, GteDepth.DepthSlope);
++        long slack = 0;
++        for (int i = 0; i < RetainedScene.MapSlacks.Length; i++)
++        {
++            slack = Count(RetainedScene.MapSlacks[i], GteDepth.DepthSlope);
++            RetainedScene.ModelUnderSlack[i] += slack - tolerant;
++        }
++        _gl.Uniform1(_uwDepthBias, 0f);
++        if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, 0f);
++        _gl.ColorMask(true, true, true, true);
++        _gl.DepthMask(true);
++        RetainedScene.ModelSamples += tolerant;
++        RetainedScene.ModelUnderMap += slack - tolerant;
++    }
++
+     /// <summary>The depth half of 0051's two passes: colour masked, and PrimFs making
+     /// only the decisions that say whether a fragment exists.</summary>
+     void DepthOnly(bool on)
+@@ -1089,6 +1168,7 @@ public sealed partial class GlCore
+         _gl.BindVertexArray(_mdlVao[slot]);
+         if (_uwMipIndirect >= 0) _gl.Uniform1(_uwMipIndirect, 0);
+         bool bias = GteDepth.ZBuffer && (GteDepth.DepthBias > 0f || GteDepth.DepthSlope > 0f);
++        ProbeModelsUnderMap(() => DrawModelRuns(f));
+         if (bias)
+         {
+             DepthOnly(true);
+@@ -1098,6 +1178,7 @@ public sealed partial class GlCore
+             if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, GteDepth.DepthBias / 65536f);
+             if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, GteDepth.DepthSlope);
+         }
++        MarkModels(true);
+         foreach (var g in f.Groups)
+         {
+             if (_uwBk >= 0) _gl.Uniform3(_uwBk, g.Bk0, g.Bk1, g.Bk2);
+@@ -1108,6 +1189,7 @@ public sealed partial class GlCore
+             _gl.DrawArrays(PrimitiveType.Triangles, g.Start, (uint)g.Count);
+             if (g.Cull) _gl.Disable(EnableCap.CullFace);
+         }
++        MarkModels(false);
+         if (bias)
+         {
+             if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, 0f);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
+index af77646..1455d0d 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
+@@ -367,6 +367,15 @@ public sealed partial class GlCore
+         _gl.Disable(EnableCap.CullFace);
+         BeginInstances(slot, true);
+         bool bias = GteDepth.ZBuffer && (GteDepth.DepthBias > 0f || GteDepth.DepthSlope > 0f);
++        ProbeModelsUnderMap(() =>
++        {
++            foreach (var m in list)
++            {
++                if (m.MeshGen != _meshGen) continue;
++                SendInstance(m, true);
++                _gl.DrawArrays(PrimitiveType.Triangles, m.MeshStart, (uint)m.MeshCount);
++            }
++        });
+         if (bias)
+         {
+             DepthOnly(true);
+@@ -381,6 +390,7 @@ public sealed partial class GlCore
+             if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, GteDepth.DepthBias / 65536f);
+             if (_uwDepthSlope >= 0) _gl.Uniform1(_uwDepthSlope, GteDepth.DepthSlope);
+         }
++        MarkModels(true);
+         foreach (var m in list)
+         {
+             // A store emptied since the instance was made holds other meshes there now.
+@@ -389,6 +399,7 @@ public sealed partial class GlCore
+             _gl.DrawArrays(PrimitiveType.Triangles, m.MeshStart, (uint)m.MeshCount);
+             RetainedScene.InstanceCorners += m.MeshCount;
+         }
++        MarkModels(false);
+         if (bias)
+         {
+             if (_uwDepthBias >= 0) _gl.Uniform1(_uwDepthBias, 0f);
+diff --git a/RecompOne.Runtime/Gpu/RetainedScene.cs b/RecompOne.Runtime/Gpu/RetainedScene.cs
+index 024e861..eab5b14 100644
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -1050,6 +1050,38 @@ public static class RetainedScene
+     /// probe's way to see what they cover.</summary>
+     public static bool MainModelsShown = true;
+ 
++    /// <summary>0086. The main view's models mark the target's stencil, and a tested
++    /// packet the walk sends after them draws over those pixels against its true depth
++    /// instead of 0051's tolerance: they were drawn at slot 1, ahead of every packet,
++    /// so the tolerance gave a model's pixels to whatever stood just behind it. Off
++    /// unless the game turns it on.</summary>
++    public static bool ModelMask;
++
++    /// <summary>0086. Counts what the tolerance would let through over the models'
++    /// pixels, with two occlusion queries per tested batch drawn after them (a stall
++    /// each); off by default. The counts below are cumulative.</summary>
++    public static bool ModelMaskProbe;
++
++    /// <summary>0086. Main views that marked models; tested batches drawn over the
++    /// mark; samples of those that pass the tolerant test over model pixels, and of
++    /// those, the ones behind the model's true depth, which the mask holds back.</summary>
++    public static long MaskFrames, MaskBatches, MaskSamples, MaskBehind;
++
++    /// <summary>0086, with the probe: samples of the blended ones in front of the model
++    /// by less than the tolerance, which still draw (an opaque batch's own depth is
++    /// already in the buffer when it is probed). Then, before each model list's
++    /// depth, the models' samples against the map: those the tolerant test passes, and
++    /// those it fails but a test pulled 0xF0 slots towards the camera
++    /// passes -- a model just behind a map face, which the table, linking a tile
++    /// 0xF0 slots deeper than its mean, drew over it.</summary>
++    public static long MaskAhead, ModelSamples, ModelUnderMap;
++
++    /// <summary>0086. The probe's slacks, in view-depth units, the last 0xF0 table
++    /// slots; <see cref="ModelUnderSlack"/> counts, per slack, the models' samples it
++    /// passes and the tolerance does not (<see cref="ModelUnderMap"/> is the last).</summary>
++    public static readonly float[] MapSlacks = [8, 32, 128, 512, 0xF0 * 4];
++    public static readonly long[] ModelUnderSlack = new long[5];
++
+     /// <summary>The planes the current frame mirrors in, nearest-first by the
+     /// port's own ranking; at most <see cref="MaxPlanes"/>.</summary>
+     public static void SetPlanes(ReadOnlySpan<float> worldY)

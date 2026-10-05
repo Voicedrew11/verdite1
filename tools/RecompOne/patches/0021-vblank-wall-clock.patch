@@ -1,0 +1,100 @@
+--- a/RecompOne.Runtime/sdk/LibEtc.cs
++++ b/RecompOne.Runtime/sdk/LibEtc.cs
+@@ -1,3 +1,4 @@
++using System.Diagnostics;
+ using RecompOne.Runtime.Context;
+ using RecompOne.Runtime.Events;
+ using RecompOne.Runtime.Memory;
+@@ -9,6 +10,25 @@
+     static int _vcount;
+     static readonly VSyncEvent _vsyncEvent = new();
+ 
++    //The vblank is time, not a call. On hardware the interrupt fires every 16.7 ms
++    //whether or not the game is ready for it: a loop blocked on a CD read misses
++    //pictures, not vblanks. This port advanced _vcount once per VSync call instead,
++    //so every game-side clock hung on the vblank -- the music sequencer among them --
++    //ran at the rendered frame rate: half speed on the CD-bound title screen (one
++    //VSync call per ~15 fps picture), half again at KF2_FPS=15 (two calls per 66 ms
++    //frame). Advance on a wall-clock grid and deliver the vblanks missed since the
++    //last call as a burst, which is what the hardware's interrupt would have done
++    //across the same gap.
++    static readonly Stopwatch VBlankClock = Stopwatch.StartNew();
++    static double _nextVBlankMs;
++    static bool _timelineStarted;
++
++    const double VBlankMs = 1000.0 / 60.0;
++
++    //A host stall longer than this (window drag, breakpoint) resyncs the grid
++    //instead of fast-forwarding the game through the whole gap.
++    const int MaxCatchUpVBlanks = 120;
++
+     public static void VSync(CpuContext c, IMemory m)
+     {
+         int mode = (int)c.A0;
+@@ -17,10 +37,42 @@
+         if (mode == 1) { c.V0 = 0; return; }
+ 
+         Runtime.PresentFrame();
++        AdvanceVBlanks(c, m);
++
++        c.V0 = 0;
++    }
++
++    static void AdvanceVBlanks(CpuContext c, IMemory m)
++    {
++        double now = VBlankClock.Elapsed.TotalMilliseconds;
++        if (!_timelineStarted) { _timelineStarted = true; _nextVBlankMs = now; }
++        else if (now - _nextVBlankMs > MaxCatchUpVBlanks * VBlankMs)
++        {
++            // The host was stopped, so discard its stale vblanks; retain only
++            // the current boundary below rather than fast-forwarding the game.
++            _nextVBlankMs = now;
++        }
++
++        int n = 0;
++        while (_nextVBlankMs <= now && n < MaxCatchUpVBlanks)
++        {
++            _nextVBlankMs += VBlankMs;
++            n++;
++            TickVBlank(c, m);
++        }
++
++        //The loop cap is the same size as the resync threshold, so it only bites at
++        //the exact boundary; if it ever does, snap the grid to now rather than carry
++        //the leftover gap into the next call and lag a frame behind for good.
++        if (n == MaxCatchUpVBlanks && _nextVBlankMs < now) _nextVBlankMs = now;
++    }
++
++    static void TickVBlank(CpuContext c, IMemory m)
++    {
+         _vcount++;
+ 
+-        //RCntCNT3/EvSpINT -- the vblank root counter. a game that opened it with
+-        //EvMdINTR expects its handler once a frame; the recompiled build has no
+-        //timer interrupt, so this is the only place it can come from.
+-        Bios.BiosB.DeliverEventIntr(c, m, 0xF2000003u, 0x0002u);
++        //0021: RCntCNT3/EvSpINT, the vblank root counter's event, is not delivered
++        //here. IRQ 0 below delivers it (Interrupts.ServiceIrq -> DeliverIrqEvents),
++        //as on upstream's blocking timeline; delivering it here as well ran every
++        //handler on it twice a vblank.
+ 
+@@ -32,6 +77,8 @@
+             Event.Dispatch(e);
+         }
+ 
+-        c.V0 = 0;
++        //The PSY-Q vblank callback (IRQ 0) belongs to the vblank too, not to the
++        //VSync call -- the game's own frame counter hangs off it.
++        Runtime.DispatchIrq(0);
+     }
+ }
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -156,7 +156,6 @@
+         FrameClock.Throttle();
+         Sdk.LibCd.Tick();
+         if (Mem != null) { Bios.BiosB.RefreshPad(Mem); Sdk.LibPad.Refresh(Mem); } //is this correct?
+-        DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented
+     }
+ 
+     public static void DispatchIrq(int irq)

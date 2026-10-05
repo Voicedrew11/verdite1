@@ -1,0 +1,445 @@
+diff --git a/RecompOne.Runtime/Gpu/GpuHleForward.cs b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+index aaabc34..7ce2d21 100644
+--- a/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -16,9 +16,15 @@ public sealed partial class Gpu
+         SetMask = _setMask, CheckMask = _checkMask, Dither = _dither,
+     };
+ 
++    // The backend has taken a float position all along, so the sub-pixel fraction
++    // needs nothing of it: adding the fraction back here is the whole of the
++    // hardware path. Fx and Fy are zero for a vertex that recovered nothing, and
++    // for every vertex at all while the setting is off, so this is an exact no-op
++    // in both cases rather than an almost-no-op.
+     static HleVertex HV(in Vert v, bool persp) => new()
+     {
+-        X = v.X, Y = v.Y, R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
++        X = v.X + v.Fx, Y = v.Y + v.Fy,
++        R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
+         Z = v.W, HasGteZ = persp,
+     };
+ 
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index e988d2f..50159eb 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -8,7 +8,18 @@ public sealed partial class Gpu
+     // W is the view depth GteDepth recovered for this vertex, and HasW says
+     // whether it found one at all. Without it the vertex interpolates affinely,
+     // exactly as the GPU did.
+-    struct Vert { public int X, Y, R, G, B, U, V; public float W; public bool HasW; }
++    //
++    // Fx and Fy are the fraction of a pixel the GTE truncated off this vertex's
++    // position, and HasSub says whether that was recovered. X and Y stay whole
++    // pixels so that a RenderPrimEvent listener still sees the coordinates the
++    // packet carried -- the fraction is added back below them, at the point each
++    // renderer actually places the vertex.
++    struct Vert
++    {
++        public int X, Y, R, G, B, U, V;
++        public float W; public bool HasW;
++        public float Fx, Fy; public bool HasSub;
++    }
+ 
+     static readonly RenderPrimEvent _primEvent = new();
+ 
+@@ -50,18 +61,33 @@ public sealed partial class Gpu
+             v[i].Y = _drawOffsetY + rawY;
+             v[i].W = 1f;
+ 
+-            if (tex)
++            // Asked for before the draw offset and before the prim event, since the
++            // key is the coordinate as the GTE produced it. A mod is then free to
++            // move X afterwards -- widescreen does -- and the depth and the fraction
++            // stay attached to the vertex.
++            //
++            // One probe of the table serves both halves. An untextured polygon has
++            // no use for the depth, so it is only asked about at all when the
++            // fraction is wanted: with perspective correction alone this is exactly
++            // the `tex` test it has always been.
++            if (GteDepth.Active && (tex || GteDepth.Subpixel)
++                && GteDepth.TryGet(rawX, rawY, out float w, out float fx, out float fy))
+             {
+-                // Asked for before the draw offset and before the prim event, since
+-                // the key is the coordinate as the GTE produced it. A mod is then
+-                // free to move X afterwards -- widescreen does -- and the depth
+-                // stays attached to the vertex.
+-                if (GteDepth.TryGet(rawX, rawY, out float w) && w > 0f)
++                if (tex && GteDepth.Enabled && w > 0f)
+                 {
+                     v[i].W = w;
+                     v[i].HasW = true;
+                 }
++                if (GteDepth.Subpixel)
++                {
++                    v[i].Fx = fx;
++                    v[i].Fy = fy;
++                    v[i].HasSub = true;
++                }
++            }
+ 
++            if (tex)
++            {
+                 uint uvw = _fifo[idx++];
+                 v[i].U = (int)(uvw & 0xFF);
+                 v[i].V = (int)((uvw >> 8) & 0xFF);
+@@ -95,25 +121,59 @@ public sealed partial class Gpu
+         }
+     }
+     
++    // A vertex that recovered its sub-pixel position needs a finer grid than whole
++    // pixels to sit on, so RasterTriangle works in 1/16ths of one whenever any
++    // vertex of the triangle has a fraction to contribute -- and at shift zero,
++    // which is the arithmetic it has always done, to the bit, whenever none has.
++    //
++    // 16 steps is the resolution the PlayStation's own successors settled on and it
++    // is well past what a 320x240 buffer can show. It also keeps the edge functions
++    // inside the types they already use: the widest primitive the GPU accepts is
++    // 1024 pixels, so a coordinate stays under 2^15 here and the products below stay
++    // far short of a long.
++    const int SubBits = 4;
++    const int SubOne = 1 << SubBits;
++
++    // Whole pixels at shift zero; otherwise the position rounded to the nearest
++    // sixteenth. A vertex that missed the table carries a fraction of zero, so it
++    // stays exactly where the packet put it while its neighbours move.
++    static int Fix(int whole, float frac, int sh) =>
++        sh == 0 ? whole : (whole << sh) + (int)MathF.Round(frac * SubOne);
++
+     void RasterTriangle(Vert a, Vert b, Vert c, bool tex, bool gouraud, bool semi, bool raw, int clut)
+     {
+         int spanX = Math.Max(a.X, Math.Max(b.X, c.X)) - Math.Min(a.X, Math.Min(b.X, c.X));
+         int spanY = Math.Max(a.Y, Math.Max(b.Y, c.Y)) - Math.Min(a.Y, Math.Min(b.Y, c.Y));
+         if (spanX > 1023 || spanY > 511) return;
+ 
+-        long area = (long)(b.X - a.X) * (c.Y - a.Y) - (long)(b.Y - a.Y) * (c.X - a.X);
+-        if (area == 0) return;
+-        if (area < 0) { (b, c) = (c, b); area = -area; }
++        // Scaling every coordinate by 16 scales the edge functions and the area by
++        // 256 and leaves every ratio taken from them alone, so this is a no-op for
++        // a triangle whose vertices all missed -- which is what makes the switch
++        // safe to flip in the middle of a frame.
++        int sh = (a.HasSub | b.HasSub | c.HasSub) ? SubBits : 0;
++        int ax = Fix(a.X, a.Fx, sh), ay = Fix(a.Y, a.Fy, sh);
++        int bx = Fix(b.X, b.Fx, sh), by = Fix(b.Y, b.Fy, sh);
++        int cx = Fix(c.X, c.Fx, sh), cy = Fix(c.Y, c.Fy, sh);
+ 
+-        int minX = Math.Max(_drawAreaLeft, Math.Min(a.X, Math.Min(b.X, c.X)));
+-        int maxX = Math.Min(_drawAreaRight, Math.Max(a.X, Math.Max(b.X, c.X)));
+-        int minY = Math.Max(_drawAreaTop, Math.Min(a.Y, Math.Min(b.Y, c.Y)));
+-        int maxY = Math.Min(_drawAreaBottom, Math.Max(a.Y, Math.Max(b.Y, c.Y)));
++        long area = (long)(bx - ax) * (cy - ay) - (long)(by - ay) * (cx - ax);
++        if (area == 0) return;
++        if (area < 0) { (b, c) = (c, b); (bx, cx) = (cx, bx); (by, cy) = (cy, by); area = -area; }
++
++        // A pixel is sampled at its own coordinate, as it always was; shifting the
++        // bounds back down floors, so the first and last pixel whose sample point
++        // lies inside the span are the ones covered.
++        int minX = Math.Max(_drawAreaLeft, Math.Min(ax, Math.Min(bx, cx)) >> sh);
++        int maxX = Math.Min(_drawAreaRight, Math.Max(ax, Math.Max(bx, cx)) >> sh);
++        int minY = Math.Max(_drawAreaTop, Math.Min(ay, Math.Min(by, cy)) >> sh);
++        int maxY = Math.Min(_drawAreaBottom, Math.Max(ay, Math.Max(by, cy)) >> sh);
+         if (minX > maxX || minY > maxY) return;
+ 
+-        int bias0 = IsTopLeft(b, c) ? 0 : -1;
+-        int bias1 = IsTopLeft(c, a) ? 0 : -1;
+-        int bias2 = IsTopLeft(a, b) ? 0 : -1;
++        // Still the smallest possible nudge, since it is applied to the edge
++        // function rather than to a coordinate: it breaks an exact tie on a shared
++        // edge and nothing else, at either shift.
++        int bias0 = IsTopLeft(bx, by, cx, cy) ? 0 : -1;
++        int bias1 = IsTopLeft(cx, cy, ax, ay) ? 0 : -1;
++        int bias2 = IsTopLeft(ax, ay, bx, by) ? 0 : -1;
+         bool ditherTex = _dither && !raw;
+ 
+         // All three or none: a triangle that mixed a recovered W with a fallback of
+@@ -130,13 +190,16 @@ public sealed partial class Gpu
+             cu = c.U * ic; cv = c.V * ic;
+         }
+ 
+-        int sx0 = b.Y - c.Y, sy0 = c.X - b.X;
+-        int sx1 = c.Y - a.Y, sy1 = a.X - c.X;
+-        int sx2 = a.Y - b.Y, sy2 = b.X - a.X;
++        // The steps are per pixel and the coordinates are per sixteenth, so a step
++        // is one edge-function derivative times the width of a pixel.
++        int sx0 = (by - cy) << sh, sy0 = (cx - bx) << sh;
++        int sx1 = (cy - ay) << sh, sy1 = (ax - cx) << sh;
++        int sx2 = (ay - by) << sh, sy2 = (bx - ax) << sh;
+ 
+-        long w0Row = (long)(c.X - b.X) * (minY - b.Y) - (long)(c.Y - b.Y) * (minX - b.X);
+-        long w1Row = (long)(a.X - c.X) * (minY - c.Y) - (long)(a.Y - c.Y) * (minX - c.X);
+-        long w2Row = (long)(b.X - a.X) * (minY - a.Y) - (long)(b.Y - a.Y) * (minX - a.X);
++        long px = (long)minX << sh, py = (long)minY << sh;
++        long w0Row = (long)(cx - bx) * (py - by) - (long)(cy - by) * (px - bx);
++        long w1Row = (long)(ax - cx) * (py - cy) - (long)(ay - cy) * (px - cx);
++        long w2Row = (long)(bx - ax) * (py - ay) - (long)(by - ay) * (px - ax);
+ 
+         for (int y = minY; y <= maxY; y++, w0Row += sy0, w1Row += sy1, w2Row += sy2)
+         {
+@@ -180,9 +243,11 @@ public sealed partial class Gpu
+         }
+     }
+ 
+-    static bool IsTopLeft(in Vert p0, in Vert p1)
++    // Takes coordinates rather than vertices because by this point the triangle is
++    // in the rasterizer's own units, which may be sixteenths of a pixel.
++    static bool IsTopLeft(int x0, int y0, int x1, int y1)
+     {
+-        int dy = p1.Y - p0.Y, dx = p1.X - p0.X;
++        int dy = y1 - y0, dx = x1 - x0;
+         return dy < 0 || (dy == 0 && dx > 0);
+     }
+ 
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+index e99effd..7d9a0ab 100644
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -1,9 +1,9 @@
+ namespace RecompOne.Runtime;
+ 
+ /// <summary>
+-/// Per-vertex view depth, recovered from the GTE and looked up again by screen
+-/// position — the one piece of information the GPU never gets, and the reason
+-/// PlayStation textures swim.
++/// Per-vertex view depth and sub-pixel position, recovered from the GTE and looked
++/// up again by screen position — the two pieces of information the GPU never gets,
++/// and the reason PlayStation textures swim and its vertices wobble.
+ ///
+ /// The GTE does the perspective divide itself: <c>RTPS</c>/<c>RTPT</c> project a
+ /// vertex to a 2D screen coordinate and the game copies that coordinate into a
+@@ -20,14 +20,27 @@ namespace RecompOne.Runtime;
+ /// 11 bits <c>GpuRaster.CoordX</c> decodes. That makes the screen position a key
+ /// the two ends can share without tracking a single register or store.
+ ///
+-/// Hence a small hash table: the GTE writes (x, y) -> z as it projects, and the
+-/// GPU asks for it again as it decodes a vertex word. A hit gives the polygon a W
+-/// per vertex and both renderers switch to perspective-correct interpolation; a
+-/// miss leaves the vertex exactly as it was. **2D work therefore corrects itself**
+-/// — a HUD sprite whose coordinates the CPU computed was never in the table, so it
+-/// keeps the affine mapping it wants.
++/// The sub-pixel position is the same story told about the same number. The GTE
++/// projects to 16.16 fixed point and then throws the low sixteen bits away:
++/// <c>SX2</c> is a whole pixel, so a vertex sliding slowly across the screen sits
++/// still and then jumps, and the polygon it belongs to shears as its corners jump
++/// at different moments. That is the wobble. The fraction is right there in the
++/// same expression as the depth, one shift earlier, and it is dropped for the same
++/// reason — so it is caught in the same place and keyed the same way.
+ ///
+-/// Three properties of the table are deliberate:
++/// Hence a small hash table: the GTE writes (x, y) -> (z, fx, fy) as it projects,
++/// and the GPU asks for it again as it decodes a vertex word. A hit gives the
++/// polygon a W per vertex, so both renderers switch to perspective-correct
++/// interpolation, and the fraction of a pixel the GTE truncated, so the vertex
++/// lands where it was actually projected; a miss leaves the vertex exactly as it
++/// was. **2D work therefore corrects itself** — a HUD sprite whose coordinates the
++/// CPU computed was never in the table, so it keeps the affine mapping and the
++/// pixel grid that 2D wants.
++///
++/// The two halves are read independently: <see cref="Enabled"/> serves the depth
++/// and <see cref="Subpixel"/> the fraction, one lookup either way.
++///
++/// Four properties of the table are deliberate:
+ ///
+ ///   * **Nothing is cleared per frame.** Entries carry a monotonic sequence number
+ ///     and expire once the table's own capacity of vertices has been written past
+@@ -39,19 +52,43 @@ namespace RecompOne.Runtime;
+ ///     onto one key. Recording those would hand one of them the other's depth,
+ ///     which is a worse picture than affine; dropping them just means the polygon
+ ///     misses and stays as it was.
+-///   * **A primitive is all-or-nothing.** The caller only interpolates
++///   * **A primitive is all-or-nothing for W.** The caller only interpolates
+ ///     perspectively when *every* vertex of the triangle hit, so a polygon can
+-///     never mix a real W with a fallback of 1 and shear itself apart.
++///     never mix a real W with a fallback of 1 and shear itself apart. The
++///     fraction needs no such rule and does not have one — see below.
++///   * **A vertex behind the eye is not recorded at all.** <c>SZ3</c> of zero is a
++///     vertex the divide could not place, and it is dropped for both halves
++///     rather than for one, so turning the fraction on cannot change which
++///     vertices carry a depth.
++///
++/// Why the fraction is per vertex where W is per primitive: W is an interpolation
++/// parameter, and one corner disagreeing about it tears the texture across the
++/// whole triangle. A fraction is just where the corner is. A triangle with one
++/// corner moved by half a pixel is a triangle with one corner moved by half a
++/// pixel, and — because two triangles sharing a vertex look up the same key and
++/// get the same answer — a shared edge still has identical endpoints on both
++/// sides of it, so no crack can open along one.
+ /// </summary>
+ public static class GteDepth
+ {
+     /// <summary>
+-    /// While false nothing is recorded and every lookup misses, so both renderers
+-    /// take the same path they took before this existed. Safe to change at run
+-    /// time: the table simply starts or stops filling.
++    /// While false the depth is not served, so both renderers interpolate affinely
++    /// exactly as they did before this existed. Safe to change at run time: the
++    /// table simply starts or stops being consulted for it.
+     /// </summary>
+     public static bool Enabled;
+ 
++    /// <summary>
++    /// While false the recovered fraction is not served, so every vertex snaps to
++    /// the whole pixel the GTE truncated it to, exactly as the console does. Also
++    /// safe to change at run time.
++    /// </summary>
++    public static bool Subpixel;
++
++    /// <summary>Nothing is recorded and every lookup misses while both halves are
++    /// off, which is what makes the table cost nothing when neither is wanted.</summary>
++    public static bool Active => Enabled || Subpixel;
++
+     const int Bits = 14;
+     const int Size = 1 << Bits;
+     const int Mask = Size - 1;
+@@ -59,13 +96,15 @@ public static class GteDepth
+     // Linear probing, bounded. A key that cannot be placed within this many slots
+     // displaces the oldest of them rather than searching further, so both Record
+     // and TryGet are constant time no matter how full the table is.
+-    const int Probe = 8;
++    const int ProbeLen = 8;
+ 
+     // An entry is stale once a table's worth of vertices has been recorded since.
+     // At a few thousand projected vertices a frame that is the last frame or two.
+     const long MaxAge = Size;
+ 
+-    struct Slot { public int Key; public long Seq; public float Z; }
++    // Fx and Fy are the truncated part of the projected position, in [0, 1) of a
++    // pixel: adding them back puts the vertex where the GTE actually put it.
++    struct Slot { public int Key; public long Seq; public float Z, Fx, Fy; }
+ 
+     static readonly Slot[] _slots = new Slot[Size];
+     static long _seq;
+@@ -76,17 +115,44 @@ public static class GteDepth
+ 
+     public static void ResetCounters() => Recorded = Hits = Misses = 0;
+ 
++    /// <summary>While false <see cref="Offset"/> and <see cref="OffsetMax"/> are not
++    /// accumulated, so measuring the wobble costs nothing when nobody is asking.
++    /// It is a separate switch from the counters above because the two probes
++    /// report over their own windows and must not reset each other's numbers.</summary>
++    public static bool Probe;
++
++    /// <summary>How far the recorded vertices sat from the pixel they snapped to,
++    /// summed and at worst, in pixels. Divided by <see cref="OffsetCount"/> the sum
++    /// is the mean, and for positions spread evenly inside a pixel that mean is the
++    /// mean distance from a corner of a unit square, 0.7652 — the number that says
++    /// the recovered fraction is a real fraction and not a table full of zeroes.</summary>
++    public static double Offset;
++    public static float OffsetMax;
++    public static long OffsetCount;
++
++    public static void ResetOffsets() { Offset = 0; OffsetMax = 0f; OffsetCount = 0; }
++
+     // +1 so that 0 can mean "never written", which is what lets TryGet stop early.
+     static int KeyOf(int x, int y) => (((y & 0x7FF) << 11) | (x & 0x7FF)) + 1;
+ 
+     static int Bucket(int key) => (int)(((uint)key * 2654435761u) >> (32 - Bits));
+ 
+-    /// <summary>Called from <c>Gte.Rtp</c> with the projected screen position and
+-    /// the view depth that produced it. <paramref name="z"/> is SZ3, the same
+-    /// quantity the divider used, so it is proportional to view-space W.</summary>
+-    public static void Record(int x, int y, int z)
++    /// <summary>Called from <c>Gte.Rtp</c> with the projected screen position, the
++    /// view depth that produced it, and the part of the position the GTE truncated
++    /// away. <paramref name="z"/> is SZ3, the same quantity the divider used, so it
++    /// is proportional to view-space W; <paramref name="fx"/> and
++    /// <paramref name="fy"/> are in [0, 1) of a pixel.</summary>
++    public static void Record(int x, int y, int z, float fx, float fy)
+     {
+-        if (!Enabled || z <= 0) return;
++        if (!Active || z <= 0) return;
++
++        if (Probe)
++        {
++            float d = MathF.Sqrt(fx * fx + fy * fy);
++            Offset += d;
++            if (d > OffsetMax) OffsetMax = d;
++            OffsetCount++;
++        }
+ 
+         int key = KeyOf(x, y);
+         int bucket = Bucket(key);
+@@ -95,7 +161,7 @@ public static class GteDepth
+         int oldest = bucket;
+         long oldestSeq = long.MaxValue;
+ 
+-        for (int i = 0; i < Probe; i++)
++        for (int i = 0; i < ProbeLen; i++)
+         {
+             int s = (bucket + i) & Mask;
+             ref var slot = ref _slots[s];
+@@ -104,34 +170,40 @@ public static class GteDepth
+                 slot.Key = key;
+                 slot.Seq = now;
+                 slot.Z = z;
++                slot.Fx = fx;
++                slot.Fy = fy;
+                 Recorded++;
+                 return;
+             }
+             if (slot.Seq < oldestSeq) { oldestSeq = slot.Seq; oldest = s; }
+         }
+ 
+-        _slots[oldest] = new Slot { Key = key, Seq = now, Z = z };
++        _slots[oldest] = new Slot { Key = key, Seq = now, Z = z, Fx = fx, Fy = fy };
+         Recorded++;
+     }
+ 
+-    /// <summary>The depth last projected to this screen position, if it is recent
+-    /// enough to belong to the geometry being drawn now.</summary>
+-    public static bool TryGet(int x, int y, out float z)
++    /// <summary>The depth and sub-pixel position last projected to this screen
++    /// position, if they are recent enough to belong to the geometry being drawn
++    /// now. One probe of the table serves both halves; which of them the caller is
++    /// allowed to use is <see cref="Enabled"/> and <see cref="Subpixel"/>.</summary>
++    public static bool TryGet(int x, int y, out float z, out float fx, out float fy)
+     {
+-        z = 0f;
+-        if (!Enabled) return false;
++        z = 0f; fx = 0f; fy = 0f;
++        if (!Active) return false;
+ 
+         int key = KeyOf(x, y);
+         int bucket = Bucket(key);
+         long now = _seq;
+ 
+-        for (int i = 0; i < Probe; i++)
++        for (int i = 0; i < ProbeLen; i++)
+         {
+             ref var slot = ref _slots[(bucket + i) & Mask];
+             if (slot.Key == 0) break;          // insertion would have stopped here too
+             if (slot.Key != key) continue;
+             if (now - slot.Seq > MaxAge) break;
+             z = slot.Z;
++            fx = slot.Fx;
++            fy = slot.Fy;
+             Hits++;
+             return true;
+         }
+diff --git a/RecompOne.Runtime/Hardware/Gte.cs b/RecompOne.Runtime/Hardware/Gte.cs
+index eec3eb1..db5631c 100644
+--- a/RecompOne.Runtime/Hardware/Gte.cs
++++ b/RecompOne.Runtime/Hardware/Gte.cs
+@@ -188,11 +188,17 @@ public static class Gte
+         SX[0] = SX[1]; SX[1] = SX[2]; SX[2] = (short)nx;
+         SY[0] = SY[1]; SY[1] = SY[2]; SY[2] = (short)ny;
+ 
+-        // The one place the screen position and the depth that made it are both in
+-        // hand. GteDepth keys on the position because that is what survives into
+-        // the GP0 packet; a saturated coordinate is not a key -- several vertices
+-        // clamp onto it -- so those are left out and simply miss later.
+-        if (GteDepth.Enabled && rx == nx && ry == ny) GteDepth.Record(nx, ny, sz);
++        // The one place the screen position, the depth that made it and the part of
++        // it about to be thrown away are all in hand. GteDepth keys on the position
++        // because that is what survives into the GP0 packet; a saturated coordinate
++        // is not a key -- several vertices clamp onto it -- so those are left out
++        // and simply miss later.
++        //
++        // sx and sy are 16.16 and the shift above floors them, so the low sixteen
++        // bits are exactly what SX2/SY2 lost: nx + fx is the position the GTE
++        // computed, for negative coordinates as well as positive ones.
++        if (GteDepth.Active && rx == nx && ry == ny)
++            GteDepth.Record(nx, ny, sz, (sx & 0xFFFF) * (1f / 65536f), (sy & 0xFFFF) * (1f / 65536f));
+ 
+         if (last)
+         {

@@ -1,0 +1,577 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index d698fb4..d75d25c 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -11,6 +11,11 @@ public sealed class GlCore : IGpuBackend
+     // this renderer ever saw before.
+     struct GlVertex { public float X, Y; public float R, G, B; public float Clut, Texpage; public float U, V; public float W, Z; }
+ 
++    // 0048. GteLightMap's inputs, in a buffer of their own: widening GlVertex took
++    // its VBO to exactly 16 MiB, and that alone cost area 1 two thirds of its frame
++    // rate with the feature off. Uploaded only for a batch that carries them.
++    struct GlLight { public float Lx, Ly, Lz, Fog; public uint Light; }
++
+     const int MaxVerts = 0x40000;
+ 
+     readonly GL _gl;
+@@ -60,6 +65,11 @@ public sealed class GlCore : IGpuBackend
+ 
+     readonly GlVertex[] _verts = new GlVertex[MaxVerts];
+     int _count;
++    readonly GlLight[] _lights = new GlLight[MaxVerts];
++    // Light slots written so far this batch; 0 means none, and the attributes stay off.
++    int _litFilled;
++    uint _vboLight;
++    bool _lightAttribs;
+     float _drawMinX, _drawMinY, _drawMaxX, _drawMaxY;
+ 
+     HleDrawEnv _env;
+@@ -69,6 +79,9 @@ public sealed class GlCore : IGpuBackend
+     int _kImage = -1;
+     int _kBlend, _kSetMask, _kCheckMask;
+     int _kZMode;
++    // 0048. The BK/LCM generation the batch's directional triangles were lit with; -1 none.
++    int _kLightGen = -1;
++    int _uLightBk, _uLcmR, _uLcmG, _uLcmB;
+     // The last render target a depth-testing batch was drawn to, for the diagnostic
+     // readback: it is the only unambiguous answer to "which depth buffer is this
+     // frame's". Diagnostic only — nothing else reads it.
+@@ -133,6 +146,11 @@ public sealed class GlCore : IGpuBackend
+         _uTrueColor = _gl.GetUniformLocation(_progPrim, "uTrueColor");
+         _uAniso = _gl.GetUniformLocation(_progPrim, "uAniso");
+         _uOpaqueDepth = _gl.GetUniformLocation(_progPrim, "uOpaqueDepth");
++        _uLightBk = _gl.GetUniformLocation(_progPrim, "uLightBk");
++        _uLcmR = _gl.GetUniformLocation(_progPrim, "uLcmR");
++        _uLcmG = _gl.GetUniformLocation(_progPrim, "uLcmG");
++        _uLcmB = _gl.GetUniformLocation(_progPrim, "uLcmB");
++        GteLightMap.Supported = !_legacy && _uLightBk >= 0;
+         _rtsTrueColor = GteDepth.TrueColor;
+         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
+         _uRepClutCount = _gl.GetUniformLocation(_progPrim, "uRepClutCount");
+@@ -213,6 +231,20 @@ public sealed class GlCore : IGpuBackend
+         _gl.EnableVertexAttribArray(4); _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)28);
+         _gl.EnableVertexAttribArray(5); _gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, (void*)36);
+         _gl.EnableVertexAttribArray(6); _gl.VertexAttribPointer(6, 1, VertexAttribPointerType.Float, false, stride, (void*)40);
++        // 0048. Integer attributes need GL 3.0, and only the core shaders read these.
++        // Left disabled until a batch carries them, when the generic value (0) reads
++        // as "no record".
++        if (!_legacy)
++        {
++            _vboLight = _gl.GenBuffer();
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vboLight);
++            _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(MaxVerts * sizeof(GlLight)), null, BufferUsageARB.DynamicDraw);
++            uint ls = (uint)sizeof(GlLight);
++            _gl.VertexAttribPointer(7, 3, VertexAttribPointerType.Float, false, ls, (void*)0);
++            _gl.VertexAttribPointer(8, 1, VertexAttribPointerType.Float, false, ls, (void*)12);
++            _gl.VertexAttribIPointer(9, 1, VertexAttribIType.UnsignedInt, ls, (void*)16);
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
++        }
+ 
+         // fullscreen quad for present, real vbo since gl_VertexID without arrays does not draw on mesa for some reason?? or i did it wrong?
+         _presentVao = _gl.GenVertexArray();
+@@ -588,7 +620,20 @@ public sealed class GlCore : IGpuBackend
+             zMode = f.SemiTrans ? 2 : 1;
+         else if (GteDepth.AmbientOcclusion && !f.SemiTrans)
+             zMode = 3;
++        // 0048. A directional triangle needs its batch's BK and LCM to be the ones
++        // it was lit with.
++        int lightGen = (a.Light & (GteLightMap.Directional << 24)) != 0 ? a.LightGen : -1;
++        if (lightGen >= 0 && _kLightGen >= 0 && lightGen != _kLightGen) Flush(FlushReason.StateLight);
+         Begin(f, 3, zMode);
++        if (lightGen >= 0) _kLightGen = lightGen;
++        if (a.Light != 0 && _vboLight != 0)
++        {
++            if (_litFilled < _count) Array.Clear(_lights, _litFilled, _count - _litFilled);
++            _lights[_count] = new GlLight { Lx = a.Lx, Ly = a.Ly, Lz = a.Lz, Fog = a.Fog, Light = a.Light };
++            _lights[_count + 1] = new GlLight { Lx = b.Lx, Ly = b.Ly, Lz = b.Lz, Fog = b.Fog, Light = b.Light };
++            _lights[_count + 2] = new GlLight { Lx = c.Lx, Ly = c.Ly, Lz = c.Lz, Fog = c.Fog, Light = c.Light };
++            _litFilled = _count + 3;
++        }
+         bool dith = DitherOf(f);
+         _verts[_count++] = V(a, f, dith); _verts[_count++] = V(b, f, dith); _verts[_count++] = V(c, f, dith);
+     }
+@@ -1089,6 +1134,15 @@ public sealed class GlCore : IGpuBackend
+         // anisotropy rebuilds nothing.
+         GteDepth.AnisotropyLive = _uAniso >= 0;
+         if (_uAniso >= 0) _gl.Uniform1(_uAniso, (float)GteDepth.Anisotropy);
++        if (_kLightGen >= 0 && _uLightBk >= 0)
++        {
++            int g = _kLightGen;
++            _gl.Uniform3(_uLightBk, (float)GteLightMap.Bk(g, 0), GteLightMap.Bk(g, 1), GteLightMap.Bk(g, 2));
++            _gl.Uniform3(_uLcmR, (float)GteLightMap.LcmAt(g, 0), GteLightMap.LcmAt(g, 1), GteLightMap.LcmAt(g, 2));
++            _gl.Uniform3(_uLcmG, (float)GteLightMap.LcmAt(g, 3), GteLightMap.LcmAt(g, 4), GteLightMap.LcmAt(g, 5));
++            _gl.Uniform3(_uLcmB, (float)GteLightMap.LcmAt(g, 6), GteLightMap.LcmAt(g, 7), GteLightMap.LcmAt(g, 8));
++            _kLightGen = -1;
++        }
+         if (_legacy)
+         {
+             _gl.Uniform4(_uTexWindow, (float)_kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY);
+@@ -1108,6 +1162,18 @@ public sealed class GlCore : IGpuBackend
+ 
+         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
+         _gl.BufferSubData<GlVertex>(BufferTargetARB.ArrayBuffer, 0, _verts.AsSpan(0, _count));
++        if (_litFilled > 0)
++        {
++            if (_litFilled < _count) Array.Clear(_lights, _litFilled, _count - _litFilled);
++            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vboLight);
++            _gl.BufferSubData<GlLight>(BufferTargetARB.ArrayBuffer, 0, _lights.AsSpan(0, _count));
++        }
++        if ((_litFilled > 0) != _lightAttribs)
++        {
++            _lightAttribs = _litFilled > 0;
++            for (uint i = 7; i <= 9; i++)
++                if (_lightAttribs) _gl.EnableVertexAttribArray(i); else _gl.DisableVertexAttribArray(i);
++        }
+ 
+         if (_legacy)
+         {
+@@ -1170,6 +1236,7 @@ public sealed class GlCore : IGpuBackend
+                 Assets.Textures.VramTracker.MarkGpuWrite(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+         }
+         _count = 0;
++        _litFilled = 0;
+     }
+ 
+     void SetBlend(float src, float dst) => _gl.Uniform4(_uBlend, src, src, src, dst);
+@@ -1700,6 +1767,7 @@ public sealed class GlCore : IGpuBackend
+         foreach (var snap in _snaps) if (snap != null) SnapDestroy(snap);
+         _vram.Dispose();
+         if (_vbo != 0) _gl.DeleteBuffer(_vbo);
++        if (_vboLight != 0) _gl.DeleteBuffer(_vboLight);
+         if (_presentVbo != 0) _gl.DeleteBuffer(_presentVbo);
+         if (_aoTex != 0) _gl.DeleteTexture(_aoTex);
+         if (_aoBlurTex != 0) _gl.DeleteTexture(_aoBlurTex);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index a15a3a3..8ec2bae 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -257,6 +257,9 @@ internal static class GlShaders
+         layout(location = 4) in vec2  inUV;
+         layout(location = 5) in float inW;
+         layout(location = 6) in float inZ;
++        layout(location = 7) in vec3  inLit;
++        layout(location = 8) in float inFog;
++        layout(location = 9) in uint  inLight;
+ 
+         // vUV is the one thing that wants correcting: handing gl_Position a real W
+         // makes the rasterizer interpolate it in 1/W, which is exactly the
+@@ -271,6 +274,10 @@ internal static class GlShaders
+         flat out int   texMode;
+         flat out int   vDither;
+         flat out int   vRepClut;
++        // 0048. Both are affine across the polygon on screen, as the colour was.
++        noperspective out vec3 vLit;
++        noperspective out float vFog;
++        flat out uint vLight;
+ 
+         uniform vec2 uVertexOffset;
+         uniform vec2 uPosBias;
+@@ -292,6 +299,9 @@ internal static class GlShaders
+             int inTexpage = int(inTexpageF + 0.5);
+ 
+             vColor = vec4(inColorF, 0.0) / 255.0;
++            vLit = inLit;
++            vFog = inFog;
++            vLight = inLight;
+             vDither = (inTexpage >> 10) & 1;
+             vRepClut = (inTexpage >> 12) & 1;
+ 
+@@ -322,6 +332,9 @@ internal static class GlShaders
+         flat in int   texMode;
+         flat in int   vDither;
+         flat in int   vRepClut;
++        noperspective in vec3 vLit;
++        noperspective in float vFog;
++        flat in uint vLight;
+ 
+         layout(location = 0, index = 0) out vec4 FragColor;
+         layout(location = 0, index = 1) out vec4 BlendColor;
+@@ -342,6 +355,10 @@ internal static class GlShaders
+         uniform int   uScale;
+         uniform vec2  uPosBias;
+         uniform float uAniso;
++        uniform vec3  uLightBk;
++        uniform vec3  uLcmR;
++        uniform vec3  uLcmG;
++        uniform vec3  uLcmB;
+ 
+         const int ditherTbl[16] = int[16](
+             -4,  0, -3,  1,
+@@ -379,6 +396,30 @@ internal static class GlShaders
+             return fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
+         }
+ 
++        // 0048. The vertex colour, made again at this pixel from what made it: a lit
++        // colour, or a light colour and the three light dots, then the depth cue's
++        // weight from the raw MAC0 through the game's own clamp and curve. Floor,
++        // because the GTE truncates.
++        ivec3 shade8() {
++            if (vLight == 0u) return ivec3(vColor.rgb * 255.0 + 0.5);
++            uint mode = vLight >> 24;
++            vec3 lit = vLit;
++            if ((mode & 0x80u) != 0u) {
++                vec3 rgbc = vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u));
++                vec3 a = clamp(vLit, 0.0, 32767.0);
++                vec3 ir = clamp(uLightBk + vec3(dot(uLcmR, a), dot(uLcmG, a), dot(uLcmB, a)) / 4096.0, 0.0, 32767.0);
++                lit = rgbc * ir / 4096.0;
++            }
++            uint curve = mode & 7u;
++            float ir0 = clamp(vFog, 0.0, 4096.0);
++            float w = curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
++                    : curve == 2u ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
++                    : curve == 3u ? ir0 * 0.5
++                    : curve == 4u ? vFog
++                    : 0.0;
++            return ivec3(clamp(floor(lit * (1.0 - w / 4096.0)), 0.0, 255.0));
++        }
++
+         uniform float uTrueColor;
+         vec3 quant5(ivec3 c8) {
+             // True color: keep all eight bits, so the smooth shaded gradient is not
+@@ -404,11 +445,12 @@ internal static class GlShaders
+             // costs it nothing. Assigning this also turns off early-Z, so a
+             // punch-through discard cannot occlude whatever is behind the hole.
+             gl_FragDepth = vDepth > 0.0 ? vDepth : 1.0;
++            ivec3 c8in = shade8();
+             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
+ 
+             if (texMode == 4) {
+                 if (uOpaqueDepth != 0) discard;
+-                FragColor = vec4(quant5(ivec3(vColor.rgb * 255.0 + 0.5)), uSetMask);
++                FragColor = vec4(quant5(c8in), uSetMask);
+                 BlendColor = uBlend;
+                 return;
+             }
+@@ -416,7 +458,7 @@ internal static class GlShaders
+             if (texMode == 5) {
+                 vec4 img = texture(uExtTex, vUV);
+                 if (img.a < 0.5 || uOpaqueDepth != 0) discard;
+-                ivec3 e8 = (ivec3(img.rgb * 255.0 + 0.5) * ivec3(vColor.rgb * 255.0 + 0.5)) >> 7;
++                ivec3 e8 = (ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7;
+                 FragColor = vec4(quant5(e8), uSetMask);
+                 BlendColor = uBlend;
+                 return;
+@@ -437,7 +479,7 @@ internal static class GlShaders
+                 vec2 t = (fuv - uRepRect.xy) / uRepRect.zw;
+                 vec4 img = texture(uRepTex, t);
+                 if (img.a < 0.5) discard;
+-                ivec3 e8 = (ivec3(img.rgb * 255.0 + 0.5) * ivec3(vColor.rgb * 255.0 + 0.5)) >> 7;
++                ivec3 e8 = (ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7;
+                 float stp = img.a < 0.95 ? 1.0 : 0.0;
+                 if (uOpaqueDepth != 0 && stp > 0.5) discard;
+                 FragColor = vec4(quant5(e8), max(stp, uSetMask));
+@@ -522,7 +564,7 @@ internal static class GlShaders
+ 
+             if (vRepClut != 0 && texMode != 2) {
+                 if (texel.a < 0.5) discard;
+-                ivec3 e8 = (ivec3(texel.rgb * 255.0 + 0.5) * ivec3(vColor.rgb * 255.0 + 0.5)) >> 7;
++                ivec3 e8 = (ivec3(texel.rgb * 255.0 + 0.5) * c8in) >> 7;
+                 float stp = texel.a < 0.95 ? 1.0 : 0.0;
+                 if (uOpaqueDepth != 0 && stp > 0.5) discard;
+                 FragColor = vec4(quant5(e8), max(stp, uSetMask));
+@@ -533,7 +575,7 @@ internal static class GlShaders
+             if (texel.rgb == vec3(0.0) && texel.a < 0.5) discard;
+             if (uOpaqueDepth != 0 && texel.a >= 0.5) discard;
+             ivec3 t8 = ivec3(texel.rgb * 31.0 + 0.5) << 3;
+-            ivec3 c8 = (t8 * ivec3(vColor.rgb * 255.0 + 0.5)) >> 7;
++            ivec3 c8 = (t8 * c8in) >> 7;
+             FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
+             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
+         }
+@@ -862,6 +904,7 @@ internal static class GlShaders
+     static readonly (uint Index, string Name)[] PrimAttribs =
+     [
+         (0, "inPos"), (1, "inColorF"), (2, "inClutF"), (3, "inTexpageF"), (4, "inUV"), (5, "inW"), (6, "inZ"),
++        (7, "inLit"), (8, "inFog"), (9, "inLight"),
+     ];
+ 
+     public static uint BuildPrim(GL gl, string vsSrc, string fsSrc, string name)
+diff --git a/RecompOne.Runtime/Gpu/GpuHleForward.cs b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+index dc0d1e8..b1c1dac 100644
+--- a/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -30,6 +30,7 @@ public sealed partial class Gpu
+         X = v.X + v.Fx, Y = v.Y + v.Fy,
+         R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
+         Z = v.W, HasGteZ = z, HasPersp = persp,
++        Lx = v.Lx, Ly = v.Ly, Lz = v.Lz, Fog = v.Fog, Light = v.Light, LightGen = v.LightGen,
+     };
+ 
+     PrimFlags PrimOf(bool tex, bool semi, bool raw, int clut, bool gouraud = false) => new()
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index f3945cd..d2e17df 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -26,6 +26,8 @@ public sealed partial class Gpu
+         // whether the W that came with it is a real view depth rather than the
+         // vertex cache's 1.0 stand-in.
+         public float Px, Py; public bool Precise, PreciseW;
++        // 0048. What GteLightMap recorded for this vertex; Light 0 is none.
++        public float Lx, Ly, Lz, Fog; public uint Light; public int LightGen;
+     }
+ 
+     static readonly RenderPrimEvent _primEvent = new();
+@@ -157,6 +159,21 @@ public sealed partial class Gpu
+             Hle.GpuTrace.Sink?.Vertices(n, hits);
+         }
+ 
++        // 0048. The lighting inputs, by the packet's address. Only the GL backend
++        // draws them, so the software path never asks.
++        if (!Detached && HleOn && GteLightMap.Active)
++        {
++            ref readonly var lr = ref GteLightMap.Find(_fifoSrc[0], _fifo[0], _fifo[1], out bool lit);
++            if (lit)
++            {
++                v[0].Lx = lr.L0x; v[0].Ly = lr.L0y; v[0].Lz = lr.L0z; v[0].Fog = lr.F0;
++                v[1].Lx = lr.L1x; v[1].Ly = lr.L1y; v[1].Lz = lr.L1z; v[1].Fog = lr.F1;
++                v[2].Lx = lr.L2x; v[2].Ly = lr.L2y; v[2].Lz = lr.L2z; v[2].Fog = lr.F2;
++                v[3].Lx = lr.L3x; v[3].Ly = lr.L3y; v[3].Lz = lr.L3z; v[3].Fog = lr.F3;
++                for (int i = 0; i < n; i++) { v[i].Light = lr.Light; v[i].LightGen = lr.Gen; }
++            }
++        }
++
+         //dispatch the render event for prims
+         if (!Detached) Hle.GpuHle.PortWidenedPrim = false;
+         if (!Detached && Event.HasAnyListeners<RenderPrimEvent>())
+diff --git a/RecompOne.Runtime/Gpu/Hle/GpuTrace.cs b/RecompOne.Runtime/Gpu/Hle/GpuTrace.cs
+index 52c71a9..f3837d5 100644
+--- a/RecompOne.Runtime/Gpu/Hle/GpuTrace.cs
++++ b/RecompOne.Runtime/Gpu/Hle/GpuTrace.cs
+@@ -21,6 +21,7 @@ public enum FlushReason : byte
+     StateMask,
+     StateTexWindow,
+     StateClip,
++    StateLight,
+ }
+ 
+ /// <summary>0046. Receives the live GPU's command stream and the backend's batch
+diff --git a/RecompOne.Runtime/Gpu/Hle/HleTypes.cs b/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
+index 24cfab7..ff0c249 100644
+--- a/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
++++ b/RecompOne.Runtime/Gpu/Hle/HleTypes.cs
+@@ -16,6 +16,10 @@ public struct HleVertex
+     // source, Depth/Transform for PGXP's.
+     public float Depth;
+     public int Transform;
++    // 0048. GteLightMap's inputs; Light 0 draws the vertex colour as before.
++    public float Lx, Ly, Lz, Fog;
++    public uint Light;
++    public int LightGen;
+ }
+ 
+ public struct PrimFlags
+diff --git a/RecompOne.Runtime/Hardware/Gte.cs b/RecompOne.Runtime/Hardware/Gte.cs
+index 059998b..cc5089a 100644
+--- a/RecompOne.Runtime/Hardware/Gte.cs
++++ b/RecompOne.Runtime/Hardware/Gte.cs
+@@ -533,9 +533,12 @@ public static class Gte
+     /// the flag bits they raised. MAC1-3 and IR1-3 are overwritten by every op's last
+     /// stage, so nothing else of them is kept.</summary>
+     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+-    private static void LightStage(int vec, out int i1, out int i2, out int i3, ref uint f)
++    private static void LightStage(int vec, out int i1, out int i2, out int i3, ref uint f) =>
++        LightStage(V[vec * 3], V[vec * 3 + 1], V[vec * 3 + 2], out i1, out i2, out i3, ref f);
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private static void LightStage(long vx, long vy, long vz, out int i1, out int i2, out int i3, ref uint f)
+     {
+-        long vx = V[vec * 3], vy = V[vec * 3 + 1], vz = V[vec * 3 + 2];
+         var key = (ulong)(ushort)vx | ((ulong)(ushort)vy << 16) | ((ulong)(ushort)vz << 32);
+         ref var e = ref _light[(int)((key * 0x9E3779B97F4A7C15UL) >> (64 - LightSlotBits))];
+         if (LightCache && e.Gen == _lightGen && e.Key == key)
+@@ -567,6 +570,22 @@ public static class Gte
+         e.Ir3 = i3;
+     }
+ 
++    /// <summary>0048. IR1-3 a lighting op would reach for this normal under the current
++    /// LLM, LCM and BK, without touching any register. Per-pixel lighting reads it.</summary>
++    public static void LightProducts(short vx, short vy, short vz, out int i1, out int i2, out int i3)
++    {
++        uint f = 0;
++        LightStage(vx, vy, vz, out i1, out i2, out i3, ref f);
++    }
++
++    /// <summary>0048. LLM times the normal over 4096, before the clamp at zero.</summary>
++    public static void LightDots(short vx, short vy, short vz, out float a1, out float a2, out float a3)
++    {
++        a1 = ((long)LLM[0] * vx + (long)LLM[1] * vy + (long)LLM[2] * vz) / 4096f;
++        a2 = ((long)LLM[3] * vx + (long)LLM[4] * vy + (long)LLM[5] * vz) / 4096f;
++        a3 = ((long)LLM[6] * vx + (long)LLM[7] * vy + (long)LLM[8] * vz) / 4096f;
++    }
++
+     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+     private static void NcdsFast(int vec, ref uint f)
+     {
+diff --git a/RecompOne.Runtime/Gpu/GteLightMap.cs b/RecompOne.Runtime/Gpu/GteLightMap.cs
+new file mode 100644
+index 0000000..4b66c2a
+--- /dev/null
++++ b/RecompOne.Runtime/Gpu/GteLightMap.cs
+@@ -0,0 +1,132 @@
++using System.Runtime.CompilerServices;
++
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0048. What a primitive's vertex colours were made from, so the fragment shader can
++/// make them again at every pixel instead of interpolating the three or four the GTE
++/// produced.
++///
++/// A packet's colour is the end of a short chain: a lit colour (a face's
++/// <c>NormalColorCol</c>, or a normal through <c>LLM</c>, <c>LCM</c> and <c>BK</c>),
++/// then the depth cue, whose weight is a clamped and curved function of the view
++/// depth. Interpolating the result across a polygon is only right where none of the
++/// clamps, the curve's knee or the terminator falls inside it. The port that builds
++/// the packet records the chain's inputs here, keyed by the packet's address; the GPU
++/// finds them by the address it read the command word from, and checks the command
++/// word and the first vertex word before believing them.
++///
++/// Per vertex: a lit colour (or, for <see cref="Directional"/>, the three light dot
++/// products before their clamp) and the raw depth-cue value, <c>MAC0 / 4096</c>,
++/// which is affine in 1/z and so exact under screen-space interpolation. Per
++/// primitive: the curve and the light colour. Per batch: <c>BK</c> and <c>LCM</c>,
++/// which the game sets per area, as uniforms.
++///
++/// Nothing here writes guest memory or the GTE. A miss draws the packet's own
++/// colours, as before.
++/// </summary>
++public static class GteLightMap
++{
++    /// <summary>Mode byte, in the top byte of <see cref="Rec.Light"/>: set on every record.</summary>
++    public const uint Present = 0x40;
++
++    /// <summary>Mode byte: per-vertex light dots and a light colour rather than a lit colour.</summary>
++    public const uint Directional = 0x80;
++
++    /// <summary>Depth-cue curves, the low three bits of the mode byte.</summary>
++    public const uint CurveNone = 0, CurveOffset = 1, CurveKnee = 2, CurveHalf = 3, CurveWord = 4;
++
++    public struct Rec
++    {
++        // The packet's command and first vertex words once it was finished.
++        public uint Cmd, Xy0;
++        // Mode byte on top, the light colour below.
++        public uint Light;
++        public int Gen;
++        public float L0x, L0y, L0z, F0;
++        public float L1x, L1y, L1z, F1;
++        public float L2x, L2y, L2z, F2;
++        public float L3x, L3y, L3z, F3;
++    }
++
++    /// <summary>The port's switch.</summary>
++    public static bool Enabled;
++
++    /// <summary>The backend can draw it: the core-profile GL shaders.</summary>
++    public static bool Supported;
++
++    public static bool Active => Enabled && Supported;
++
++    static Rec[]? _recs;
++    static Rec _discard;
++    static uint _base, _count;
++
++    /// <summary>The address range packets are built in.</summary>
++    public static void SetRange(uint baseAddress, uint bytes)
++    {
++        _base = baseAddress & 0x1FFFFFFFu;
++        _count = bytes >> 2;
++        _recs = new Rec[_count];
++    }
++
++    /// <summary>The record for the packet at <paramref name="pkt"/>, or a scratch one
++    /// when it is outside the range.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static ref Rec Slot(uint pkt)
++    {
++        uint i = ((pkt & 0x1FFFFFFFu) - _base) >> 2;
++        if (_recs == null || i >= _count) return ref _discard;
++        Recorded++;
++        return ref _recs[i];
++    }
++
++    /// <summary>The record for the packet whose command word the GPU read from
++    /// <paramref name="cmdSrc"/>, if it still describes these words.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static ref readonly Rec Find(uint cmdSrc, uint cmd, uint xy0, out bool found)
++    {
++        found = false;
++        uint i = ((cmdSrc & 0x1FFFFFFFu) - 4u - _base) >> 2;
++        if (_recs == null || cmdSrc == 0 || i >= _count) { Misses++; return ref _discard; }
++        ref readonly var r = ref _recs[i];
++        if (r.Light == 0 || r.Cmd != cmd || r.Xy0 != xy0) { Misses++; return ref _discard; }
++        found = true;
++        Hits++;
++        return ref r;
++    }
++
++    // BK and LCM by generation, so a batch uploads the pair its primitives were built
++    // with. The game writes them per area, so a generation lasts minutes.
++    const int GenRing = 8;
++    static readonly int[] _bk = new int[GenRing * 3];
++    static readonly short[] _lcm = new short[GenRing * 9];
++    static int _gen;
++
++    /// <summary>The generation of the current BK and LCM, starting a new one if they changed.</summary>
++    public static int NoteConstants()
++    {
++        int o3 = (_gen & (GenRing - 1)) * 3, o9 = (_gen & (GenRing - 1)) * 9;
++        bool same = true;
++        for (int i = 0; i < 3 && same; i++) same = _bk[o3 + i] == (int)Gte.ReadControl(13 + i);
++        for (int i = 0; i < 9 && same; i++) same = _lcm[o9 + i] == Lcm(i);
++        if (same && _gen != 0) return _gen;
++
++        _gen++;
++        o3 = (_gen & (GenRing - 1)) * 3;
++        o9 = (_gen & (GenRing - 1)) * 9;
++        for (int i = 0; i < 3; i++) _bk[o3 + i] = (int)Gte.ReadControl(13 + i);
++        for (int i = 0; i < 9; i++) _lcm[o9 + i] = Lcm(i);
++        return _gen;
++    }
++
++    static short Lcm(int i) =>
++        i == 8 ? (short)Gte.ReadControl(20) : (short)(Gte.ReadControl(16 + i / 2) >> ((i & 1) * 16));
++
++    public static int Bk(int gen, int c) => _bk[(gen & (GenRing - 1)) * 3 + c];
++    public static short LcmAt(int gen, int i) => _lcm[(gen & (GenRing - 1)) * 9 + i];
++
++    /// <summary>Records written, and primitives that found theirs or did not.</summary>
++    public static long Recorded, Hits, Misses;
++
++    public static void ResetCounters() => Recorded = Hits = Misses = 0;
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/GteLightMap.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/GteLightMap.cs
+index 4b66c2a..1b4f36f 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/GteLightMap.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/GteLightMap.cs
+@@ -96,8 +96,10 @@ public static class GteLightMap
+     }
+ 
+     // BK and LCM by generation, so a batch uploads the pair its primitives were built
+-    // with. The game writes them per area, so a generation lasts minutes.
+-    const int GenRing = 8;
++    // with. Every model sets its own from its tile's light record, and the planar walk
++    // replays them, so a frame starts several; one that started more than the ring holds
++    // lit its first models with a later model's BK (0048 amended).
++    const int GenRing = 64;
+     static readonly int[] _bk = new int[GenRing * 3];
+     static readonly short[] _lcm = new short[GenRing * 9];
+     static int _gen;
+@@ -112,6 +114,7 @@ public static class GteLightMap
+         if (same && _gen != 0) return _gen;
+ 
+         _gen++;
++        Generations++;
+         o3 = (_gen & (GenRing - 1)) * 3;
+         o9 = (_gen & (GenRing - 1)) * 9;
+         for (int i = 0; i < 3; i++) _bk[o3 + i] = (int)Gte.ReadControl(13 + i);
+@@ -122,6 +125,9 @@ public static class GteLightMap
+     static short Lcm(int i) =>
+         i == 8 ? (short)Gte.ReadControl(20) : (short)(Gte.ReadControl(16 + i / 2) >> ((i & 1) * 16));
+ 
++    /// <summary>Generations started; never reset.</summary>
++    public static long Generations;
++
+     public static int Bk(int gen, int c) => _bk[(gen & (GenRing - 1)) * 3 + c];
+     public static short LcmAt(int gen, int i) => _lcm[(gen & (GenRing - 1)) * 9 + i];
+ 

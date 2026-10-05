@@ -1,0 +1,351 @@
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index f3cee16..8022aad 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -87,6 +87,9 @@ public sealed class GlCore : IGpuBackend
+     int _uSsrPlanarOn, _uSsrPlanarPlane, _uSsrPlanarTol, _uSsrRipple, _uSsrCompare;
+     int _uClipOn, _uClipPlane, _uClipCentre, _uClipH;
+     int _clipOnSent = -1;
++    // 0071. Authored lights.
++    int _uLightN, _uLightPos, _uLightCol, _uLightDir, _uLightCentre, _uLightH;
++    int _lightNSent = -1, _lightsSentGen = -1, _kRemasterGen;
+ 
+     uint _postProg, _postFbo, _postTex;
+     int _postW, _postH, _postVersion = -1;
+@@ -223,6 +226,14 @@ public sealed class GlCore : IGpuBackend
+         _uClipCentre = _gl.GetUniformLocation(_progPrim, "uClipCentre");
+         _uClipH = _gl.GetUniformLocation(_progPrim, "uClipH");
+         _clipOnSent = -1;
++        _uLightN = _gl.GetUniformLocation(_progPrim, "uLightN");
++        _uLightPos = _gl.GetUniformLocation(_progPrim, "uLightPos");
++        _uLightCol = _gl.GetUniformLocation(_progPrim, "uLightCol");
++        _uLightDir = _gl.GetUniformLocation(_progPrim, "uLightDir");
++        _uLightCentre = _gl.GetUniformLocation(_progPrim, "uLightCentre");
++        _uLightH = _gl.GetUniformLocation(_progPrim, "uLightH");
++        _lightNSent = _lightsSentGen = -1;
++        RemasterUniforms.Supported = !_legacy && _uLightN >= 0 && _uLightPos >= 0;
+         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
+         _uRepClutCount = _gl.GetUniformLocation(_progPrim, "uRepClutCount");
+ 
+@@ -871,6 +882,12 @@ public sealed class GlCore : IGpuBackend
+         // it was lit with.
+         int lightGen = (a.Light & (GteLightMap.Directional << 24)) != 0 ? a.LightGen : -1;
+         if (lightGen >= 0 && _kLightGen >= 0 && lightGen != _kLightGen) Flush(FlushReason.StateLight);
++        // 0071. A batch is drawn with the light list it was built under.
++        if (RemasterUniforms.Generation != _kRemasterGen)
++        {
++            if (_count > 0) Flush(FlushReason.StateLight);
++            _kRemasterGen = RemasterUniforms.Generation;
++        }
+         Begin(f, 3, zMode);
+         // 0058. Keep the triangle for the normal buffer. zMode 1 is exactly the
+         // geometry that writes depth and is opaque, which is the geometry the
+@@ -1584,6 +1601,28 @@ public sealed class GlCore : IGpuBackend
+                 _gl.Uniform1(_uClipH, Math.Max(1f, GteDepth.ProjH));
+             }
+         }
++        // 0071. The light list, sent when the port publishes a new one. Not into
++        // VRAM or a planar texture, whose view is not the one the lights are in.
++        int lightN = RemasterUniforms.Active && rt is { IsPlanar: false } ? RemasterUniforms.LightCount : 0;
++        if (_uLightN >= 0 && (lightN != 0 || _lightNSent != 0))
++        {
++            if (lightN != _lightNSent) _gl.Uniform1(_uLightN, lightN);
++            _lightNSent = lightN;
++            if (lightN != 0)
++            {
++                if (_lightsSentGen != RemasterUniforms.Generation)
++                {
++                    _gl.Uniform4(_uLightPos, (uint)lightN, new ReadOnlySpan<float>(RemasterUniforms.LightPos, 0, lightN * 4));
++                    _gl.Uniform4(_uLightCol, (uint)lightN, new ReadOnlySpan<float>(RemasterUniforms.LightCol, 0, lightN * 4));
++                    _gl.Uniform4(_uLightDir, (uint)lightN, new ReadOnlySpan<float>(RemasterUniforms.LightDir, 0, lightN * 4));
++                    _lightsSentGen = RemasterUniforms.Generation;
++                    RemasterUniforms.Uploads++;
++                }
++                _gl.Uniform2(_uLightCentre, GteDepth.ProjCx + rt!.Margin, GteDepth.ProjCy);
++                _gl.Uniform1(_uLightH, Math.Max(1f, GteDepth.ProjH));
++                RemasterUniforms.LitBatches++;
++            }
++        }
+         // A plain uniform the next batch reads: unlike true color, changing the
+         // anisotropy rebuilds nothing.
+         GteDepth.AnisotropyLive = _uAniso >= 0;
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 40f644f..fc349f4 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -921,6 +921,15 @@ internal static class GlShaders
+         uniform vec4  uClipPlane;
+         uniform vec2  uClipCentre;
+         uniform float uClipH;
++        // 0071. Authored lights, published by the port in the GTE's view space
++        // (RemasterUniforms): position and radius; colour times intensity and the
++        // spot's inner cosine; direction and the outer cosine (-2 for a point).
++        uniform int   uLightN;
++        uniform vec4  uLightPos[16];
++        uniform vec4  uLightCol[16];
++        uniform vec4  uLightDir[16];
++        uniform vec2  uLightCentre;
++        uniform float uLightH;
+ 
+         const int ditherTbl[16] = int[16](
+             -4,  0, -3,  1,
+@@ -1035,7 +1044,34 @@ internal static class GlShaders
+         // colour, or a light colour and the three light dots, then the depth cue's
+         // weight from the raw MAC0 through the game's own clamp and curve. Floor,
+         // because the GTE truncates.
+-        ivec3 shade8() {
++        // 0071. What the authored lights add at this fragment, in the game's light
++        // units: 1.0 adds the packet's own RGBC once. The view position is rebuilt
++        // from the recovered depth as NormalFs rebuilds it, and the normal is that
++        // position's plane, so a light is placed and faced exactly where the GTE
++        // put the polygon. The derivatives are taken before any per-fragment test.
++        vec3 authored() {
++            float z = vDepth * 65536.0;
++            vec3 p = vec3((gl_FragCoord.xy / float(uScale) - uLightCentre) * (z / uLightH), z);
++            vec3 n = cross(dFdx(p), dFdy(p));
++            if (vDepth <= 0.0 || vLight == 0u || !(dot(n, n) > 1e-12)) return vec3(0.0);
++            n = normalize(n);
++            if (dot(n, p) > 0.0) n = -n;
++            vec3 sum = vec3(0.0);
++            for (int i = 0; i < 16; ++i) {
++                if (i >= uLightN) break;
++                vec3 l = uLightPos[i].xyz - p;
++                float r2 = uLightPos[i].w * uLightPos[i].w;
++                float d2 = dot(l, l);
++                if (d2 >= r2) continue;
++                vec3 dir = d2 > 0.0 ? l * inversesqrt(d2) : -n;
++                float q = 1.0 - d2 / r2;
++                float spot = smoothstep(uLightDir[i].w, uLightCol[i].w, dot(-dir, uLightDir[i].xyz));
++                sum += uLightCol[i].rgb * (max(dot(n, dir), 0.0) * q * q * spot);
++            }
++            return sum;
++        }
++
++        ivec3 shade8(vec3 extra) {
+             if (vLight == 0u) return ivec3(vColor.rgb * 255.0 + 0.5);
+             uint mode = vLight >> 24;
+             vec3 lit = vLit;
+@@ -1045,6 +1081,9 @@ internal static class GlShaders
+                 vec3 ir = clamp(uLightBk + vec3(dot(uLcmR, a), dot(uLcmG, a), dot(uLcmB, a)) / 4096.0, 0.0, 32767.0);
+                 lit = rgbc * ir / 4096.0;
+             }
++            // 0071. Before the depth cue, so the game's fog darkens it too.
++            if (uLightN > 0)
++                lit += vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u)) * extra;
+             uint curve = mode & 7u;
+             float ir0 = clamp(vFog, 0.0, 4096.0);
+             float w = curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
+@@ -1087,7 +1126,10 @@ internal static class GlShaders
+                 vec3 cp = vec3((gl_FragCoord.xy / float(uScale) - uClipCentre) * (cz / uClipH), cz);
+                 if (dot(uClipPlane.xyz, cp) + uClipPlane.w < 0.0) discard;
+             }
+-            ivec3 c8in = shade8();
++            // 0071. Not into a planar reflection: its view is the mirrored camera's.
++            vec3 extra = vec3(0.0);
++            if (uLightN > 0 && uClipOn == 0) extra = authored();
++            ivec3 c8in = shade8(extra);
+             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
+ 
+             if (texMode == 4) {
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/RemasterUniforms.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/RemasterUniforms.cs
+new file mode 100644
+index 0000000..2b9bb6a
+--- /dev/null
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/RemasterUniforms.cs
+@@ -0,0 +1,55 @@
++namespace RecompOne.Runtime;
++
++/// <summary>
++/// 0071. What the port's remaster hands the prim shader beyond the game's own state:
++/// for now, authored lights.
++///
++/// A light is one more term in <c>shade8</c>'s lit colour, added before the depth cue
++/// and before the texture is modulated, so the game's own fog, texture and saturation
++/// apply to it exactly as to the game's light. The port publishes each light already
++/// in the GTE's view space (X right, Y down, Z into the screen, world units), since it
++/// has the camera and the shader has only the fragment: the shader rebuilds the
++/// fragment's view position from its recovered depth, the H and the centre, as
++/// <c>NormalFs</c> does, and its normal from that position's screen derivatives.
++///
++/// A light reaches only a packet with a <see cref="GteLightMap"/> record, whose low
++/// bytes are the colour the game lit it with (RGBC); the HUD and anything unrecorded
++/// keep their vertex colour. None is drawn into a planar reflection's texture. GL
++/// core only. Nothing here writes guest memory or the GTE.
++/// </summary>
++public static class RemasterUniforms
++{
++    public const int MaxLights = 16;
++
++    /// <summary>The port's switch.</summary>
++    public static bool Enabled;
++
++    /// <summary>The backend can draw it: the core-profile prim shader has the uniforms.</summary>
++    public static bool Supported;
++
++    public static bool Active => Enabled && Supported && LightCount > 0;
++
++    /// <summary>Per light, four floats each. Pos: view position and radius. Col: colour
++    /// times intensity, in the game's light units (1.0 adds the packet's own RGBC once),
++    /// and the cosine of the spot's inner cone. Dir: the spot's view direction and the
++    /// cosine of its outer cone; a point light's outer cosine is -2.</summary>
++    public static readonly float[] LightPos = new float[MaxLights * 4];
++    public static readonly float[] LightCol = new float[MaxLights * 4];
++    public static readonly float[] LightDir = new float[MaxLights * 4];
++
++    public static int LightCount { get; private set; }
++
++    /// <summary>Bumped by <see cref="Publish"/>; a batch drawn under one generation is
++    /// flushed before a primitive of the next is added.</summary>
++    public static int Generation { get; private set; }
++
++    /// <summary>The arrays hold <paramref name="count"/> lights for the frame about to be drawn.</summary>
++    public static void Publish(int count)
++    {
++        LightCount = Math.Clamp(count, 0, MaxLights);
++        Generation++;
++    }
++
++    /// <summary>Batches drawn with lights, and light-list uploads; never reset.</summary>
++    public static long LitBatches, Uploads;
++}
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 8ab6666..1ec23ce 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -1883,7 +1883,7 @@ public sealed class GlCore : IGpuBackend
+                 _matRows[(n + i) * 4] = SurfaceMaterial.Emissive[i * 3];
+                 _matRows[(n + i) * 4 + 1] = SurfaceMaterial.Emissive[i * 3 + 1];
+                 _matRows[(n + i) * 4 + 2] = SurfaceMaterial.Emissive[i * 3 + 2];
+-                _matRows[(n + i) * 4 + 3] = 0f;
++                _matRows[(n + i) * 4 + 3] = SurfaceMaterial.EmissiveAdditive[i] ? 1f : 0f;
+             }
+             fixed (float* p = _matRows)
+                 _gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, (uint)n, 2, PixelFormat.Rgba, PixelType.Float, p);
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 34dcc90..e753eaa 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -972,9 +972,12 @@ internal static class GlShaders
+         uniform vec2  uLightCentre;
+         uniform float uLightH;
+         // 0071. Emissive materials: row 1 of SurfaceMaterial's table is the light an
+-        // id gives off, in the same units as a light's colour.
++        // id gives off, in the same units as a light's colour, and in alpha whether it
++        // is added after the texture (1) or to the lit colour before it (0).
+         uniform int   uEmitOn;
+         uniform sampler2D uMatTable;
++        // An additive glow, fogged, in 8-bit colour; added to the modulated texel.
++        ivec3 gGlow8 = ivec3(0);
+ 
+         const int ditherTbl[16] = int[16](
+             -4,  0, -3,  1,
+@@ -1116,6 +1119,17 @@ internal static class GlShaders
+             return sum;
+         }
+ 
++        // The depth cue's weight, 0..4096, from the raw MAC0 through the curve.
++        float cueWeight() {
++            uint curve = (vLight >> 24) & 7u;
++            float ir0 = clamp(vFog, 0.0, 4096.0);
++            return curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
++                 : curve == 2u ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
++                 : curve == 3u ? ir0 * 0.5
++                 : curve == 4u ? vFog
++                 : 0.0;
++        }
++
+         ivec3 shade8(vec3 extra) {
+             if (vLight == 0u) return ivec3(vColor.rgb * 255.0 + 0.5);
+             uint mode = vLight >> 24;
+@@ -1129,13 +1143,7 @@ internal static class GlShaders
+             // 0071. Before the depth cue, so the game's fog darkens it too.
+             if (uLightN > 0 || uEmitOn != 0)
+                 lit += vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u)) * extra;
+-            uint curve = mode & 7u;
+-            float ir0 = clamp(vFog, 0.0, 4096.0);
+-            float w = curve == 1u ? max(ir0 - 800.0, 0.0) * 2.0
+-                    : curve == 2u ? (ir0 < 2800.0 ? ir0 : 3.0 * ir0 - 5600.0)
+-                    : curve == 3u ? ir0 * 0.5
+-                    : curve == 4u ? vFog
+-                    : 0.0;
++            float w = cueWeight();
+             return ivec3(clamp(floor(lit * (1.0 - w / 4096.0)), 0.0, 255.0));
+         }
+ 
+@@ -1175,14 +1183,21 @@ internal static class GlShaders
+             vec3 extra = vec3(0.0);
+             if (uLightN > 0 && uClipOn == 0) extra = authored();
+             // A surface's own glow needs no position, so it is in a planar
+-            // reflection too.
+-            if (uEmitOn != 0 && vMat != 0u) extra += texelFetch(uMatTable, ivec2(int(vMat), 1), 0).rgb;
++            // reflection too. Additive: RGBC times the glow, fogged as the lit
++            // colour is, then added past the texture so a dark texel lights too.
++            if (uEmitOn != 0 && vMat != 0u && vLight != 0u) {
++                vec4 glow = texelFetch(uMatTable, ivec2(int(vMat), 1), 0);
++                if (glow.a > 0.5) {
++                    vec3 rgbc = vec3(uvec3(vLight, vLight >> 8u, vLight >> 16u) & uvec3(255u));
++                    gGlow8 = ivec3(clamp(floor(rgbc * glow.rgb * (1.0 - cueWeight() / 4096.0)), 0.0, 255.0));
++                } else extra += glow.rgb;
++            }
+             ivec3 c8in = shade8(extra);
+             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
+ 
+             if (texMode == 4) {
+                 if (uOpaqueDepth == 1) discard;
+-                FragColor = vec4(quant5(c8in), uSetMask);
++                FragColor = vec4(quant5(c8in + gGlow8), uSetMask);
+                 BlendColor = uBlend;
+                 return;
+             }
+@@ -1190,7 +1205,7 @@ internal static class GlShaders
+             if (texMode == 5) {
+                 vec4 img = texture(uExtTex, vUV);
+                 if (img.a < 0.5 || uOpaqueDepth == 1) discard;
+-                ivec3 e8 = (ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7;
++                ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + gGlow8;
+                 FragColor = vec4(quant5(e8), uSetMask);
+                 BlendColor = uBlend;
+                 return;
+@@ -1211,7 +1226,7 @@ internal static class GlShaders
+                 vec2 t = (fuv - uRepRect.xy) / uRepRect.zw;
+                 vec4 img = texture(uRepTex, t);
+                 if (img.a < 0.5) discard;
+-                ivec3 e8 = (ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7;
++                ivec3 e8 = ((ivec3(img.rgb * 255.0 + 0.5) * c8in) >> 7) + gGlow8;
+                 float stp = img.a < 0.95 ? 1.0 : 0.0;
+                 if (uOpaqueDepth == 1 && stp > 0.5) discard;
+                 FragColor = vec4(quant5(e8), max(stp, uSetMask));
+@@ -1272,7 +1287,7 @@ internal static class GlShaders
+ 
+             if (vRepClut != 0 && texMode != 2) {
+                 if (texel.a < 0.5) discard;
+-                ivec3 e8 = (ivec3(texel.rgb * 255.0 + 0.5) * c8in) >> 7;
++                ivec3 e8 = ((ivec3(texel.rgb * 255.0 + 0.5) * c8in) >> 7) + gGlow8;
+                 float stp = texel.a < 0.95 ? 1.0 : 0.0;
+                 if (uOpaqueDepth == 1 && stp > 0.5) discard;
+                 FragColor = vec4(quant5(e8), max(stp, uSetMask));
+@@ -1284,7 +1299,7 @@ internal static class GlShaders
+             if (uOpaqueDepth == 1 && texel.a >= 0.5) discard;
+             // 248 = 31 << 3: exact for a texel, and keeps a filtered colour's fraction.
+             ivec3 t8 = ivec3(texel.rgb * 248.0 + 0.5);
+-            ivec3 c8 = (t8 * c8in) >> 7;
++            ivec3 c8 = ((t8 * c8in) >> 7) + gGlow8;
+             FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
+             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
+         }
+diff --git a/tools/RecompOne/RecompOne.Runtime/Gpu/SurfaceMaterial.cs b/tools/RecompOne/RecompOne.Runtime/Gpu/SurfaceMaterial.cs
+index 2cfee39..569cab0 100644
+--- a/tools/RecompOne/RecompOne.Runtime/Gpu/SurfaceMaterial.cs
++++ b/tools/RecompOne/RecompOne.Runtime/Gpu/SurfaceMaterial.cs
+@@ -59,6 +59,11 @@ public static class SurfaceMaterial
+     /// packet with a <see cref="GteLightMap"/> record glows.</summary>
+     public static readonly float[] Emissive = new float[Count * 3];
+ 
++    /// <summary>How an id's glow is added: true after the texture is modulated, so
++    /// every texel lights, as a light source does; false to the lit colour before
++    /// it, so the glow is the texture shown brighter. Fogged either way.</summary>
++    public static readonly bool[] EmissiveAdditive = new bool[Count];
++
+     /// <summary>Bumped by <see cref="Changed"/>; the table is uploaded to the GPU when
+     /// it moves. A port that writes the arrays calls it once it is done.</summary>
+     public static int Generation { get; private set; }

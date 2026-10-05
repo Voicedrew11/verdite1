@@ -1,0 +1,106 @@
+diff --git a/RecompOne.Recompiler/CodeGen/SdkPatches.cs b/RecompOne.Recompiler/CodeGen/SdkPatches.cs
+index dd10142..c1c0c94 100644
+--- a/RecompOne.Recompiler/CodeGen/SdkPatches.cs
++++ b/RecompOne.Recompiler/CodeGen/SdkPatches.cs
+@@ -23,6 +23,10 @@ public static class SdkPatches
+         {
+             "DrawOTag", "DrawSync", "PutDrawEnv", "PutDispEnv",
+         }),
++        ("RecompOne.Runtime.Sdk.LibApi", new[]
++        {
++            "DMACallback",
++        }),
+         ("RecompOne.Runtime.Sdk.LibCdStream", new[]
+         {
+             "StSetRing", "StClearRing", "StUnSetRing", "StSetStream",
+diff --git a/RecompOne.Runtime/Memory/Dma.cs b/RecompOne.Runtime/Memory/Dma.cs
+index c376f15..f9aa684 100644
+--- a/RecompOne.Runtime/Memory/Dma.cs
++++ b/RecompOne.Runtime/Memory/Dma.cs
+@@ -129,6 +129,12 @@ public sealed class Dma
+ 
+     void Complete(int channel)
+     {
++        // Not gated on DICR: the library routine that would have set those bits
++        // is the same one we reimplement in LibApi, so it never runs to set them.
++        // A callback exists only because the game asked for it, which is the same
++        // condition the enable bits encode.
++        Sdk.LibApi.Complete(channel);
++
+         bool master = (_dicr & (1u << 23)) != 0;
+         bool enabled = (_dicr & (1u << (16 + channel))) != 0;
+         if (!master || !enabled) return;
+diff --git a/RecompOne.Runtime/Runtime.cs b/RecompOne.Runtime/Runtime.cs
+index cf6d76c..cf6834a 100644
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -125,6 +125,7 @@ public static class Runtime
+         Sdk.LibCdStream.Reset();
+         Assets.Xa.XaRouter.Reset();
+         Sdk.LibPad.Reset();
++        Sdk.LibApi.Reset();
+         Dispatch.Dispatcher.Reset();
+         Bios.BiosB.Reset();
+         OverlayLog.Clear();
+diff --git a/RecompOne.Runtime/sdk/LibApi.cs b/RecompOne.Runtime/sdk/LibApi.cs
+new file mode 100644
+index 0000000..759b72a
+--- /dev/null
++++ b/RecompOne.Runtime/sdk/LibApi.cs
+@@ -0,0 +1,56 @@
++using RecompOne.Runtime.Context;
++using RecompOne.Runtime.Dispatch;
++using RecompOne.Runtime.Memory;
++
++namespace RecompOne.Runtime.Sdk;
++
++/// <summary>
++/// PSY-Q libapi pieces that a static recompilation cannot reach on its own.
++///
++/// DMACallback is the important one. On hardware a finished DMA raises IRQ 3 and
++/// the library's own interrupt entry reads DICR and calls the per-channel
++/// callback. A recompiled build has no exception path, so that entry never runs
++/// and the callbacks are dead -- which silently breaks anything that does its
++/// work in one, MDEC video playback above all: the callback is where the decoded
++/// frame gets handed to LoadImage.
++///
++/// Recording the callbacks here and invoking them when the emulated transfer
++/// finishes is the same shape as LibCd's ready/data callbacks.
++/// </summary>
++public static class LibApi
++{
++    public const int Channels = 7;
++
++    static readonly uint[] _dmaCallback = new uint[Channels];
++
++    public static void DMACallback(CpuContext c, IMemory m)
++    {
++        int ch = (int)c.A0;
++        if (ch < 0 || ch >= Channels) { c.V0 = 0; return; }
++
++        c.V0 = _dmaCallback[ch];
++        _dmaCallback[ch] = c.A1;
++        Log.Sdk($"DMACallback({ch}, 0x{c.A1:X8})");
++    }
++
++    internal static void Reset() => Array.Clear(_dmaCallback);
++
++    /// <summary>Run the channel's callback, if one is installed.</summary>
++    internal static void Complete(int channel)
++    {
++        if (channel < 0 || channel >= Channels) return;
++        uint cb = _dmaCallback[channel];
++        if (cb == 0) return;
++
++        var c = Runtime.Cpu;
++        var m = Runtime.Mem;
++        if (c == null || m == null) return;
++
++        // The transfer completes inside the store that started it, so the
++        // callback runs on top of whatever the game was doing; give it back the
++        // registers it had, the way Interrupts.Deliver does.
++        var snap = c.Snapshot();
++        Dispatcher.Call(c, m, cb);
++        c.Restore(snap);
++    }
++}

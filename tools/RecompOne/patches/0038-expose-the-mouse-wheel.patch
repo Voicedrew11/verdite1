@@ -1,0 +1,101 @@
+--- a/RecompOne.Runtime/Events/RuntimeEvents/MouseEvent.cs
++++ b/RecompOne.Runtime/Events/RuntimeEvents/MouseEvent.cs
+@@ -21,8 +21,12 @@ public enum MouseAction
+ public sealed class MouseEvent : IEvent
+ {
+     public MouseAction Action;
+     public int X, Y;
+     public MouseButton Button = MouseButton.None;
+     public bool Pressed;
+-    public int Wheel;
++    /// <summary>Notches scrolled, positive away from the user. A float for the
++    /// reason <c>InputManager.TakeMouseWheel</c> is one: a trackpad delivers a
++    /// fraction of a notch at a time, and an int throws every one of them
++    /// away.</summary>
++    public float Wheel;
+ }
+\ No newline at end of file
+--- a/RecompOne.Runtime/Host/InputManager.cs
++++ b/RecompOne.Runtime/Host/InputManager.cs
+@@ -107,12 +107,13 @@ internal static unsafe class InputManager
+     // one subtraction per callback -- and is cleared on the mode change, because
+     // the pointer teleports when the cursor is locked or let go and that jump is
+     // not motion anyone asked for.
+     static Vector2 _mousePos;
+     static bool _mouseSeen;
+     static float _mouseDx, _mouseDy;
++    static float _mouseWheel;
+     static bool _mouseCaptured;
+ 
+     public static bool MouseAvailable => _mouse != null;
+ 
+     /// <summary>
+     /// Lock the pointer to the window and hide it, or give it back. Silently
+@@ -150,12 +151,29 @@ internal static unsafe class InputManager
+     {
+         var motion = (_mouseDx, _mouseDy);
+         _mouseDx = _mouseDy = 0f;
+         return motion;
+     }
+ 
++    /// <summary>Notches scrolled since the last call, positive away from the
++    /// user, and cleared by it. Drained rather than polled for the reason
++    /// <see cref="TakeMouseMotion"/> is: the host produces these as discrete
++    /// events, and a caller reading a level would miss a notch that arrived
++    /// between two reads or spend the same one twice.
++    ///
++    /// A **float** because a wheel is not the only device that produces one: a
++    /// discrete wheel steps it by exactly +-1, but a trackpad's two-finger
++    /// scroll arrives in fractions of a notch, and rounding those away makes a
++    /// whole class of pointing device report nothing at all.</summary>
++    public static float TakeMouseWheel()
++    {
++        var wheel = _mouseWheel;
++        _mouseWheel = 0f;
++        return wheel;
++    }
++
+     public static bool IsMouseButtonDown(MouseButton button) =>
+         _mouse != null && _mouse.IsButtonPressed(button);
+ 
+     public static void Poll()
+     {
+         Controller.Analog = ConfigManager.Game.PadKind == PadKind.Analog;
+@@ -571,17 +589,19 @@ internal static unsafe class InputManager
+                 Y = (int)mouse.Position.Y
+             });
+     }
+ 
+     private static void OnScroll(IMouse mouse, ScrollWheel wheel)
+     {
++        _mouseWheel += wheel.Y;
++
+         if (EventBus.HasAnyListeners<MouseEvent>())
+             EventBus.Dispatch(new MouseEvent
+             {
+                 Action = MouseAction.Wheel,
+-                Wheel = (int)wheel.Y,
++                Wheel = wheel.Y,
+                 X = (int)mouse.Position.X,
+                 Y = (int)mouse.Position.Y
+             });
+     }
+ 
+     private static EvMouseButton MapMouseButton(MouseButton button)
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -476,12 +476,14 @@ public static class HostWindow
+     }
+ 
+     /// <summary>Motion since the last call, in window pixels, and cleared by
+     /// it.</summary>
+     public static (float X, float Y) TakeMouseMotion() => InputManager.TakeMouseMotion();
+ 
++    public static float TakeMouseWheel() => InputManager.TakeMouseWheel();
++
+     public static bool IsMouseButtonDown(MouseButton button) => InputManager.IsMouseButtonDown(button);
+ 
+     public static void RequestDiscPath()
+     {
+         PopupManager.Open<DiscPickerPopup>();
+     }

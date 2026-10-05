@@ -1,0 +1,19 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -809,8 +809,14 @@
+     public unsafe (uint tex, int w, int h, float aspect) PresentDisplay(int dispX, int dispY, int w, int h, bool rgb24 = false, int outW = 0, int outH = 0)
+     {
+         if (!Ready || w <= 0 || h <= 0) return (0, 0, 0, GpuHle.OutputAspect);
+-        _frame++;
++        // Flush before advancing the counter. The depth clear keys on
++        // LastDrawFrame != _frame, so bumping the frame first makes this trailing
++        // flush — the tail of the frame that is ending — look like the head of the
++        // next one: it clears the depth buffer and stamps the new frame number, so
++        // the next frame's real first draw skips its clear and inherits whatever
++        // this last batch wrote.
+         Flush();
++        _frame++;
+ 
+         for (int i = 0; i < _rts.Length; i++)
+         {

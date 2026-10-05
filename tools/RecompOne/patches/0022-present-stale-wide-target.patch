@@ -1,0 +1,58 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -833,10 +833,37 @@
+         if (!rgb24)
+             foreach (var rt in _rts)
+             {
+-                if (rt == null || _frame - rt.LastDrawFrame > 4) continue;
++                // No freshness gate on the present counter: the host can present
++                // many times between two drawn frames -- VSync off, or a monitor
++                // refresh the game's 30 fps cannot match -- and a count-based gate
++                // then rejects both targets and drops the picture to the plain
++                // VRAM texture at 4:3, which is the wide margins flashing black.
++                // Writeback above copies every dirty target's middle columns into
++                // VRAM on every present and WriteVram syncs direct writes back
++                // into targets, so a target containing the display area is never
++                // staler than the fallback it replaces; idle targets are
++                // destroyed at 300 frames below.
++                if (rt == null) continue;
+                 if (dispX < rt.X || dispY < rt.Y || dispX + w > rt.X + rt.W || dispY + h > rt.Y + rt.H) continue;
+                 if (src == null || rt.LastDrawFrame > src.LastDrawFrame) src = rt;
+             }
++        // Only the non-rgb24 path searches for a target, so src is meaningful only
++        // there; an rgb24 present (FMV) draws raw VRAM by a different route and would
++        // otherwise be miscounted as the 4:3 margin fallback the census is watching for.
++        if (GpuHle.PresentProbe && !rgb24)
++        {
++            if (src is { Margin: > 0 }) GpuHle.PresentWide++;
++            else if (src != null) GpuHle.PresentPlain++;
++            else GpuHle.PresentFallback++;
++            double now = Environment.TickCount64 / 1000.0;
++            if (now - GpuHle.PresentWindowStart >= 2.0)
++            {
++                Console.WriteLine($"[present] wide {GpuHle.PresentWide}, plain {GpuHle.PresentPlain}, " +
++                                  $"vram fallback {GpuHle.PresentFallback}");
++                GpuHle.PresentWide = GpuHle.PresentPlain = GpuHle.PresentFallback = 0;
++                GpuHle.PresentWindowStart = now;
++            }
++        }
+ 
+         // The target the frame's depth batches actually went to — not the one being
+         // presented (with two buffers that is last frame's) and not the most
+diff --git a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+--- a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
++++ b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+@@ -13,6 +13,12 @@
+     public static int LastDisplayH { get; set; }
+     public static float TargetAspect { get; set; } = 4f / 3f;
+     public const float BaseAspect = 4f / 3f;
++    // KF2_PRESENT_PROBE: what each present picked -- the widened target, a plain
++    // one, or a fallback to raw VRAM. GlCore.PresentDisplay counts; Program.cs
++    // sets the switch.
++    public static bool PresentProbe;
++    public static long PresentWide, PresentPlain, PresentFallback;
++    public static double PresentWindowStart = Environment.TickCount64 / 1000.0;
+ 
+     public struct DispRect { public int X, Y, W, H; public long Stamp; public bool Valid; }
+ 

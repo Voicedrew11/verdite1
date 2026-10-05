@@ -1,0 +1,755 @@
+diff --git a/RecompOne.Runtime/Diagnostics/Profiler.cs b/RecompOne.Runtime/Diagnostics/Profiler.cs
+index d30d9ae..104a04e 100644
+--- a/RecompOne.Runtime/Diagnostics/Profiler.cs
++++ b/RecompOne.Runtime/Diagnostics/Profiler.cs
+@@ -6,6 +6,13 @@ namespace RecompOne.Runtime.Diagnostics;
+ /// <summary>What a section's time is spent on, which is what decides whether it is
+ /// a cost to chase: <see cref="Wait"/> is a deliberate sleep to a deadline, and
+ /// <see cref="Gpu"/> is the thread blocked on the driver, not running code.</summary>
++/// <summary>0046. See <see cref="Profiler.Trace"/>.</summary>
++public interface IProfileTrace
++{
++    void Enter(int id, long timestamp);
++    void Leave(int id, long timestamp);
++}
++
+ public enum ProfileGroup : byte
+ {
+     /// <summary>Recompiled MIPS: the frame's unattributed remainder, and the body of
+@@ -51,6 +58,19 @@ public static class Profiler
+     /// <summary>Whether sections are recorded. Checked at every site.</summary>
+     public static bool Enabled;
+ 
++    /// <summary>0046. Receives every section's enter and leave, with the timestamp
++    /// the profiler itself took, for a frame capture. Sections are recorded while
++    /// this is set even with <see cref="Enabled"/> off.</summary>
++    public static IProfileTrace? Trace;
++
++    public static bool Recording => Enabled || Trace != null;
++
++    /// <summary>Profile the calling thread, if no frame has claimed one yet.</summary>
++    public static void AdoptThread()
++    {
++        if (_thread < 0) _thread = Environment.CurrentManagedThreadId;
++    }
++
+     public static readonly double TicksToMs = 1000.0 / Stopwatch.Frequency;
+ 
+     // ---- the section registry ------------------------------------------------
+@@ -131,6 +151,10 @@ public static class Profiler
+     public static readonly int Throttle = Register("FrameClock.Throttle (host ceiling)", ProfileGroup.Wait);
+     public static readonly int Ticks = Register("CD, card and pad ticks", ProfileGroup.Runtime);
+     public static readonly int Self = Register("profiler (its own reporting)", ProfileGroup.Runtime);
++    public static readonly int Ao = Register("GlCore ambient occlusion pass", ProfileGroup.Runtime);
++    public static readonly int Composite = Register("GlCore present blit + post-fx", ProfileGroup.Runtime);
++    public static readonly int Writeback = Register("GlCore.Writeback (target to VRAM)", ProfileGroup.Runtime);
++    public static readonly int VertexLookup = Register("vertex attribute lookup (perspective, sub-pixel, depth)", ProfileGroup.Runtime);
+ 
+     // ---- the open stack, and this frame's accumulators --------------------------
+ 
+@@ -160,7 +184,7 @@ public static class Profiler
+ 
+     public static int Begin(int id)
+     {
+-        if (!Enabled || _depth >= MaxDepth || Environment.CurrentManagedThreadId != _thread) return -1;
++        if (!(Enabled || Trace != null) || _depth >= MaxDepth || Environment.CurrentManagedThreadId != _thread) return -1;
+ 
+         var d = _depth++;
+         _stId[d] = id;
+@@ -169,6 +193,7 @@ public static class Profiler
+         if (!_touched[id]) Touch(id);
+         _calls[id]++;
+         _stStart[d] = Stopwatch.GetTimestamp();
++        Trace?.Enter(id, _stStart[d]);
+         return d;
+     }
+ 
+@@ -182,6 +207,7 @@ public static class Profiler
+             var d = --_depth;
+             var id = _stId[d];
+             var el = now - _stStart[d];
++            Trace?.Leave(id, now);
+             if (!_touched[id]) Touch(id);
+             _self[id] += el - _stChild[d];
+             if (--_open[id] <= 0)
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index f2242cc..d698fb4 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -104,6 +104,8 @@ public sealed class GlCore : IGpuBackend
+     public unsafe void InitGl()
+     {
+         _vram.Init();
++        // 0046. Core since 3.3; the 2.1 context needs the extension.
++        _timerQueries = !_legacy || _gl.IsExtensionPresent("ARB_timer_query");
+ 
+         string primVs = _legacy ? GlShaders.PrimVs120 : GlShaders.PrimVs;
+         string primFs = _legacy ? GlShaders.PrimFs120 : GlShaders.PrimFs;
+@@ -318,6 +320,13 @@ public sealed class GlCore : IGpuBackend
+     }
+ 
+     void Writeback(GlDisplayRt rt)
++    {
++        var profile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Writeback);
++        WritebackCore(rt);
++        Diagnostics.Profiler.End(profile);
++    }
++
++    void WritebackCore(GlDisplayRt rt)
+     {
+         int s = GlVram.Scale;
+         _gl.Disable(EnableCap.ScissorTest);
+@@ -368,11 +377,28 @@ public sealed class GlCore : IGpuBackend
+         foreach (var rt in _rts)
+             if (rt is { Dirty: true } && rt.Intersects(px, py, pw, 256))
+             {
+-                Flush();
++                Flush(FlushReason.TextureFeedback);
+                 Writeback(rt);
+             }
+     }
+ 
++    // 0046. Which state DesiredMatches found different; the first, when several are.
++    FlushReason Mismatch(bool transparent, int blend, int image, int zMode)
++    {
++        if (_kRepTex != _pendingRepTex || _kRepClut != _pendingRepClut
++            || (_pendingRepTex != 0 && (_kRepX != _pendingRepX || _kRepY != _pendingRepY
++                                        || _kRepW != _pendingRepW || _kRepH != _pendingRepH)))
++            return FlushReason.StateReplacement;
++        if (_kTransparent != transparent) return FlushReason.StateSemi;
++        if (_kBlend != blend) return FlushReason.StateBlend;
++        if (_kImage != image) return FlushReason.StateImage;
++        if (_kZMode != zMode) return FlushReason.StateDepthMode;
++        if (_kSetMask != (_env.SetMask ? 1 : 0) || _kCheckMask != (_env.CheckMask ? 1 : 0)) return FlushReason.StateMask;
++        if (_kClipX0 != _env.ClipX0 || _kClipY0 != _env.ClipY0 || _kClipX1 != _env.ClipX1 || _kClipY1 != _env.ClipY1)
++            return FlushReason.StateClip;
++        return FlushReason.StateTexWindow;
++    }
++
+     bool DesiredMatches(bool transparent, int blend, int image, int zMode)
+     {
+         int twAndX = ~(_env.TwMaskX * 8) & 0xFF, twAndY = ~(_env.TwMaskY * 8) & 0xFF;
+@@ -393,8 +419,13 @@ public sealed class GlCore : IGpuBackend
+         int blend = f.BlendMode;
+         int image = f.UseImage ? f.Image : -1;
+         var target = Classify();
+-        if (_count > 0 && (target != _kTarget || !DesiredMatches(transparent, blend, image, zMode))) Flush();
+-        if (_count + vertsNeeded > MaxVerts) Flush();
++        if (_count > 0)
++        {
++            if (target != _kTarget) Flush(FlushReason.Target);
++            else if (!DesiredMatches(transparent, blend, image, zMode))
++                Flush(GpuTrace.Sink != null ? Mismatch(transparent, blend, image, zMode) : FlushReason.Other);
++        }
++        if (_count + vertsNeeded > MaxVerts) Flush(FlushReason.Full);
+         CheckTextureFeedback(f);
+ 
+         _kTarget = target;
+@@ -615,7 +646,7 @@ public sealed class GlCore : IGpuBackend
+ 
+     public void FillRect(int x, int y, int w, int h, ushort color15)
+     {
+-        Flush();
++        Flush(FlushReason.Fill);
+         _vram.Fill(x, y, w, h, color15);
+         foreach (var rt in _rts)
+         {
+@@ -806,7 +837,7 @@ public sealed class GlCore : IGpuBackend
+ 
+     public void CopyVram(int sx, int sy, int dx, int dy, int w, int h)
+     {
+-        Flush();
++        Flush(FlushReason.Copy);
+         WritebackDirtyIntersecting(sx, sy, w, h);
+         _vram.CopyRect(sx, sy, dx, dy, w, h);
+         SyncRtsFromVram(dx, dy, w, h);
+@@ -814,7 +845,7 @@ public sealed class GlCore : IGpuBackend
+ 
+     public void WriteVram(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
+     {
+-        Flush();
++        Flush(FlushReason.Upload);
+         // A restore of a frame this backend read out at scale writes the scaled
+         // copy instead of the 1x pixels the game is handing back; everything else
+         // uploads as it always did.
+@@ -823,12 +854,17 @@ public sealed class GlCore : IGpuBackend
+         SnapProbe();
+     }
+ 
+-    public void ReadVram(int x, int y, int w, int h, Span<ushort> px)
++    public void ReadVram(int x, int y, int w, int h, Span<ushort> px) => ReadVram(x, y, w, h, px, true);
++
++    /// <summary>0046. <paramref name="snapshot"/> false reads without offering the
++    /// pixels to 0039's scaled restore copies, so a diagnostic read of the whole of
++    /// VRAM does not evict the copy a menu is being restored from.</summary>
++    public void ReadVram(int x, int y, int w, int h, Span<ushort> px, bool snapshot)
+     {
+-        Flush();
++        Flush(FlushReason.Readback);
+         WritebackDirtyIntersecting(x, y, w, h);
+         _vram.ReadRect(x, y, w, h, px);
+-        SnapTake(x, y, w, h, px);
++        if (snapshot) SnapTake(x, y, w, h, px);
+     }
+ 
+     public int RegisterImage(ReadOnlySpan<byte> rgba, int width, int height)
+@@ -848,16 +884,65 @@ public sealed class GlCore : IGpuBackend
+         return _images.Count - 1;
+     }
+ 
+-    public void Flush()
++    public void Flush() => Flush(FlushReason.Other);
++
++    void Flush(FlushReason why)
+     {
+         if (_count == 0) return;
+ 
++        //0046.
++        var trace = GpuTrace.Sink;
++        trace?.Flush(why, _count);
+         //0045.
+         var profile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.GlFlush);
++        var query = BeginGpuTimer();
+         FlushCore();
++        EndGpuTimer(query, GpuWork.Batch, 0);
+         Diagnostics.Profiler.End(profile);
++        trace?.Flushed();
+     }
+ 
++    // 0046. GPU time for a frame capture: a GL_TIME_ELAPSED query around the work,
++    // read back frames later with GpuTimeNs. Nothing is queried unless a capture is
++    // tracing, and the queries never nest -- a flush, the AO pass and the composite
++    // run one after another.
++    bool _timerQueries;
++
++    uint BeginGpuTimer()
++    {
++        if (!_timerQueries || GpuTrace.Sink == null) return 0;
++        var q = _gl.GenQuery();
++        _gl.BeginQuery(QueryTarget.TimeElapsed, q);
++        return q;
++    }
++
++    void EndGpuTimer(uint query, GpuWork what, long start)
++    {
++        if (query != 0) _gl.EndQuery(QueryTarget.TimeElapsed);
++        if (GpuTrace.Sink is { } t)
++            t.Work(what, start, what == GpuWork.Batch ? 0 : System.Diagnostics.Stopwatch.GetTimestamp(), query);
++        else if (query != 0) _gl.DeleteQuery(query);
++    }
++
++    /// <summary>0046. A timer query's result in nanoseconds, deleting it; -1 while the
++    /// GPU has not finished it.</summary>
++    public long GpuTimeNs(uint query)
++    {
++        if (query == 0) return -1;
++        _gl.GetQueryObject(query, QueryObjectParameterName.ResultAvailable, out int ready);
++        if (ready == 0) return -1;
++        _gl.GetQueryObject(query, QueryObjectParameterName.Result, out long ns);
++        _gl.DeleteQuery(query);
++        return ns;
++    }
++
++    public void DeleteGpuTimer(uint query)
++    {
++        if (query != 0) _gl.DeleteQuery(query);
++    }
++
++    public bool TimerQueries => _timerQueries;
++
+     private void FlushCore()
+     {
+ 
+@@ -1147,13 +1232,14 @@ public sealed class GlCore : IGpuBackend
+     public unsafe (uint tex, int w, int h, float aspect) PresentDisplay(int dispX, int dispY, int w, int h, bool rgb24 = false, int outW = 0, int outH = 0)
+     {
+         if (!Ready || w <= 0 || h <= 0) return (0, 0, 0, GpuHle.OutputAspect);
++        long presentStart = System.Diagnostics.Stopwatch.GetTimestamp();
+         // Flush before advancing the counter. The depth clear keys on
+         // LastDrawFrame != _frame, so bumping the frame first makes this trailing
+         // flush — the tail of the frame that is ending — look like the head of the
+         // next one: it clears the depth buffer and stamps the new frame number, so
+         // the next frame's real first draw skips its clear and inherits whatever
+         // this last batch wrote.
+-        Flush();
++        Flush(FlushReason.Present);
+         _frame++;
+ 
+         // True color was toggled: the live targets have the wrong pixel format.
+@@ -1288,10 +1374,20 @@ public sealed class GlCore : IGpuBackend
+         // does not exist until the last primitive has been drawn.
+         bool aoOn = AoReady(src, rgb24);
+         if (aoOn)
++        {
++            var aoProfile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Ao);
++            long aoStart = System.Diagnostics.Stopwatch.GetTimestamp();
++            var aoQuery = BeginGpuTimer();
+             RunAo(src!, dispX - src!.X, dispY - src.Y, w1x, h1x, fbW, fbH);
++            EndGpuTimer(aoQuery, GpuWork.AmbientOcclusion, aoStart);
++            Diagnostics.Profiler.End(aoProfile);
++        }
+         else if (GteDepth.AmbientOcclusion && !rgb24)
+             GteDepth.AoNoTarget++;
+ 
++        var compProfile = Diagnostics.Profiler.Begin(Diagnostics.Profiler.Composite);
++        long compStart = System.Diagnostics.Stopwatch.GetTimestamp();
++        var compQuery = BeginGpuTimer();
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _presentFbo);
+         _gl.Viewport(0, 0, (uint)fbW, (uint)fbH);
+         _gl.Disable(EnableCap.DepthTest);
+@@ -1332,8 +1428,11 @@ public sealed class GlCore : IGpuBackend
+         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+ 
+         uint outTex = ApplyPostFx(_presentTex, fbW, fbH);
++        EndGpuTimer(compQuery, GpuWork.Composite, compStart);
++        Diagnostics.Profiler.End(compProfile);
+ 
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++        GpuTrace.Sink?.Work(GpuWork.Present, presentStart, System.Diagnostics.Stopwatch.GetTimestamp(), 0);
+         return (outTex, fbW, fbH, aspect);
+     }
+     
+diff --git a/RecompOne.Runtime/Gpu/Gpu.cs b/RecompOne.Runtime/Gpu/Gpu.cs
+index e4af8cb..d7250bd 100644
+--- a/RecompOne.Runtime/Gpu/Gpu.cs
++++ b/RecompOne.Runtime/Gpu/Gpu.cs
+@@ -16,9 +16,53 @@ public sealed partial class Gpu
+     private int _drawOffsetX, _drawOffsetY;
+     
+     public int DrawOffsetX => _drawOffsetX;
+-    
++
+     public int DrawOffsetY => _drawOffsetY;
+ 
++    public int DrawAreaLeft => _drawAreaLeft;
++    public int DrawAreaTop => _drawAreaTop;
++    public int DrawAreaRight => _drawAreaRight;
++    public int DrawAreaBottom => _drawAreaBottom;
++
++    // 0046. A detached GPU is a replay of a captured frame: it rasterizes in
++    // software into its own VRAM and reaches nothing global -- no backend, no
++    // trace, no prim event, no vertex map, no texture tracker.
++    public bool Detached { get; init; }
++
++    // Replay counters, null/zero on the live GPU. Coverage counts fragments per
++    // VRAM pixel (a transparent texel is still a fragment), Owner is the
++    // CoverTag of the last primitive that wrote the pixel.
++    public int[]? Coverage;
++    public int[]? Owner;
++    public int CoverTag;
++    public long Fragments;
++
++    void Frag(int x, int y)
++    {
++        Fragments++;
++        if (Coverage != null) Coverage[y * VramWidth + x]++;
++    }
++
++    /// <summary>0046. Take another GPU's registers and VRAM, with an empty FIFO.</summary>
++    public void CopyStateFrom(Gpu src)
++    {
++        src.Vram.AsSpan().CopyTo(Vram);
++        (_drawAreaLeft, _drawAreaTop, _drawAreaRight, _drawAreaBottom) =
++            (src._drawAreaLeft, src._drawAreaTop, src._drawAreaRight, src._drawAreaBottom);
++        (_drawOffsetX, _drawOffsetY) = (src._drawOffsetX, src._drawOffsetY);
++        (_texPageX, _texPageY, _texDepth, _blendMode) = (src._texPageX, src._texPageY, src._texDepth, src._blendMode);
++        (_dither, _texDisable) = (src._dither, src._texDisable);
++        (_texWinMaskX, _texWinMaskY, _texWinOffX, _texWinOffY) =
++            (src._texWinMaskX, src._texWinMaskY, src._texWinOffX, src._texWinOffY);
++        (_setMask, _checkMask) = (src._setMask, src._checkMask);
++        (_dispVramX, _dispVramY) = (src._dispVramX, src._dispVramY);
++        (_hRange1, _hRange2, _vRange1, _vRange2) = (src._hRange1, src._hRange2, src._vRange1, src._vRange2);
++        (_hres, _hres368, _vres480, _pal, _disp24, _interlace, _displayDisabled, _dmaDir) =
++            (src._hres, src._hres368, src._vres480, src._pal, src._disp24, src._interlace, src._displayDisabled, src._dmaDir);
++        ClearFifo();
++        _polyline = _loadImage = _readImage = false;
++    }
++
+     private int _texPageX, _texPageY;
+     private int _texDepth;
+     private int _blendMode;
+@@ -175,8 +219,16 @@ public sealed partial class Gpu
+             _fifoSrc[i] = baseAddress == 0u ? 0u : baseAddress + (uint)i * 4u;
+         _fifoCount = words.Length;
+         _fifoBase = baseAddress;
++        var trace = Detached ? null : GpuTrace.Sink;
++        if (trace != null)
++            for (var i = 0; i < words.Length; i++)
++                trace.Word(words[i], _fifoSrc[i]);
+         Execute();
+-        if (!_loadImage) _fifoCount = 0;
++        if (!_loadImage)
++        {
++            _fifoCount = 0;
++            trace?.Executed();
++        }
+     }
+ 
+     public void WriteGp0(uint word)
+@@ -189,6 +241,8 @@ public sealed partial class Gpu
+     /// it was written to the register directly and has no address.</summary>
+     public void WriteGp0(uint word, uint srcAddr)
+     {
++        if (GpuTrace.Sink != null && !Detached) GpuTrace.Sink.Word(word, srcAddr);
++
+         if (_loadImage)
+         {
+             StoreImageHalfword((ushort)word);
+@@ -207,6 +261,7 @@ public sealed partial class Gpu
+                 _polyline = false;
+                 ExecutePolyline();
+                 ClearFifo();
++                if (!Detached) GpuTrace.Sink?.Executed();
+             }
+             else
+             {
+@@ -233,7 +288,11 @@ public sealed partial class Gpu
+         if (_fifoCount >= _need)
+         {
+             Execute();
+-            if (!_loadImage) ClearFifo();
++            if (!_loadImage)
++            {
++                ClearFifo();
++                if (!Detached) GpuTrace.Sink?.Executed();
++            }
+         }
+     }
+ 
+@@ -246,11 +305,12 @@ public sealed partial class Gpu
+         // -- so tracing all of it is cheap and it is the only way to see whether
+         // the game ever enabled the display (GP1(03)).
+         if (Log.GpuOn) Log.Gpu($"GP1({op:X2}) 0x{p:X6}");
++        if (!Detached) GpuTrace.Sink?.Gp1(word);
+         switch (op)
+         {
+             case >= 0x05 and <= 0x08:
+                 WriteGp1Display(op, p);
+-                GpuHle.NotifyDisplay(_dispVramX, _dispVramY, DisplayWidth, DisplayHeight);
++                if (!Detached) GpuHle.NotifyDisplay(_dispVramX, _dispVramY, DisplayWidth, DisplayHeight);
+                 return;
+             case 0x00: Reset(); break;
+             case 0x01:
+diff --git a/RecompOne.Runtime/Gpu/GpuCommands.cs b/RecompOne.Runtime/Gpu/GpuCommands.cs
+index c2dee55..efdb146 100644
+--- a/RecompOne.Runtime/Gpu/GpuCommands.cs
++++ b/RecompOne.Runtime/Gpu/GpuCommands.cs
+@@ -123,7 +123,7 @@ public sealed partial class Gpu
+                 Vram[py * VramWidth + px] = color;
+             }
+ 
+-        Assets.Textures.VramTracker.MarkCpuWrite(x, y, w, h);
++        if (!Detached) Assets.Textures.VramTracker.MarkCpuWrite(x, y, w, h);
+         ClearZ(x, y, w, h);
+ 
+         if (HleOn) HleFill(x, y, w, h, color);
+@@ -148,7 +148,7 @@ public sealed partial class Gpu
+             Vram[d] = px;
+         }
+ 
+-        Assets.Textures.VramTracker.MarkCpuWrite(dx, dy, w, h);
++        if (!Detached) Assets.Textures.VramTracker.MarkCpuWrite(dx, dy, w, h);
+ 
+         if (HleOn) HleCopy(sx, sy, dx, dy, w, h);
+     }
+@@ -186,8 +186,10 @@ public sealed partial class Gpu
+         if (++_loadPx >= _loadW * _loadH)
+         {
+             _loadImage = false;
++            if (Detached) return;
+             Assets.Textures.VramTracker.MarkCpuWrite(_loadX, _loadY, _loadW, _loadH);
+             HleLoadFlush();
++            Hle.GpuTrace.Sink?.Executed();
+         }
+     }
+ 
+diff --git a/RecompOne.Runtime/Gpu/GpuHleForward.cs b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+index 03d4009..dc0d1e8 100644
+--- a/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -4,7 +4,7 @@ namespace RecompOne.Runtime;
+ 
+ public sealed partial class Gpu
+ {
+-    static bool HleOn => GpuHle.Active && GpuHle.Backend is { Ready: true };
++    bool HleOn => !Detached && GpuHle.Active && GpuHle.Backend is { Ready: true };
+ 
+     int CurTPage() => ((_texPageX / 64) & 0xf) | (((_texPageY / 256) & 1) << 4)
+                     | ((_blendMode & 3) << 5) | ((_texDepth & 3) << 7);
+diff --git a/RecompOne.Runtime/Gpu/GpuRaster.cs b/RecompOne.Runtime/Gpu/GpuRaster.cs
+index 6bfa2da..f3945cd 100644
+--- a/RecompOne.Runtime/Gpu/GpuRaster.cs
++++ b/RecompOne.Runtime/Gpu/GpuRaster.cs
+@@ -106,8 +106,11 @@ public sealed partial class Gpu
+         // downstream. Untextured geometry reaches this block through that term
+         // alone -- most of the architecture in this game is flat-shaded, so
+         // leaving it at ZBuffer meant a depth buffer holding only the textures.
+-        if ((GteDepth.Active || pgxp) && (tex || GteDepth.Subpixel || GteDepth.DepthWanted))
++        if (!Detached && (GteDepth.Active || pgxp) && (tex || GteDepth.Subpixel || GteDepth.DepthWanted))
+         {
++            //0045/0046.
++            var lookup = Diagnostics.Profiler.Begin(Diagnostics.Profiler.VertexLookup);
++            int hits = 0;
+             bool wantW = tex && (pgxp ? Pgxp.Pgxp.TextureCorrection : GteDepth.Enabled);
+             bool wantZ = GteDepth.DepthWanted;
+             bool wantSub = GteDepth.Subpixel;
+@@ -131,11 +134,17 @@ public sealed partial class Gpu
+                 }
+             }
+ 
+-            if (pgxp) ApplyPgxp(v, vwAt, n, wantW, wantZ, wantSub);
++            if (pgxp)
++            {
++                ApplyPgxp(v, vwAt, n, wantW, wantZ, wantSub);
++                for (int i = 0; i < n; i++)
++                    if (v[i].Precise) hits++;
++            }
+             else
+                 for (int i = 0; i < n; i++)
+                 {
+                     if (!GteVertexMap.TryGet(_fifoSrc[vwAt[i]], _fifo[vwAt[i]], out var a)) continue;
++                    hits++;
+                     v[i].W = a.Z;
+                     v[i].HasW = wantW && a.Z > 0f;
+                     v[i].HasZ = wantZ && a.Z > 0f;
+@@ -144,11 +153,13 @@ public sealed partial class Gpu
+                     v[i].HasSub = wantSub;
+                     v[i].Clamped = a.Clipped;
+                 }
++            Diagnostics.Profiler.End(lookup);
++            Hle.GpuTrace.Sink?.Vertices(n, hits);
+         }
+ 
+         //dispatch the render event for prims
+-        Hle.GpuHle.PortWidenedPrim = false;
+-        if (Event.HasAnyListeners<RenderPrimEvent>())
++        if (!Detached) Hle.GpuHle.PortWidenedPrim = false;
++        if (!Detached && Event.HasAnyListeners<RenderPrimEvent>())
+         {
+             var e = _primEvent;
+             e.Context = Runtime.Cpu!; e.Memory = Runtime.Mem!;
+@@ -165,7 +176,7 @@ public sealed partial class Gpu
+         // the one place both of them pass through, and it is taken after the prim
+         // event so it reports where the polygon was actually drawn. Bbox is clamped
+         // to the draw area: a surface is only occluding what it covers on screen.
+-        if (GteDepth.TriCensus && GteDepth.ZBuffer)
++        if (!Detached && GteDepth.TriCensus && GteDepth.ZBuffer)
+         {
+             int x0 = int.MaxValue, y0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue;
+             float minZ = float.MaxValue, maxZ = 0f;
+@@ -188,7 +199,7 @@ public sealed partial class Gpu
+                                  v[0].R, v[0].G, v[0].B);
+         }
+ 
+-        MaybeClearDepth(v, n);
++        if (!Detached) MaybeClearDepth(v, n);
+ 
+         if (HleOn)
+         {
+@@ -276,7 +287,7 @@ public sealed partial class Gpu
+         // linear in screen space for a plane, so the pixel's view depth is the
+         // reciprocal of the interpolated inverses — whether or not the texture
+         // is also being divided.
+-        bool useZ = GteDepth.ZBuffer && a.HasZ && b.HasZ && c.HasZ;
++        bool useZ = !Detached && GteDepth.ZBuffer && a.HasZ && b.HasZ && c.HasZ;
+         float za = 0f, zb = 0f, zc = 0f;
+         if (useZ)
+         {
+@@ -284,7 +295,7 @@ public sealed partial class Gpu
+             EnsureZClear();
+             za = 1f / a.W; zb = 1f / b.W; zc = 1f / c.W;
+         }
+-        else if (GteDepth.ZBuffer) GteDepth.ZSkipped++;
++        else if (GteDepth.ZBuffer && !Detached) GteDepth.ZSkipped++;
+ 
+         // The steps are per pixel and the coordinates are per sixteenth, so a step
+         // is one edge-function derivative times the width of a pixel.
+@@ -303,6 +314,7 @@ public sealed partial class Gpu
+             for (int x = minX; x <= maxX; x++, w0 += sx0, w1 += sx1, w2 += sx2)
+             {
+                 if (w0 + bias0 < 0 || w1 + bias1 < 0 || w2 + bias2 < 0) continue;
++                if (Detached) Frag(x, y);
+ 
+                 int zi = 0;
+                 float zpix = 0f;
+@@ -391,8 +403,8 @@ public sealed partial class Gpu
+         if (sz == 0) { uint wh = _fifo[idx]; w = (int)(wh & 0xFFFF); h = (int)((wh >> 16) & 0xFFFF); }
+         else { w = h = sz == 1 ? 1 : sz == 2 ? 8 : 16; }
+         //dispatch event
+-        Hle.GpuHle.PortWidenedPrim = false;
+-        if (Event.HasAnyListeners<RenderPrimEvent>())
++        if (!Detached) Hle.GpuHle.PortWidenedPrim = false;
++        if (!Detached && Event.HasAnyListeners<RenderPrimEvent>())
+         {
+             var e = _primEvent;
+             e.Context = Runtime.Cpu!; e.Memory = Runtime.Mem!;
+@@ -411,6 +423,7 @@ public sealed partial class Gpu
+             {
+                 int px = x + dx, py = y + dy;
+                 if (px < _drawAreaLeft || px > _drawAreaRight || py < _drawAreaTop || py > _drawAreaBottom) continue;
++                if (Detached && (uint)px < VramWidth && (uint)py < VramHeight) Frag(px, py);
+                 if (tex)
+                 {
+                     ushort texel = FetchTexel((u0 + dx) & 0xFF, (v0 + dy) & 0xFF, clut);
+@@ -468,7 +481,7 @@ public sealed partial class Gpu
+     {
+         // Lines pass neither RenderPrimEvent dispatch, so nothing clears the
+         // widescreen patch's widened-prim flag for them; clear it here.
+-        Hle.GpuHle.PortWidenedPrim = false;
++        if (!Detached) Hle.GpuHle.PortWidenedPrim = false;
+         x0 += _drawOffsetX; y0 += _drawOffsetY;
+         x1 += _drawOffsetX; y1 += _drawOffsetY;
+         if (HleOn) { HleLine(x0, y0, r0, g0, b0, x1, y1, r1, g1, b1, semi, gouraud); return; }
+@@ -484,6 +497,7 @@ public sealed partial class Gpu
+             int g = (int)(g0 + (g1 - g0) * t);
+             int b = (int)(b0 + (b1 - b0) * t);
+             if (x < _drawAreaLeft || x > _drawAreaRight || y < _drawAreaTop || y > _drawAreaBottom) continue;
++            if (Detached && (uint)x < VramWidth && (uint)y < VramHeight) Frag(x, y);
+             Plot(x, y, r, g, b, semi, _dither);
+         }
+     }
+@@ -546,6 +560,7 @@ public sealed partial class Gpu
+         ushort outp = (ushort)(fr | (fg << 5) | (fb << 10));
+         if (_setMask || maskBit) outp |= 0x8000;
+         Vram[idx] = outp;
++        if (Owner != null) Owner[idx] = CoverTag;
+         return true;
+     }
+ 
+diff --git a/RecompOne.Runtime/Gpu/GteVertexMap.cs b/RecompOne.Runtime/Gpu/GteVertexMap.cs
+index cba7420..2fa7480 100644
+--- a/RecompOne.Runtime/Gpu/GteVertexMap.cs
++++ b/RecompOne.Runtime/Gpu/GteVertexMap.cs
+@@ -131,6 +131,14 @@ public static class GteVertexMap
+ 
+     public static void ResetCounters() => Roots = Propagated = Hits = Misses = 0;
+ 
++    /// <summary>0046. Never reset, so a frame capture can difference them across a
++    /// call: coordinates the GTE offered, loads that offered a known word on, ring
++    /// scans past the filter, and stores that bound. <see cref="Stores"/> is every
++    /// store watched, and wraps.</summary>
++    public static long TracePublished, TraceRepublished, TraceScans, TraceBound;
++
++    public static uint Stores => _tick;
++
+     /// <summary>Called when either half of the feature is switched on or off. The
+     /// arrays are allocated on the first switch-on and then kept, since turning the
+     /// setting off and on again in the menu is not a reason to hand 10 MB back.</summary>
+@@ -170,8 +178,11 @@ public static class GteVertexMap
+     /// <summary>Offer a value and the attributes that belong to it, for whichever
+     /// store copies it next. Called from <c>Gte.Read</c> as a screen coordinate
+     /// leaves the GTE, and from a load of a word this map already knows.</summary>
+-    public static void Publish(uint value, float z, float fx, float fy, bool clipped) =>
++    public static void Publish(uint value, float z, float fx, float fy, bool clipped)
++    {
++        TracePublished++;
+         Publish(value, z, fx, fy, clipped, true);
++    }
+ 
+     static void Publish(uint value, float z, float fx, float fy, bool clipped, bool root)
+     {
+@@ -200,6 +211,7 @@ public static class GteVertexMap
+             return;
+         }
+ 
++        TraceScans++;
+         int found = -1;
+         for (int k = 1; k <= PendingCount; k++)
+         {
+@@ -229,6 +241,7 @@ public static class GteVertexMap
+             Value = value, Seq = _tick, Z = src.Z, Fx = src.Fx, Fy = src.Fy, Clipped = src.Clipped,
+         };
+         Mark(idx);
++        TraceBound++;
+         if (src.Root) Roots++; else Propagated++;
+     }
+ 
+@@ -243,6 +256,7 @@ public static class GteVertexMap
+         ref var e = ref _map![idx];
+         if (e.Value != value || _tick - e.Seq > EntryMaxAge) return;
+ 
++        TraceRepublished++;
+         Publish(value, e.Z, e.Fx, e.Fy, e.Clipped, false);
+     }
+ 
+diff --git a/RecompOne.Runtime/Modding/HookManager.cs b/RecompOne.Runtime/Modding/HookManager.cs
+index b1bcaf2..829adf2 100644
+--- a/RecompOne.Runtime/Modding/HookManager.cs
++++ b/RecompOne.Runtime/Modding/HookManager.cs
+@@ -223,7 +223,7 @@ public static class HookManager
+ 
+     private static void Invoke(FunctionHooks hooks, Action<CpuContext, IMemory> orig, CpuContext c, IMemory m)
+     {
+-        if (Profiler.Enabled)
++        if (Profiler.Recording)
+         {
+             InvokeProfiled(hooks, orig, c, m);
+             return;
+diff --git a/RecompOne.Runtime/Gpu/Hle/GpuTrace.cs b/RecompOne.Runtime/Gpu/Hle/GpuTrace.cs
+new file mode 100644
+index 0000000..52c71a9
+--- /dev/null
++++ b/RecompOne.Runtime/Gpu/Hle/GpuTrace.cs
+@@ -0,0 +1,62 @@
++namespace RecompOne.Runtime.Hle;
++
++/// <summary>Why the GL backend submitted a batch. The state reasons name the first
++/// field <c>GlCore.DesiredMatches</c> found different.</summary>
++public enum FlushReason : byte
++{
++    Other,
++    Target,
++    Full,
++    TextureFeedback,
++    Fill,
++    Copy,
++    Upload,
++    Readback,
++    Present,
++    StateReplacement,
++    StateSemi,
++    StateBlend,
++    StateImage,
++    StateDepthMode,
++    StateMask,
++    StateTexWindow,
++    StateClip,
++}
++
++/// <summary>0046. Receives the live GPU's command stream and the backend's batch
++/// submits, for a frame capture. Called on the game thread; null when nothing is
++/// capturing, which is the only cost when off.</summary>
++public interface IGpuTrace
++{
++    /// <summary>A word written to GP0, and the guest address it was read from (0 if none).</summary>
++    void Word(uint word, uint src);
++    void Gp1(uint word);
++    /// <summary>The words since the last call made one complete command, and it has run.</summary>
++    void Executed();
++    void Flush(FlushReason why, int verts);
++    void Flushed();
++    /// <summary>A polygon's vertices were looked up for perspective, sub-pixel or
++    /// depth: how many were asked for, and how many recovered their attributes.</summary>
++    void Vertices(int asked, int hits);
++    /// <summary>Backend work between two timestamps, with a GL_TIME_ELAPSED query
++    /// around it (0 if timer queries are unavailable). A <see cref="GpuWork.Batch"/>
++    /// belongs to the flush in progress and carries no times of its own.</summary>
++    void Work(GpuWork what, long start, long end, uint query);
++}
++
++/// <summary>Backend work a capture times on the GPU as well as the CPU.</summary>
++public enum GpuWork : byte
++{
++    Batch,
++    AmbientOcclusion,
++    /// <summary>The present blit and any post-fx.</summary>
++    Composite,
++    /// <summary>The whole of <c>GlCore.PresentDisplay</c>; CPU only, and the last
++    /// call a present makes.</summary>
++    Present,
++}
++
++public static class GpuTrace
++{
++    public static IGpuTrace? Sink;
++}
