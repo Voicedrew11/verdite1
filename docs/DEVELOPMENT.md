@@ -61,6 +61,33 @@ carry their MIPS address in their name. The pid is the `dotnet` process, not a
 
 ## Driving the game without a person
 
+Three switches, all off unless set (see `docs/ENV_VARS.md`), Verdite3's harness
+on this game's addresses:
+
+- **`KF1_AGENT=1`**, the beacon (`patches/AgentBeacon.cs`): `[KF1-AGENT] overlay
+  <name>` on each load, and once a second
+  `{"overlay":…,"inGame":…,"loop":…,"hp":…,"maxHp":…,"mp":…,"maxMp":…,"area":…,"pos":[x,y,z],"pitch":…,"yaw":…}`.
+  `inGame` is GAME.EXE up and a non-zero max HP; **`loop` is whether the main
+  loop's stage A ran in the last second**, false for about four seconds after
+  GAME.EXE loads, while the area does. The fields are "The player" in
+  `docs/GAME_INTERNALS.md`.
+- **`KF1_SHELL=1`** (or a port), the command channel (`patches/AgentServer.cs`):
+  TCP `127.0.0.1:27901` (Verdite2 uses 27900 and Verdite3 27903), one request a
+  line, one JSON line back: `state`, `press <button> [ms]`, `peek <hex addr>
+  [bytes]`, `dump <file>` (the 2 MB of RAM, for diffing), `help`. Everything
+  runs on the game thread, from the vblank.
+- **`KF1_AUTOSTART=new`** (`patches/AutoStart.cs`): Start is pulsed through
+  OPEN.EXE until GAME.EXE loads, then released; a Start that lands in the area
+  opens the in-game menu. Measured: area 1 at HP 30/30, the loop turning, about
+  20 s after boot.
+
+```bash
+SDL_GAMECONTROLLER_IGNORE_DEVICES=0x054C/0x0CE6 KF1_AUTOSTART=new KF1_AGENT=1 KF1_SHELL=1 \
+    dotnet bin/Release/net10.0/KingsField1.dll disc/KingsField1.cue
+# [KF1] autostart: booting into a New Game
+# [KF1] autostart: in area 1, HP 30/30
+```
+
 **`KF1_AUTOPAD=seconds:button:holdMs,…`** (`Program.cs`): scripted pad input
 through the BIOS pad read (`PadReadEvent`), its clock started by GAME.EXE's load,
 or by OPEN.EXE's with `KF1_AUTOPAD_FROM=open`. From boot to the first area:

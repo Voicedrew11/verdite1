@@ -1,5 +1,4 @@
 using RecompOne.Runtime.Memory;
-using RecompOne.Runtime.Hardware;
 using Recompiled;
 
 // Entry point for the King's Field (SLPS-00017) port. Hand-owned, so RecompOne
@@ -43,6 +42,15 @@ RecompOne.Runtime.Events.Event.AddListener<RecompOne.Runtime.Events.OverlayLoade
     Console.WriteLine($"[KF1] irq callback table: {e.Name} 0x{table:X8}");
 });
 
+// The agent harness: a state beacon and a command channel. See "Driving the game
+// without a person" in docs/DEVELOPMENT.md.
+Kf1.AgentBeacon.Configure(Environment.GetEnvironmentVariable("KF1_AGENT"));
+Kf1.AgentBeacon.Install();
+Kf1.AgentServer.Configure(Environment.GetEnvironmentVariable("KF1_SHELL"));
+Kf1.AgentServer.Install();
+Kf1.AutoStart.Configure(Environment.GetEnvironmentVariable("KF1_AUTOSTART"));
+Kf1.AutoStart.Install();
+
 // Scripted pad input, seconds:button:holdMs, timed from GAME.EXE's load, or from
 // OPEN.EXE's with KF1_AUTOPAD_FROM=open (the title needs input to reach the game):
 //     KF1_AUTOPAD=5:Start:1000,8:Circle:200
@@ -50,21 +58,11 @@ RecompOne.Runtime.Events.Event.AddListener<RecompOne.Runtime.Events.OverlayLoade
 var autopad = Environment.GetEnvironmentVariable("KF1_AUTOPAD");
 if (!string.IsNullOrWhiteSpace(autopad))
 {
-    var buttons = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["Select"] = Controller.Select, ["Start"] = Controller.Start,
-        ["Cross"] = Controller.Cross, ["Circle"] = Controller.Circle,
-        ["Square"] = Controller.Square, ["Triangle"] = Controller.Triangle,
-        ["L1"] = Controller.L1, ["R1"] = Controller.R1,
-        ["L2"] = Controller.L2, ["R2"] = Controller.R2,
-        ["Up"] = Controller.Up, ["Down"] = Controller.Down,
-        ["Left"] = Controller.Left, ["Right"] = Controller.Right,
-    };
     var press = new List<(double At, double Until, ushort Bit)>();
     foreach (var step in autopad.Split(',', StringSplitOptions.RemoveEmptyEntries))
     {
         var f = step.Split(':');
-        if (f.Length != 3 || !buttons.TryGetValue(f[1].Trim(), out var bit))
+        if (f.Length != 3 || !Kf1.AgentServer.Buttons.TryGetValue(f[1].Trim(), out var bit))
             throw new ArgumentException($"KF1_AUTOPAD: bad step '{step}'");
         double at = double.Parse(f[0], System.Globalization.CultureInfo.InvariantCulture);
         double hold = double.Parse(f[2], System.Globalization.CultureInfo.InvariantCulture) / 1000.0;

@@ -22,6 +22,28 @@ Start; `OPEN3.`, `MIX3.`, `MIXA3.`, `MIXB3.` after the second). GAME reads
 `KF/WEPON/WEP00.MIM`, then the area: `KF/B1/MIX.TIM`, `MIXA.DAT`, `SND0.SEQ` and,
 last, `MIXB.DAT`.
 
+## The player
+
+Found 2026-10-05 by diffing RAM dumps (`dump` on the command channel) across a
+walk and a turn, and by reading the code that uses each word:
+
+| address | type | what |
+|---|---|---|
+| `0x800A0790` | u16 | max HP (30 at a New Game) |
+| `0x800A0792` | u16 | HP: damage (`0x80016648`) subtracts from it, clamped at 0, and stage A calls the death routine `func_80015164` when it reads 0 (`0x80019A78`) |
+| `0x800A0794` | u16 | max MP (20 at a New Game) |
+| `0x800A0796` | u16 | MP |
+| `0x800A078A` | u8 | the area, n for `KF/Bn`: the sequence loader `func_80032A4C` writes it plus `'0'` into `B?\SND?.SEQ` |
+| `0x800A0824` | VECTOR | position x, y, z (s32); y is height, negative up (-11500 standing at the start) |
+| `0x800A0838` | SVECTOR | rotation: pitch at `+0`, yaw at `+2` (`0x800A083A`), 0x1000 a turn |
+
+A New Game starts at (31000, -11500, 4000), yaw 0, in area 1. Holding Up for a
+second walks about 4000 units along the facing; holding Left for half a second
+raised yaw by 280. The New Game set-up at `0x80015280` writes both halves of each
+HP and MP pair, and copies `0x800650B4`, `0x800650B6` and `0x800650B8` into
+`0x800A07A2`, `0x800A07A4` and `0x800A0784` (unidentified; `0x800A0784` reads
+50).
+
 ## GAME.EXE's set-up and main loop
 
 `func_800146B8` clears its tables, initialises the subsystems, opens the vblank
