@@ -7,8 +7,9 @@ learns, written here rather than left in the commit that found it. Verdite3's
 
 ## Status
 
-Read so far (2026-10-05): the boot, GAME.EXE's set-up and main loop, its
-frame gate, and where the HUD's and menus' palettes are loaded.
+Read so far (2026-10-05): the boot, GAME.EXE's set-up and main loop, the
+renderer (stage I) whole, its frame gate, and where the HUD's and menus'
+palettes are loaded.
 
 ## The boot
 
@@ -61,10 +62,9 @@ handler (below), calls `func_80014674(1)`, under which the area loads, and enter
 | I | `func_8001FDE4` | `0x800650A0`, `0x80065098` |
 | gate | `func_800149F4` | |
 
-then a check of the byte at `0x800A078D + 0xBD`. What each stage does is not read
-yet; the earlier `kf1-port` attempt measured stage I as the renderer (every
-projection and the one `DrawOTag`) and `0x800650A0`/`0x80065098` as the camera's
-position and rotation, which is to be confirmed here.
+then a check of the byte at `0x800A078D + 0xBD`. Stage I is the renderer, read
+whole below ("The renderer in C#"); `0x800650A0`/`0x80065098` are the camera's
+position and rotation.
 
 ## Saves, the menu and the title
 
@@ -113,6 +113,79 @@ to `0xFE` and leaves the main loop. Area 1 has four exit cells (z, x): (2, 15),
 where a New Game starts, (11, 25), (35, 39) and (56, 29). Measured: standing on
 (11, 25) loads `KF/B3` (area 3) and keeps x and z, so the levels share one
 coordinate frame.
+
+## The renderer in C#
+
+`patches/Renderer.cs` (stage I, `func_8001FDE4`) and `patches/CameraBlock.cs`
+(`func_8001C184`), **on by default**; `KF1_RENDERER` and `KF1_CAMERABLOCK` take `0`
+(the recompiled routine) or `verify`. Verdite3's `Stage15` and `CameraBlock`, with
+their verifiers, on this game's routines. Every callee is called through a
+delegate, so each hook on it still fires.
+
+**The renderer** is twenty call sites and three blocks of arithmetic:
+
+| site | callee | what |
+|---|---|---|
+| View | `func_8001C184(pos, rot)` | the camera block, below |
+| FrameHead | `func_8001BFB8` | flips the buffer index `0x80070E98`, points the ordering table (`0x80070EB8`) and packet pointer (`0x80090EBC`) at its half, `ClearOTagR(ot, 0x4000)`, zeroes three counters |
+| PoseMark | `func_800209A8` | marks each of the 12 pose slots at `0x800910C0` (0x14 bytes) in use as unclaimed (`1`) |
+| GeomScreen | `SetGeomScreen(200)` | |
+| Map | `func_8001E83C` | the map walk: cells through one of 16 stencils (`func_8001E5EC`, `func_8001DE18`) |
+| LightMap | `SetLightMatrix(0x80055FE8)` | |
+| *gauges* | | with the HUD up (`u8[0x800A0818] == 1`): the HP and MP bars' lengths into the HUD records (`(cur - 1) / 50 + max * 50 / ...` as the code has it, `+0xA` of the records at `0x80055C5C`), the two numbers over 100, and one of four condition marks by the lowest set bit of `u16[0x800A07AA]`; else all eight records off |
+| *compass* | | `u8[0x800A0819]` into the records at `0x80055D04` and `0x80055D74`, the needle the negated yaw of the camera copy (`0x80055D86`) |
+| Compass | `func_8001F8B0` | model `0x15` |
+| HudSprites | `func_8001F9D4(0x80055C5C)` | each record (0xE bytes, to a `0xFF`) with `+0 == 1` through `func_8001E480`, under the light colours at `0x80095060..64` |
+| LightHud | `SetLightMatrix(0x80056008)` | |
+| HudSetup | `func_8001FAFC` | the selected item's display, a state machine at `u8[0x80095088]` (below) |
+| *HUD models* | | `RotMatrix` of (`u16[0x8009508A]`, 0, 0) with the translation (0, 160, 200), and each of the records at `0x80055D20`, `0x80055D2E` and four from `0x80055D3C` with `+0 == 1` drawn by `func_8001E230(rec + 2, 0, 0)`, under the colours at `0x80095066` and `0x8009506A` |
+| Models | `func_8001F218` | the model walk ("Creatures, objects and their clips" in `docs/SMOOTHING.md`) |
+| Arm | `func_8001F798` | |
+| Present | `func_8001C050` | `DrawSync`, `VSync`, `PutDrawEnv`, `PutDispEnv`, `DrawOTag` |
+| PoseSweep | `func_80020A98` | frees (`func_800209E4`) each pose slot still unclaimed |
+
+The HUD-model loop is the routine's one loop, and the recompiled body polls
+interrupts at its head; the C# polls there too.
+
+**The selected item's display** (`func_8001FAFC`): state 0 waits for an item in
+the selected slot (`u8[0x8009506E + u8[0x80095086]]`, `0xFF` empty); states 2 and
+3 turn it in, stepping `u16[0x8009508A]` and the countdown `u8[0x80095089]` (15)
+**on every renderer call**, so under pacing it animates at the drawn rate (not yet
+held to the tick). Item `0x13` shows four digit models (`func_8002ADF8`,
+`func_8001FAE4`) instead of one; the slots are rewritten from the game's own state
+each tick, so a `poke` there does not stick.
+
+**The camera block** copies a non-null `pos` (16 bytes) to `0x80095744` and its
+cell, `X / 2000` and `Z / 2000`, to the halfwords `0x8009575C`/`0x8009575E`; a
+non-null `rot` (8 bytes, `lwl`/`lwr`, so unaligned) to `0x80095754`; then
+`RotMatrix` (`func_8004E9B8`) of the angles into the view matrix `0x800956A0`, and
+of (pitch, 0, 0) into the pitch matrix `0x800956C0`.
+
+**Verify**, the renderer: the recompiled routine runs and every call it makes from
+its own body is recorded (all registers, all of RAM and the scratchpad, on entry
+and exit); the C# routine then runs from the same entry with each call answered
+from the record. Each call must be the next recorded one, with every register,
+RAM and the scratchpad equal on entry, and the return state must match. A stretch
+of the body in which the recording's poll could have run a handler
+(`Interrupts.SlowPolls` moved) is not compared for RAM. The camera block uses the
+shared `Differential`.
+
+Measured 2026-10-05, `KF1_FPS=144`, both on `verify`: **8,588 renderer frames, 0
+mismatches** (19 stretches interrupted) over standing, turning, walking, a swing,
+the menu, the double door, a person, the sprites, the walk onto area 1's exit and
+area 3's arrival, and the HUD-model records switched on by `poke` (2,758 HUD-model
+calls); **all twenty sites called**; the camera block 0 mismatches over 8,535
+calls. (The first session, before the C# polled at the loop's head, had one: 59
+bytes of the kernel's area, a vblank handled in the recording only.) Uncapped, standing at the start (`KF1_FPS=off`): 751-783 fps recompiled and
+680-781 C#, run-to-run noise; 451 packets a frame both ways. At 144 the view and
+model smoothing probes read as before.
+
+**`Renderer.ViewOverride`** draws the frame from a camera of the port's: stored
+into the block and `a0 = a1 = 0` handed to it; after the frame the block is
+rebuilt from the camera the frame would have used. Shell verb `view [x y z pitch
+yaw roll | off]`; its reply's `drawn` is the camera the last frame was drawn
+with. Checked: `drawn` reads the given camera while it is set and the handed one
+after `off`, and the player does not move.
 
 ## The frame gate
 

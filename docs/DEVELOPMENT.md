@@ -106,7 +106,8 @@ on this game's addresses:
   TCP `127.0.0.1:27901` (Verdite2 uses 27900 and Verdite3 27903), one request a
   line, one JSON line back: `state`, `press <button> [ms]`, `peek <hex addr>
   [bytes]`, `dump <file>` (the 2 MB of RAM, for diffing), `poke <hex addr> <hex
-  bytes>` (a diagnostic: it writes the game's own state), `help`. Everything
+  bytes>` (a diagnostic: it writes the game's own state), `view [x y z pitch yaw
+  roll | off]` (draw from a fixed camera; needs the renderer in C#), `help`. Everything
   runs on the game thread, from the vblank. A poke of the position
   (`0x800A0824`) can be lost to a stage that already holds the old one; check
   `state` after it.

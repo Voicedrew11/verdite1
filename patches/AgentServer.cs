@@ -55,6 +55,7 @@ public static class AgentServer
         "dump <file> - write the 2 MB of guest RAM to a file",
         "poke <addr> <hex bytes> - write guest memory (a diagnostic: it moves the game's own state)",
         "aspect [4:3|16:9|16:10|21:9|<ratio>] - the widescreen aspect, or the current one",
+        "view [<x> <y> <z> <pitch> <yaw> <roll> | off] - draw from a fixed camera (the renderer in C#), or read the camera",
     ];
 
     public static void Configure(string? spec)
@@ -174,7 +175,7 @@ public static class AgentServer
 
         switch (cmd.Name)
         {
-            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect":
+            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect" or "view":
                 Enqueue(_fast, cmd);
                 break;
             default:
@@ -216,6 +217,7 @@ public static class AgentServer
         "dump" => DoDump(cmd.Arg1),
         "poke" => DoPoke(cmd.Arg1, cmd.Arg2),
         "aspect" => Widescreen.Shell(cmd.Arg1),
+        "view" => DoView(cmd.Args),
         _ => Err($"unknown command '{cmd.Name}'; try help"),
     };
 
@@ -265,6 +267,28 @@ public static class AgentServer
         if (path.Length == 0) return Err("dump <file>");
         File.WriteAllBytes(path, m.Ram[..0x200000].ToArray());
         return "{\"ok\":true,\"cmd\":\"dump\",\"file\":" + Q(Path.GetFullPath(path)) + "}";
+    }
+
+    static string DoView(string[] args)
+    {
+        var m = RecompOne.Runtime.Runtime.Mem;
+        if (m == null) return Err("not running");
+        if (args.Length == 1 && args[0].Equals("off", StringComparison.OrdinalIgnoreCase))
+            Renderer.ViewOverride = null;
+        else if (args.Length == 6)
+        {
+            var v = new int[6];
+            for (int i = 0; i < 6; i++)
+                if (!int.TryParse(args[i], out v[i])) return Err("view <x> <y> <z> <pitch> <yaw> <roll> | off");
+            if (!Renderer.InCSharp) return Err("the override needs the renderer in C# (KF1_RENDERER unset or 1)");
+            Renderer.ViewOverride = new Camera(v[0], v[1], v[2], (short)v[3], (short)v[4], (short)v[5]);
+        }
+        else if (args.Length != 0) return Err("view <x> <y> <z> <pitch> <yaw> <roll> | off");
+
+        var cam = CameraBlock.Read(m);
+        static string Json(Camera? k) => k is { } v ? $"[{v.X},{v.Y},{v.Z},{v.Pitch},{v.Yaw},{v.Roll}]" : "null";
+        return "{\"ok\":true,\"cmd\":\"view\",\"camera\":" + Json(cam) + ",\"handed\":" + Json(Renderer.Handed) +
+               ",\"drawn\":" + Json(Renderer.Drawn) + ",\"override\":" + (Renderer.ViewOverride != null ? "true" : "false") + "}";
     }
 
     public static string Err(string message) => "{\"ok\":false,\"error\":" + Q(message) + "}";

@@ -41,6 +41,14 @@ recompiled and running, following Verdite3's method but applied to this disc.
 - **Widescreen** (2026-10-05, `docs/WIDESCREEN.md`): the margin, the tints and
   the cull stencils widened with the aspect, measured, off until judged.
 
+- **The renderer and camera block in C#** (2026-10-05, "The renderer in C#" in
+  `docs/GAME_INTERNALS.md`): verified, 0 mismatches over 8,588 frames with all
+  twenty sites called; on by default. Next on the way to the retained renderer:
+  the model walk and its five submitters in C# (with the smoothing passed in), then
+  the pose routine `func_800205D4`, then the map path. **The selected item's
+  display steps on every renderer call**, so under pacing it turns in faster;
+  hold it to the tick.
+
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
 ticks, the picture (24-bit, perspective, sub-pixel, Z-buffer), widescreen,

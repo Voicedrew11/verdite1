@@ -136,6 +136,16 @@ public sealed class TestingSection : ISettingsSection
 
     static Kept K(string key) => Switches.First(s => s.Key == key);
 
+    static readonly string[] Routine = ["Recompiled", "C#", "Verify"];
+
+    static void RoutineCombo(string label, Func<int> get, Action<int> set, string tip)
+    {
+        int v = get();
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.Combo(label, ref v, Routine, Routine.Length)) set(v);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(tip);
+    }
+
     // The readout, measured from the frame and tick counters every half second.
     static long _frames0, _ticks0;
     static double _at0 = -1.0, _fps, _tps;
@@ -252,6 +262,13 @@ public sealed class TestingSection : ISettingsSection
             "Steers with the mouse and presses pad buttons with its buttons; Escape captures the pointer.");
         Toggle("Instant mouse look", K(Mouse.LeadKey),
             "Turns the view the frame you move the mouse, instead of on the game's next tick.");
+
+        ImGui.SeparatorText("Routines in C#");
+        Note("Verify runs both versions every call and prints mismatches to the console; it is slow.");
+        RoutineCombo("Renderer", () => Renderer.Setting, v => Renderer.Setting = v,
+            "Stage I, which draws the whole frame.");
+        RoutineCombo("Camera block", () => CameraBlock.Setting, v => CameraBlock.Setting = v,
+            "The view matrices from the camera.");
 
         ImGui.SeparatorText("Console probes");
         bool p = FramePacing.ProbeOn;

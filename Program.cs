@@ -65,6 +65,14 @@ Kf1.FramePacing.Configure(Environment.GetEnvironmentVariable("KF1_FPS"),
 Kf1.FramePacing.Install();
 Kf1.RateCensus.Install();
 
+// The renderer (stage I) and its camera block in C#, verified against the
+// recompiled routines (KF1_RENDERER, KF1_CAMERABLOCK: 0, 1 or verify). See "The
+// renderer in C#" in docs/GAME_INTERNALS.md.
+Kf1.Renderer.Configure(Environment.GetEnvironmentVariable("KF1_RENDERER"));
+Kf1.Renderer.Install();
+Kf1.CameraBlock.Configure(Environment.GetEnvironmentVariable("KF1_CAMERABLOCK"));
+Kf1.CameraBlock.Install();
+
 // The camera carried between ticks, whenever pacing is on (KF1_SMOOTH=0 compares).
 // See "The camera carried" in docs/SMOOTHING.md.
 Kf1.ViewSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH"),
