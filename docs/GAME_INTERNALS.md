@@ -168,3 +168,7 @@ of idle frames, 2026-10-05), finds:
 
 **Nothing a frame shows advances at the render rate while standing.** A census
 with creatures and objects moving has not been taken.
+One thing the census missed, read in the code: **the flipbook sprites' cel**
+(`+0x14` of the list at `0x80095098`) steps on every draw of the sprite, so it
+advances at the render rate; `ModelSmoothing` holds it to one step a tick ("Creatures,
+objects and their clips" in `docs/SMOOTHING.md`).

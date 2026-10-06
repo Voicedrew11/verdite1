@@ -28,9 +28,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
 - **Frame pacing** (2026-10-05): built and measured, off until judged
   (`KF1_FPS`); menus wait a vblank under it.
 - **The camera carried between ticks** (2026-10-05): built and measured, on
-  under pacing (`docs/SMOOTHING.md`). So are creatures, objects and their clip
-  times, measured on two animated objects; a walking creature is still to
-  measure.
+  under pacing (`docs/SMOOTHING.md`). So is everything the model walk draws,
+  at its submitters, with clip times and the sprites' cels held to the tick;
+  measured on animated objects, a person, a door and a staged falling pickup. A
+  monster's real drop and a walking creature are still to see.
 - **The picture** (2026-10-05, `docs/PICTURE.md`): no dither, 24-bit,
   perspective, sub-pixel and a Z-buffer from the address map, built and measured,
   all off until judged.
