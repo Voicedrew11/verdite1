@@ -48,3 +48,5 @@ switch is added.
 | `KF1_WIDESCREEN_EFFECTS` | on | `0`: leave full-screen tints 320 wide |
 | `KF1_CULLCONE` | on | `0`: the game's stencils at any aspect |
 | `KF1_CULLCONE_PROBE` | off | `1`: cells drawn a frame, cells added |
+| `KF1_TRANSLATION` | saved, off | `1`/`0`: the English fan translation this run, over the setting (`docs/GAME_INTERNALS.md`) |
+| `KF1_TRANSLATION_PPF` | a `*.ppf` beside the disc | the translation's patch file |

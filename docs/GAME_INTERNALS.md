@@ -221,6 +221,42 @@ menu were drawn and invisible** until fork `0092` (2026-10-05). Measured after:
 GL's VRAM equals the CPU's everywhere outside the two display buffers, through
 boot, area 1 and the menu.
 
+## The English translation
+
+The fan patch "KF Jap to Eng v1.0" is a PPF3 file over the cue/bin (SHA-256
+`18643044…a0da3fb`, 356,686 records), kept beside the disc and off by default
+(`KF1_TRANSLATION`, or **Settings → Interface → English translation**, read at
+the next launch). Measured 2026-10-05 by mapping every record onto the disc's
+ISO 9660 tree: no record touches a sector header or the directory, and none
+crosses a sector. The patch changes:
+
+- **Pictures of text**: 249 TIMs (`KF/KAN`, `KF/PRSN`, `KF/TALK`, `KF/ENE1` and
+  the rest), `E0`-`E2`, `KF/TIM/M*`, `KF/B0/MIX3`, `KF/B0/MIX9` and
+  `KF/COM/MIX.TIM`, which are TIMs too, and `KF/COM/STAT.DAT`, the status screen's
+  `POLY_FT4` packets. The rest of each sector's changes are its EDC/ECC.
+- **63 bytes of GAME.EXE in eight functions**, every one an `ori` immediate or the
+  register of an `sh` in code that builds a glyph string on the stack (x, y, codes,
+  `0xFFFF`) for a text drawer: `func_800291EC` (two choices, a0 and a1),
+  `func_80029DE0` (one string at a1) or `func_8002AD6C` (a menu of 20-byte
+  entries). No branch, no game state. `func_80028380`'s はい/いいえ prompt (s0 == 2)
+  is left Japanese.
+- **One defect**, in `func_800286D4`, the save point's はい/いいえ: the edit is two
+  bytes off, so `sh v1,44(sp)` became `sh at,44(sp)` (the "No" string's first code
+  is whatever `at` holds) and `sh v1,46(sp)` became `sh v1,46(t5)`, a store of 6 to
+  wherever t5 points. That is a write the Japanese game does not make.
+
+So the port does not run the patched code. `patches/Translation.cs` lays the
+records over every sector read (fork `0093`), **except GAME.EXE's 299**, so RAM
+holds the Japanese executable either way (checked by `peek` at the edited words),
+and puts the English codes into each string before its drawer runs, keyed by the
+call's return address: 29 calls. Each slot is checked to hold the Japanese or the
+English code first, and a site that holds neither is left Japanese and logged.
+`func_800286D4` gets "Yes" `[0x00, 0x06]` as the patch writes it and "No"
+`[0x50, 0x00, 0xFF]`, the patch's own "No" in `func_80028380`, with neither stray
+store. Whether that reads right is for a person to look at. The save point's
+prompt hits it (`[KF1] translation: func_800286D4 at 0x800288D4: English`), and
+the same scripted run with the translation on and off reaches the same states.
+
 ## What runs at the render rate
 
 With pacing on, stage I runs on every frame and stages A-H only on a tick, so

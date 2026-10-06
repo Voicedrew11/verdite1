@@ -118,6 +118,13 @@ Kf1.CullCone.Configure(Environment.GetEnvironmentVariable("KF1_CULLCONE"),
                        Environment.GetEnvironmentVariable("KF1_CULLCONE_PROBE"));
 Kf1.CullCone.Install();
 
+// The English fan translation, a setting under Interface: its disc files laid over
+// the disc's reads, and its strings put in at the drawers' call sites, so the code
+// is the same either way. See "The English translation" in docs/GAME_INTERNALS.md.
+Kf1.Translation.Configure(Environment.GetEnvironmentVariable("KF1_TRANSLATION"),
+                          Environment.GetEnvironmentVariable("KF1_TRANSLATION_PPF"));
+Kf1.Translation.Install();
+
 // The Testing tab in Settings: every switch above, live.
 Kf1.TestingSection.Install();
 
