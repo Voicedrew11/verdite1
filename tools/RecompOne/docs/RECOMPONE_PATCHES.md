@@ -1706,6 +1706,21 @@ Four files in the directory have no entry below:
   set it runs as before. Measured in Verdite1: about 20 frames a second in the first
   area, the gate's three vblanks a frame. **No recompile.**
 
+- `0092-wrapped-image-load.patch` — an image load (GP0 `A0`) that runs past VRAM's
+  right or bottom edge wraps on the console, and `StoreImageHalfword` wraps it into
+  the shadow, but `HleLoadFlush` handed the backend the whole rectangle, and every
+  GL backend's `WriteRect` is one `TexSubImage2D`, which refuses a rectangle past
+  the texture with `GL_INVALID_VALUE`: the backend received none of it. King's
+  Field (`SLPS-00017`) loads its HUD and menu palettes as 16x16 TIM CLUT blocks at
+  rows 497-500, so the backend's palettes read zero, every texel transparent, and
+  the HUD and every menu were drawn and invisible. A wrapping load now goes to the
+  backend as up to four pieces, each at its wrapped position; a load that fits is
+  passed as before, so a game that never wraps one is unchanged. Measured in
+  Verdite1: 35 palette words differed between the backend's VRAM and the shadow,
+  and 0 after, with all of VRAM outside the display buffers equal through the boot,
+  the first area and the in-game menu. Fills and VRAM copies that wrap are not
+  split. **No recompile.**
+
 ## Retained contract additions under verification (2026-10-04)
 
 The depth-linear cue is curve 5 in `LinearDepthCue`, composed into the actual
