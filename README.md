@@ -1,27 +1,43 @@
-# Verdite1
+<img width="700" alt="verdite1 logo" src="https://github.com/user-attachments/assets/578f8f59-3e5e-4563-86eb-ffa44809b3ee" />
 
-A static recompilation of **King's Field** (`SLPS-00017`), the first game in the
-series, released only in Japan in 1994, using
-[RecompOne](https://github.com/BlackLabelHQ/RecompOne). The series was renumbered
-for the West: the game sold in North America as "King's Field" is the Japanese
-*King's Field II* (Verdite2), and the North American "King's Field II" is the
-Japanese *King's Field III* (Verdite3). This project is the one before both.
+***
 
-You must supply your own dump of `SLPS-00017`. No disc data is included, and
-none ever will be.
+[![Release](https://img.shields.io/github/v/release/Voicedrew11/verdite1)](https://github.com/Voicedrew11/verdite1/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Voicedrew11/verdite1/total)](https://github.com/Voicedrew11/verdite1/releases)
+[![Discord](https://img.shields.io/discord/1553561882843947149?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/R4EKCs8RWH)
 
-**Status: bootstrapping.** The state of each piece is in `NOTES.md`.
-`tools/RecompOne` is a subtree of the shared fork `Voicedrew11/verdite-recompone`,
-and `tools/verdite-core` of the code shared with Verdite2 and Verdite3.
+Verdite1 is a PC port of King's Field (JP) built atop of the [RecompOne](https://github.com/BlackLabelHQ/RecompOne) project. This is not to be confused with King's Field (US), or King's Field II (JP), which is a different game covered by [verdite2](https://github.com/Voicedrew11/verdite2)
 
-## No prebuilt binary
+## Features
 
-A playable binary cannot be shipped. The generated code is a translation of
-FromSoftware's own code, so the assembly that plays the game has to be built on
-the machine of somebody who owns the disc. The project will ship its inputs and
-build the game at first run instead, as Verdite2 and Verdite3 do.
+- Built in support for English translation
+- Widescreen support (16:9, 16:10, 21:9), with changed culling behavior
+- Perspective-correct textures and corrected vertex wobbling
+- Anisotropic filtering
+- Ambient occlusion
+- Z-buffer
+- 24-bit colour
+- 60+ fps
+- Consistent game speed
+- Per-pixel lighting
+- Fancy water
+- Reflections
+- Smooth fog
+- Enhanced audio quality
+- Automatic save reload after death
+- Keyboard and mouse support
+- Modern Twin-stick FPS controls
+- Mod support
 
-## Upstream
+## Status
 
-This project is built on the RecompOne fork, not directly on upstream RecompOne.
-No pull requests and no issues go to upstream RecompOne; see `AGENTS.md`.
+Game is playable from start to finish. There may still be some intermittent issues.
+
+## Requirements
+
+A dump of the Japanese PlayStation release (`SLPS-00017`) in `.cue` / `.bin`, or `.chd` format.
+
+## Credits
+
+Built on [RecompOne](https://github.com/BlackLabelHQ/RecompOne) (MIT). *King's
+Field* is the property of FromSoftware; this project ships no game data.
