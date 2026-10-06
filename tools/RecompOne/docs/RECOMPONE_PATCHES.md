@@ -1721,6 +1721,15 @@ Four files in the directory have no entry below:
   the first area and the in-game menu. Fills and VRAM copies that wrap are not
   split. **No recompile.**
 
+- `0093-disc-image-decorator.patch` — `DiscImage.Decorate`, a
+  `Func<IDiscImage, string, IDiscImage>` that `DiscImage.Open` hands each image it
+  opens, with its path, and returns the result of. Null, the default, passes the
+  image through, so a game that does not set it is unchanged. The disc is opened
+  inside the generated `Entry.Run`, so a port had no other place to stand between
+  the image and the runtime's reads. King's Field (`SLPS-00017`) lays the English
+  fan translation's PPF over the sectors this way, leaving its executable's
+  records out. **No recompile.**
+
 ## Retained contract additions under verification (2026-10-04)
 
 The depth-linear cue is curve 5 in `LinearDepthCue`, composed into the actual
