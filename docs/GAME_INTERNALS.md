@@ -7,8 +7,8 @@ learns, written here rather than left in the commit that found it. Verdite3's
 
 ## Status
 
-Read so far (2026-10-05): the boot, GAME.EXE's set-up and main loop, and its
-frame gate.
+Read so far (2026-10-05): the boot, GAME.EXE's set-up and main loop, its
+frame gate, and where the HUD's and menus' palettes are loaded.
 
 ## The boot
 
@@ -129,6 +129,24 @@ four frames and spun in the gate for good (the managed stack: `func_800149F4`
 under `func_80036618` under `func_80014674`). `Program.cs` sets
 `LibEtc.VBlankFromPoll` (fork `0091`), and the interrupt poll the spin makes
 delivers the vblanks that are due: about 20 frames a second in the first area.
+
+## The HUD and the menus
+
+The HUD and the menus are 2D: flat textured quads (`POLY_FT4`, op `0x2C`, `0x2E`
+semi-transparent) with no GTE depth, sorted into the same ordering table as the
+world. Counted in area 1 (2026-10-05): about 71 a frame in play beside 368 of the
+world's gouraud quads (`0x3C`), and in the in-game menu 116 plus 12 blended,
+nothing else, which clear the screen (`isbg` 1) and draw at 60 a second.
+
+**Their palettes are 4-bit CLUTs that GAME.EXE loads as 16x16 blocks at rows 497,
+498, 499 and 500** (`MIX.TIM`'s CLUT headers, `(0,497)` and so on), each running
+past VRAM's bottom edge and wrapping to row 0 on the console. The menu draws from
+the page at `(768,256)` through `(0,498)`, the HUD's panels from `(896,256)`
+through `(0,500)`. The fork's GL backend dropped any load that crossed the edge
+whole, so those palettes read zero, which is transparent, and **the HUD and every
+menu were drawn and invisible** until fork `0092` (2026-10-05). Measured after:
+GL's VRAM equals the CPU's everywhere outside the two display buffers, through
+boot, area 1 and the menu.
 
 ## What runs at the render rate
 

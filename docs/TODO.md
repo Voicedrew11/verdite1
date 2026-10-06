@@ -18,6 +18,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
   acceptance test.~~ Done 2026-10-05, by program: see "The acceptance test" in
   `docs/DEVELOPMENT.md`. **By eye, still to do**: the picture, the menus, the
   save and load screens, the area transition.
+- ~~The HUD and the menus do not draw.~~ Reported from play 2026-10-05: their
+  palettes wrap past VRAM's bottom edge and the GL backend dropped them (fork
+  `0092`; "The HUD and the menus" in `docs/GAME_INTERNALS.md`). Measured, **not
+  yet looked at by eye**.
 
 ## Phase 3: the enhancements
 
