@@ -27,12 +27,13 @@ address or finding carries between them. The user supplies their own dump of
 are recompiled, with 42 PSY-Q entry points bound by address; three scripted
 Starts take the title to a New Game in `KF/B1`, which runs at the game's own 20
 frames a second. Nothing has been judged by eye. `tools/RecompOne` is a `git
-subtree` of the shared fork `Voicedrew11/verdite-recompone`, taken at `f02f484`
-(the commit Verdite2 and Verdite3 pin) with four changes for this disc: `0090`
-(no `SYSTEM.CNF`), `0091` (vblanks from the interrupt poll, off unless a port
-asks) and `0092` (image loads that wrap past VRAM's edge, which carry the HUD's
+subtree` of the shared fork `Voicedrew11/verdite-recompone` at `c79d32f` and
+`tools/verdite-core` is Verdite Core at `674e51c`, the commits Verdite2 and
+Verdite3 pin (2026-10-14). The fork carries four changes made for this disc:
+`0090` (no `SYSTEM.CNF`), `0091` (vblanks from the interrupt poll, off unless a
+port asks), `0092` (image loads that wrap past VRAM's edge, which carry the HUD's
 and menus' palettes) and `0093` (a port's layer over the disc image, which the
-English fan translation uses). `tools/verdite-core` is Verdite Core at `91f4a4a`. The bring-up order is
+English fan translation uses). The bring-up order is
 in `docs/TODO.md`.
 
 ## The documents

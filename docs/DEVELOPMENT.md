@@ -86,6 +86,17 @@ program; **nothing has been looked at by eye**.
    Circle; the position becomes the save's.
 8. No `unmapped call` anywhere in the log.
 
+Re-run 2026-10-14 against fork `c79d32f` and Verdite Core `674e51c`: steps 1-6
+and 8 pass (the walk moved 4003, the exit loaded area 3, the save rewrote
+`carda.sav`). **Step 7 did not reproduce as written, on this build and on the one
+before the pull alike**: after the save's second Circle the loop stays stopped
+(the save screen is still up, and Triangle does not close it), so the menu
+presses that follow do not reach the load screen. The recipe for leaving the save
+screen is to be found; the pull changed nothing here.
+
+Since `0106` the runtime keeps `carda.sav.bak` beside the card each session
+(gitignored).
+
 **Cross opens the in-game menu and Circle examines**: a scripted Circle in front
 of a save point, or a run of them in the save screen, writes card A. Keep a copy
 of `carda.sav` before driving the menus.
