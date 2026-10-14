@@ -1,0 +1,586 @@
+--- /dev/null
++++ b/RecompOne.Runtime/Diagnostics/CrashReport.cs
+@@ -0,0 +1,248 @@
++using System.Reflection;
++using System.Runtime.InteropServices;
++using System.Text;
++using RecompOne.Runtime.Context;
++using RecompOne.Runtime.Memory;
++
++namespace RecompOne.Runtime.Diagnostics;
++
++//0107. What a crash leaves behind. The runtime printed an exception to stderr and
++//closed the window, and a player who started the game from a launcher or a
++//desktop icon has no stderr: the window vanished and nothing could be sent. A
++//report is one text file in `crashes/` -- the exception, the CPU registers, the
++//last indirect calls the game made, the overlays loaded, whatever the port adds
++//(its version, its area, its switches) and the console's last lines -- with the
++//2 MB of game RAM beside it, so the state the crash came out of can be read
++//after the fact. Written for a crash (the game stopped), a fault (a hook threw
++//and was turned off, HookManager) and a hang (Watchdog).
++public static class CrashReport
++{
++    /// <summary>Where the reports go, relative to the working directory.</summary>
++    public static string Folder = "crashes";
++
++    /// <summary>The first line of every report: the port's name and version.</summary>
++    public static string Title = "RecompOne";
++
++    /// <summary>Keep the newest this many reports and delete the rest, so a crash
++    /// loop cannot fill a disk.</summary>
++    public static int Keep = 20;
++
++    /// <summary>Most reports one session writes; past it, the console only.</summary>
++    public static int MaxPerSession = 12;
++
++    /// <summary>Write the 2 MB of game RAM beside the report.</summary>
++    public static bool DumpRam = true;
++
++    private static readonly List<(string Title, Func<string> Body)> _sections = [];
++    private static readonly object _gate = new();
++    private static readonly DateTime _started = DateTime.Now;
++    private static int _written;
++    private static bool _installed;
++
++    [ThreadStatic] private static bool _writing;
++
++    /// <summary>A section of the port's own, called when a report is written.
++    /// It runs on whichever thread crashed, after the crash: it should read, not
++    /// lock, and it may throw (the section then says so).</summary>
++    public static void AddSection(string title, Func<string> body)
++    {
++        lock (_sections)
++        {
++            _sections.Add((title, body));
++        }
++    }
++
++    /// <summary>Report what no one else catches: an exception on any other thread,
++    /// and a task's exception nobody observed. Also starts the watchdog.</summary>
++    public static void Install()
++    {
++        if (_installed) return;
++        _installed = true;
++
++        AppDomain.CurrentDomain.UnhandledException += (_, a) =>
++        {
++            var e = a.ExceptionObject as Exception;
++            var path = Write("crash", e, $"unhandled on thread '{Thread.CurrentThread.Name ?? "?"}'" +
++                                         (a.IsTerminating ? "; the process is ending" : ""));
++            if (path != null) Console.Error.WriteLine($"[Runtime] crash report: {Path.GetFullPath(path)}");
++        };
++        TaskScheduler.UnobservedTaskException += (_, a) =>
++        {
++            Write("fault", a.Exception, "a background task failed and nothing observed it");
++            a.SetObserved();
++        };
++        Watchdog.Start();
++    }
++
++    /// <summary>Write a report; its path, or null if none was written.
++    /// <paramref name="kind"/> is "crash", "fault" or "hang". Never throws.</summary>
++    public static string? Write(string kind, Exception? e, string? note = null, string? stack = null)
++    {
++        if (_writing) return null;
++        _writing = true;
++        try
++        {
++            lock (_gate)
++            {
++                if (_written >= MaxPerSession)
++                {
++                    Console.Error.WriteLine($"[Runtime] {kind} not written: {MaxPerSession} reports this session already");
++                    return null;
++                }
++
++                _written++;
++                Directory.CreateDirectory(Folder);
++                var stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
++                var name = Path.Combine(Folder, $"{stamp}-{kind}");
++                for (var n = 2; File.Exists(name + ".log"); n++) name = Path.Combine(Folder, $"{stamp}-{kind}-{n}");
++
++                var ram = DumpRam && WriteRam(name + ".ram.bin");
++                File.WriteAllText(name + ".log", Compose(kind, e, note, stack, ram ? Path.GetFileName(name + ".ram.bin") : null));
++                Prune();
++                Console.Error.WriteLine($"[Runtime] {kind} report written: {Path.GetFullPath(name + ".log")}");
++                return name + ".log";
++            }
++        }
++        catch (Exception failure)
++        {
++            try
++            {
++                Console.Error.WriteLine($"[Runtime] could not write a {kind} report: {failure.Message}");
++            }
++            catch
++            {
++            }
++
++            return null;
++        }
++        finally
++        {
++            _writing = false;
++        }
++    }
++
++    private static string Compose(string kind, Exception? e, string? note, string? stack, string? ram)
++    {
++        var sb = new StringBuilder();
++        sb.AppendLine($"{Title} {kind} report");
++        sb.AppendLine($"time:    {DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}");
++        sb.AppendLine($"uptime:  {DateTime.Now - _started:hh\\:mm\\:ss}");
++        sb.AppendLine($"thread:  {Thread.CurrentThread.Name ?? Thread.CurrentThread.ManagedThreadId.ToString()}");
++        sb.AppendLine($"os:      {RuntimeInformation.OSDescription} ({RuntimeInformation.OSArchitecture})");
++        sb.AppendLine($".NET:    {RuntimeInformation.FrameworkDescription}");
++        sb.AppendLine($"memory:  {Environment.WorkingSet / (1024 * 1024)} MB working set, " +
++                      $"{GC.GetTotalMemory(false) / (1024 * 1024)} MB managed");
++        if (ram != null) sb.AppendLine($"ram:     {ram} (game RAM, 2 MB, from 0x80000000)");
++        if (note != null) sb.AppendLine($"note:    {note}");
++
++        Section(sb, "Exception", () => e?.ToString() ?? "(none)");
++        if (stack != null) Section(sb, "Game thread", () => stack);
++
++        (string Title, Func<string> Body)[] sections;
++        lock (_sections)
++        {
++            sections = _sections.ToArray();
++        }
++
++        foreach (var (title, body) in sections) Section(sb, title, body);
++
++        Section(sb, "CPU", Registers);
++        Section(sb, "Last indirect calls, oldest first", RecentCalls);
++        Section(sb, "Overlays", Overlays);
++        Section(sb, "Hooks turned off this session", Modding.HookManager.DescribeFaults);
++        Section(sb, "Console, last lines", ConsoleTail);
++        return sb.ToString();
++    }
++
++    private static void Section(StringBuilder sb, string title, Func<string> body)
++    {
++        sb.AppendLine();
++        sb.AppendLine($"== {title} ==");
++        try
++        {
++            sb.AppendLine(body());
++        }
++        catch (Exception e)
++        {
++            sb.AppendLine($"(this section failed: {e.GetType().Name}: {e.Message})");
++        }
++    }
++
++    private static string Registers()
++    {
++        if (Runtime.Cpu is not { } cpu) return "(no CPU yet)";
++        var sb = new StringBuilder();
++        var n = 0;
++        foreach (var f in typeof(CpuContext).GetFields(BindingFlags.Public | BindingFlags.Instance))
++        {
++            if (f.FieldType != typeof(uint)) continue;
++            sb.Append($"{f.Name,-3}={(uint)f.GetValue(cpu)!:X8}  ");
++            if (++n % 6 == 0) sb.AppendLine();
++        }
++
++        return sb.ToString().TrimEnd();
++    }
++
++    //A loop makes the same call over and over: a run is one address and a count.
++    private static string RecentCalls()
++    {
++        var calls = Dispatch.Dispatcher.Recent();
++        var parts = new List<string>();
++        for (var i = 0; i < calls.Length;)
++        {
++            var run = 1;
++            while (i + run < calls.Length && calls[i + run] == calls[i]) run++;
++            parts.Add(run == 1 ? $"{calls[i]:X8}" : $"{calls[i]:X8} x{run}");
++            i += run;
++        }
++
++        return parts.Count == 0 ? "(none)" : string.Join(' ', parts);
++    }
++
++    private static string Overlays()
++    {
++        var sb = new StringBuilder();
++        sb.AppendLine($"active: {string.Join(", ", Dispatch.Dispatcher.ActiveNames)}");
++        var events = new List<Dispatch.OverlayEvent>();
++        Runtime.OverlayLog.Read(events);
++        foreach (var ev in events.TakeLast(16))
++            sb.AppendLine($"{ev.TimestampMs / 1000.0,9:F1}s {ev.Kind,-12} {ev.OverlayName}" +
++                          (ev.DisplacedBy != null ? $" (by {ev.DisplacedBy})" : ""));
++        return sb.ToString().TrimEnd();
++    }
++
++    private static string ConsoleTail()
++    {
++        var lines = new List<string>();
++        ConsoleMirror.SnapshotInto(lines);
++        return string.Join('\n', lines.TakeLast(300));
++    }
++
++    private static bool WriteRam(string path)
++    {
++        try
++        {
++            if (Runtime.Mem is not PSMemory m) return false;
++            File.WriteAllBytes(path, m.Ram.ToArray());
++            return true;
++        }
++        catch
++        {
++            return false;
++        }
++    }
++
++    private static void Prune()
++    {
++        var logs = new DirectoryInfo(Folder).GetFiles("*.log").OrderByDescending(f => f.LastWriteTimeUtc).ToArray();
++        foreach (var old in logs.Skip(Keep))
++            try
++            {
++                old.Delete();
++                File.Delete(Path.ChangeExtension(old.FullName, ".ram.bin"));
++            }
++            catch
++            {
++            }
++    }
++}
+--- /dev/null
++++ b/RecompOne.Runtime/Diagnostics/Watchdog.cs
+@@ -0,0 +1,89 @@
++using System.Diagnostics;
++using System.Runtime.CompilerServices;
++
++namespace RecompOne.Runtime.Diagnostics;
++
++//0107. A hang leaves nothing at all: the window stops, the player closes it, and
++//what the game was doing is gone. The watchdog notices the game's frames stop
++//(Runtime.PresentFrame counts them) and writes a hang report. A thread cannot
++//read another's managed stack, so it asks the game thread for its own: a flag
++//that the dispatcher's indirect calls and every access off the RAM fast path
++//(hardware registers, which a game spinning on a flag reads) check, and that
++//the game thread answers by taking its own stack. A loop that does neither has
++//no stack in its report, but still its registers, its last indirect calls and
++//its RAM.
++public static class Watchdog
++{
++    /// <summary>Seconds without a frame that count as a hang; 0 turns it off.</summary>
++    public static double HangSeconds = 15;
++
++    /// <summary>Set around a wait the port knows is long and frameless.</summary>
++    public static volatile bool Paused;
++
++    private static long _frames;
++    private static volatile bool _wanted;
++    private static volatile string? _stack;
++    private static Thread? _thread;
++
++    /// <summary>A frame was presented.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    internal static void Frame()
++    {
++        _frames++;
++    }
++
++    /// <summary>A place the game thread passes often: answer a stack request.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    internal static void Probe()
++    {
++        if (_wanted) Answer();
++    }
++
++    [MethodImpl(MethodImplOptions.NoInlining)]
++    private static void Answer()
++    {
++        _wanted = false;
++        _stack = new StackTrace(2, false).ToString();
++    }
++
++    internal static void Start()
++    {
++        if (_thread != null) return;
++        _thread = new Thread(Loop) { IsBackground = true, Name = "watchdog", Priority = ThreadPriority.BelowNormal };
++        _thread.Start();
++    }
++
++    private static void Loop()
++    {
++        long seen = 0;
++        var still = Stopwatch.StartNew();
++        var reported = false;
++        while (true)
++        {
++            Thread.Sleep(1000);
++            var frames = Volatile.Read(ref _frames);
++            if (frames != seen || Paused || Debugger.IsAttached)
++            {
++                if (reported && frames != seen)
++                    Console.WriteLine($"[Runtime] frames again after {still.Elapsed.TotalSeconds:F0}s");
++                seen = frames;
++                still.Restart();
++                reported = false;
++                continue;
++            }
++
++            if (frames == 0 || reported || HangSeconds <= 0 || still.Elapsed.TotalSeconds < HangSeconds) continue;
++            reported = true;
++
++            _stack = null;
++            _wanted = true;
++            for (var i = 0; i < 20 && _stack == null; i++) Thread.Sleep(50);
++            _wanted = false;
++
++            CrashReport.Write("hang", null,
++                $"no frame for {still.Elapsed.TotalSeconds:F0}s (the window may only have been held, e.g. dragged)",
++                _stack ?? "(the game thread made no indirect call and touched no hardware register in 1s, " +
++                "so its stack could not be taken; the registers and RAM below are what is left)");
++        }
++    }
++}
+--- a/RecompOne.Runtime/Dispatch/Dispatcher.cs
++++ b/RecompOne.Runtime/Dispatch/Dispatcher.cs
+@@ -248,8 +248,26 @@ public static class Dispatcher
+         return op == 1 && ((w >> 16) & 0x1Fu) is 0x10 or 0x11;
+     }
+ 
++    //0107. The last indirect calls, for a crash or hang report (CrashReport): a
++    //ring the game thread writes one word into per call, read only after the fact.
++    private const int RecentCalls = 64;
++    private static readonly uint[] _recent = new uint[RecentCalls];
++    private static int _recentAt;
++
++    /// <summary>The last indirect call targets, oldest first.</summary>
++    public static uint[] Recent()
++    {
++        var at = _recentAt;
++        var n = Math.Min(at, RecentCalls);
++        var list = new uint[n];
++        for (var i = 0; i < n; i++) list[i] = _recent[(at - n + i) & (RecentCalls - 1)];
++        return list;
++    }
++
+     public static void Call(CpuContext c, IMemory m, uint addr)
+     {
++        _recent[_recentAt++ & (RecentCalls - 1)] = addr;
++        Diagnostics.Watchdog.Probe();
+         if (BiosKernel.TryDispatch(c, m, addr)) return;
+ 
+         if (_funcMap.TryGetValue(addr, out var fn))
+--- a/RecompOne.Runtime/Host/Window/Assets/languages.json
++++ b/RecompOne.Runtime/Host/Window/Assets/languages.json
+@@ -398,6 +398,24 @@
+       "zh-CN": "要使本设定生效，需要重新启动主程序",
+       "fr-FR": "Vous devez redémarrer l'application pour appliquer la configuration"
+     },
++    "crash.title": {
++      "en": "The game stopped"
++    },
++    "crash.body": {
++      "en": "The game ran into an error it could not recover from and has stopped."
++    },
++    "crash.saved": {
++      "en": "A report was saved. Sending it, along with what you were doing, helps get this fixed:"
++    },
++    "crash.no_report": {
++      "en": "No report could be saved; the console output has the details."
++    },
++    "crash.open_folder": {
++      "en": "Open the report's folder"
++    },
++    "crash.quit": {
++      "en": "Quit"
++    },
+     "common.notice": {
+       "en": "Notice",
+       "pt-BR": "Aviso",
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -870,6 +870,7 @@ public static class HostWindow
+         PopupManager.Register(new NoticePopup());
+         PopupManager.Register(new StartupNoticePopup());
+         PopupManager.Register(new DiscPickerPopup());
++        PopupManager.Register(new CrashPopup());
+ 
+         MainMenuBar.RegisterBuiltins();
+ 
+--- /dev/null
++++ b/RecompOne.Runtime/Host/Window/Popups/CrashPopup.cs
+@@ -0,0 +1,85 @@
++using System.Diagnostics;
++using System.Numerics;
++using ImGuiNET;
++
++namespace RecompOne.Runtime.Host.Window;
++
++//0107. The window a crash leaves up (Runtime.HoldAfterCrash): what happened, where
++//the report is, a button to its folder and one to quit.
++public sealed class CrashPopup : Popup
++{
++    private static volatile bool _wanted;
++    private static string? _report;
++
++    protected override string TitleKey => "crash.title";
++    protected override Vector2 Size => new(560f, 0f);
++    protected override bool Closable => false;
++
++    public static void Show(string? report)
++    {
++        _report = report == null ? null : Path.GetFullPath(report);
++        _wanted = true;
++    }
++
++    protected internal override void Update()
++    {
++        if (_wanted && !IsOpen) Open();
++    }
++
++    protected override void DrawContent()
++    {
++        UiText.CenteredWrapped(Localization.T("crash.body"));
++        ImGui.Spacing();
++        if (_report != null)
++        {
++            UiText.CenteredWrapped(Localization.T("crash.saved"));
++            ImGui.Spacing();
++            ImGui.TextWrapped(_report);
++        }
++        else
++        {
++            UiText.CenteredWrapped(Localization.T("crash.no_report"));
++        }
++
++        ImGui.Spacing();
++        ImGui.Separator();
++        ImGui.Spacing();
++
++        var width = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) * 0.5f;
++        if (_report != null)
++        {
++            if (ImGui.Button(Localization.T("crash.open_folder"), new Vector2(width, 0f))) OpenFolder();
++            ImGui.SameLine();
++        }
++        else
++        {
++            width = -1f;
++        }
++
++        if (ImGui.Button(Localization.T("crash.quit"), new Vector2(width, 0f)))
++        {
++            try
++            {
++                Runtime.Shutdown();
++            }
++            catch
++            {
++            }
++
++            Environment.Exit(1);
++        }
++    }
++
++    private static void OpenFolder()
++    {
++        try
++        {
++            var folder = Path.GetDirectoryName(_report);
++            if (folder != null) Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
++        }
++        catch (Exception e)
++        {
++            Console.Error.WriteLine($"[Runtime] could not open the report's folder: {e.Message}");
++        }
++    }
++}
+--- a/RecompOne.Runtime/Memory/PSMemory.cs
++++ b/RecompOne.Runtime/Memory/PSMemory.cs
+@@ -151,6 +151,7 @@ public sealed class PSMemory : IMemory
+ 
+     private void TrackRead(uint phys, int size)
+     {
++        Diagnostics.Watchdog.Probe();
+         if (RamLogger.TrackReads && phys < MemoryMap.RamWindow)
+             Runtime.RamLog.RecordRead(phys & _ramMask, size);
+     }
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -110,6 +110,7 @@ public static class Runtime
+         {
+             _hostReady = true;
+             Diagnostics.ConsoleMirror.Install();
++            Diagnostics.CrashReport.Install();
+             Host.GpuJobs.Run(() => HostWindow.Initialize(title));
+             Audio.Initialize();
+         }
+@@ -214,8 +215,20 @@ public static class Runtime
+ 
+     public static bool HardResetPending => _hardResetPending;
+ 
++    //0108. A hard reset unwinds the game with HardResetSignal and boots it again,
++    //which only Run's loop does; a port that calls its Entry.Run itself has no
++    //such loop, and the signal ended the process. Such a port says so here, and
++    //the menu's Hard Reset then explains instead.
++    public static bool CanHardReset = true;
++
+     public static void HardReset()
+     {
++        if (!CanHardReset)
++        {
++            ShowNotice("Hard Reset is not available in this port. Quit and start the game again instead.");
++            return;
++        }
++
+         _hardResetPending = true;
+     }
+ 
+@@ -264,6 +277,30 @@ public static class Runtime
+         
+         while (!_gameDone)
+             PresentLoop();
++
++        if (_crashed) HoldAfterCrash(_crashReport);
++    }
++
++    private static volatile bool _crashed;
++    private static string? _crashReport;
++
++    //0107. After a crash: the window stays, with the report's path and a way to
++    //it, until the player closes it. Before, it closed with the exception on a
++    //stderr that a player starting the game from a launcher never sees. Returns
++    //at once with no window; returns if the window itself cannot be drawn.
++    public static void HoldAfterCrash(string? report)
++    {
++        Diagnostics.Watchdog.Paused = true;
++        if (!HostWindow.Ready) return;
++        Host.Window.CrashPopup.Show(report);
++        try
++        {
++            while (true) HostWindow.Pump();
++        }
++        catch (Exception e)
++        {
++            Console.Error.WriteLine($"[Runtime] the crash screen could not be drawn: {e.Message}");
++        }
+     }
+     
+     private static void RunGame(Action boot)
+@@ -282,6 +319,8 @@ public static class Runtime
+             catch (Exception e)
+             {
+                 Console.Error.WriteLine($"[Runtime] runtime has crashed: {e}");
++                _crashReport = Diagnostics.CrashReport.Write("crash", e);
++                _crashed = true;
+                 break;
+             }
+         
+@@ -368,6 +407,7 @@ public static class Runtime
+     
+     public static void PresentFrame()
+     {
++        Diagnostics.Watchdog.Frame();
+         if (_hardResetPending)
+         {
+             _hardResetPending = false;

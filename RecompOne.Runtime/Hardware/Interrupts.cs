@@ -139,6 +139,7 @@ public static class Interrupts
         TakeExceptionStack(cpu);
         try
         {
+            if (Sdk.LibEtc.VBlankFromPoll) Sdk.LibEtc.PollVBlanks(cpu, mem);
             DrainPending(cpu, mem);
             BiosB.PumpCardEvents(cpu, mem);
             Sdk.LibCd.Pump();

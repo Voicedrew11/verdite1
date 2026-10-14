@@ -34,6 +34,15 @@ public static class OutputView
     public static bool Hovered { get; internal set; }
 
     /// <summary>
+    /// The pointer is over some other ImGui window than this panel -- a floating
+    /// panel in front of the picture, say. <see cref="Hovered"/> false cannot say
+    /// that: it is also false while another item is active or a popup blocks, so
+    /// a caller testing a click against the rectangle needs this to tell a click
+    /// on a panel from a click on the game.
+    /// </summary>
+    public static bool Covered { get; internal set; }
+
+    /// <summary>
     /// The display buffer the *game* programmed, in its own pixels -- 320x240
     /// here. Published because <see cref="Min"/> and <see cref="Max"/> are a
     /// rectangle and not a scale, and the inverse of that rectangle is what an
@@ -99,6 +108,12 @@ internal sealed class OutputPanel : IPanel
         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
         var visible = ImGui.Begin(this.Title());
         ImGui.PopStyleVar(2);
+        //Asked inside Begin, where "this window" is the Output panel: ImGui's
+        //hovered window is someone else's exactly when another window sits under
+        //the pointer, whatever is active or whether the picture was drawn.
+        OutputView.Covered =
+            ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup) &&
+            !ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup);
         IsDocked = ImGui.IsWindowDocked();
         OutputView.DockId = IsDocked ? ImGui.GetWindowDockID() : 0u;
         OutputView.Valid = false;

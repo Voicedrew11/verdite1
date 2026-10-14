@@ -176,7 +176,7 @@ public static class NeighbourBlend
         }
         void nbAround(int own, int hid, vec2 xz, out ivec4 rec, out vec4 k) {
             int i = hid - 1, tile = i >> 1, upper = i & 1, side = textureSize(uNbHalves, 0).x / 2;
-            int tx = tile % side, tz = tile / side;
+            int tx = tile % side, tz = tile / side; // int-ok: hid >= 1 (WorldVs packs none of 0), so tile >= 0; side is HalvesW / 2
             vec2 o = xz - (vec2(tx, tz) + 0.5) * uNbTile;
             vec2 a = min(abs(o), vec2(0.5 * uNbTile)) / uNbTile;
             ivec2 s = ivec2(o.x < 0.0 ? -1 : 1, o.y < 0.0 ? -1 : 1);

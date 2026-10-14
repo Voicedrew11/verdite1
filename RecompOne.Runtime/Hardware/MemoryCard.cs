@@ -11,23 +11,108 @@ public sealed class MemoryCard
     private readonly string _path;
     public bool Enabled = true;
 
+    //0106. Whether this session has copied the card to `<path>.bak` yet: done
+    //once, before the first write, so the backup is the card as the session
+    //found it, not one frame behind the save that is being written.
+    private bool _backedUp;
+    private bool _failing;
+
     public MemoryCard(string path)
     {
         _path = path;
-        if (File.Exists(path))
+        if (!File.Exists(path))
         {
-            var b = File.ReadAllBytes(path);
-            Array.Copy(b, _d, Math.Min(b.Length, CardSize));
-        }
-        else
-        {
+            _backedUp = true;
             Format();
+            return;
+        }
+
+        //0106. A card the file system cut short, or one that is not a card at all,
+        //used to load as whatever bytes it had with zeros after them, and the
+        //next save wrote that back over it. It is kept aside as it is, and the
+        //session's backup restored if there is a good one; with none, the old
+        //behaviour stands -- the game sees an unformatted card and offers to
+        //format it, which is the player's choice, not ours.
+        var bytes = TryRead(path);
+        if (bytes != null && Valid(bytes))
+        {
+            bytes.CopyTo(_d, 0);
+            return;
+        }
+
+        var kept = IO.DurableFile.Keep(path, "damaged");
+        var backup = TryRead(path + ".bak");
+        if (backup != null && Valid(backup))
+        {
+            backup.CopyTo(_d, 0);
+            _backedUp = true;
+            Console.Error.WriteLine($"[Runtime] memory card {path} is damaged ({Describe(bytes)}); " +
+                                    $"restored {path}.bak, damaged copy kept as {kept ?? "(none)"}");
+            Flush();
+            Runtime.ShowNotice($"The memory card file {Path.GetFileName(path)} was damaged, so its backup " +
+                               $"from {File.GetLastWriteTime(path + ".bak"):g} was restored. " +
+                               $"The damaged file was kept as {Path.GetFileName(kept ?? "(not kept)")}.");
+            return;
+        }
+
+        if (bytes != null) Array.Copy(bytes, _d, Math.Min(bytes.Length, CardSize));
+        Console.Error.WriteLine($"[Runtime] memory card {path} is damaged ({Describe(bytes)}) and has no good " +
+                                $"backup; loaded as it is, damaged copy kept as {kept ?? "(none)"}");
+        Runtime.ShowNotice($"The memory card file {Path.GetFileName(path)} is damaged and has no backup. " +
+                           $"A copy was kept as {Path.GetFileName(kept ?? "(not kept)")}.");
+    }
+
+    private static bool Valid(byte[] b)
+    {
+        return b.Length == CardSize && b[0] == 0x4D && b[1] == 0x43;
+    }
+
+    private static string Describe(byte[]? b)
+    {
+        if (b == null) return "unreadable";
+        return b.Length != CardSize ? $"{b.Length} bytes, not {CardSize}" : "no card header";
+    }
+
+    private static byte[]? TryRead(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllBytes(path) : null;
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"[Runtime] could not read {path}: {e.Message}");
+            return null;
         }
     }
 
+    //0106. The whole card, replaced in one step and forced to the disk (DurableFile),
+    //after a once-a-session copy of what was there. A failure is logged and shown
+    //once, never thrown: this runs inside the game's own save, in an emulated BIOS
+    //call, and the game's copy of the card in memory is still whole.
     public void Flush()
     {
-        File.WriteAllBytes(_path, _d);
+        try
+        {
+            if (!_backedUp && File.Exists(_path))
+            {
+                var current = File.ReadAllBytes(_path);
+                if (Valid(current)) IO.DurableFile.Write(_path + ".bak", current, sync: true);
+            }
+
+            _backedUp = true;
+            IO.DurableFile.Write(_path, _d, sync: true);
+            if (_failing) Console.WriteLine($"[Runtime] memory card {_path} saved again");
+            _failing = false;
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"[Runtime] could not save memory card {_path}: {e.Message}");
+            if (_failing) return;
+            _failing = true;
+            Runtime.ShowNotice($"The memory card could not be saved to {Path.GetFileName(_path)}: {e.Message} " +
+                               "The save is not on disk yet; it will be written by the next save that succeeds.");
+        }
     }
 
     private static byte Sum(byte[] d, int o)

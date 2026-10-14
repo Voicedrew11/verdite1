@@ -1,0 +1,264 @@
+--- a/RecompOne.Runtime/Hardware/Controller.cs
++++ b/RecompOne.Runtime/Hardware/Controller.cs
+@@ -53,12 +53,14 @@
+     public static RumbleWave? Rumble;
+ 
+     /// <summary>Set by a port that wants HD rumble: the host then writes a Switch
+-    /// pad's rumble reports itself, with both bands' frequencies, instead of going
+-    /// through SDL's two motors (0104).</summary>
++    /// pad's rumble reports itself, with both bands' frequencies (0104), or plays the
++    /// wave into a DualSense's actuators over USB (0105), instead of going through
++    /// SDL's two motors.</summary>
+     public static bool WantHdRumble;
+ 
+     /// <summary>Whether pad 1 is taking HD rumble: a Switch Pro Controller or a
+-    /// single Joy-Con, opened for its reports.</summary>
++    /// single Joy-Con opened for its reports, or a DualSense's sound card open for
++    /// its actuators.</summary>
+     public static bool HdRumble;
+ 
+     public static ushort State2 = 0xFFFF;
+--- a/RecompOne.Runtime/Host/InputManager.cs
++++ b/RecompOne.Runtime/Host/InputManager.cs
+@@ -257,6 +257,7 @@
+     {
+         MouseCaptured = false;
+         CloseControllers();
++        PadHaptics.Shutdown(_sdl);
+         _sdl?.QuitSubSystem(Sdl.InitGamecontroller);
+         _sdl?.Dispose();
+         _sdl = null;
+@@ -527,9 +528,10 @@
+ 
+     /// <summary>The port's <see cref="Controller.Rumble"/> out to pad 1 (0104): as
+     /// HD rumble while <see cref="Controller.WantHdRumble"/> holds and the pad is a
+-    /// Switch Pro Controller or a single Joy-Con, otherwise through SDL's two
+-    /// motors. Nothing is sent while no port asks, so the game's own rumble
+-    /// (<see cref="SetRumble"/>) is left alone.</summary>
++    /// Switch Pro Controller or a single Joy-Con, as haptics on a DualSense over USB
++    /// (<see cref="PadHaptics"/>, 0105), otherwise through SDL's two motors. Nothing
++    /// is sent while no port asks, so the game's own rumble (<see cref="SetRumble"/>)
++    /// is left alone.</summary>
+     private static void PollRumble()
+     {
+         lock (_rumbleLock)
+@@ -548,13 +550,14 @@
+             if (!Controller.WantHdRumble)
+             {
+                 if (_hd != null) CloseHd();
++                PadHaptics.Close(_sdl);
+                 _hdTried = false;
+             }
+             else if (!_hdTried)
+             {
+                 OpenHd();
+             }
+-            Controller.HdRumble = _hd != null;
++            Controller.HdRumble = _hd != null || PadHaptics.Open;
+ 
+             var wave = Controller.Rumble;
+             if (wave == null || (wave.Low <= 0f && wave.High <= 0f))
+@@ -564,6 +567,14 @@
+                 return;
+             }
+ 
++            // The haptics are a stream, topped up on every poll rather than resent.
++            if (PadHaptics.Open)
++            {
++                PadHaptics.Feed(_sdl, wave);
++                _rumbleSent = wave;
++                return;
++            }
++
+             var now = Environment.TickCount64;
+             if (ReferenceEquals(wave, _rumbleSent) && now - _rumbleSentMs < RumbleRefreshMs) return;
+ 
+@@ -585,6 +596,7 @@
+     private static void OpenHd()
+     {
+         _hdTried = true;
++        if (PadHaptics.TryOpen(_sdl!, _pad0)) return;
+         var type = _sdl!.GameControllerGetType(_pad0);
+         if (type is not (GameControllerType.NintendoSwitchPro or GameControllerType.NintendoSwitchJoyconLeft
+                          or GameControllerType.NintendoSwitchJoyconRight))
+@@ -610,12 +622,14 @@
+ 
+     private static void StopRumble()
+     {
+-        if (_hd != null) WriteHd(null);
++        if (PadHaptics.Open) PadHaptics.Stop(_sdl!);
++        else if (_hd != null) WriteHd(null);
+         else _sdl!.GameControllerRumble(_pad0, 0, 0, 0);
+     }
+ 
+     private static void ForgetRumble()
+     {
++        if (_sdl != null) PadHaptics.Close(_sdl);
+         if (_hd != null) CloseHd();
+         else if (_rumbleSent != null && _sdl != null && _rumblePad != null)
+             _sdl.GameControllerRumble(_rumblePad, 0, 0, 0);
+--- a/RecompOne.Runtime/Host/PadHaptics.cs
++++ b/RecompOne.Runtime/Host/PadHaptics.cs
+@@ -0,0 +1,162 @@
++using Silk.NET.SDL;
++using RecompOne.Runtime.Hardware;
++
++namespace RecompOne.Runtime.Host;
++
++/// <summary>
++/// A DualSense's haptics over USB (0105): the pad is a USB sound card with four
++/// output channels, the first two its speaker and headset and the last two its left
++/// and right voice-coil actuators, so a wave played into channels 3 and 4 is felt
++/// rather than heard. <see cref="InputManager"/> drives it under its rumble lock in
++/// place of SDL's two-motor rumble whenever <see cref="Controller.WantHdRumble"/>
++/// holds and pad 1 is a DualSense whose sound card is there (over Bluetooth it is
++/// not).
++///
++/// SDL's DualSense driver turns the audio haptics off (its <c>0x02</c> enable bit)
++/// whenever it is asked for non-zero rumble, and a zero-rumble report leaves the bit
++/// clear again; so the motors are stopped once when this opens and never asked for
++/// anything while it is open.
++///
++/// The wave is synthesised here, both bands summed as sines with their phases kept
++/// across blocks and their amplitudes ramped over each block, and queued about
++/// <see cref="LeadMs"/> ahead of the device (SDL's queue, no callback).
++/// </summary>
++internal static unsafe class PadHaptics
++{
++    private const int Rate = 48000;
++    private const int Channels = 4;
++    private const ushort AudioF32 = 0x8120;            // AUDIO_F32LSB
++    private const int AllowChannelsChange = 0x04;      // SDL_AUDIO_ALLOW_CHANNELS_CHANGE
++
++    /// <summary>How far ahead of the device the wave is queued.</summary>
++    private const int LeadMs = 40;
++
++    private static uint _dev;
++    private static bool _audioInit;
++    private static double _phaseLow, _phaseHigh;
++    private static float _low, _high;
++    private static float[] _block = [];
++
++    public static bool Open => _dev != 0;
++
++    /// <summary>Find and open pad 1's sound card; true when it is open with four channels.</summary>
++    public static bool TryOpen(Sdl sdl, GameController* pad)
++    {
++        if (_dev != 0) return true;
++        if (sdl.GameControllerGetType(pad) != GameControllerType.PS5) return false;
++
++        if (!_audioInit)
++        {
++            if (sdl.InitSubSystem(Sdl.InitAudio) != 0)
++            {
++                Console.WriteLine($"[Input] haptics: no SDL audio ({sdl.GetErrorS()}); two-motor rumble instead");
++                return false;
++            }
++            _audioInit = true;
++        }
++
++        string? name = null;
++        var count = sdl.GetNumAudioDevices(0);
++        for (var i = 0; i < count; i++)
++        {
++            var n = sdl.GetAudioDeviceNameS(i, 0);
++            if (n != null && (n.Contains("DualSense", StringComparison.OrdinalIgnoreCase) ||
++                              n.Contains("Wireless Controller", StringComparison.OrdinalIgnoreCase)))
++            {
++                name = n;
++                break;
++            }
++        }
++        if (name == null)
++        {
++            Console.WriteLine($"[Input] haptics: no DualSense sound card among {count} outputs " +
++                              $"({sdl.GetCurrentAudioDriverS()}); it is there over USB only; two-motor rumble instead");
++            return false;
++        }
++
++        AudioSpec want = default, got = default;
++        want.Freq = Rate;
++        want.Format = AudioF32;
++        want.Channels = Channels;
++        want.Samples = 512;
++        _dev = sdl.OpenAudioDevice(name, 0, &want, &got, AllowChannelsChange);
++        if (_dev == 0)
++        {
++            Console.WriteLine($"[Input] haptics: could not open \"{name}\" ({sdl.GetErrorS()}); two-motor rumble instead");
++            return false;
++        }
++        if (got.Channels != Channels)
++        {
++            Console.WriteLine($"[Input] haptics: \"{name}\" opened with {got.Channels} channels, not 4 " +
++                              "(set its profile to four channels); two-motor rumble instead");
++            Close(sdl);
++            return false;
++        }
++
++        _phaseLow = _phaseHigh = 0;
++        _low = _high = 0f;
++        sdl.GameControllerRumble(pad, 0, 0, 0);     // leave SDL's "audio haptics off" bit clear
++        sdl.PauseAudioDevice(_dev, 0);
++        Console.WriteLine($"[Input] haptics: \"{name}\", {got.Freq} Hz, 4 channels ({sdl.GetCurrentAudioDriverS()})");
++        return true;
++    }
++
++    public static void Close(Sdl sdl)
++    {
++        if (_dev == 0) return;
++        sdl.ClearQueuedAudio(_dev);
++        sdl.CloseAudioDevice(_dev);
++        _dev = 0;
++    }
++
++    /// <summary>Stop at once: what is queued is dropped.</summary>
++    public static void Stop(Sdl sdl)
++    {
++        if (_dev == 0) return;
++        sdl.ClearQueuedAudio(_dev);
++        _low = _high = 0f;
++    }
++
++    /// <summary>Keep the queue <see cref="LeadMs"/> ahead with <paramref name="wave"/>.</summary>
++    public static void Feed(Sdl sdl, Controller.RumbleWave wave)
++    {
++        if (_dev == 0) return;
++        var frameBytes = Channels * sizeof(float);
++        var queued = (int)(sdl.GetQueuedAudioSize(_dev) / (uint)frameBytes);
++        var frames = Rate * LeadMs / 1000 - queued;
++        if (frames <= 0) return;
++
++        var n = frames * Channels;
++        if (_block.Length < n) _block = new float[n];
++
++        float low = Math.Clamp(wave.Low, 0f, 1f), high = Math.Clamp(wave.High, 0f, 1f);
++        double stepLow = 2 * Math.PI * Math.Clamp(wave.LowHz, 20f, 1000f) / Rate;
++        double stepHigh = 2 * Math.PI * Math.Clamp(wave.HighHz, 20f, 1000f) / Rate;
++        for (var i = 0; i < frames; i++)
++        {
++            var k = (i + 1) / (float)frames;
++            var a = _low + (low - _low) * k;
++            var b = _high + (high - _high) * k;
++            var s = 0.5f * (a * (float)Math.Sin(_phaseLow) + b * (float)Math.Sin(_phaseHigh));
++            _phaseLow += stepLow;
++            _phaseHigh += stepHigh;
++            var o = i * Channels;
++            _block[o] = _block[o + 1] = 0f;
++            _block[o + 2] = _block[o + 3] = s;
++        }
++        _phaseLow %= 2 * Math.PI;
++        _phaseHigh %= 2 * Math.PI;
++        _low = low;
++        _high = high;
++
++        fixed (float* p = _block) sdl.QueueAudio(_dev, p, (uint)(frames * frameBytes));
++    }
++
++    public static void Shutdown(Sdl? sdl)
++    {
++        if (sdl == null) return;
++        Close(sdl);
++        if (_audioInit) sdl.QuitSubSystem(Sdl.InitAudio);
++        _audioInit = false;
++    }
++}

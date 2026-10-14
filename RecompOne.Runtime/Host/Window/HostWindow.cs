@@ -116,7 +116,7 @@ public static class HostWindow
 
     /// <summary>
     /// GLFW leaves the Wayland app id and the X11 class empty, so a compositor has
-    /// nothing to match a desktop entry against. Silk 2.22 has no name for the
+    /// nothing to match a desktop entry against. Silk 2.23 has no name for the
     /// Wayland hint, which is GLFW 3.4's <c>GLFW_WAYLAND_APP_ID</c> (0x00026001).
     /// </summary>
     private static void HintAppId(string id)
@@ -167,6 +167,7 @@ public static class HostWindow
                 _window.Render += OnRender;
                 _window.Closing += OnClosing;
                 _window.Move += OnMove;
+                _window.FocusChanged += OnFocusChanged;
                 HintAppId(AppId);
                 _window.Initialize();
                 if (ConfigManager.View.Fullscreen && ConfigManager.View.Borderless) SetFullscreen(true);
@@ -741,6 +742,21 @@ public static class HostWindow
         set => InputManager.MouseCaptured = value;
     }
 
+    /// <summary>Whether the window has the desktop's focus. A captured pointer
+    /// that outlives its focus is the desktop's to give back, so a port that
+    /// captures wants to know when this goes false (0101).</summary>
+    public static bool Focused { get; private set; } = true;
+
+    /// <summary>Raised on the window's thread when <see cref="Focused"/>
+    /// changes, from inside the host's event pump.</summary>
+    public static event Action<bool>? FocusChanged;
+
+    private static void OnFocusChanged(bool focused)
+    {
+        Focused = focused;
+        FocusChanged?.Invoke(focused);
+    }
+
     /// <summary>Motion since the last call, in window pixels, and cleared by
     /// it.</summary>
     public static (float X, float Y) TakeMouseMotion() => InputManager.TakeMouseMotion();
@@ -761,16 +777,36 @@ public static class HostWindow
         while (StartupNoticePopup.NeedsAck)
             HandOverFrame();
 
+        // OnLoad registers the picker and opens it when there is no valid path, and
+        // that can come after this wait starts, so the picker is only watched once
+        // it has been seen open.
+        var pickerShown = false;
+
         while (true)
         {
-            var path = ConfigManager.Game.CdPath;
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) && Runtime.ValidateDisc(path) == null)
-                return;
+            if (HasValidDisc()) return;
+
+            if (PopupManager.Get<DiscPickerPopup>() is { IsOpen: true }) pickerShown = true;
 
             HandOverFrame();
+
+            // During the boot wait, Cancel means quit: there is nothing to run
+            // without a disc, and the picker is the only way to reopen it. Confirm
+            // closes it too, having saved a valid path, which is not a cancel.
+            if (pickerShown && PopupManager.Get<DiscPickerPopup>() is not { IsOpen: true } && !HasValidDisc())
+            {
+                Runtime.Shutdown();
+                Environment.Exit(0);
+            }
         }
     }
     
+    private static bool HasValidDisc()
+    {
+        var path = ConfigManager.Game.CdPath;
+        return !string.IsNullOrWhiteSpace(path) && File.Exists(path) && Runtime.ValidateDisc(path) == null;
+    }
+
     private static void HandOverFrame()
     {
         var closing = false;
@@ -854,6 +890,7 @@ public static class HostWindow
         PopupManager.Register(new NoticePopup());
         PopupManager.Register(new StartupNoticePopup());
         PopupManager.Register(new DiscPickerPopup());
+        PopupManager.Register(new CrashPopup());
 
         MainMenuBar.RegisterBuiltins();
 
@@ -993,7 +1030,7 @@ public static class HostWindow
         }
     }
 
-    // GLFW 3.4's glfwGetPlatform, which Silk 2.22 does not bind.
+    // GLFW 3.4's glfwGetPlatform, which Silk 2.23 does not bind.
     private const int GlfwPlatformWayland = 0x00060003;
 
     private static unsafe bool IsWayland()

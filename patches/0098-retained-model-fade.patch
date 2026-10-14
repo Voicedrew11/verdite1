@@ -1,0 +1,137 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
+index ad0b061..ae1c6a5 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
+@@ -42,6 +42,8 @@ public sealed partial class GlCore
+     int _uwnModel = -1, _uwnModelBase, _uwnModelR, _uwnModelT, _uwnModelFar, _uwnModelNear, _uwnModelMat, _uwnModelGteC = -1;
+     int _uwModelPose = -1, _uwModelPoseW = -1, _uwnModelPose = -1, _uwnModelPoseW = -1, _uwModelSky = -1;
+     int _uwModelTile = -1, _uwnModelTile = -1;
++    // 0098. ModelInstance.FadeOut, as the weight drawn, per program.
++    int _uwModelKeep = -1, _uwnModelKeep = -1;
+     // The view-space placement (the arm), per program: uModelView, then the three rows and T.
+     readonly int[] _uwView = [-1, -1, -1, -1, -1], _uwnView = [-1, -1, -1, -1, -1];
+     static readonly string[] ViewNames = ["uModelView", "uModelVR0", "uModelVR1", "uModelVR2", "uModelVT"];
+@@ -54,9 +56,10 @@ public sealed partial class GlCore
+         _uwModelFar = L("uModelFar"); _uwModelNear = L("uModelNear"); _uwModelLlm = L("uModelLlm"); _uwModelCue = L("uModelCue");
+         _uwModelRgbc = L("uModelRgbc"); _uwModelMat = L("uModelMat"); _uwModelGteC = L("uModelGteC");
+         _uwModelPose = L("uModelPose"); _uwModelPoseW = L("uModelPoseW"); _uwModelSky = L("uModelSky");
+-        _uwModelTile = L("uModelTile");
++        _uwModelTile = L("uModelTile"); _uwModelKeep = L("uModelKeep");
+         for (int i = 0; i < ViewNames.Length; i++) _uwView[i] = L(ViewNames[i]);
+         _gl.UseProgram(_progWorld);
++        if (_uwModelKeep >= 0) _gl.Uniform1(_uwModelKeep, 1f);
+         if (_uwModelSky >= 0) _gl.Uniform1(_uwModelSky, 0);
+         if (_uwModelTile >= 0) _gl.Uniform1(_uwModelTile, 0);
+         if (_uwView[0] >= 0) _gl.Uniform1(_uwView[0], 0);
+@@ -71,8 +74,10 @@ public sealed partial class GlCore
+             _uwnModel = N("uModel"); _uwnModelBase = N("uModelBase"); _uwnModelR = N("uModelR"); _uwnModelT = N("uModelT");
+             _uwnModelFar = N("uModelFar"); _uwnModelNear = N("uModelNear"); _uwnModelMat = N("uModelMat"); _uwnModelGteC = N("uModelGteC");
+             _uwnModelPose = N("uModelPose"); _uwnModelPoseW = N("uModelPoseW"); _uwnModelTile = N("uModelTile");
++            _uwnModelKeep = N("uModelKeep");
+             for (int i = 0; i < ViewNames.Length; i++) _uwnView[i] = N(ViewNames[i]);
+             _gl.UseProgram(_progWorldNrm);
++            if (_uwnModelKeep >= 0) _gl.Uniform1(_uwnModelKeep, 1f);
+             if (_uwnView[0] >= 0) _gl.Uniform1(_uwnView[0], 0);
+             if (_uwnModelTile >= 0) _gl.Uniform1(_uwnModelTile, 0);
+             if (_uwnModel >= 0) _gl.Uniform1(_uwnModel, 0);
+@@ -333,6 +338,7 @@ public sealed partial class GlCore
+             _gl.Uniform1(_uwnModelFar, m.Far);
+             _gl.Uniform1(_uwnModelNear, m.Near);
+             if (_uwnModelMat >= 0) _gl.Uniform1(_uwnModelMat, m.Material);
++            if (_uwnModelKeep >= 0) _gl.Uniform1(_uwnModelKeep, 1f - Math.Clamp(m.FadeOut, 0f, 1f));
+             return;
+         }
+         _gl.Uniform1(_uwModelBase, m.VertBase);
+@@ -350,6 +356,7 @@ public sealed partial class GlCore
+         if (_uwModelCue >= 0) _gl.Uniform3(_uwModelCue, m.Dqa, m.Dqb, m.Curve);
+         if (_uwModelRgbc >= 0) _gl.Uniform1(_uwModelRgbc, m.Rgbc);
+         if (_uwModelMat >= 0) _gl.Uniform1(_uwModelMat, m.Material);
++        if (_uwModelKeep >= 0) _gl.Uniform1(_uwModelKeep, 1f - Math.Clamp(m.FadeOut, 0f, 1f));
+         if (_uwBk >= 0) _gl.Uniform3(_uwBk, m.Bk0, m.Bk1, m.Bk2);
+         if (_uwLcmR >= 0) _gl.Uniform3(_uwLcmR, m.L0, m.L1, m.L2);
+         if (_uwLcmG >= 0) _gl.Uniform3(_uwLcmG, m.L3, m.L4, m.L5);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 2bf860b..6997bda 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -507,9 +507,12 @@ internal static class GlShaders
+         flat out uint vTex;
+         // 0089. The world program's; no packet is faded.
+         out vec2 vFadeXZ;
++        // 0098. As WorldNormalVs's.
++        flat out float vKeep;
+ 
+         void main() {
+             vec2 p = (inPos + uPosBias) * uFbInv - 1.0;
++            vKeep = 1.0;
+             float w = max(inZ, 1.0);
+             gl_Position = vec4(p * w, 0.0, w);
+             vDepth = inZ * (1.0/65536.0);
+@@ -541,6 +544,8 @@ internal static class GlShaders
+         flat in uint vTex;
+         // 0089. A world corner's X and Z, for DistanceFade (WorldNormalVs).
+         in vec2 vFadeXZ;
++        // 0098. A model's own weight (uModelKeep), 1 for everything else.
++        flat in float vKeep;
+         // 0067. Two outputs. The first is the occlusion pass's normal buffer and
+         // is blended (ONE, ONE_MINUS_SRC_ALPHA), so a translucent surface writes
+         // alpha 0 and leaves the opaque surface under it -- whose depth is the one
+@@ -608,7 +613,7 @@ internal static class GlShaders
+             // Taken here, in uniform control flow, for a surface's texel below.
+             vec2 dUvx = dFdx(vUv), dUvy = dFdy(vUv);
+             // 0089. A pixel the colour pass dithers away by distance is no surface.
+-            if (fadeDropped(distanceFade(vFadeXZ, z))) discard;
++            if (fadeDropped(vKeep * distanceFade(vFadeXZ, z))) discard;
+             // A veil, a see-through 2D box: where it is see-through, both buffers
+             // are left as they are and its mark is added to the id (the draw blends
+             // it so); a texel without the semi-transparency bit is an overlay.
+@@ -693,6 +698,9 @@ internal static class GlShaders
+     /// </summary>
+     const string ModelGlsl = """
+         uniform int   uModel;
++        // 0098. The instance's own weight, 1 - ModelInstance.FadeOut: dithered as
++        // DistanceFade's, on top of it.
++        uniform float uModelKeep;
+         uniform isamplerBuffer uModelVerts;
+         uniform int   uModelBase;
+         uniform mat3  uModelR;
+@@ -838,6 +846,8 @@ internal static class GlShaders
+         // 0089. As WorldVs's.
+         out vec2 vFadeXZ;
+         uniform vec4 uFade;
++        // 0098. A model's own weight, as WorldVs folds it into vFade.
++        flat out float vKeep;
+ 
+         uniform mat3  uR;
+         uniform vec3  uCam;
+@@ -873,6 +883,7 @@ internal static class GlShaders
+             uint flags = inFlags;
+             vec3 w = inWorld;
+             vFadeXZ = vec2(0.0);
++            vKeep = uModel != 0 ? uModelKeep : 1.0;
+             if (uModel != 0) {
+                 uint m = uModelMat;
+                 if (uModelBlend != 0) {
+@@ -1783,6 +1794,7 @@ internal static class GlShaders
+                     return;
+                 }
+             }
++            if (uModel != 0) vFade *= uModelKeep;
+             if (uSwellOn != 0 && (flags & 0x8000000u) != 0u) w.y += swellDy(w);
+             vFadeXZ = uModel != 0 && (uModelView != 0 || uModelSky != 0) ? uFade.xy : w.xz;
+             gl_ClipDistance[0] = (uPlaneY - uPlaneBias) - w.y;
+diff --git a/RecompOne.Runtime/Gpu/RetainedScene.cs b/RecompOne.Runtime/Gpu/RetainedScene.cs
+index 0c6428e..73bad67 100644
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -897,6 +897,10 @@ public static class RetainedScene
+         /// <summary>The forced-blend twin's rate plus one, every face blended at it; 0 for
+         /// the faces' own.</summary>
+         public int TwinMode;
++        /// <summary>0098. How far this model alone is faded out, 0 (drawn in full) to 1
++        /// (gone), through the same ordered dither as <see cref="DistanceFade"/> and on top
++        /// of it, in the colour pass and the normal pass alike.</summary>
++        public float FadeOut;
+     }
+ 
+     /// <summary>0085. A mesh corner's <see cref="Vertex.Light"/>: the low 24 bits are its

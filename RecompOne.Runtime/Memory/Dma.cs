@@ -140,6 +140,8 @@ public sealed class Dma
     {
         var count = bcr & 0xFFFFu;
         if (count == 0) return;
+        // 0095. The same words, written straight into RAM when nothing watches the stores.
+        if (_mem is PSMemory ps && ps.ClearOrderingTable(madr, count)) return;
         var addr = madr;
         for (uint i = 0; i < count - 1; i++)
         {

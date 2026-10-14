@@ -248,8 +248,26 @@ public static class Dispatcher
         return op == 1 && ((w >> 16) & 0x1Fu) is 0x10 or 0x11;
     }
 
+    //0107. The last indirect calls, for a crash or hang report (CrashReport): a
+    //ring the game thread writes one word into per call, read only after the fact.
+    private const int RecentCalls = 64;
+    private static readonly uint[] _recent = new uint[RecentCalls];
+    private static int _recentAt;
+
+    /// <summary>The last indirect call targets, oldest first.</summary>
+    public static uint[] Recent()
+    {
+        var at = _recentAt;
+        var n = Math.Min(at, RecentCalls);
+        var list = new uint[n];
+        for (var i = 0; i < n; i++) list[i] = _recent[(at - n + i) & (RecentCalls - 1)];
+        return list;
+    }
+
     public static void Call(CpuContext c, IMemory m, uint addr)
     {
+        _recent[_recentAt++ & (RecentCalls - 1)] = addr;
+        Diagnostics.Watchdog.Probe();
         if (BiosKernel.TryDispatch(c, m, addr)) return;
 
         if (_funcMap.TryGetValue(addr, out var fn))

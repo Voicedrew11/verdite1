@@ -203,7 +203,9 @@ public static class RetainedScene
     public static long MainNormalTriangles;
     /// <summary>0085's probe: read the surface buffer back against the frame's depth
     /// when set, and clear it. Of the pixels with a depth: those whose surface lies
-    /// behind it, and those with no surface at all.</summary>
+    /// behind it, those whose opaque surface lies in front of it (a face the colour
+    /// pass drew no depth for, as a billboard's transparent texels: AO's box round a
+    /// sprite), and those with no surface at all.</summary>
     public static bool SurfaceCheck;
     /// <summary>Whether the map drawn on the GPU goes into the normal and surface
     /// buffers; off is the comparison (the map missing from both).</summary>
@@ -214,7 +216,7 @@ public static class RetainedScene
     /// <summary>The main view's per-pixel fog from each pixel's own depth; off is the
     /// screen-affine corner value, which a face clipped at the eye gets wrong.</summary>
     public static bool MainFogFromZ = true;
-    public static long SurfaceDepthPixels, SurfaceBehind, SurfaceMissing, SurfaceChecks;
+    public static long SurfaceDepthPixels, SurfaceBehind, SurfaceAhead, SurfaceMissing, SurfaceChecks;
     /// <summary>The probe's readback by surface id: none, opaque, water, overlay, an
     /// authored id, a blended one.</summary>
     public static readonly long[] SurfaceIds = new long[6];
@@ -895,6 +897,10 @@ public static class RetainedScene
         /// <summary>The forced-blend twin's rate plus one, every face blended at it; 0 for
         /// the faces' own.</summary>
         public int TwinMode;
+        /// <summary>0098. How far this model alone is faded out, 0 (drawn in full) to 1
+        /// (gone), through the same ordered dither as <see cref="DistanceFade"/> and on top
+        /// of it, in the colour pass and the normal pass alike.</summary>
+        public float FadeOut;
     }
 
     /// <summary>0085. A mesh corner's <see cref="Vertex.Light"/>: the low 24 bits are its
@@ -1087,6 +1093,37 @@ public static class RetainedScene
     /// mark; samples of those that pass the tolerant test over model pixels, and of
     /// those, the ones behind the model's true depth, which the mask holds back.</summary>
     public static long MaskFrames, MaskBatches, MaskSamples, MaskBehind;
+
+    /// <summary>0096. How many table slots the walk passes after the slot the main view
+    /// is drawn at (1) that the game linked to be drawn before its world: a second table
+    /// spliced in there, such as Verdite3's eight-entry front table. A packet in them
+    /// with no recovered depth is drawn only where the main view left the far plane
+    /// (<see cref="UnderWorld"/>), as painter's order put it behind everything. 0, the
+    /// default, is the walk as it was.</summary>
+    public static int UnderSlots;
+
+    /// <summary>0103. Draw a retained model's face that has a corner the GTE cannot
+    /// project (nearer than H/2, or off the divide's range) in the ordinary projection,
+    /// clipped at the GPU's near plane and kept by its plane against the eye, as a
+    /// <c>Tile</c> instance's is. Placed at the divide's saturated ends instead, a large
+    /// flat face reaching past the eye drew as a long sheared slab; the packets never
+    /// drew it, the GPU refusing a triangle more than 1023 pixels across or 511 down.
+    /// Not the sky nor a model placed in view space. False, the default, is the draw as
+    /// it was.</summary>
+    public static bool ModelNearClip;
+
+    /// <summary>0096. Set by the table walk while it is in <see cref="UnderSlots"/> after
+    /// a main view that drew; false outside a walk.</summary>
+    public static bool UnderWorld;
+
+    /// <summary>0096. Triangles drawn under the world (cumulative).</summary>
+    public static long UnderTriangles;
+
+    /// <summary>0096. Counts each batch drawn under the world twice more with occlusion
+    /// queries (a stall each): its samples untested, and those that pass, which are the
+    /// ones painter's order would have left showing. Off by default; cumulative.</summary>
+    public static bool UnderProbe;
+    public static long UnderSamples, UnderShown;
 
     /// <summary>0086, with the probe: samples of the blended ones in front of the model
     /// by less than the tolerance, which still draw (an opaque batch's own depth is

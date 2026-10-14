@@ -1,0 +1,57 @@
+--- a/RecompOne.Runtime/Host/Audio.cs
++++ b/RecompOne.Runtime/Host/Audio.cs
+@@ -135,12 +135,42 @@ internal static unsafe class Audio
+ 
+     private static readonly int BufferMs = Math.Max(1, FramesPerBuffer * 1000 / 44100);
+ 
++    //0109. The mixer is its own thread, and an exception on a thread nobody
++    //catches ends the process with no word -- and this one runs the SPU's whole
++    //emulation (Spu.Mix), not only OpenAL. A failure is reported once (a fault
++    //report) and the mixer goes on; one that keeps failing for a second and a
++    //half stops the sound and leaves the game running.
+     private static void MixerLoop()
+     {
++        var failures = 0;
++        var reported = false;
+         while (_running)
+         {
+             var spu = _spu;
+-            if (spu != null) FillBuffers(spu);
++            try
++            {
++                if (spu != null) FillBuffers(spu);
++                failures = 0;
++            }
++            catch (Exception e)
++            {
++                if (!reported)
++                {
++                    reported = true;
++                    Diagnostics.CrashReport.Write("fault", e, "the sound mixer threw");
++                }
++
++                if (++failures >= 30)
++                {
++                    Console.Error.WriteLine($"[Host] the sound mixer keeps failing ({e.Message}); sound is off");
++                    Runtime.ShowNotice("Sound stopped working and has been turned off until the game restarts.");
++                    return;
++                }
++
++                Thread.Sleep(50);
++                continue;
++            }
++
+             Thread.Sleep(spu != null ? BufferMs : 20);
+         }
+     }
+@@ -173,7 +203,9 @@ internal static unsafe class Audio
+     {
+         if (_alc == null) return;
+         _running = false;
+-        _mixerThread?.Join();
++        _mixerThread?.Join(1000);
++        //0109. No device means nothing was made: no context, no source, no buffers.
++        if (_device == null || _context == null) return;
+         if (_al != null)
+         {
+             _al.SourceStop(_source);

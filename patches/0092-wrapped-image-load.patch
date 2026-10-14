@@ -1,0 +1,38 @@
+diff --git a/RecompOne.Runtime/Gpu/GpuHleForward.cs b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+index 8710ceb..1cf6a9b 100644
+--- a/RecompOne.Runtime/Gpu/GpuHleForward.cs
++++ b/RecompOne.Runtime/Gpu/GpuHleForward.cs
+@@ -149,7 +149,32 @@ public sealed partial class Gpu
+     void HleLoadFlush()
+     {
+         if (!_hleLoadActive) return;
+-        GpuHle.Backend!.WriteVram(_loadX, _loadY, _loadW, _loadH, _hleLoad.AsSpan(0, _loadW * _loadH));
+         _hleLoadActive = false;
++        var be = GpuHle.Backend!;
++        var px = _hleLoad.AsSpan(0, _loadW * _loadH);
++        if (_loadX + _loadW <= VramWidth && _loadY + _loadH <= VramHeight)
++        {
++            be.WriteVram(_loadX, _loadY, _loadW, _loadH, px);
++            return;
++        }
++
++        //0092. A load past VRAM's right or bottom edge wraps, as StoreImageHalfword
++        //writes it; a backend's rectangle cannot, so it goes as the pieces either side.
++        int w0 = Math.Min(_loadW, VramWidth - _loadX), h0 = Math.Min(_loadH, VramHeight - _loadY);
++        Piece(be, px, 0, 0, w0, h0);
++        Piece(be, px, w0, 0, _loadW - w0, h0);
++        Piece(be, px, 0, h0, w0, _loadH - h0);
++        Piece(be, px, w0, h0, _loadW - w0, _loadH - h0);
++    }
++
++    ushort[] _hlePiece = Array.Empty<ushort>();
++
++    void Piece(IGpuBackend be, ReadOnlySpan<ushort> px, int col, int row, int w, int h)
++    {
++        if (w <= 0 || h <= 0) return;
++        if (_hlePiece.Length < w * h) _hlePiece = new ushort[w * h];
++        for (int r = 0; r < h; r++)
++            px.Slice((row + r) * _loadW + col, w).CopyTo(_hlePiece.AsSpan(r * w, w));
++        be.WriteVram((_loadX + col) & (VramWidth - 1), (_loadY + row) & (VramHeight - 1), w, h, _hlePiece.AsSpan(0, w * h));
+     }
+ }

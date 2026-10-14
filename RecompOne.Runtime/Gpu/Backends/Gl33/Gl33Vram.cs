@@ -283,6 +283,25 @@ public sealed class Gl33Vram : IGlVram
         else _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
     }
 
+    public void Rescale(int from)
+    {
+        uint oldTex = _tex, oldFbo = _fbo;
+        _tex = CreateTex(GlVram.Width, GlVram.Height);
+        _fbo = CreateFbo(_tex);
+        _gl.Disable(EnableCap.ScissorTest);
+        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, oldFbo);
+        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
+        _gl.BlitFramebuffer(0, 0, VramShadow.Width * from, VramShadow.Height * from,
+            0, 0, GlVram.Width, GlVram.Height, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+        _gl.DeleteFramebuffer(oldFbo);
+        _gl.DeleteTexture(oldTex);
+        _gl.DeleteFramebuffer(_destVramFbo);
+        _gl.DeleteTexture(_destVramTex);
+        _destVramTex = CreateTex(GlVram.Width, GlVram.Height);
+        _destVramFbo = CreateFbo(_destVramTex);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+    }
+
     public void Dispose()
     {
         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);

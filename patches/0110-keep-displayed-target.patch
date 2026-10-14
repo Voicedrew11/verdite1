@@ -1,0 +1,20 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index df1cd7b..d995985 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -2535,7 +2535,14 @@ public sealed partial class GlCore : IGpuBackend
+         {
+             if (_rts[i] is not { } rt) continue;
+             if (rt.Dirty) Writeback(rt);
+-            if (_frame - rt.LastDrawFrame > 300)
++            // 0110. Never reap the target the display is showing. A game that holds
++            // a still and stops drawing while it waits for a button (KF2's map item
++            // spins on the pad with no draw) kept presenting, so 300 frames later its
++            // only wide target was destroyed and the picture dropped to the 4:3 VRAM
++            // fallback: black bars a few seconds in. That target is never staler than
++            // VRAM (writeback above, WriteVram syncs into it), so keeping it is safe.
++            bool shown = dispX >= rt.X && dispY >= rt.Y && dispX + w <= rt.X + rt.W && dispY + h <= rt.Y + rt.H;
++            if (!shown && _frame - rt.LastDrawFrame > 300)
+             {
+                 rt.Destroy(_gl);
+                 _rts[i] = null;

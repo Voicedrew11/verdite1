@@ -91,7 +91,7 @@ public sealed partial class Gpu
         _texPageY = (int)((word >> 4) & 1) * 256;
         _blendMode = (int)((word >> 5) & 3);
         _texDepth = (int)((word >> 7) & 3);
-        _dither = (word & (1u << 9)) != 0;
+        _dither = (word & (1u << 9)) != 0 && !SuppressDither;
         _texDisable = (word & (1u << 11)) != 0;
     }
 

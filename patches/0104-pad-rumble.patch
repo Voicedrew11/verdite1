@@ -1,0 +1,233 @@
+--- a/RecompOne.Runtime/Hardware/Controller.cs
++++ b/RecompOne.Runtime/Hardware/Controller.cs
+@@ -40,6 +40,27 @@ public static class Controller
+     /// Zero while <see cref="Gyro"/> is false.</summary>
+     public static float GyroX, GyroY, GyroZ;
+ 
++    /// <summary>One moment of rumble (0104): a low band and a high band, each a
++    /// frequency in hertz and an amplitude 0..1. A two-motor pad takes the
++    /// amplitudes alone, the low band on the large motor and the high on the small;
++    /// a Switch pad sent HD rumble plays both bands at the frequencies asked.</summary>
++    public sealed record RumbleWave(float LowHz, float Low, float HighHz, float High);
++
++    /// <summary>What a port asks pad 1's motors for, or null for nothing. A new
++    /// record is a new moment: the host sends it as soon as it sees it and resends
++    /// it while it stands, so a port replaces the reference rather than editing one
++    /// (0104).</summary>
++    public static RumbleWave? Rumble;
++
++    /// <summary>Set by a port that wants HD rumble: the host then writes a Switch
++    /// pad's rumble reports itself, with both bands' frequencies, instead of going
++    /// through SDL's two motors (0104).</summary>
++    public static bool WantHdRumble;
++
++    /// <summary>Whether pad 1 is taking HD rumble: a Switch Pro Controller or a
++    /// single Joy-Con, opened for its reports.</summary>
++    public static bool HdRumble;
++
+     public static ushort State2 = 0xFFFF;
+     public static bool Connected2;
+     public static byte RightX2 = 0x80;
+--- a/RecompOne.Runtime/Host/InputManager.cs
++++ b/RecompOne.Runtime/Host/InputManager.cs
+@@ -26,6 +26,21 @@ internal static unsafe class InputManager
+     private static GameController* _gyroPad;
+     private static bool _gyroOn;
+ 
++    // The port's rumble (0104). Poll runs on more than one thread, so the motors
++    // are driven under one lock. _hd is the Switch pad's own HID handle while HD
++    // rumble is on, opened beside SDL's (_hdTried: asked once per pad).
++    private static readonly object _rumbleLock = new();
++    private static GameController* _rumblePad;
++    private static HidDevice* _hd;
++    private static bool _hdTried;
++    private static byte _hdCount;
++    private static Controller.RumbleWave? _rumbleSent;
++    private static long _rumbleSentMs;
++
++    /// <summary>A standing wave is sent again this often: a Switch pad lets a
++    /// rumble go after a while, and SDL's two-motor rumble is asked for in spans.</summary>
++    private const long RumbleRefreshMs = 30;
++
+     private const int AxisThreshold = 8000;
+     private const int StickThreshold = 16000;
+     private const int LeftTrigger = 100;
+@@ -190,6 +205,7 @@ internal static unsafe class InputManager
+         PollKeyboard();
+         PollGamepads();
+         PollGyro();
++        PollRumble();
+         Controller.Connected2 = _pad1 != null || HasAnyKey(ConfigManager.Game.Keys2);
+     }
+ 
+@@ -280,6 +296,7 @@ internal static unsafe class InputManager
+     {
+         _gyroPad = null;
+         _gyroOn = false;
++        lock (_rumbleLock) ForgetRumble();
+ 
+         if (_pad0 != null)
+         {
+@@ -508,6 +525,162 @@ internal static unsafe class InputManager
+         Controller.GyroZ = data[2];
+     }
+ 
++    /// <summary>The port's <see cref="Controller.Rumble"/> out to pad 1 (0104): as
++    /// HD rumble while <see cref="Controller.WantHdRumble"/> holds and the pad is a
++    /// Switch Pro Controller or a single Joy-Con, otherwise through SDL's two
++    /// motors. Nothing is sent while no port asks, so the game's own rumble
++    /// (<see cref="SetRumble"/>) is left alone.</summary>
++    private static void PollRumble()
++    {
++        lock (_rumbleLock)
++        {
++            if (_pad0 != _rumblePad)
++            {
++                ForgetRumble();
++                _rumblePad = _pad0;
++            }
++            if (_sdl == null || _pad0 == null)
++            {
++                Controller.HdRumble = false;
++                return;
++            }
++
++            if (!Controller.WantHdRumble)
++            {
++                if (_hd != null) CloseHd();
++                _hdTried = false;
++            }
++            else if (!_hdTried)
++            {
++                OpenHd();
++            }
++            Controller.HdRumble = _hd != null;
++
++            var wave = Controller.Rumble;
++            if (wave == null || (wave.Low <= 0f && wave.High <= 0f))
++            {
++                if (_rumbleSent != null) StopRumble();
++                _rumbleSent = null;
++                return;
++            }
++
++            var now = Environment.TickCount64;
++            if (ReferenceEquals(wave, _rumbleSent) && now - _rumbleSentMs < RumbleRefreshMs) return;
++
++            if (_hd != null && !WriteHd(wave))
++            {
++                Console.WriteLine("[Input] HD rumble: the pad refused a report; two-motor rumble instead");
++                CloseHd();
++            }
++            if (_hd == null)
++                _sdl.GameControllerRumble(_pad0, Motor(wave.Low), Motor(wave.High), (uint)(RumbleRefreshMs * 4));
++
++            _rumbleSent = wave;
++            _rumbleSentMs = now;
++        }
++    }
++
++    private static ushort Motor(float amp) => (ushort)(Math.Clamp(amp, 0f, 1f) * 65535f);
++
++    private static void OpenHd()
++    {
++        _hdTried = true;
++        var type = _sdl!.GameControllerGetType(_pad0);
++        if (type is not (GameControllerType.NintendoSwitchPro or GameControllerType.NintendoSwitchJoyconLeft
++                         or GameControllerType.NintendoSwitchJoyconRight))
++            return;
++
++        // SDL's HIDAPI driver has the pad, and its path is the HID device's; a
++        // second handle on it only writes. A pad SDL reads some other way (a
++        // kernel driver's event node) has no such path and keeps the two motors.
++        var path = _sdl.GameControllerPathS(_pad0);
++        if (string.IsNullOrEmpty(path)) return;
++        _sdl.HidInit();
++        _hd = _sdl.HidOpenPath(path, 0);
++        Console.WriteLine(_hd != null ? $"[Input] HD rumble: {type} at {path}"
++                                      : $"[Input] HD rumble: could not open {path}; two-motor rumble instead");
++    }
++
++    private static void CloseHd()
++    {
++        WriteHd(null);
++        _sdl!.HidClose(_hd);
++        _hd = null;
++    }
++
++    private static void StopRumble()
++    {
++        if (_hd != null) WriteHd(null);
++        else _sdl!.GameControllerRumble(_pad0, 0, 0, 0);
++    }
++
++    private static void ForgetRumble()
++    {
++        if (_hd != null) CloseHd();
++        else if (_rumbleSent != null && _sdl != null && _rumblePad != null)
++            _sdl.GameControllerRumble(_rumblePad, 0, 0, 0);
++        _hdTried = false;
++        _rumbleSent = null;
++        _rumblePad = null;
++        Controller.HdRumble = false;
++    }
++
++    /// <summary>One rumble report (output report 0x10: the id, a counter, then four
++    /// bytes for the left actuator and four for the right), or the neutral one for
++    /// null. A single Joy-Con reads its own half, so both carry the wave.</summary>
++    private static bool WriteHd(Controller.RumbleWave? wave)
++    {
++        var buf = stackalloc byte[10];
++        buf[0] = 0x10;
++        buf[1] = (byte)(_hdCount++ & 0x0F);
++        if (wave == null)
++        {
++            EncodeHd(160f, 0f, 320f, 0f, buf + 2);
++        }
++        else
++        {
++            EncodeHd(wave.LowHz, wave.Low, wave.HighHz, wave.High, buf + 2);
++        }
++        for (int i = 0; i < 4; i++) buf[6 + i] = buf[2 + i];
++        return _sdl!.HidWrite(_hd, buf, 10) >= 0;
++    }
++
++    /// <summary>
++    /// One actuator's four bytes, as the reverse-engineered rumble table has them
++    /// (dekuNukem's Nintendo_Switch_Reverse_Engineering, rumble_data_table.md): a
++    /// frequency is <c>round(log2(hz / 10) * 32)</c>, the high band's taken from
++    /// 0x60 four times over (81.75..1252 Hz) and the low band's from 0x40
++    /// (40.875..626 Hz); an amplitude is a code 0..100, doubled for the high band
++    /// and for the low band halved onto 0x40 with its odd step in the top bit of
++    /// the frequency's byte. Silence at 160 and 320 Hz is <c>00 01 40 40</c>.
++    /// </summary>
++    private static void EncodeHd(float lowHz, float low, float highHz, float high, byte* o)
++    {
++        var hf = (HdFreq(highHz, 81.75f, 1252f) - 0x60) * 4;
++        var lf = HdFreq(lowHz, 40.875f, 626f) - 0x40;
++        var ha = HdAmp(high);
++        var la = HdAmp(low);
++        o[0] = (byte)(hf & 0xFF);
++        o[1] = (byte)((ha * 2) | ((hf >> 8) & 0x01));
++        o[2] = (byte)(lf | ((la & 1) != 0 ? 0x80 : 0));
++        o[3] = (byte)(0x40 + la / 2);
++    }
++
++    private static int HdFreq(float hz, float min, float max) =>
++        (int)MathF.Round(MathF.Log2(Math.Clamp(float.IsFinite(hz) ? hz : min, min, max) / 10f) * 32f);
++
++    /// <summary>The table's amplitude code: two logarithmic pieces above 0.12 and a
++    /// straight line below, 100 at full (0xC8 on the high band, the table's top).</summary>
++    private static int HdAmp(float amp)
++    {
++        if (!(amp > 0f)) return 0;
++        amp = Math.Min(amp, 1f);
++        var code = amp > 0.23f ? MathF.Log2(amp * 8.7f) * 32f
++                 : amp > 0.12f ? MathF.Log2(amp * 17f) * 16f
++                 : amp / 0.12f * 16f;
++        return Math.Clamp((int)MathF.Round(code), 0, 100);
++    }
++
+     private static byte Axis(GameController* ctrl, int index)
+     {
+         if (_sdl == null || index < 0) return 0x80;

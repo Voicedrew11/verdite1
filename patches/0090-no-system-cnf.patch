@@ -1,0 +1,26 @@
+diff --git a/RecompOne.Recompiler/AutoConfigure/DiscProbe.cs b/RecompOne.Recompiler/AutoConfigure/DiscProbe.cs
+index 47af1e3..a848438 100644
+--- a/RecompOne.Recompiler/AutoConfigure/DiscProbe.cs
++++ b/RecompOne.Recompiler/AutoConfigure/DiscProbe.cs
+@@ -106,6 +106,8 @@ public static class DiscProbe
+ 
+     public static string SystemCfgBoot(DiscFs fs)
+     {
++        // 0090. The BIOS's own default when the disc has no SYSTEM.CNF.
++        if (!fs.Exists("SYSTEM.CNF")) return fs.Exists("PSX.EXE") ? "PSX.EXE" : "";
+         var text = Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF"));
+         foreach (var raw in text.Split('\n'))
+         {
+diff --git a/RecompOne.Recompiler/Psx/SystemCfg.cs b/RecompOne.Recompiler/Psx/SystemCfg.cs
+index 307af22..4fd7204 100644
+--- a/RecompOne.Recompiler/Psx/SystemCfg.cs
++++ b/RecompOne.Recompiler/Psx/SystemCfg.cs
+@@ -13,6 +13,8 @@ public sealed class SystemCfg
+     public static SystemCfg Parse(DiscFs fs)
+     {
+         var cfg = new SystemCfg();
++        // 0090. No SYSTEM.CNF: the BIOS boots PSX.EXE with these defaults.
++        if (!fs.Exists("SYSTEM.CNF")) return cfg;
+         var text = Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF"));
+ 
+         foreach (var raw in text.Split('\n'))

@@ -41,6 +41,36 @@ public sealed class PSMemory : IMemory
 
     internal byte[] RamBuffer => _ram;
 
+    /// <summary>0095. DMA channel 6's clear, the words <c>Dma</c>'s loop writes through
+    /// <see cref="WriteU32"/> -- entry <paramref name="madr"/> down to the table's head,
+    /// each linked to the one below it and the last ending the list -- stored into RAM
+    /// directly: an 8192-entry table was 8192 calls down the full store path every
+    /// frame. False, having written nothing, unless that path would only have stored
+    /// them (<see cref="DirectRam"/>, no probe) and the whole table is in RAM without
+    /// wrapping. <see cref="GteVertexMap"/> sees the same stores: one by one while one
+    /// could still bind, then counted in bulk.</summary>
+    internal bool ClearOrderingTable(uint madr, uint count)
+    {
+        if (!DirectRam || RamProbe.On) return false;
+        var phys = MemoryMap.ToPhysical(madr);
+        var top = phys & _ramMask;
+        var span = (count - 1u) * 4u;
+        if (phys >= MemoryMap.RamWindow || (top & 3u) != 0 || top < span || top + 4u > (uint)_ram.Length) return false;
+
+        var addr = madr;
+        var i = 0u;
+        for (; i < count && GteVertexMap.Active && GteVertexMap.MayBind; i++, addr -= 4u)
+            WriteU32(addr, i < count - 1u ? (addr - 4u) & 0x00FFFFFFu : 0x00FFFFFFu);
+        if (i == count) return true;
+
+        if (GteVertexMap.Active) GteVertexMap.NoteStores(top - span, top - i * 4u, count - i);
+        var words = MemoryMarshal.Cast<byte, uint>(_ram.AsSpan((int)(top - span), (int)(span + 4u)));
+        for (var k = (int)(count - 1u - i); k > 0; k--, addr -= 4u)
+            words[k] = (addr - 4u) & 0x00FFFFFFu;
+        words[0] = 0x00FFFFFFu;
+        return true;
+    }
+
     /// <summary>0047. True while a store of RAM through this class does nothing but
     /// the store and <see cref="GteVertexMap"/>'s bookkeeping -- nothing frozen, no
     /// logger, no overlay waiting on its header -- so a caller that keeps the vertex
@@ -76,11 +106,18 @@ public sealed class PSMemory : IMemory
         Pgxp.PgxpMemory.Init(size);
 
         _dma = new Dma(this, _gpu, _spu, _mdec, () => Runtime.DispatchIrq(3));
+        PublishDevices();
+        Bios.KromFont.InstallInto(_bios);
+    }
+
+    //A hard reset's ResetForBoot clears these, but the memory that owns them
+    //outlives the reset, so SetContext publishes them again on the next boot.
+    internal void PublishDevices()
+    {
         Runtime.Gpu = _gpu;
         Runtime.Spu = _spu;
         Runtime.Mdec = _mdec;
         Runtime.Timers = _timers;
-        Bios.KromFont.InstallInto(_bios);
     }
 
     public void SetCd(CdController cd)
@@ -121,6 +158,7 @@ public sealed class PSMemory : IMemory
 
     private void TrackRead(uint phys, int size)
     {
+        Diagnostics.Watchdog.Probe();
         if (RamLogger.TrackReads && phys < MemoryMap.RamWindow)
             Runtime.RamLog.RecordRead(phys & _ramMask, size);
     }

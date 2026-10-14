@@ -139,7 +139,31 @@ public static class LibEtc
         c.V0 = 0;
     }
 
+    //0091. A game that waits for its vblank handler without calling VSync gets its
+    //vblanks from the interrupt poll instead. Off unless the port sets it.
+    public static bool VBlankFromPoll;
+    private static bool _advancing;
+
+    internal static void PollVBlanks(CpuContext c, IMemory m)
+    {
+        if (BlockingVSync || _advancing) return;
+        AdvanceVBlanks(c, m);
+    }
+
     private static void AdvanceVBlanks(CpuContext c, IMemory m)
+    {
+        _advancing = true;
+        try
+        {
+            AdvanceVBlanksOnGrid(c, m);
+        }
+        finally
+        {
+            _advancing = false;
+        }
+    }
+
+    private static void AdvanceVBlanksOnGrid(CpuContext c, IMemory m)
     {
         var now = VBlankClock.Elapsed.TotalMilliseconds;
         if (!_timelineStarted)

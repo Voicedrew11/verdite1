@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using MonoMod.RuntimeDetour;
 using RecompOne.Runtime.Context;
@@ -12,6 +13,7 @@ public static class HookManager
     {
         public ModInfo Mod = null!;
         public T Fn = default!;
+        public string Name = "";
         public int Profile;
         public int Order;
     }
@@ -22,6 +24,10 @@ public static class HookManager
         public Entry<Action<CpuContext, IMemory>>[] Posts = [];
         public Action<Action<CpuContext, IMemory>, CpuContext, IMemory>? Replace;
         public ModInfo? ReplaceOwner;
+        public string ReplaceName = "";
+        public string Name = "";
+        public Action<CpuContext, IMemory>? OrigSeen, OrigCounted;
+        public int OrigRuns, OrigMisses;
         public Hook? Hook;
         public int Profile;
         public int ReplaceProfile;
@@ -94,8 +100,10 @@ public static class HookManager
                 return false;
             }
 
+            if (Refused(mod, target)) return false;
             hooks.Replace = replace;
             hooks.ReplaceOwner = mod;
+            hooks.ReplaceName = Describe(impl);
             hooks.ReplaceProfile = HookSection(impl, "replace");
         }
 
@@ -130,8 +138,9 @@ public static class HookManager
 
         lock (_gate)
         {
+            if (Refused(mod, target)) return false;
             var hooks = Get(target);
-            hooks.Pres = Insert(hooks.Pres, new Entry<Func<CpuContext, IMemory, bool>> { Mod = mod, Fn = pre, Profile = HookSection(impl, "pre"), Order = order });
+            hooks.Pres = Insert(hooks.Pres, new Entry<Func<CpuContext, IMemory, bool>> { Mod = mod, Fn = pre, Name = Describe(impl), Profile = HookSection(impl, "pre"), Order = order });
         }
 
         return true;
@@ -148,8 +157,9 @@ public static class HookManager
         var post = impl.CreateDelegate<Action<CpuContext, IMemory>>();
         lock (_gate)
         {
+            if (Refused(mod, target)) return false;
             var hooks = Get(target);
-            hooks.Posts = Insert(hooks.Posts, new Entry<Action<CpuContext, IMemory>> { Mod = mod, Fn = post, Profile = HookSection(impl, "post"), Order = order });
+            hooks.Posts = Insert(hooks.Posts, new Entry<Action<CpuContext, IMemory>> { Mod = mod, Fn = post, Name = Describe(impl), Profile = HookSection(impl, "post"), Order = order });
         }
 
         return true;
@@ -237,19 +247,215 @@ public static class HookManager
         var pres = hooks.Pres;
         var posts = hooks.Posts;
         var replace = hooks.Replace;
+        var owner = hooks.ReplaceOwner;
 
         var skip = false;
         for (var i = 0; i < pres.Length; i++)
-            if (!pres[i].Fn(c, m))
+            if (!RunPre(hooks, pres[i], c, m))
                 skip = true;
         if (!skip)
         {
-            if (replace != null) replace(orig, c, m);
+            if (replace != null) RunReplace(hooks, replace, owner, orig, c, m);
             else orig(c, m);
         }
 
         for (var i = 0; i < posts.Length; i++)
-            posts[i].Fn(c, m);
+            RunPost(hooks, posts[i], c, m);
+    }
+
+    //0108. A hook that throws is turned off, not the game. Every port patch and
+    //every mod is a set of hooks here, and an exception out of one went straight
+    //into the recompiled caller and ended the session -- for C# that only stands
+    //in for a routine the game still has. Now the hook's whole mod (all of its
+    //hooks, so none is left half-working) is taken off every function for the
+    //rest of the session, a fault report is written, the player is told once,
+    //and the call goes on: a pre as if it had let the routine run, a post as if
+    //it had returned, a replacement by running the game's own routine -- unless
+    //the replacement had already called it, which is counted, so it never runs
+    //twice. Only an exception thrown by the hook's own code counts: one that came
+    //up out of the game's code through it (Blame) is the game's crash, and is
+    //marked so that no hook further out claims it either. What a hook wrote
+    //before it threw stays written.
+    private static bool RunPre(FunctionHooks hooks, Entry<Func<CpuContext, IMemory, bool>> pre, CpuContext c, IMemory m)
+    {
+        try
+        {
+            return pre.Fn(c, m);
+        }
+        catch (Exception e) when (Containable(e))
+        {
+            if (!Contain(hooks, pre.Mod, "pre", pre.Name, e)) throw;
+            return true;
+        }
+    }
+
+    private static void RunPost(FunctionHooks hooks, Entry<Action<CpuContext, IMemory>> post, CpuContext c, IMemory m)
+    {
+        try
+        {
+            post.Fn(c, m);
+        }
+        catch (Exception e) when (Containable(e))
+        {
+            if (!Contain(hooks, post.Mod, "post", post.Name, e)) throw;
+        }
+    }
+
+    private static void RunReplace(FunctionHooks hooks, Action<Action<CpuContext, IMemory>, CpuContext, IMemory> replace,
+                                   ModInfo? owner, Action<CpuContext, IMemory> orig, CpuContext c, IMemory m)
+    {
+        var counted = ReferenceEquals(hooks.OrigSeen, orig) ? hooks.OrigCounted! : Count(hooks, orig);
+        var before = hooks.OrigRuns;
+        try
+        {
+            replace(counted, c, m);
+        }
+        catch (Exception e) when (Containable(e))
+        {
+            if (owner == null || !Contain(hooks, owner, "replace", hooks.ReplaceName, e)) throw;
+            if (hooks.OrigRuns == before) orig(c, m);
+        }
+    }
+
+    //The detour hands over the same trampoline every call, so the counting
+    //wrapper is made once per function; a detour that did not would cost an
+    //allocation a call, which is said once.
+    private static Action<CpuContext, IMemory> Count(FunctionHooks hooks, Action<CpuContext, IMemory> orig)
+    {
+        if (hooks.OrigSeen != null && ++hooks.OrigMisses == 64)
+            Console.Error.WriteLine($"[Mods] {hooks.Name}: the detour's original changes from call to call");
+        hooks.OrigSeen = orig;
+        return hooks.OrigCounted = (c, m) =>
+        {
+            hooks.OrigRuns++;
+            orig(c, m);
+        };
+    }
+
+    private const string DecidedKey = "RecompOne.HookManager.Decided";
+    private static readonly HashSet<ModInfo> _turnedOff = [];
+    private static readonly List<string> _faults = [];
+
+    /// <summary>A mod was turned off for throwing: the mod, which hook, the exception.</summary>
+    public static event Action<ModInfo, string, Exception>? Faulted;
+
+    /// <summary>Mark an exception as the game's, so no hook it passes through is
+    /// turned off for it: for a port's deliberate stop, and for tests.</summary>
+    public static Exception NotAHookFault(Exception e)
+    {
+        e.Data[DecidedKey] = "game";
+        return e;
+    }
+
+    public static bool IsTurnedOff(ModInfo mod)
+    {
+        lock (_gate)
+            return _turnedOff.Contains(mod);
+    }
+
+    public static string DescribeFaults()
+    {
+        lock (_faults)
+            return _faults.Count == 0 ? "(none)" : string.Join('\n', _faults);
+    }
+
+    //Control flow, not faults: a hard reset and a guest thread's exit unwind
+    //through hooks on purpose.
+    private static bool Containable(Exception e)
+    {
+        return e is not (HardResetSignal or Bios.BiosB.ThreadGone or OutOfMemoryException
+            or ThreadInterruptedException or InsufficientExecutionStackException);
+    }
+
+    private static bool Contain(FunctionHooks hooks, ModInfo mod, string kind, string impl, Exception e)
+    {
+        try
+        {
+            if (e.Data[DecidedKey] != null) return false;
+            if (!Blame(e))
+            {
+                e.Data[DecidedKey] = "game";
+                return false;
+            }
+
+            e.Data[DecidedKey] = mod.Id;
+        }
+        catch
+        {
+            return false;
+        }
+
+        TurnOff(mod);
+        var where = $"{mod.Id}: {kind} {impl} on {hooks.Name}";
+        lock (_faults)
+            _faults.Add($"{DateTime.Now:HH:mm:ss} {where}: {e.GetType().Name}: {e.Message}");
+        Console.Error.WriteLine($"[Mods] {where} threw, and {mod.Id} is turned off for this session: {e}");
+        var report = CrashReport.Write("fault", e,
+            $"{where} threw; {mod.Id} is turned off for the rest of the session and the game's own routine runs in its place");
+        Runtime.ShowNotice($"\"{mod.Name}\" failed and has been turned off until the game restarts; the game's own " +
+                           "routine is used in its place." +
+                           (report == null ? "" : $" A report was saved to {Path.GetFullPath(report)}."));
+        try
+        {
+            Faulted?.Invoke(mod, where, e);
+        }
+        catch (Exception listener)
+        {
+            Console.Error.WriteLine($"[Mods] a Faulted listener threw: {listener.Message}");
+        }
+
+        return true;
+    }
+
+    //Whose code threw: the first frame, from the throw outwards, that is either
+    //the game's recompiled code (namespace Recompiled, or a detour's dynamic copy
+    //of it, which has no type) or anything that is not the runtime or a library.
+    //The runtime's own frames say nothing either way: a hook calling the runtime
+    //wrongly and the game doing so look the same there. Reaching the catch with
+    //neither means the hook called the runtime directly: the hook's.
+    private static bool Blame(Exception e)
+    {
+        foreach (var frame in new StackTrace(e, false).GetFrames())
+        {
+            var method = frame.GetMethod();
+            if (method == null) return false;
+            var type = method.DeclaringType;
+            if (type == null) return false;
+            var ns = type.Namespace ?? "";
+            if (ns == "Recompiled" || ns.StartsWith("Recompiled.", StringComparison.Ordinal)) return false;
+            if (ns.StartsWith("RecompOne.", StringComparison.Ordinal) || ns == "System" ||
+                ns.StartsWith("System.", StringComparison.Ordinal) || ns.StartsWith("Microsoft.", StringComparison.Ordinal) ||
+                ns.StartsWith("MonoMod", StringComparison.Ordinal) || ns.StartsWith("Mono.", StringComparison.Ordinal))
+                continue;
+            return true;
+        }
+
+        return true;
+    }
+
+    private static void TurnOff(ModInfo mod)
+    {
+        lock (_gate)
+        {
+            _turnedOff.Add(mod);
+            foreach (var hooks in _hooks.Values)
+            {
+                hooks.Pres = hooks.Pres.Where(p => p.Mod != mod).ToArray();
+                hooks.Posts = hooks.Posts.Where(p => p.Mod != mod).ToArray();
+                if (hooks.ReplaceOwner != mod) continue;
+                hooks.Replace = null;
+                hooks.ReplaceOwner = null;
+            }
+        }
+    }
+
+    //A mod turned off stays off: one that hooks again on the next overlay load
+    //would otherwise come back and throw again.
+    private static bool Refused(ModInfo mod, MethodInfo target)
+    {
+        if (!_turnedOff.Contains(mod)) return false;
+        Console.Error.WriteLine($"[Mods] {mod.Id}: not hooking {target.Name}, it was turned off this session");
+        return true;
     }
 
     //0045. The same calls as Invoke, each inside a profiler section: the hooked
@@ -267,11 +473,12 @@ public static class HookManager
         var fn = Profiler.Begin(hooks.Profile);
         try
         {
+            var owner = hooks.ReplaceOwner;
             var skip = false;
             for (var i = 0; i < pres.Length; i++)
             {
                 var t = Profiler.Begin(pres[i].Profile);
-                if (!pres[i].Fn(c, m))
+                if (!RunPre(hooks, pres[i], c, m))
                     skip = true;
                 Profiler.End(t);
             }
@@ -281,7 +488,7 @@ public static class HookManager
                 if (replace != null)
                 {
                     var t = Profiler.Begin(hooks.ReplaceProfile);
-                    replace(orig, c, m);
+                    RunReplace(hooks, replace, owner, orig, c, m);
                     Profiler.End(t);
                 }
                 else orig(c, m);
@@ -290,7 +497,7 @@ public static class HookManager
             for (var i = 0; i < posts.Length; i++)
             {
                 var t = Profiler.Begin(posts[i].Profile);
-                posts[i].Fn(c, m);
+                RunPost(hooks, posts[i], c, m);
                 Profiler.End(t);
             }
         }
@@ -317,7 +524,7 @@ public static class HookManager
     {
         if (!_hooks.TryGetValue(target, out var hooks))
         {
-            _hooks[target] = hooks = new FunctionHooks();
+            _hooks[target] = hooks = new FunctionHooks { Name = $"{target.DeclaringType?.Name}.{target.Name}" };
             hooks.Profile = Profiler.Register(Profiler.FunctionName(target), ProfileGroup.Game);
         }
 

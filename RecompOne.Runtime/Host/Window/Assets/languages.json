@@ -398,6 +398,24 @@
       "zh-CN": "要使本设定生效，需要重新启动主程序",
       "fr-FR": "Vous devez redémarrer l'application pour appliquer la configuration"
     },
+    "crash.title": {
+      "en": "The game stopped"
+    },
+    "crash.body": {
+      "en": "The game ran into an error it could not recover from and has stopped."
+    },
+    "crash.saved": {
+      "en": "A report was saved. Sending it, along with what you were doing, helps get this fixed:"
+    },
+    "crash.no_report": {
+      "en": "No report could be saved; the console output has the details."
+    },
+    "crash.open_folder": {
+      "en": "Open the report's folder"
+    },
+    "crash.quit": {
+      "en": "Quit"
+    },
     "common.notice": {
       "en": "Notice",
       "pt-BR": "Aviso",
@@ -667,14 +685,6 @@
       "ja-JP": "現在のコンテキストでは{1}ライン、スケール後は{3}ライン（{4}x)",
       "zh-CN": "当前状态下为 {1} 行数, 缩放后为 {3} 行数 ({4}x)",
       "fr-FR": "{1} lignes à l'origine, {3} après mise à l'échelle ({4}x)"
-    },
-    "settings.display.restart_pending": {
-      "en": "restart is required",
-      "pt-BR": "é necessário reiniciar",
-      "es-419": "se requiere reiniciar",
-      "ja-JP": "再起動が必要です",
-      "zh-CN": "需要重新启动",
-      "fr-FR": "Un redémarrage est requis"
     },
     "settings.display.backend": {
       "en": "Graphics backend",

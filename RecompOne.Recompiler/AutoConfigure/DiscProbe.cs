@@ -106,6 +106,8 @@ public static class DiscProbe
 
     public static string SystemCfgBoot(DiscFs fs)
     {
+        // 0090. The BIOS's own default when the disc has no SYSTEM.CNF.
+        if (!fs.Exists("SYSTEM.CNF")) return fs.Exists("PSX.EXE") ? "PSX.EXE" : "";
         var text = Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF"));
         foreach (var raw in text.Split('\n'))
         {

@@ -13,6 +13,8 @@ public sealed class SystemCfg
     public static SystemCfg Parse(DiscFs fs)
     {
         var cfg = new SystemCfg();
+        // 0090. No SYSTEM.CNF: the BIOS boots PSX.EXE with these defaults.
+        if (!fs.Exists("SYSTEM.CNF")) return cfg;
         var text = Encoding.ASCII.GetString(fs.ReadFile("SYSTEM.CNF"));
 
         foreach (var raw in text.Split('\n'))

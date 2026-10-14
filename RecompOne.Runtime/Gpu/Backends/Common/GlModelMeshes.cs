@@ -42,6 +42,10 @@ public sealed partial class GlCore
     int _uwnModel = -1, _uwnModelBase, _uwnModelR, _uwnModelT, _uwnModelFar, _uwnModelNear, _uwnModelMat, _uwnModelGteC = -1;
     int _uwModelPose = -1, _uwModelPoseW = -1, _uwnModelPose = -1, _uwnModelPoseW = -1, _uwModelSky = -1;
     int _uwModelTile = -1, _uwnModelTile = -1;
+    // 0098. ModelInstance.FadeOut, as the weight drawn, per program.
+    int _uwModelKeep = -1, _uwnModelKeep = -1;
+    // 0103. RetainedScene.ModelNearClip, per program.
+    int _uwModelClip = -1, _uwnModelClip = -1;
     // The view-space placement (the arm), per program: uModelView, then the three rows and T.
     readonly int[] _uwView = [-1, -1, -1, -1, -1], _uwnView = [-1, -1, -1, -1, -1];
     static readonly string[] ViewNames = ["uModelView", "uModelVR0", "uModelVR1", "uModelVR2", "uModelVT"];
@@ -54,9 +58,10 @@ public sealed partial class GlCore
         _uwModelFar = L("uModelFar"); _uwModelNear = L("uModelNear"); _uwModelLlm = L("uModelLlm"); _uwModelCue = L("uModelCue");
         _uwModelRgbc = L("uModelRgbc"); _uwModelMat = L("uModelMat"); _uwModelGteC = L("uModelGteC");
         _uwModelPose = L("uModelPose"); _uwModelPoseW = L("uModelPoseW"); _uwModelSky = L("uModelSky");
-        _uwModelTile = L("uModelTile");
+        _uwModelTile = L("uModelTile"); _uwModelKeep = L("uModelKeep"); _uwModelClip = L("uModelClip");
         for (int i = 0; i < ViewNames.Length; i++) _uwView[i] = L(ViewNames[i]);
         _gl.UseProgram(_progWorld);
+        if (_uwModelKeep >= 0) _gl.Uniform1(_uwModelKeep, 1f);
         if (_uwModelSky >= 0) _gl.Uniform1(_uwModelSky, 0);
         if (_uwModelTile >= 0) _gl.Uniform1(_uwModelTile, 0);
         if (_uwView[0] >= 0) _gl.Uniform1(_uwView[0], 0);
@@ -71,8 +76,10 @@ public sealed partial class GlCore
             _uwnModel = N("uModel"); _uwnModelBase = N("uModelBase"); _uwnModelR = N("uModelR"); _uwnModelT = N("uModelT");
             _uwnModelFar = N("uModelFar"); _uwnModelNear = N("uModelNear"); _uwnModelMat = N("uModelMat"); _uwnModelGteC = N("uModelGteC");
             _uwnModelPose = N("uModelPose"); _uwnModelPoseW = N("uModelPoseW"); _uwnModelTile = N("uModelTile");
+            _uwnModelKeep = N("uModelKeep"); _uwnModelClip = N("uModelClip");
             for (int i = 0; i < ViewNames.Length; i++) _uwnView[i] = N(ViewNames[i]);
             _gl.UseProgram(_progWorldNrm);
+            if (_uwnModelKeep >= 0) _gl.Uniform1(_uwnModelKeep, 1f);
             if (_uwnView[0] >= 0) _gl.Uniform1(_uwnView[0], 0);
             if (_uwnModelTile >= 0) _gl.Uniform1(_uwnModelTile, 0);
             if (_uwnModel >= 0) _gl.Uniform1(_uwnModel, 0);
@@ -326,6 +333,7 @@ public sealed partial class GlCore
         {
             _gl.Uniform1(_uwnModelBase, m.VertBase);
             if (_uwnModelTile >= 0) _gl.Uniform1(_uwnModelTile, m.Tile ? 1 : 0);
+            if (_uwnModelClip >= 0) _gl.Uniform1(_uwnModelClip, RetainedScene.ModelNearClip ? 1 : 0);
             if (_uwnModelPose >= 0) _gl.Uniform1(_uwnModelPose, pose);
             if (_uwnModelPoseW >= 0) _gl.Uniform1(_uwnModelPoseW, weight);
             _gl.UniformMatrix3(_uwnModelR, 1, true, _m9);
@@ -333,11 +341,13 @@ public sealed partial class GlCore
             _gl.Uniform1(_uwnModelFar, m.Far);
             _gl.Uniform1(_uwnModelNear, m.Near);
             if (_uwnModelMat >= 0) _gl.Uniform1(_uwnModelMat, m.Material);
+            if (_uwnModelKeep >= 0) _gl.Uniform1(_uwnModelKeep, 1f - Math.Clamp(m.FadeOut, 0f, 1f));
             return;
         }
         _gl.Uniform1(_uwModelBase, m.VertBase);
         if (_uwModelSky >= 0) _gl.Uniform1(_uwModelSky, m.Sky ? 1 : 0);
         if (_uwModelTile >= 0) _gl.Uniform1(_uwModelTile, m.Tile ? 1 : 0);
+        if (_uwModelClip >= 0) _gl.Uniform1(_uwModelClip, RetainedScene.ModelNearClip ? 1 : 0);
         if (_uwModelPose >= 0) _gl.Uniform1(_uwModelPose, pose);
         if (_uwModelPoseW >= 0) _gl.Uniform1(_uwModelPoseW, weight);
         _gl.UniformMatrix3(_uwModelR, 1, true, _m9);
@@ -350,6 +360,7 @@ public sealed partial class GlCore
         if (_uwModelCue >= 0) _gl.Uniform3(_uwModelCue, m.Dqa, m.Dqb, m.Curve);
         if (_uwModelRgbc >= 0) _gl.Uniform1(_uwModelRgbc, m.Rgbc);
         if (_uwModelMat >= 0) _gl.Uniform1(_uwModelMat, m.Material);
+        if (_uwModelKeep >= 0) _gl.Uniform1(_uwModelKeep, 1f - Math.Clamp(m.FadeOut, 0f, 1f));
         if (_uwBk >= 0) _gl.Uniform3(_uwBk, m.Bk0, m.Bk1, m.Bk2);
         if (_uwLcmR >= 0) _gl.Uniform3(_uwLcmR, m.L0, m.L1, m.L2);
         if (_uwLcmG >= 0) _gl.Uniform3(_uwLcmG, m.L3, m.L4, m.L5);

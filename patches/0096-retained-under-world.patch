@@ -1,0 +1,198 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index f95131c..911b7d9 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -1004,12 +1004,17 @@ public sealed partial class GlCore : IGpuBackend
+         // because a death fade or a damage flash is something you see the world
+         // *through* and must not erase its depth. 4 = 2 on a packet the port
+         // called solid (a blended model, the secret door): the occlusion pass
+-        // sees all of it.
++        // sees all of it. 5 (0096) = linked to be drawn before the world the
++        // retained main view already drew: at the far plane, tested, so it shows
++        // only where the world left none.
+         int zMode = 0;
+         if (a.HasGteZ && b.HasGteZ && c.HasGteZ)
+             zMode = !f.SemiTrans ? 1 : a.Solid && GteDepth.SurfacesWanted ? 4 : 2;
++        else if (RetainedScene.UnderWorld && GteDepth.DepthWanted)
++            zMode = 5;
+         else if (GteDepth.SurfacesWanted && !f.SemiTrans)
+             zMode = 3;
++        if (zMode == 5) RetainedScene.UnderTriangles++;
+         // 0048. A directional triangle needs its batch's BK and LCM to be the ones
+         // it was lit with.
+         int lightGen = (a.Light & (GteLightMap.Directional << 24)) != 0 ? a.LightGen : -1;
+@@ -1177,10 +1182,12 @@ public sealed partial class GlCore : IGpuBackend
+     bool CoversTarget(float x0, float y0, float x1, float y1) =>
+         _kTarget != null && x1 - x0 >= _kTarget.W * 0.9f && y1 - y0 >= _kTarget.H * 0.9f;
+ 
+-    /// <summary>The zMode a primitive with no recovered depth takes: 3 (stamp the
+-    /// far plane) while the occlusion pass is on and the primitive is opaque, 0 --
+-    /// which is what everything did before this existed -- otherwise.</summary>
+-    static int FarMask(in PrimFlags f) => GteDepth.SurfacesWanted && !f.SemiTrans ? 3 : 0;
++    /// <summary>The zMode a primitive with no recovered depth takes: 5 under the
++    /// retained world (0096), 3 (stamp the far plane) while the occlusion pass is on
++    /// and the primitive is opaque, 0 -- which is what everything did before this
++    /// existed -- otherwise.</summary>
++    static int FarMask(in PrimFlags f) =>
++        RetainedScene.UnderWorld && GteDepth.DepthWanted ? 5 : GteDepth.SurfacesWanted && !f.SemiTrans ? 3 : 0;
+ 
+     public void DrawRect(in HleRect r, in PrimFlags f)
+     {
+@@ -1197,7 +1204,7 @@ public sealed partial class GlCore : IGpuBackend
+         _verts[_count++] = V(a, f, false); _verts[_count++] = V(b, f, false); _verts[_count++] = V(c, f, false);
+         _verts[_count++] = V(b, f, false); _verts[_count++] = V(d, f, false); _verts[_count++] = V(c, f, false);
+         // 0067. A sprite is 2D: the HUD's, as far as the reflection pass is concerned.
+-        if (GteDepth.Reflections && _kTarget is { IsPlanar: false } && AoGeometry.Active
++        if (GteDepth.Reflections && _kTarget is { IsPlanar: false } && AoGeometry.Active && !RetainedScene.UnderWorld
+             && !CoversTarget(r.X, r.Y, r.X + r.W, r.Y + r.H))
+         {
+             float m = SurfaceMaterial.Overlay;
+@@ -1704,6 +1711,14 @@ public sealed partial class GlCore : IGpuBackend
+             _gl.DepthFunc(DepthFunction.Always);
+             _gl.DepthMask(true);
+         }
++        else if (_kZMode == 5)
++        {
++            // 0096. Under the world: its fragments are at the far plane, so LEQUAL
++            // passes only where nothing nearer was drawn; nothing is written.
++            _gl.Enable(EnableCap.DepthTest);
++            _gl.DepthFunc(DepthFunction.Lequal);
++            _gl.DepthMask(false);
++        }
+         else if (_kZMode != 0)
+         {
+             if (rt != null) { GteDepth.ZBatchRt++; if (!rt.IsPlanar) _lastZRt = rt; } else GteDepth.ZBatchVram++;
+@@ -2024,6 +2039,8 @@ public sealed partial class GlCore : IGpuBackend
+             GteDepth.ZPrepasses++;
+         }
+ 
++        if (_kZMode == 5 && RetainedScene.UnderProbe) ProbeUnder(first, _count);
++
+         if (_legacy)
+         {
+             _gl.Disable(EnableCap.Blend);
+@@ -2060,7 +2077,7 @@ public sealed partial class GlCore : IGpuBackend
+ 
+             // Texels without the semi-transparency bit draw opaque, so they must hide what is behind them from the occlusion pass.
+             // A solid packet (zMode 4) hides it with every texel.
+-            if (GteDepth.SurfacesWanted && _uOpaqueDepth >= 0)
++            if (GteDepth.SurfacesWanted && _uOpaqueDepth >= 0 && _kZMode != 5)
+             {
+                 _gl.Disable(EnableCap.Blend);
+                 _gl.ColorMask(false, false, false, false);
+@@ -2270,6 +2287,27 @@ public sealed partial class GlCore : IGpuBackend
+         if (_kZMode != 1) RetainedScene.MaskAhead += held - clear;
+     }
+ 
++    /// <summary>0096. A batch under the world: its samples, and those its far-plane
++    /// test passes. Writes nothing.</summary>
++    void ProbeUnder(int first, int count)
++    {
++        _gl.ColorMask(false, false, false, false);
++        long Count(DepthFunction func)
++        {
++            _gl.DepthFunc(func);
++            uint q = _gl.GenQuery();
++            _gl.BeginQuery(QueryTarget.SamplesPassed, q);
++            _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
++            _gl.EndQuery(QueryTarget.SamplesPassed);
++            _gl.GetQueryObject(q, QueryObjectParameterName.Result, out long n);
++            _gl.DeleteQuery(q);
++            return n;
++        }
++        RetainedScene.UnderSamples += Count(DepthFunction.Always);
++        RetainedScene.UnderShown += Count(DepthFunction.Lequal);
++        _gl.ColorMask(true, true, true, true);
++    }
++
+     void SetDepthBias(bool on)
+     {
+         if (_uDepthBias >= 0) _gl.Uniform1(_uDepthBias, on ? GteDepth.DepthBias / 65536f : 0f);
+diff --git a/RecompOne.Runtime/Gpu/RetainedScene.cs b/RecompOne.Runtime/Gpu/RetainedScene.cs
+index ab6ea04..d0102c8 100644
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -1088,6 +1088,27 @@ public static class RetainedScene
+     /// those, the ones behind the model's true depth, which the mask holds back.</summary>
+     public static long MaskFrames, MaskBatches, MaskSamples, MaskBehind;
+ 
++    /// <summary>0096. How many table slots the walk passes after the slot the main view
++    /// is drawn at (1) that the game linked to be drawn before its world: a second table
++    /// spliced in there, such as Verdite3's eight-entry front table. A packet in them
++    /// with no recovered depth is drawn only where the main view left the far plane
++    /// (<see cref="UnderWorld"/>), as painter's order put it behind everything. 0, the
++    /// default, is the walk as it was.</summary>
++    public static int UnderSlots;
++
++    /// <summary>0096. Set by the table walk while it is in <see cref="UnderSlots"/> after
++    /// a main view that drew; false outside a walk.</summary>
++    public static bool UnderWorld;
++
++    /// <summary>0096. Triangles drawn under the world (cumulative).</summary>
++    public static long UnderTriangles;
++
++    /// <summary>0096. Counts each batch drawn under the world twice more with occlusion
++    /// queries (a stall each): its samples untested, and those that pass, which are the
++    /// ones painter's order would have left showing. Off by default; cumulative.</summary>
++    public static bool UnderProbe;
++    public static long UnderSamples, UnderShown;
++
+     /// <summary>0086, with the probe: samples of the blended ones in front of the model
+     /// by less than the tolerance, which still draw (an opaque batch's own depth is
+     /// already in the buffer when it is probed). Then, before each model list's
+diff --git a/RecompOne.Runtime/sdk/LibGpu.cs b/RecompOne.Runtime/sdk/LibGpu.cs
+index 0c784e0..4433d4a 100644
+--- a/RecompOne.Runtime/sdk/LibGpu.cs
++++ b/RecompOne.Runtime/sdk/LibGpu.cs
+@@ -61,6 +61,9 @@ public static class LibGpu
+         var arm = RetainedScene.ArmSerial > 0 && RetainedScene.ArmSerial == RetainedScene.MainSerial
+                   && !custom && !PlanarReflections.Capturing;
+         var armDue = false;
++        // 0096. The last slot the game linked to be drawn before the world; -1 until a
++        // main view has drawn.
++        var underTo = -1;
+         for (var guard = 0; guard < 0x100000; guard++)
+         {
+             // Where in the table this primitive was linked, counted from the head —
+@@ -82,14 +85,20 @@ public static class LibGpu
+                 if (slot == 1 && !custom && PlanarReflections.Capturing && RetainedScene.MirrorSerial > 0)
+                 {
+                     if (!gpu.DrawRetainedMain()) RetainedScene.MirrorMissed++;
++                    else underTo = slot + RetainedScene.UnderSlots;
+                     RetainedScene.MirrorSerial = 0;
+                 }
+                 else if (slot == 1 && RetainedScene.MainSerial > 0 && !custom && !PlanarReflections.Capturing)
+                 {
+                     if (!gpu.DrawRetainedMain()) RetainedScene.MainMissed++;
+-                    else water = RetainedScene.WaterPending && reorder;
++                    else
++                    {
++                        water = RetainedScene.WaterPending && reorder;
++                        underTo = slot + RetainedScene.UnderSlots;
++                    }
+                     RetainedScene.MainSerial = 0;
+                 }
++                RetainedScene.UnderWorld = slot > 1 && slot <= underTo;
+                 armDue |= arm && slot >= RetainedScene.ArmSlot && slot >= 1;
+             }
+             GteDepth.OtSlot = slot;
+@@ -116,8 +125,9 @@ public static class LibGpu
+                         else SendHeld(gpu, m, onEntry, probe, guard, slot, ref water);
+                     }
+                     // The water walked before a barrier that draws goes before it, as
+-                    // the held packets do.
+-                    if (water && kind == BlendOrder.Kind.Barrier && Draws(m, addr))
++                    // the held packets do; not before one under the world (0096),
++                    // which the water is drawn over.
++                    if (water && kind == BlendOrder.Kind.Barrier && !RetainedScene.UnderWorld && Draws(m, addr))
+                         water = gpu.DrawRetainedWater(WaterCut(slot));
+                     onEntry?.Invoke(guard);
+                     if (probe) BlendOrder.ProbePacket(m, addr, count);
+@@ -139,6 +149,7 @@ public static class LibGpu
+         if (GteDepth.OtEntry >= 0) GteDepth.OtLength = GteDepth.OtEntry + 1;
+         GteDepth.OtEntry = -1;
+         GteDepth.OtSlot = -1;
++        RetainedScene.UnderWorld = false;
+         if (custom) GpuPrims.Clear();
+     }
+ 

@@ -357,6 +357,27 @@ public sealed class Gl21Vram : IGlVram
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
     }
 
+    public void Rescale(int from)
+    {
+        uint oldTex = _tex, oldFbo = _fbo;
+        _tex = CreateTex(GlVram.Width, GlVram.Height);
+        _fbo = CreateFbo(_tex);
+        int ow = VramShadow.Width * from, oh = VramShadow.Height * from;
+        BlitScaled(oldTex, ow, oh, _fbo, GlVram.Width, GlVram.Height,
+            0, 0, ow, oh, 0, 0, GlVram.Width, GlVram.Height);
+        _gl.DeleteFramebuffer(oldFbo);
+        _gl.DeleteTexture(oldTex);
+        _gl.DeleteFramebuffer(_destVramFbo);
+        _gl.DeleteTexture(_destVramTex);
+        _destVramTex = CreateTex(GlVram.Width, GlVram.Height);
+        _destVramFbo = CreateFbo(_destVramTex);
+        _gl.DeleteFramebuffer(_scratchFbo);
+        _gl.DeleteTexture(_scratchTex);
+        _scratchTex = CreateTex(GlVram.Width, GlVram.Height);
+        _scratchFbo = CreateFbo(_scratchTex);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+    }
+
     public void Dispose()
     {
         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);

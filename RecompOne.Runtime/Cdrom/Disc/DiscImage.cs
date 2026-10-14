@@ -4,6 +4,13 @@ namespace RecompOne.Runtime.Cdrom;
 
 public static class DiscImage
 {
+    /// <summary>
+    /// 0093. A port's layer over every image this opens, given the image and its
+    /// path: a patch applied to sectors as they are read, say. Null passes the image
+    /// through, which is the default.
+    /// </summary>
+    public static Func<IDiscImage, string, IDiscImage>? Decorate;
+
     public static IDiscImage Open(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -11,12 +18,13 @@ public static class DiscImage
         if (!File.Exists(path))
             throw new FileNotFoundException($"disc image not found: {path}", path);
 
-        return Detect(path) switch
+        IDiscImage image = Detect(path) switch
         {
             DiscFormat.Chd => ChdImage.Open(path),
             DiscFormat.CueBin => CueBinImage.Open(path),
             _ => throw new NotSupportedException($"unsupported disc format: {path}")
         };
+        return Decorate?.Invoke(image, path) ?? image;
     }
 
     public static DiscFormat Detect(string path)

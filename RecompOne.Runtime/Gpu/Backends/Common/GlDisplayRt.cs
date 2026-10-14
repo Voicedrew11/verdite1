@@ -24,6 +24,12 @@ public sealed class GlDisplayRt
     // last surface drawn at each pixel, translucent water included, as an
     // octahedral normal, a depth and a material. Only while reflections are on.
     public uint Surface;
+    // 0099. The picture as it was before the first see-through 2D primitive of the frame
+    // (a HUD's text or box) was drawn over it: the passes darken or reflect the
+    // surface under such a primitive in this, and the present puts back what the
+    // primitive changed. Only while reflections are on (Geo.PreHud).
+    public uint PreHud, PreHudFbo;
+    public int PreHudW, PreHudH;
     public readonly AoGeometry Geo = new();
     // 0068. The scene from the camera mirrored in the water, drawn at this target's
     // size so the reflection pass indexes it exactly as it indexes this one. Its
@@ -140,8 +146,10 @@ public sealed class GlDisplayRt
         if (NormalFbo != 0) gl.DeleteFramebuffer(NormalFbo);
         if (Normal != 0) gl.DeleteTexture(Normal);
         if (Surface != 0) gl.DeleteTexture(Surface);
+        if (PreHudFbo != 0) gl.DeleteFramebuffer(PreHudFbo);
+        if (PreHud != 0) gl.DeleteTexture(PreHud);
         Planar?.Destroy(gl);
         Planar = null;
-        Fbo = Tex = Depth = Normal = NormalFbo = Surface = 0;
+        Fbo = Tex = Depth = Normal = NormalFbo = Surface = PreHud = PreHudFbo = 0;
     }
 }

@@ -557,6 +557,15 @@ public static class GteDepth
 
     public static void NoteDepthCue(int dqa, int dqb) { ProjDqa = dqa; ProjDqb = dqb; }
 
+    /// <summary>0100. Fog by the eye's distance to a pixel rather than by its view
+    /// depth: the GTE cues by SZ, so a pixel at the side of the picture, or below a
+    /// camera looking down, was fogged as if nearer than it is and the fog moved as the
+    /// view turned. The depth cue is taken at the distance instead, by the shaders that
+    /// recover a pixel's view position (the retained world, the packets with a depth,
+    /// the reflection pass). At the picture's centre the two agree. Off by default: the
+    /// game's own look.</summary>
+    public static bool RadialFog;
+
     /// <summary>
     /// True color (24-bit). While false the GL backend renders into an RGB5A1
     /// display target and the fragment shader crushes every shaded pixel to five
