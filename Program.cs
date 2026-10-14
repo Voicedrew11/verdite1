@@ -80,6 +80,28 @@ Kf1.StageProbe.Configure(Environment.GetEnvironmentVariable("KF1_STAGEPROBE"));
 Kf1.StageProbe.Install();
 Kf1.PrimBufferProbe.Configure(Environment.GetEnvironmentVariable("KF1_PRIMBUF_PROBE"));
 Kf1.PrimBufferProbe.Install();
+// What each renderer draw call adds to the ordering table, by packet type (KF1_GEOPROBE).
+Kf1.GeometryProbe.Configure(Environment.GetEnvironmentVariable("KF1_GEOPROBE"));
+Kf1.GeometryProbe.Install();
+
+// The frame profiler (Verdite Core's): where each frame's time goes, by section. Shift+P
+// opens the panel, and recording runs while it is open. See "Profiling a frame" in
+// docs/DEVELOPMENT.md.
+//
+//     KF1_PROFILE=1             record from boot, a console summary every 5 s
+//     KF1_PROFILE=panel         record from boot and open the panel
+//     KF1_PROFILE_OUT=path.csv  every frame's sections; scripts/profile_report.py
+//     KF1_PROFILE_SPIKE=12      a console line per frame over 12 ms of work
+//     KF1_PROFILE_FUNCS=stages  time the main-loop stages, or name functions:
+//                               game:8001E83C+8001F218
+Verdite.Core.FrameProfiler.Configure(Environment.GetEnvironmentVariable("KF1_PROFILE"),
+                                     Environment.GetEnvironmentVariable("KF1_PROFILE_OUT"),
+                                     Environment.GetEnvironmentVariable("KF1_PROFILE_SPIKE"),
+                                     Environment.GetEnvironmentVariable("KF1_PROFILE_FUNCS"),
+                                     Kf1.ProfilerKnown.Table);
+Verdite.Core.FrameProfiler.Install();
+Verdite.Core.ProfilerPanel.Configure(() => Kf1.FramePacing.Enabled && !Kf1.FramePacing.Uncapped ? 1000.0 / Kf1.FramePacing.TargetFps : 0,
+                                     defaultProbe: "game:8001E83C", stages: 10);
 
 // The camera carried between ticks, whenever pacing is on (KF1_SMOOTH=0 compares).
 // See "The camera carried" in docs/SMOOTHING.md.

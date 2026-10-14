@@ -84,6 +84,15 @@ Every later step depends on finding them.
    repeatable corpus, add a game-thread `warp` to an area and cell (Verdite3's
    `SceneDriver`, `mods/kf3debug/Warp.cs`), working on copied cards.
 
+**Status 2026-10-14** (findings in `GPU_RENDERER.md`): 1 done (`NoDither` moved to
+`0094`; the load step of the acceptance test does not reproduce, before the pull
+or after). 2 read from the code: the writers, the contexts. 3: `StageProbe`,
+`PrimBufferProbe`, `GeometryProbe` and `ProfilerKnown` built and measured;
+`MapCoverage` and `DrawCensus` not yet. 4: the areas and their files; the mesh,
+face-kind and clip counts not yet. 5: `warp` built and measured in areas 1 and 3.
+Still open for the gate: death and the ending, the arm, kinds `0x2D`-`0x3C`, cells
+in areas 2, 4 and 5, and counters taken in every context, not only gameplay.
+
 **Gate**: every emitter and context has an owner and a way to verify it; anything
 not reached is listed as open. Counters are taken with the GPU path off, so a zero
 later cannot mean the probe never attached.

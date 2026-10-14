@@ -85,7 +85,7 @@ The area loader is `func_8001B558`, from `func_80036554`. Paths are
   objects in every area, read by `func_8001C5B0`; 2-4 go to `func_800204C0`.
   Whether 135 is the map's tile meshes and 200 the models is to be found.
 
-## A warp, as designed
+## A warp
 
 The area byte is `u8[0x800A078A]`. `func_80036AF0` picks the destination from a
 handler per area (table `0x80012C14`, areas 1-5) keyed by the exit cell; the
@@ -93,9 +93,15 @@ transition `func_80036850(area, entry)` loads it and snaps x and z to the cell's
 centre. The proposed `warp <area> <x> <z> [yaw]`: in a pre hook on stage A
 (`func_80018880`), call `func_80036850` with the area, then write the position,
 the yaw `0x800A083A` and the last-cell bytes `0x800A084C`/`4D`, so the exit test
-does not fire on arrival. Open: the entry argument for an arbitrary area, the
-floor height (Y is not written), and the music. A warp counts only when the
-beacon's area changes and the loop turns again.
+does not fire on arrival. Built as `patches/Warp.cs` (the `warp` verb). The
+entry is 0: area 1's dispatcher zeroes `A1` (line 52901) and its exits to areas
+2, 3 and 4 set only `A0`; `func_80036618` hands it on to the loader.
+
+Measured 2026-10-14 at `KF1_FPS=144`: area 3 at (51000, 23000), area 1 at
+(31000, 4000), area 1 at (45000, 30000) and area 3 again each took about 6 s, after
+which the beacon read the area, `loop` true and the requested position, and still
+did 3 s later. The game settles the height itself (-11800 at (45000, 30000)).
+**Not tried**: areas 2, 4 and 5, for want of a known cell in them; the music.
 
 ## Measured: who submits, and how full the buffer gets
 
@@ -114,3 +120,24 @@ Measured 2026-10-14 at `KF1_FPS=144`, area 1, standing, walking and turning:
   each and fills 64-133 slots; the gate is skipped under pacing.
 - **The packet buffer is 104,000 bytes a half** (`func_8001BCE0` sets the record
   up) and a frame spends 17,260-39,492 of it (16.6-38.0%); no frame ran out.
+
+## Measured: what each renderer call draws
+
+`patches/GeometryProbe.cs` (`KF1_GEOPROBE=1`), Verdite3's probe: the table walked
+before and after each of the renderer's drawing calls, packets new to it counted
+by type. 2026-10-14 at `KF1_FPS=144`, per renderer call:
+
+| site | area 1, standing and walking | area 3, on arrival |
+|---|---|---|
+| map walk `func_8001E83C` | GT4 368-428 | GT4 438-474 |
+| models `func_8001F218` | FT4 62-74, FT3 5-12, G3 0-50 | GT3 224-235, G3 49-53 |
+| compass `func_8001F8B0` | G3 7 | G3 7 |
+| HUD sprites `func_8001F9D4` | FT4 9 | FT4 9 |
+| selected item, HUD models, arm | none | none |
+
+- **The map is all GT4**, so the map writer `func_8001DE18` is one path.
+- **No sprite, tile, line or draw-mode packet** was added by any site.
+- **The arm draws nothing**, standing or walking with a New Game's empty hands;
+  whether it draws with a weapon equipped is to be found.
+- The probe slows the frame (54-143 renderer calls a second at 144), and counts
+  the renderer's modal-loop calls apart from the main loop's.

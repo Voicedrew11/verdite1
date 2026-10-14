@@ -118,8 +118,11 @@ on this game's addresses:
   line, one JSON line back: `state`, `press <button> [ms]`, `peek <hex addr>
   [bytes]`, `dump <file>` (the 2 MB of RAM, for diffing), `poke <hex addr> <hex
   bytes>` (a diagnostic: it writes the game's own state), `view [x y z pitch yaw
-  roll | off]` (draw from a fixed camera; needs the renderer in C#), `help`. Everything
-  runs on the game thread, from the vblank. A poke of the position
+  roll | off]` (draw from a fixed camera; needs the renderer in C#), `warp <area 1-5>
+  <x> <z> [yaw]` (queues an area transition, run on stage A: `func_80036850` with
+  entry 0, then x, z, yaw and the cell bytes written at the requested values; the
+  reply is `queued`, and `state` carries `"warp"` with `done` once it has run),
+  `help`. Everything runs on the game thread, from the vblank. A poke of the position
   (`0x800A0824`) can be lost to a stage that already holds the old one; check
   `state` after it.
 - **`KF1_AUTOSTART=new`** (`patches/AutoStart.cs`): Start is pulsed through
@@ -220,3 +223,26 @@ config loads after `Program.cs`). **A `KF1_*` variable that is set wins** over a
 kept value. Checked 2026-10-05: `kf1.pacing=1`, `kf1.fps=120` and `kf1.zbuffer=1`
 with no variables boot to 120.0 fps at 20.0 ticks/s with 97.1% of triangles
 depth-tested.
+
+## Profiling a frame
+
+Verdite Core's frame profiler (`FrameProfiler`, `ProfilerPanel`, `GpuFrames`) and
+the runtime's `Diagnostics/Profiler.cs`, as Verdite3 wires them; this port hands
+it `patches/ProfilerKnown.cs`, the names of the addresses it knows. **Shift+P**
+opens the panel, and recording runs while it is open; `KF1_PROFILE=1` records
+from boot and prints a summary every five seconds; `KF1_PROFILE_OUT=profile.csv`
+writes every frame for `scripts/profile_report.py` (Verdite3's script). Every
+hooked function is already a section, so the stages and the renderer's callees
+need no `KF1_PROFILE_FUNCS`. The figure to chase is **work**, the frame less its
+waits and swap. Verdite3's `docs/DEVELOPMENT.md` explains the rest.
+
+```bash
+KF1_AUTOSTART=new KF1_PROFILE=1 KF1_PROFILE_OUT=profile.csv \
+    dotnet bin/Release/net10.0/KingsField1.dll disc/KingsField1.cue
+python3 scripts/profile_report.py profile.csv --skip 30
+```
+
+Baseline, 2026-10-14, uncapped (`KF1_FPS` unset), standing at a New Game in area
+1, the renderer in C#: **about 766 fps, 1.30 ms a frame, 1.08 ms of it work**, 0.23
+ms swap, 0.20 ms of GPU a present; the costliest routine by self time is the map's
+stencil walk `func_8001E5EC`, 0.46 ms a frame.

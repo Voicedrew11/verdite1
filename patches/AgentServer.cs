@@ -56,6 +56,7 @@ public static class AgentServer
         "poke <addr> <hex bytes> - write guest memory (a diagnostic: it moves the game's own state)",
         "aspect [4:3|16:9|16:10|21:9|<ratio>] - the widescreen aspect, or the current one",
         "view [<x> <y> <z> <pitch> <yaw> <roll> | off] - draw from a fixed camera (the renderer in C#), or read the camera",
+        "warp <area 1-5> <x> <z> [yaw] - queue an area transition to a cell (x/2000, z/2000); state's warp shows the result",
     ];
 
     public static void Configure(string? spec)
@@ -75,6 +76,7 @@ public static class AgentServer
         if (Port == 0) return;
 
         Event.AddListener<VSyncEvent>(_ => Drain(_fast));
+        Warp.Install();
 
         // PAD_dr's buffer is active-low with its two button bytes swapped against
         // Controller's layout, as in Verdite Core's Mouse.
@@ -175,7 +177,7 @@ public static class AgentServer
 
         switch (cmd.Name)
         {
-            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect" or "view":
+            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect" or "view" or "warp":
                 Enqueue(_fast, cmd);
                 break;
             default:
@@ -210,7 +212,7 @@ public static class AgentServer
 
     static string Execute(Cmd cmd) => cmd.Name switch
     {
-        "state" => "{\"ok\":true,\"cmd\":\"state\",\"state\":" + AgentBeacon.Snapshot() + "}",
+        "state" => "{\"ok\":true,\"cmd\":\"state\",\"state\":" + AgentBeacon.Snapshot() + ",\"warp\":" + Warp.Last + "}",
         "press" => DoPress(cmd.Arg1, cmd.Arg2),
         "help" => "{\"ok\":true,\"cmd\":\"help\",\"commands\":[" + string.Join(',', HelpCommands.Select(Q)) + "]}",
         "peek" => DoPeek(cmd.Arg1, cmd.Arg2),
@@ -218,6 +220,7 @@ public static class AgentServer
         "poke" => DoPoke(cmd.Arg1, cmd.Arg2),
         "aspect" => Widescreen.Shell(cmd.Arg1),
         "view" => DoView(cmd.Args),
+        "warp" => Warp.Request(cmd.Args),
         _ => Err($"unknown command '{cmd.Name}'; try help"),
     };
 

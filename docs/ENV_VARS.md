@@ -21,6 +21,11 @@ switch is added.
 | `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
 | `KF1_STAGEPROBE` | off | `1`: per stage A-I and the gate, calls a second, ordering-table words written, presents, every 5 s |
 | `KF1_PRIMBUF_PROBE` | off | `1`: the frame's primitive buffer spent, peak and mean, and frames that ran out, every 2 s |
+| `KF1_GEOPROBE` | off | `1`: what each renderer draw call adds to the ordering table, by packet type, every 5 s (`patches/GeometryProbe.cs`) |
+| `KF1_PROFILE` | off | `1`: the frame profiler, a section summary every 5 s; `panel` also opens its panel (Shift+P toggles it) |
+| `KF1_PROFILE_OUT` | off | a path: every frame's sections as CSV rows, for `scripts/profile_report.py` |
+| `KF1_PROFILE_SPIKE` | off | milliseconds: a console line for each frame whose work passes it |
+| `KF1_PROFILE_FUNCS` | off | `stages`, or `game:hex+hex` to time more functions: an empty pre-hook makes each one a section |
 | `KF1_RENDERER` | on | `0`: the recompiled renderer (stage I); `verify`: both, compared (`docs/GAME_INTERNALS.md`) |
 | `KF1_CAMERABLOCK` | on | `0`: the recompiled camera block; `verify`: both, compared |
 | `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |
