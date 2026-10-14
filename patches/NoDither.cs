@@ -8,9 +8,10 @@ namespace Kf1;
 /// <summary>
 /// Turns off the GPU's ordered dither, Verdite3's NoDither on this disc's libgpu.
 /// The dither state is bit 9 of a GP0(E1) word, and it reaches the GPU two
-/// hookable ways: PutDrawEnv's <c>dtd</c> byte at <c>DRAWENV+0x16</c>, and E1 words
-/// linked into the ordering table. Both are cleared in a pre hook and put back in
-/// the post, so the game's memory is unchanged either side. Off until judged.
+/// ways: PutDrawEnv's <c>dtd</c> byte at <c>DRAWENV+0x16</c>, and E1 words linked into
+/// the ordering table. Both end in the GPU's draw-mode decode, which the runtime's
+/// <c>Gpu.SuppressDither</c> (0094) masks, so the game's memory is never touched; the
+/// table walk runs only for the probe. Off until judged.
 ///
 ///     KF1_NODITHER=1         no dither; 0 or unset keeps the crosshatch
 ///     KF1_NODITHER_PROBE=1   once every 2 s: draw envs and table words that asked
@@ -27,7 +28,11 @@ public static class NoDither
     static readonly (string Overlay, uint Addr)[] DrawOTag =
         [("open", 0x800309D4), ("game", 0x80050CF0)];
 
-    public static bool Enabled { get; set; }
+    public static bool Enabled
+    {
+        get => RecompOne.Runtime.Gpu.SuppressDither;
+        set => RecompOne.Runtime.Gpu.SuppressDither = value;
+    }
 
     public static bool ProbeOn { get; set; }
 
@@ -38,12 +43,6 @@ public static class NoDither
         Version = "1.0",
         Description = "Clears the GPU's dither bit.",
     };
-
-    static uint _envAddr;
-    static byte _envDtd;
-    static bool _envPatched;
-
-    static readonly List<(uint Addr, uint Word)> _saved = [];
 
     // The probe's window: draw envs and table words that asked for dither, the
     // E1 words seen in the table at all, and GPUSTAT bit 9 or'd over the frames.
@@ -68,16 +67,16 @@ public static class NoDither
         MethodInfo M(string n) => self.GetMethod(n, BindingFlags.Public | BindingFlags.Static)!;
 
         var targets = new List<MethodInfo>();
-        void Hook((string Overlay, uint Addr)[] sites, string pre, string post)
+        void Hook((string Overlay, uint Addr)[] sites, string pre, string? post)
         {
             foreach (var (overlay, addr) in sites)
             {
                 var t = SymbolRegistry.Resolve(overlay, null, addr);
                 if (t == null) { Console.Error.WriteLine($"[KF1] dither: no function at {overlay}/0x{addr:X8}"); continue; }
-                if (HookManager.AddPre(_self, t, M(pre)) && HookManager.AddPost(_self, t, M(post))) targets.Add(t);
+                if (HookManager.AddPre(_self, t, M(pre)) && (post == null || HookManager.AddPost(_self, t, M(post)))) targets.Add(t);
             }
         }
-        Hook(PutDrawEnv, nameof(BeforePutDrawEnv), nameof(AfterPutDrawEnv));
+        Hook(PutDrawEnv, nameof(BeforePutDrawEnv), null);
         Hook(DrawOTag, nameof(BeforeDrawOTag), nameof(AfterDrawOTag));
         HookManager.Commit();
 
@@ -86,34 +85,18 @@ public static class NoDither
         return n == 4;
     }
 
+    // The probe's count of draw envs that asked for dither.
     public static void BeforePutDrawEnv(CpuContext c, IMemory m)
     {
-        _envPatched = false;
-        if (!Enabled && !ProbeOn) return;
-        uint env = c.A0;
-        byte dtd = m.ReadU8(env + 0x16);
-        if (dtd == 0) return;
-        _envHits++;
-        if (!Enabled) return;
-        m.WriteU8(env + 0x16, 0);
-        _envAddr = env;
-        _envDtd = dtd;
-        _envPatched = true;
+        if (ProbeOn && m.ReadU8(c.A0 + 0x16) != 0) _envHits++;
     }
 
-    public static void AfterPutDrawEnv(CpuContext c, IMemory m)
-    {
-        if (!_envPatched) return;
-        m.WriteU8(_envAddr + 0x16, _envDtd);
-        _envPatched = false;
-    }
-
-    // DrawOTag's own walk: each header's `next` to the end marker, a packet's
-    // words counted by its top byte.
+    // The probe's count of table E1 words that asked for dither: DrawOTag's own
+    // walk, each header's `next` to the end marker, a packet's words counted by
+    // its top byte.
     public static void BeforeDrawOTag(CpuContext c, IMemory m)
     {
-        _saved.Clear();
-        if (Enabled || ProbeOn)
+        if (ProbeOn)
         {
             uint mask = RecompOne.Runtime.Runtime.RamWordMask;
             uint addr = c.A0 & mask;
@@ -131,8 +114,6 @@ public static class NoDither
 
     public static void AfterDrawOTag(CpuContext c, IMemory m)
     {
-        for (int i = 0; i < _saved.Count; i++) m.WriteU32(_saved[i].Addr, _saved[i].Word);
-        _saved.Clear();
         if (ProbeOn && RecompOne.Runtime.Runtime.Gpu is { } gpu)
             _stat |= (gpu.ReadStat() >> 9) & 1u;
     }
@@ -148,15 +129,7 @@ public static class NoDither
             if (word >> 24 == 0xE1)
             {
                 _otE1++;
-                if ((word & 0x200u) != 0)
-                {
-                    _otHits++;
-                    if (Enabled)
-                    {
-                        _saved.Add((at, word));
-                        m.WriteU32(at, word & ~0x200u);
-                    }
-                }
+                if ((word & 0x200u) != 0) _otHits++;
                 i++;
                 continue;
             }

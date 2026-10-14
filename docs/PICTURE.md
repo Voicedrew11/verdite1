@@ -7,16 +7,20 @@ judged by eye**, and each is live in Settings ▸ Testing.
 
 ## Unit 1: no dither, 24-bit
 
-`patches/NoDither.cs` (`KF1_NODITHER=1`) clears bit 9 of the draw mode on both
-routes it takes: `PutDrawEnv`'s `dtd` byte (`DRAWENV + 0x16`), and E1 words linked
-into the ordering table, each in a pre hook and put back in the post, so the
-game's memory is unchanged either side. `patches/TrueColor.cs`
+`patches/NoDither.cs` (`KF1_NODITHER=1`) sets the fork's `Gpu.SuppressDither`
+(`0094`), which masks bit 9 of the draw mode where every E1 word lands, so both
+routes it takes — `PutDrawEnv`'s `dtd` byte (`DRAWENV + 0x16`) and E1 words linked
+into the ordering table — reach the GPU without it and the game's memory is never
+touched. Until 2026-10-14 it cleared the bit in RAM around each call, which walked
+the whole table before every `DrawOTag`; the walk now runs only for the probe. `patches/TrueColor.cs`
 (`KF1_TRUECOLOR=1`) is the fork's 24-bit output switch. The Testing tab offers
 them as one Shading combo: Dither (the console), None, Smooth (24-bit).
 
 Measured 2026-10-05 in area 1, `KF1_NODITHER_PROBE=1`: **every draw environment
 asks for dither** (144 a second at 144 fps, one a frame) and **no table word
-does**; GPUSTAT bit 9 reads 0 with it on.
+does**; GPUSTAT bit 9 reads 0 with it on. Re-measured 2026-10-14 on `0094`: GPUSTAT bit 9
+reads 0 with it on and 1 with it off, about 866 draw environments a second
+asking for dither either way.
 
 ## Unit 2: perspective and sub-pixel
 
