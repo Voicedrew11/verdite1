@@ -2,8 +2,8 @@
 #
 # Run through the game's packaging/windows/build-windows.ps1, or directly; the game
 # is the checkout this subtree sits in (tools/verdite-core), or $env:VERDITE_GAME_ROOT.
-# Its packaging/package.env names it (NAME, APP_ID, INNO_APP_ID), and
-# packaging/shared/ holds its $APP_ID.ico.
+# Its packaging/package.env names it (NAME, APP_ID, INNO_APP_ID, and INNO_PRIVILEGES
+# when it is not "admin"), and packaging/shared/ holds its $APP_ID.ico if it ships one.
 #
 # Needs the RecompOne subtree built (the game's scripts/setup_tools.sh) and the
 # .NET 10 SDK. It does NOT need the disc: the launcher carries the inputs to a
@@ -32,11 +32,22 @@ $stage = Join-Path $dist 'win-x64'
 $csproj = Join-Path $root "$name.Launcher\$name.Launcher.csproj"
 $icon = Join-Path $root "packaging\shared\$appId.ico"
 
-# One source of the number, for everything that names a build: the launcher's
-# csproj reads this same file, so the zip and the installer cannot be named
-# something other than what is inside them.
-$version = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
-if (-not $version) { throw "VERSION is empty" }
+# One rule for the number, for everything that names a build, as scripts/version.sh
+# gives it and the launcher's csproj resolves it: VERSION, else $env:VERDITE_VERSION,
+# else the newest vMAJOR.MINOR.PATCH tag reachable from HEAD, else 0.0.0. So the
+# zip and the installer cannot be named something other than what is inside them.
+$versionFile = Join-Path $root 'VERSION'
+if (Test-Path $versionFile) { $version = (Get-Content $versionFile -Raw).Trim() }
+elseif ($env:VERDITE_VERSION) { $version = $env:VERDITE_VERSION -replace '^v', '' }
+else {
+    $tag = $null
+    try {
+        $tag = git -C "$root" tag --merged HEAD --list 'v*' --sort=-v:refname 2>$null |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } | Select-Object -First 1
+    } catch { }
+    $version = if ($tag) { $tag.Substring(1) } else { '0.0.0' }
+}
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "not MAJOR.MINOR.PATCH: $version" }
 
 Write-Host "==> publishing win-x64 ($version)"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
@@ -64,7 +75,11 @@ Write-Host "==> stub"
 $stubProj = Join-Path $PSScriptRoot 'Stub\Verdite.Stub.csproj'
 $stubOut = Join-Path $dist 'stub'
 if (Test-Path $stubOut) { Remove-Item -Recurse -Force $stubOut }
-dotnet publish $stubProj -c Release -o $stubOut "-p:StubName=$name" "-p:StubIcon=$icon"
+# A port that ships no mark gets a stub with none: Windows draws its plain
+# program icon until the game points the shortcuts at the card icon it read.
+$stubArgs = @("-p:StubName=$name")
+if (Test-Path $icon) { $stubArgs += "-p:StubIcon=$icon" }
+dotnet publish $stubProj -c Release -o $stubOut @stubArgs
 if ($LASTEXITCODE -ne 0) { throw "stub publish failed" }
 Copy-Item (Join-Path $stubOut "$name.exe") (Join-Path $stage "$name.exe")
 $stubConfig = Join-Path $stubOut "$name.exe.config"
@@ -92,6 +107,7 @@ Compress-Archive -Path "$stage\*" -DestinationPath $zip
 $env:VERDITE_VERSION = $version
 $env:VERDITE_NAME = $name
 $env:VERDITE_INNO_APP_ID = $pkg['INNO_APP_ID']
+$env:VERDITE_INNO_PRIVILEGES = $pkg['INNO_PRIVILEGES']
 $env:VERDITE_ROOT = "$root"
 
 if (Get-Command iscc -ErrorAction SilentlyContinue) {

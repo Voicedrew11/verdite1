@@ -15,13 +15,22 @@ namespace Verdite.Core;
 /// over at once (RecompOne's 0061): pixel art a window manager never resamples.
 /// Entry 0 is the background, which a card header zeroes, so it is transparent.
 /// On Linux the same sizes go into the icon theme (<see cref="DesktopEntry"/>),
-/// which is the only icon a Wayland compositor reads.
+/// which is the only icon a Wayland compositor reads; on Windows into an .ico
+/// that the shortcuts to the game are pointed at (<see cref="ShortcutIcon"/>).
+///
+/// The 256 px size is kept as <see cref="Saved"/> in the data directory, so a
+/// later run wears the card icon before the disc is read: the launcher's build
+/// popup, and a game opened with no disc named (<see cref="ApplySaved"/>).
 /// </summary>
 public static class WindowIcon
 {
     public const int Side = 16;
 
     static readonly int[] Sizes = [16, 32, 48, 64, 128, 256];
+
+    /// <summary>The card icon a run read, relative to the data directory. The
+    /// launcher reads the same name.</summary>
+    public const string Saved = "icon.png";
 
     /// <summary>
     /// Which frame the game's <c>{Tag}_ICON</c> asks for, <paramref name="byDefault"/>
@@ -78,6 +87,23 @@ public static class WindowIcon
         RecompOne.Runtime.Runtime.SetIcons(images);
         Console.WriteLine($"[{Game.Tag}] icon: the game's memory-card icon, off the disc");
         DesktopEntry.Publish(images);
+        ShortcutIcon.Publish(images);
+
+        try { DesktopEntry.Write(Path.GetFullPath(Saved), DesktopEntry.Png(images[^1].Rgba, images[^1].W, images[^1].H)); }
+        catch (Exception e) { Console.Error.WriteLine($"[{Game.Tag}] icon: cannot keep {Saved}: {e.Message}"); }
+    }
+
+    /// <summary>The card icon an earlier run kept, until the disc is read again.</summary>
+    public static void ApplySaved()
+    {
+        try
+        {
+            if (File.Exists(Saved)) RecompOne.Runtime.Runtime.SetIcon(File.ReadAllBytes(Saved));
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"[{Game.Tag}] icon: cannot read {Saved}: {e.Message}");
+        }
     }
 
     static byte[] Scale(byte[] src, int n)

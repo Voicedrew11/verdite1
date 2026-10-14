@@ -16,7 +16,12 @@ namespace Verdite.Core;
 /// <paramref name="TextEditing"/> gates the capture key while a text field has
 /// focus; <paramref name="Frames"/> and <paramref name="LogicHz"/> are the
 /// frame clock the stale-motion test keys off; <paramref name="Paused"/> is a
-/// game that drops motion while its world is stopped.
+/// game that drops motion while its world is stopped;
+/// <paramref name="DefaultCaptureKey"/> is the key that captures and releases,
+/// <c>Key.Unknown</c> for none; <paramref name="OnIsSetting"/> and
+/// <paramref name="LeadIsSetting"/> false are a game whose mouse look, or instant
+/// mouse look, is always on, its saved key no longer read and its variable the only
+/// comparison.
 /// </summary>
 public sealed record MouseGame(
     float UnitsPerDegree,
@@ -31,7 +36,10 @@ public sealed record MouseGame(
     Func<bool> TextEditing,
     Func<long> Frames,
     Func<double> LogicHz,
-    Func<bool>? Paused = null);
+    Func<bool>? Paused = null,
+    Key DefaultCaptureKey = Key.Escape,
+    bool OnIsSetting = true,
+    bool LeadIsSetting = true);
 
 /// <summary>
 /// Mouse look, and the mouse buttons, as a third source the game's own control
@@ -43,14 +51,19 @@ public sealed record MouseGame(
 ///     {Tag}_MOUSE_INVERTY=1                    look-Y inversion
 ///     {Tag}_MOUSE_LEAD=0                       show motion when the tick spends it
 ///     {Tag}_MOUSE_BUTTONS=Triangle,Square,...  left, right, middle, as pad buttons
-///     {Tag}_MOUSE_KEY=Escape                   the key that captures and releases
+///     {Tag}_MOUSE_KEY=Escape                   the key that captures and releases;
+///                                              None for none (the game's default)
 ///
 /// **The look half is not its own hook.** The game's own look routine spends
 /// <see cref="TakeLook"/> and reports what it asked for through
 /// <see cref="NoteSpent"/>. The buttons ride the event the BIOS fires when the
 /// game reads the pad, so a held button is ORed into the word the game is about
-/// to read. Capture is what makes motion mean anything: the pointer is locked to
-/// the window with <see cref="CaptureKey"/>, and any popup takes it back.
+/// to read. Capture is what makes motion mean anything, and it behaves as a
+/// desktop game's does: a click on the picture locks the pointer (and is not a
+/// button), losing focus gives it back, a popup takes it back, and a screen of the
+/// game's own that wants a pointer holds it with <see cref="Suspend"/> and hands
+/// it back when it closes. <see cref="CaptureKey"/> toggles it as well, if the
+/// game keeps one.
 /// </summary>
 public static class Mouse
 {
@@ -113,19 +126,36 @@ public static class Mouse
         ("Select",   Controller.Select),
     ];
 
-    /// <summary>The key that locks the pointer to the window and gives it back.
-    /// Escape by default: a popup closes on Escape, so while one is open this
-    /// leaves the key alone.</summary>
+    /// <summary>The key that locks the pointer to the window and gives it back,
+    /// or <c>Key.Unknown</c> for none: the game's
+    /// <see cref="MouseGame.DefaultCaptureKey"/> until the player picks one. A
+    /// popup closes on Escape, so while one is open this leaves the key alone.</summary>
     public static Key CaptureKey = Key.Escape;
 
     /// <summary>The keys the settings page offers, since it has no key-capture
-    /// widget of its own.</summary>
+    /// widget of its own. <c>Key.Unknown</c> is "None".</summary>
     internal static readonly Key[] CaptureKeys =
-        [Key.Escape, Key.Tab, Key.GraveAccent, Key.F9, Key.F10, Key.F12];
+        [Key.Unknown, Key.Escape, Key.Tab, Key.GraveAccent, Key.F9, Key.F10, Key.F12];
+
+    /// <summary>A key's name on the settings page and in the log.</summary>
+    internal static string KeyName(Key key) => key == Key.Unknown ? "None" : key.ToString();
 
     /// <summary>Whether the pointer is locked to the window right now. The host
     /// is the authority — a platform that refuses the mode leaves this false.</summary>
     public static bool Captured { get; private set; }
+
+    /// <summary>Whether a screen of the game's own holds the pointer free
+    /// (<see cref="Suspend"/>). Nothing captures while it does.</summary>
+    public static bool Suspended { get; private set; }
+
+    /// <summary>Whether the suspension took a captured pointer, and so gives it
+    /// back when it ends.</summary>
+    static bool _resume;
+
+    /// <summary>The mouse buttons held when the pointer was captured, as
+    /// left 1, right 2, middle 4: the click that captured is not a press, so each
+    /// stays out of the pad word until it is let go.</summary>
+    static int _swallow;
 
     /// <summary>The step cap and the pitch limit, in the game's units.</summary>
     internal static int StepCap => _game.StepCap;
@@ -136,7 +166,10 @@ public static class Mouse
 
     static long _taken;
     static long _checked;
-    static bool _hinted;
+
+    /// <summary>The ImGui panels open when last looked at, so a new one opening
+    /// while the pointer is captured can be told from one already there.</summary>
+    static int _panels;
 
     static readonly HashSet<string> _fromEnv = new(StringComparer.Ordinal);
 
@@ -147,6 +180,7 @@ public static class Mouse
         LeftButton = game.DefaultLeftButton;
         RightButton = game.DefaultRightButton;
         MiddleButton = game.DefaultMiddleButton;
+        CaptureKey = game.DefaultCaptureKey;
 
         Kept.Env(Game.EnvPrefix + "MOUSE", OnKey, ref Enabled, _fromEnv);
         Kept.Env(Game.EnvPrefix + "MOUSE_TURN", TurnKey, ref TurnSens, _fromEnv);
@@ -178,8 +212,9 @@ public static class Mouse
         string? key = Game.Env("MOUSE_KEY");
         if (!string.IsNullOrWhiteSpace(key))
         {
+            if (string.Equals(key.Trim(), "none", StringComparison.OrdinalIgnoreCase)) key = nameof(Key.Unknown);
             if (!Enum.TryParse<Key>(key.Trim(), true, out var parsed))
-                throw new ArgumentException($"{Game.EnvPrefix}MOUSE_KEY: no key '{key}' (a Silk.NET key name)");
+                throw new ArgumentException($"{Game.EnvPrefix}MOUSE_KEY: no key '{key}' (a Silk.NET key name, or None)");
             CaptureKey = parsed;
             _fromEnv.Add(CaptureKeyKey);
         }
@@ -194,15 +229,11 @@ public static class Mouse
     {
         Event.AddListener<RuntimeReadyEvent>(_ =>
         {
-            // Registered here rather than by the game so it lands after the
-            // runtime's own panels: PanelManager draws in registration order.
-            PanelManager.Register(MouseIndicator.Instance);
-
-            Kept.Saved(OnKey, ref Enabled, _fromEnv);
+            if (_game.OnIsSetting) Kept.Saved(OnKey, ref Enabled, _fromEnv);
             Kept.Saved(TurnKey, ref TurnSens, _fromEnv);
             Kept.Saved(LookKey, ref LookSens, _fromEnv);
             Kept.Saved(InvertKey, ref InvertY, _fromEnv);
-            Kept.Saved(LeadKey, ref Lead, _fromEnv);
+            if (_game.LeadIsSetting) Kept.Saved(LeadKey, ref Lead, _fromEnv);
             Kept.Saved(LeftKey, ref LeftButton, _fromEnv);
             Kept.Saved(RightKey, ref RightButton, _fromEnv);
             Kept.Saved(MiddleKey, ref MiddleButton, _fromEnv);
@@ -216,7 +247,8 @@ public static class Mouse
             MiddleButton = Clamp(MiddleButton);
 
             if (Enabled)
-                Console.WriteLine($"[{Game.Tag}] mouse: on, {CaptureKey} captures the pointer " +
+                Console.WriteLine($"[{Game.Tag}] mouse: on, a click captures the pointer" +
+                                  (CaptureKey == Key.Unknown ? " " : $" and {CaptureKey} toggles it ") +
                                   $"(turn x{TurnSens:0.##}, look x{LookSens:0.##}; " +
                                   $"{PadButtons[LeftButton].Name}/{PadButtons[RightButton].Name}/" +
                                   $"{PadButtons[MiddleButton].Name} on left/right/middle)");
@@ -227,21 +259,80 @@ public static class Mouse
         // from inside it.
         Event.AddListener<KeyboardEvent>(e =>
         {
-            if (!e.Pressed || e.Key != (int)CaptureKey) return;
+            if (!e.Pressed || CaptureKey == Key.Unknown || e.Key != (int)CaptureKey) return;
             if (!Enabled) return;
 
             // A popup is drawn over the game and closes on Escape itself, so the
             // key belongs to it while one is open. Releasing is still allowed.
-            if (!Captured && PopupManager.AnyOpen) return;
-            if (!Captured && TextEditing) return;
+            if (!Captured && (PopupManager.AnyOpen || TextEditing || Suspended)) return;
 
             SetCaptured(!Captured);
         });
+
+        // A click on the picture captures, as in any desktop game. Only on the
+        // picture, and not while a popup or one of ImGui's own (a menu bar's
+        // dropdown) is open, so a click meant for the port's windows stays
+        // theirs. A panel floating in front of the picture keeps its clicks too.
+        // Focus is not asked: a click is focus, and the flag can lag it.
+        Event.AddListener<MouseEvent>(e =>
+        {
+            if (e.Action != MouseAction.Button || !e.Pressed) return;
+            // In a menu the click is the menu's.
+            if (!Enabled || Captured || Suspended) return;
+
+            string? refused =
+                PopupManager.AnyOpen || ImGuiPopupOpen ? "a popup is open" :
+                !OutputView.Hovered && OutputView.Covered ? "the click is on a panel" :
+                !OnPicture(e.X, e.Y) ? $"({e.X}, {e.Y}) is not on the picture " +
+                                       $"({OutputView.Min.X:0}, {OutputView.Min.Y:0})-({OutputView.Max.X:0}, {OutputView.Max.Y:0})" :
+                null;
+            if (refused != null)
+            {
+                Console.WriteLine($"[{Game.Tag}] mouse: click not captured: {refused}");
+                return;
+            }
+
+            SetCaptured(true);
+            if (!Captured)
+                Console.WriteLine($"[{Game.Tag}] mouse: click not captured: the host refused the lock");
+        });
+
+        // Losing focus gives the pointer back, and a suspension that took it no
+        // longer returns it: the player comes back with a click, which is how
+        // they left the game's window anyway.
+        HostWindow.FocusChanged += focused =>
+        {
+            if (focused) return;
+            _resume = false;
+            if (Captured) SetCaptured(false);
+        };
 
         // The buttons are not listened for here. PAD_dr is the busiest call in
         // the game, so the listener is attached when the pointer is captured and
         // dropped when it is let go -- the window in which a button means anything.
     }
+
+    /// <summary>Whether the click at (x, y) landed on the game picture. Either
+    /// ImGui saw the pointer over it last frame, or the click's own position is
+    /// inside it: just after a release ImGui can still hold the locked pointer's
+    /// virtual position, or an active item from the click that captured. The
+    /// rectangle fallback holds only when no other ImGui window is under the
+    /// pointer, so a click on a panel floating over the picture stays the
+    /// panel's.</summary>
+    static bool OnPicture(int x, int y)
+    {
+        if (OutputView.Hovered) return true;
+        if (OutputView.Covered) return false;
+        if (!OutputView.Valid) return false;
+        var (min, max) = (OutputView.Min, OutputView.Max);
+        return x >= min.X && y >= min.Y && x < max.X && y < max.Y;
+    }
+
+    /// <summary>An ImGui popup of any level open, such as a menu bar's dropdown,
+    /// which PopupManager does not own.</summary>
+    static bool ImGuiPopupOpen =>
+        ImGuiNET.ImGui.GetCurrentContext() != nint.Zero &&
+        ImGuiNET.ImGui.IsPopupOpen("", ImGuiNET.ImGuiPopupFlags.AnyPopupId | ImGuiNET.ImGuiPopupFlags.AnyPopupLevel);
 
     /// <summary>Whether a text field has focus, so a letter hotkey waits.</summary>
     static bool TextEditing => _game.TextEditing();
@@ -260,10 +351,16 @@ public static class Mouse
         Watch();
         if (!Captured) return;
 
+        int down = (HostWindow.IsMouseButtonDown(MouseButton.Left) ? 1 : 0) |
+                   (HostWindow.IsMouseButtonDown(MouseButton.Right) ? 2 : 0) |
+                   (HostWindow.IsMouseButtonDown(MouseButton.Middle) ? 4 : 0);
+        _swallow &= down;
+        down &= ~_swallow;
+
         ushort press = 0;
-        if (HostWindow.IsMouseButtonDown(MouseButton.Left)) press |= PadButtons[LeftButton].Bit;
-        if (HostWindow.IsMouseButtonDown(MouseButton.Right)) press |= PadButtons[RightButton].Bit;
-        if (HostWindow.IsMouseButtonDown(MouseButton.Middle)) press |= PadButtons[MiddleButton].Bit;
+        if ((down & 1) != 0) press |= PadButtons[LeftButton].Bit;
+        if ((down & 2) != 0) press |= PadButtons[RightButton].Bit;
+        if ((down & 4) != 0) press |= PadButtons[MiddleButton].Bit;
         if (press == 0) return;
 
         // The buffer PAD_dr fills is active low and carries the two button bytes
@@ -343,13 +440,13 @@ public static class Mouse
     /// </summary>
     internal static (float Turn, float Pitch) TakeLook()
     {
-        if (!Captured && Enabled && !_hinted)
+        // The look routine runs only while the player walks about, so no menu
+        // is open whatever the game told Suspend: a leave the game never made
+        // must not keep the pointer from the world.
+        if (Suspended)
         {
-            // Said once, and here rather than at boot: reaching this means the
-            // player is walking around with mouse look on and a pointer that is
-            // still a pointer.
-            _hinted = true;
-            MouseIndicator.Show(false);
+            Console.WriteLine($"[{Game.Tag}] mouse: a menu's suspension outlived it; ended by the look routine");
+            Suspend(false);
         }
 
         Poll();
@@ -406,7 +503,7 @@ public static class Mouse
     }
 
     /// <summary>
-    /// Lock or release, and say so on screen through <see cref="MouseIndicator"/>.
+    /// Lock or release.
     /// Reads the host back rather than trusting the write: no mouse, or a platform
     /// without the cursor mode, and the answer is no.
     /// </summary>
@@ -417,7 +514,14 @@ public static class Mouse
         HostWindow.MouseCaptured = on;
         Captured = HostWindow.MouseCaptured;
 
-        if (Captured) Event.AddListener(_buttons);
+        if (Captured)
+        {
+            _swallow = (HostWindow.IsMouseButtonDown(MouseButton.Left) ? 1 : 0) |
+                       (HostWindow.IsMouseButtonDown(MouseButton.Right) ? 2 : 0) |
+                       (HostWindow.IsMouseButtonDown(MouseButton.Middle) ? 4 : 0);
+            _panels = OpenPanels();
+            Event.AddListener(_buttons);
+        }
         else Event.RemoveListener(_buttons);
 
         if (on && !Captured)
@@ -433,12 +537,42 @@ public static class Mouse
         _pendTurn = _pendPitch = 0f;
         _taken = _polled = Environment.TickCount64;
 
-        MouseIndicator.Show(Captured);
     }
 
     /// <summary>
-    /// The one state change nothing announces: a popup opening while the pointer
-    /// is captured. Throttled to once a millisecond, because its caller is PAD_dr.
+    /// A screen of the game's own that wants a pointer -- a menu -- opening
+    /// (true) or closing (false). Opening releases a captured pointer and holds it
+    /// free; closing captures it again if the opening took it, the window still
+    /// has focus and no popup is open; otherwise a click on the picture does.
+    /// </summary>
+    public static void Suspend(bool on)
+    {
+        if (on == Suspended) return;
+        Suspended = on;
+
+        if (on)
+        {
+            _resume = Captured;
+            if (Captured) SetCaptured(false);
+            return;
+        }
+
+        bool resume = _resume;
+        _resume = false;
+        if (!resume || !Enabled) return;
+
+        string? refused = !HostWindow.Focused ? "the window has no focus" :
+                          PopupManager.AnyOpen ? "a popup is open" : null;
+        if (refused == null) SetCaptured(true);
+        else Console.WriteLine($"[{Game.Tag}] mouse: not captured again after the menu: {refused}; a click will");
+    }
+
+    /// <summary>
+    /// The state changes nothing announces: a popup opening while the pointer is
+    /// captured, or an ImGui panel (a debug tool's, on its hotkey) -- the pointer
+    /// is hidden, and the panel was opened to be clicked. Opening releases; a
+    /// panel left open does not stop a click on the picture capturing again.
+    /// Throttled to once a millisecond, because its caller is PAD_dr.
     /// </summary>
     static void Watch()
     {
@@ -446,7 +580,24 @@ public static class Mouse
         if (now == _checked) return;
         _checked = now;
 
-        if (Captured && PopupManager.AnyOpen) SetCaptured(false);
+        if (Captured && PopupManager.AnyOpen) { SetCaptured(false); return; }
+
+        int panels = OpenPanels();
+        bool opened = panels > _panels;
+        _panels = panels;
+        if (Captured && opened)
+        {
+            Console.WriteLine($"[{Game.Tag}] mouse: released: a panel opened");
+            SetCaptured(false);
+        }
+    }
+
+    static int OpenPanels()
+    {
+        int n = 0;
+        foreach (var panel in PanelManager.Panels)
+            if (panel.IsOpen) n++;
+        return n;
     }
 
     static int Clamp(int index) => index < 0 || index >= PadButtons.Length ? 0 : index;

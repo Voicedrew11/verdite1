@@ -7,8 +7,8 @@
       its own names -
           AssemblyName       Verdite2, the shipped executable
           RootNamespace      Verdite2.Launcher
-          ApplicationIcon    the .ico Windows reads out of the executable
-          VerditeAppId       verdite2, the shipped PNG's name
+          ApplicationIcon    the .ico Windows reads out of the executable, if any
+          VerditeAppId       verdite2, the shipped PNG's name (a port may ship none)
           VerditeEnvPrefix   VERDITE2_, read for <prefix>BUILD below
       - then imports this file, and holds one Program.cs that hands
       Verdite.Launcher.Launcher.Run a LauncherGame record. Everything else is here.
@@ -44,10 +44,18 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
         <!--
-          The version is NOT declared in a csproj: VERSION at the game's root is the
-          single source of it, because four other things need to read the same
-          number and only one of them can parse XML: the AppImage script, the
-          Windows script, the Inno installer and the release workflow's tag check.
+          The version is NOT declared in a csproj. It is resolved by one rule, which
+          scripts/version.sh, the Windows script and this file all follow, because
+          four other things need the same number and only one of them can parse
+          XML: the AppImage script, the Windows script, the Inno installer and the
+          release workflow.
+            1. VERSION at the game's root, when the game keeps one (Verdite2);
+            2. else VERDITE_VERSION, which a release build sets from its tag;
+            3. else the newest vMAJOR.MINOR.PATCH tag reachable from HEAD
+               (ResolveVersion below, since evaluation cannot run git);
+            4. else 0.0.0.
+          A game with no VERSION file is versioned by its tags alone: a release is
+          a tag, and no commit names the number.
 
           The cache key is derived from it, so a released build that changes how
           the build is done must bump it or a player keeps the game.dll they
@@ -55,8 +63,9 @@
           ordinary case on its own; this covers a change in the launcher itself.
         -->
         <VersionFile>$(VerditeGameRoot)VERSION</VersionFile>
-        <VersionRaw>$([System.IO.File]::ReadAllText('$(VersionFile)'))</VersionRaw>
-        <Version>$(VersionRaw.Trim())</Version>
+        <VerditeVersion Condition="Exists('$(VersionFile)')">$([System.IO.File]::ReadAllText('$(VersionFile)').Trim())</VerditeVersion>
+        <VerditeVersion Condition="'$(VerditeVersion)' == '' And '$(VERDITE_VERSION)' != ''">$([System.Text.RegularExpressions.Regex]::Replace('$(VERDITE_VERSION)', '^v', ''))</VerditeVersion>
+        <Version Condition="'$(VerditeVersion)' != ''">$(VerditeVersion)</Version>
 
         <!--
           Trimming would break a port three ways over: MonoMod.RuntimeDetour builds
@@ -116,6 +125,9 @@
     <!-- The shared shell. The game's project directory adds its Program.cs by the default glob. -->
     <ItemGroup>
         <Compile Include="$(VerditeCore)launcher/**/*.cs" />
+        <!-- The first-run setup, which the game's settings page runs again: one copy
+             of its source, compiled here and (as payload) into the game. -->
+        <Compile Include="$(VerditeCore)src/Onboarding/**/*.cs" />
     </ItemGroup>
 
     <!--
@@ -139,8 +151,28 @@
         <Content Include="$(VerditeCore)src/**/*.cs" LinkBase="content/src/verdite-core" CopyToOutputDirectory="PreserveNewest" />
         <Content Include="$(VerditeGameRoot)mods/**/*" Exclude="$(VerditeGameRoot)mods/.cache/**;$(VerditeGameRoot)mods/**/bin/**;$(VerditeGameRoot)mods/**/obj/**" LinkBase="content/mods" CopyToOutputDirectory="PreserveNewest" />
         <Content Include="$(VerditeGameRoot)LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
-        <Content Include="$(VerditeGameRoot)packaging/shared/$(VerditeAppId).png" Link="$(VerditeAppId).png" CopyToOutputDirectory="PreserveNewest" />
+        <Content Condition="Exists('$(VerditeGameRoot)packaging/shared/$(VerditeAppId).png')" Include="$(VerditeGameRoot)packaging/shared/$(VerditeAppId).png" Link="$(VerditeAppId).png" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
+
+    <!--
+      content/manifest.txt: where each payload file above was staged, one Link a
+      line. The launcher reads only the files listed (Build/Payload.cs), because a
+      release unpacked over an older one keeps the files the new one deleted, and
+      the build used to compile every .cs it found: Verdite3 0.1.1 over 0.1.0
+      failed with seven errors from three stale patches. Written before
+      AssignTargetPaths so it is copied and published like the payload it lists.
+      The SDK has already turned each LinkBase into a Link at evaluation; the
+      separators are the host's, and Payload.cs normalises them.
+    -->
+    <Target Name="VerditeContentManifest" BeforeTargets="AssignTargetPaths">
+        <WriteLinesToFile File="$(IntermediateOutputPath)verdite-manifest.txt" Lines="@(Content->'%(Link)')"
+                          Overwrite="true" WriteOnlyWhenDifferent="true" />
+        <ItemGroup>
+            <Content Include="$(IntermediateOutputPath)verdite-manifest.txt" Link="content/manifest.txt"
+                     CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+            <FileWrites Include="$(IntermediateOutputPath)verdite-manifest.txt" />
+        </ItemGroup>
+    </Target>
 
     <!--
       Program.cs, patches/** and core's src/** are payload, NOT sources of this
@@ -168,7 +200,27 @@
       outside a git checkout (a source tarball, a distro package) can still say
       what it is.
     -->
-    <Target Name="StampBuild" BeforeTargets="GetAssemblyAttributes">
+    <!--
+      Rule 3 and 4 of the version: no VERSION file and no VERDITE_VERSION, so the
+      newest version tag HEAD contains, highest first by git's version sort, or
+      0.0.0 with none (no tag yet, or not a checkout).
+    -->
+    <Target Name="ResolveVersion" BeforeTargets="GetAssemblyVersion" Condition="'$(VerditeVersion)' == ''">
+        <Exec Command="git -C &quot;$(VerditeGameRoot).&quot; tag --merged HEAD --list &quot;v*&quot; --sort=-v:refname"
+              Condition="Exists('$(VerditeGameRoot).git')"
+              ConsoleToMSBuild="true" StandardOutputImportance="low"
+              ContinueOnError="true" IgnoreExitCode="true">
+            <Output TaskParameter="ConsoleOutput" ItemName="VerditeTag" />
+        </Exec>
+        <PropertyGroup>
+            <VerditeTags>@(VerditeTag)</VerditeTags>
+            <VerditeVersion>$([System.Text.RegularExpressions.Regex]::Match(';$(VerditeTags);', '(?&lt;=;v)\d+\.\d+\.\d+(?=;)'))</VerditeVersion>
+            <VerditeVersion Condition="'$(VerditeVersion)' == ''">0.0.0</VerditeVersion>
+            <Version>$(VerditeVersion)</Version>
+        </PropertyGroup>
+    </Target>
+
+    <Target Name="StampBuild" BeforeTargets="GetAssemblyAttributes" DependsOnTargets="ResolveVersion">
         <PropertyGroup>
             <BuildOverride>$([System.Environment]::GetEnvironmentVariable('$(VerditeEnvPrefix)BUILD'))</BuildOverride>
         </PropertyGroup>

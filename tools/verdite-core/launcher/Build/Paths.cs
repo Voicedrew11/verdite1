@@ -120,6 +120,9 @@ static class Paths
         var added = new List<string>();
         foreach (var src in Directory.EnumerateFiles(ContentMods, "*", SearchOption.AllDirectories))
         {
+            // A mod an older release shipped and this one dropped is not seeded.
+            if (!Payload.Shipped(src)) continue;
+
             var rel = Path.GetRelativePath(ContentMods, src).Replace('\\', '/');
             if (already.Contains(rel)) continue;
 
