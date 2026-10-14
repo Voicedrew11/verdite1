@@ -19,9 +19,11 @@ switch is added.
 | `KF1_VBLANKPACING` | on | `0`: menus' `VSync` calls on the runtime's clock, a comparison |
 | `KF1_VBLANKPACING_PROBE` | off | `1`: a line a second of held `VSync` calls |
 | `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
-| `KF1_STAGEPROBE` | off | `1`: per stage A-I and the gate, calls a second, ordering-table words written, presents, every 5 s |
+| `KF1_STAGEPROBE` | off | `1`: per stage A-I and the gate, calls a second, ordering-table words written, presents, every 5 s; and, when the in-game menu runs, its present and clear, and its writers' calls and cursor words per call, on a `menu:` line |
 | `KF1_PRIMBUF_PROBE` | off | `1`: the frame's primitive buffer spent, peak and mean, and frames that ran out, every 2 s |
 | `KF1_GEOPROBE` | off | `1`: what each renderer draw call adds to the ordering table, by packet type, every 5 s (`patches/GeometryProbe.cs`) |
+| `KF1_MAPCOVERAGE` | off | `1`: the address map's coverage by packet writer: packets, vertices and hit % a second, every 2 s (`patches/MapCoverage.cs`) |
+| `KF1_DRAWCENSUS` | off | `1`: the primitive buffer bytes a frame spends, exclusive and inclusive, by renderer routine, every 2 s (`patches/DrawCensus.cs`) |
 | `KF1_PROFILE` | off | `1`: the frame profiler, a section summary every 5 s; `panel` also opens its panel (Shift+P toggles it) |
 | `KF1_PROFILE_OUT` | off | a path: every frame's sections as CSV rows, for `scripts/profile_report.py` |
 | `KF1_PROFILE_SPIKE` | off | milliseconds: a console line for each frame whose work passes it |

@@ -31,7 +31,7 @@ walk and a turn, and by reading the code that uses each word:
 | address | type | what |
 |---|---|---|
 | `0x800A0790` | u16 | max HP (30 at a New Game) |
-| `0x800A0792` | u16 | HP: damage (`0x80016648`) subtracts from it, clamped at 0, and stage A calls the death routine `func_80015164` when it reads 0 (`0x80019A78`) |
+| `0x800A0792` | u16 | HP: damage (`func_8001564C`) adds to it, clamped, and calls the death routine `func_80015164` at 0 or below; stage A's tail also calls it (return `0x80019A90`). Death and its state byte `0x800A0822`: "Drawing contexts" in `GPU_RENDERER.md` |
 | `0x800A0794` | u16 | max MP (20 at a New Game) |
 | `0x800A0796` | u16 | MP |
 | `0x800A078A` | u8 | the area, n for `KF/Bn`: the sequence loader `func_80032A4C` writes it plus `'0'` into `B?\SND?.SEQ` |

@@ -83,6 +83,12 @@ Kf1.PrimBufferProbe.Install();
 // What each renderer draw call adds to the ordering table, by packet type (KF1_GEOPROBE).
 Kf1.GeometryProbe.Configure(Environment.GetEnvironmentVariable("KF1_GEOPROBE"));
 Kf1.GeometryProbe.Install();
+// The address map's coverage by packet writer (KF1_MAPCOVERAGE), and the draw census:
+// which renderer routine draws how much of the frame (KF1_DRAWCENSUS).
+Kf1.MapCoverage.Configure(Environment.GetEnvironmentVariable("KF1_MAPCOVERAGE"));
+Kf1.MapCoverage.Install();
+Kf1.DrawCensus.Configure(Environment.GetEnvironmentVariable("KF1_DRAWCENSUS"));
+Kf1.DrawCensus.Install();
 
 // The frame profiler (Verdite Core's): where each frame's time goes, by section. Shift+P
 // opens the panel, and recording runs while it is open. See "Profiling a frame" in

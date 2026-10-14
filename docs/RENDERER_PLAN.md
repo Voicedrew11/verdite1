@@ -86,12 +86,16 @@ Every later step depends on finding them.
 
 **Status 2026-10-14** (findings in `GPU_RENDERER.md`): 1 done (`NoDither` moved to
 `0094`; the load step of the acceptance test does not reproduce, before the pull
-or after). 2 read from the code: the writers, the contexts. 3: `StageProbe`,
-`PrimBufferProbe`, `GeometryProbe` and `ProfilerKnown` built and measured;
-`MapCoverage` and `DrawCensus` not yet. 4: the areas and their files; the mesh,
-face-kind and clip counts not yet. 5: `warp` built and measured in areas 1 and 3.
-Still open for the gate: death and the ending, the arm, kinds `0x2D`-`0x3C`, cells
-in areas 2, 4 and 5, and counters taken in every context, not only gameplay.
+or after). 2 done: every writer and its codes (the full table at `0x8001222C`),
+the projection and the depth; death and the ending located. 3 done: `StageProbe`
+(now with the menu), `PrimBufferProbe`, `GeometryProbe`, `MapCoverage`,
+`DrawCensus` and `ProfilerKnown`, measured. 4 done: meshes and face kinds per
+area; the banks counted, clips not identified. 5: `warp` measured in areas 1-4.
+Measured: areas 1-5, walking, the arm swinging, the menu, Start's message,
+death. **Left open, by owner**: area 5's warp (every cell tried fell or died;
+the verb's entry 0 is suspected), the ending and title (read, not run), OPEN.EXE's
+`func_8001A82C` (caller not found), the map TMD's F3/G3/G4 primitives (who reads
+them), the bank records' meaning, and the save and load screens (not entered).
 
 **Gate**: every emitter and context has an owner and a way to verify it; anything
 not reached is listed as open. Counters are taken with the GPU path off, so a zero

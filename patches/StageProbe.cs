@@ -13,6 +13,11 @@ namespace Kf1;
 /// line every five seconds. Stage I is the renderer, replaced in C# by
 /// <see cref="Renderer"/>; the hooks here still fire around the replacement. See
 /// "GAME.EXE's set-up and main loop" in docs/GAME_INTERNALS.md.
+///
+/// The in-game menu does not run the stages, so it has its own line when it runs: the
+/// present and the table clear, and the 2D writers it calls, with the packet-record
+/// cursor (0x80070EB8 +8) and the menu's packet pointer (0x80057E88) charged per call.
+/// See "Drawing contexts" in docs/GPU_RENDERER.md.
 /// </summary>
 public static class StageProbe
 {
@@ -24,11 +29,28 @@ public static class StageProbe
         ("I", 0x8001FDE4), ("gate", 0x800149F4),
     ];
 
+    // The menu: its present (func_8002AC34), its table clear (func_8002ABB4), and the
+    // writers. A writer is charged for the cursor it advances, not its callees'.
+    static readonly (string Name, uint Addr, bool Writer)[] Menu =
+    [
+        ("present", 0x8002AC34, false), ("clear", 0x8002ABB4, false),
+        ("80022D7C", 0x80022D7C, true), ("80025DA0", 0x80025DA0, true),
+        ("80027E58", 0x80027E58, true), ("80027EA0", 0x80027EA0, true),
+        ("80027EE4", 0x80027EE4, true), ("8002A510", 0x8002A510, true),
+        ("8002ACCC", 0x8002ACCC, true), ("8002AD1C", 0x8002AD1C, true),
+        ("800292F8", 0x800292F8, true), ("card", 0x8001B7B0, true),
+    ];
+
     /// <summary>u32: the ordering table the frame is being built into (FrameHead sets it).</summary>
     const uint OtPointer = 0x80090EBC;
     const int OtWords = 0x4000;
     const int Renderer = 8, Gate = 9;
     static uint _otAt;
+
+    /// <summary>u32: the packet record (start, end, cursor at +8); every writer bumps the cursor.</summary>
+    const uint Record = 0x80070EB8;
+    /// <summary>u32: the menu's packet pointer, bumped by its writers.</summary>
+    const uint MenuPacket = 0x80057E88;
 
     static readonly ModInfo _self = new()
     {
@@ -48,6 +70,18 @@ public static class StageProbe
     static readonly uint[] _after = new uint[OtWords];
     static readonly Stack<int> _stack = new();
     static long _windowStart = -1;
+
+    // The menu's counters: calls, and bytes its writers advanced the record and the
+    // packet pointer by, exclusive of the writers they call.
+    static readonly long[] _menuCalls = new long[Menu.Length];
+    static readonly long[] _menuRec = new long[Menu.Length];
+    static readonly long[] _menuPkt = new long[Menu.Length];
+
+    // The writers entered and not yet left: which one, the cursors on entry, and the
+    // bytes its callees have already been charged.
+    static readonly (int Slot, uint Rec, uint Cur, uint Pkt, long ChildRec, long ChildPkt)[] _menuStack =
+        new (int, uint, uint, uint, long, long)[16];
+    static int _menuDepth;
 
     public static void Configure(string? on) => _on = on?.Trim() == "1";
 
@@ -73,10 +107,24 @@ public static class StageProbe
             HookManager.AddPost(_self, t, post);
             targets.Add(t);
         }
+
+        // The menu's routines. A pre-hook gets only the CpuContext, so the slot is baked
+        // in per routine; the post goes first, as an orphan post is harmless.
+        int menu = 0;
+        for (int i = 0; i < Menu.Length; i++)
+        {
+            var t = SymbolRegistry.Resolve("game", null, Menu[i].Addr);
+            if (t == null) { Console.Error.WriteLine($"[KF1] stageprobe: no game/0x{Menu[i].Addr:X8} (menu {Menu[i].Name})"); continue; }
+            var slot = typeof(MenuSlot<>).MakeGenericType(Markers[i]);
+            slot.GetField(nameof(MenuSlot<int>.Id))!.SetValue(null, i);
+            if (HookManager.AddPost(_self, t, slot.GetMethod(nameof(MenuSlot<int>.Post))!) &&
+                HookManager.AddPre(_self, t, slot.GetMethod(nameof(MenuSlot<int>.Pre))!)) menu++;
+        }
+
         HookManager.Commit();
         int n = targets.Count(HookAttach.Installed);
-        Console.WriteLine($"[KF1] stageprobe: {n}/{Stages.Length} stages hooked");
-        return n == Stages.Length;
+        Console.WriteLine($"[KF1] stageprobe: {n}/{Stages.Length} stages hooked, {menu}/{Menu.Length} menu routines");
+        return n == Stages.Length && menu == Menu.Length;
     }
 
     public static void Pre(CpuContext c, IMemory m)
@@ -109,11 +157,52 @@ public static class StageProbe
         Report();
     }
 
-    /// <summary>Copies the ordering table; false when the pointer is not a table in main RAM.</summary>
+    // The menu's routines: a call is counted on exit; a writer also charges the cursors.
+    static void MenuEnter(int slot, IMemory m)
+    {
+        if (!Menu[slot].Writer) return;
+        if (_menuDepth >= _menuStack.Length) { _menuDepth++; return; }
+        var (rec, cur) = Cursors(m);
+        _menuStack[_menuDepth++] = (slot, rec, cur, m.ReadU32(MenuPacket), 0L, 0L);
+    }
+
+    static void MenuLeave(int slot, IMemory m)
+    {
+        _menuCalls[slot]++;
+        if (!Menu[slot].Writer) { Report(); return; }
+        if (_menuDepth <= 0) { Report(); return; }
+        if (_menuDepth > _menuStack.Length) { _menuDepth--; Report(); return; }
+        var f = _menuStack[--_menuDepth];
+
+        // The record moved across the call only if the writer swapped buffers; then its
+        // cursor has no meaning here and the advance is not charged.
+        var (rec, cur) = Cursors(m);
+        long recAdv = rec == f.Rec && rec != 0 ? (long)(uint)(cur - f.Cur) : 0L;
+        long pkt = (long)(uint)(m.ReadU32(MenuPacket) - f.Pkt);
+        _menuRec[slot] += Math.Max(0L, recAdv - f.ChildRec);
+        _menuPkt[slot] += Math.Max(0L, pkt - f.ChildPkt);
+
+        if (_menuDepth > 0 && _menuDepth <= _menuStack.Length)
+        {
+            var parent = _menuStack[_menuDepth - 1];
+            _menuStack[_menuDepth - 1] = (parent.Slot, parent.Rec, parent.Cur, parent.Pkt,
+                parent.ChildRec + recAdv, parent.ChildPkt + pkt);
+        }
+        Report();
+    }
+
+    // The packet record's cursor, and 0 when no record is set up.
+    static (uint Rec, uint Cur) Cursors(IMemory m)
+    {
+        uint rec = m.ReadU32(Record);
+        return rec < 0x80000000u ? (0u, 0u) : (rec, m.ReadU32(rec + 8u));
+    }
+
     // Whether the call ran: frame pacing's pre hook skips stages A-H on a frame the
     // world did not tick, and the gate whenever it is on; the hooks still fire.
     static bool Ran(int i) => i == Renderer || (i == Gate ? !FramePacing.Enabled : FramePacing.IterationTicked);
 
+    /// <summary>Copies the ordering table; false when the pointer is not a table in main RAM.</summary>
     static bool Snapshot(IMemory m, uint[] into)
     {
         if (m is not PSMemory p) return false;
@@ -152,6 +241,44 @@ public static class StageProbe
             _calls[i] = _otWrites[i] = _presents[i] = 0;
         }
         Console.WriteLine("[KF1] stageprobe: " + string.Join(" | ", parts));
+        ReportMenu(s);
         _windowStart = now;
+    }
+
+    // One line when the menu ran in the window; nothing otherwise.
+    static void ReportMenu(double s)
+    {
+        var parts = new List<string>();
+        for (int i = 0; i < Menu.Length; i++)
+        {
+            long n = _menuCalls[i];
+            if (n > 0)
+            {
+                string text = $"{Menu[i].Name} {n / s:0.0}/s";
+                if (Menu[i].Writer)
+                    // Words: a cursor step is 4 bytes; the packet pointer is the menu's own.
+                    text += $", rec {_menuRec[i] / 4.0 / n:0.0} pkt {_menuPkt[i] / 4.0 / n:0.0} words/call";
+                parts.Add(text);
+            }
+            _menuCalls[i] = _menuRec[i] = _menuPkt[i] = 0;
+        }
+        if (parts.Count > 0) Console.WriteLine("[KF1] stageprobe menu: " + string.Join(" | ", parts));
+    }
+
+    // One distinct pair of methods per menu routine, so the same delegate is not shared.
+    struct M0; struct M1; struct M2; struct M3; struct M4; struct M5; struct M6;
+    struct M7; struct M8; struct M9; struct M10; struct M11;
+
+    static readonly Type[] Markers =
+    [
+        typeof(M0), typeof(M1), typeof(M2), typeof(M3), typeof(M4), typeof(M5), typeof(M6),
+        typeof(M7), typeof(M8), typeof(M9), typeof(M10), typeof(M11),
+    ];
+
+    static class MenuSlot<T>
+    {
+        public static int Id;
+        public static void Pre(CpuContext c, IMemory m) => MenuEnter(Id, m);
+        public static void Post(CpuContext c, IMemory m) => MenuLeave(Id, m);
     }
 }
