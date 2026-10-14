@@ -61,7 +61,8 @@ public sealed record LauncherGame
 
     /// <summary>
     /// The launcher's strings with this game's names in them: <c>%NAME%</c> is
-    /// <see cref="Name"/> and <c>%GAME%</c> is <see cref="GameTitle"/>.
+    /// <see cref="Name"/>, <c>%GAME%</c> is <see cref="GameTitle"/> and
+    /// <c>%SERIAL%</c> is <see cref="Serial"/>.
     /// </summary>
-    public string Fill(string text) => text.Replace("%NAME%", Name).Replace("%GAME%", GameTitle);
+    public string Fill(string text) => text.Replace("%NAME%", Name).Replace("%GAME%", GameTitle).Replace("%SERIAL%", Serial);
 }

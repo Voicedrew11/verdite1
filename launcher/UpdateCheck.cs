@@ -9,8 +9,9 @@ namespace Verdite.Launcher;
 /// <summary>
 /// Asks GitHub whether a newer release exists. Notify only: nothing is downloaded.
 ///
-/// Runs once per launch on a worker thread, and reaches the network at most once a
-/// day; between checks the last answer is reused from update.json in the data
+/// Runs once per launch on a worker thread, and reaches the network at most once an
+/// hour (a day kept a published release from a player who had launched that morning
+/// until the next); between checks the last answer is reused from update.json in the data
 /// directory, so a player who launches twice still sees the notice. See
 /// "Telling the player about a new release" in Verdite Core's README.
 /// </summary>
@@ -21,7 +22,7 @@ static class UpdateCheck
     /// <summary>The View config key behind the Interface checkbox.</summary>
     public static string SettingKey => Launcher.Game.Name + ".UpdateCheck";
 
-    static readonly TimeSpan Interval = TimeSpan.FromHours(24);
+    static readonly TimeSpan Interval = TimeSpan.FromHours(1);
 
     public sealed record Release(string Tag, string Url);
 
@@ -38,7 +39,7 @@ static class UpdateCheck
 
     /// <summary>
     /// {prefix}UPDATE_CHECK=0 (VERDITE2_UPDATE_CHECK) turns it off, =force ignores
-    /// the daily throttle (a skipped version stays skipped).
+    /// the hourly throttle (a skipped version stays skipped).
     /// </summary>
     public static void Start()
     {

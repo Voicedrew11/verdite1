@@ -161,9 +161,9 @@ static class UpdateBadge
           "es-419": "Buscar actualizaciones al iniciar"
         },
         "verdite.update.setting_hint": {
-          "en": "Asks GitHub for the latest release at most once a day. Nothing is downloaded.",
-          "pt-BR": "Consulta o GitHub pela versão mais recente no máximo uma vez por dia. Nada é baixado.",
-          "es-419": "Consulta a GitHub por la versión más reciente como máximo una vez al día. No se descarga nada."
+          "en": "Asks GitHub for the latest release at most once an hour. Nothing is downloaded.",
+          "pt-BR": "Consulta o GitHub pela versão mais recente no máximo uma vez por hora. Nada é baixado.",
+          "es-419": "Consulta a GitHub por la versión más reciente como máximo una vez por hora. No se descarga nada."
         }
       }
     }

@@ -85,18 +85,8 @@ static class BuildKey
 static class Sources
 {
     /// <summary>The port's own C#, Verdite Core's included, compiled into the assembly.</summary>
-    public static IEnumerable<string> All() => In(Paths.ContentSrc, "*.cs");
+    public static IEnumerable<string> All() => Payload.In(Paths.ContentSrc, "*.cs");
 
     /// <summary>The recompiler's inputs: the game's config and the function maps under it.</summary>
-    public static IEnumerable<string> Config() => In(Paths.ContentConfig, "*.json");
-
-    static IEnumerable<string> In(string dir, string pattern)
-    {
-        if (!Directory.Exists(dir)) yield break;
-
-        var files = Directory.GetFiles(dir, pattern, SearchOption.AllDirectories);
-        // Ordinal, so the key does not move with the host's locale.
-        Array.Sort(files, StringComparer.Ordinal);
-        foreach (var f in files) yield return f;
-    }
+    public static IEnumerable<string> Config() => Payload.In(Paths.ContentConfig, "*.json");
 }

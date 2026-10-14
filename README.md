@@ -69,12 +69,13 @@ from a file.
 | `Game.cs` | the game's tag, its log and env prefixes and its id |
 | `HookAttach.cs` | attach on overlay loads until the pass succeeds, and read back what `HookManager` actually committed |
 | `Differential.cs` | run a recompiled routine and its C# transcription from one state and compare RAM, the scratchpad, the callee-saved registers with LO/HI, and the GTE; the recompiled result stands (a game's `verify` modes) |
-| `MouseIndicator.cs` | the glyph shown over the game picture when the mouse is captured or released; `Picture` is the rectangle it sits in, `OutputView` unless the game sets it |
 | `KeyLayoutApply.cs` | the port's keyboard layout as a default and a once-per-version migration that leaves a customised layout alone and corrects a superseded one; the game hands it its table, `Version`, `Superseded`, the line announcing it and where the applied version is kept |
 | `Kept.cs` | a setting's env var, then its saved key: the env var wins and is remembered as having won; `BoolsAsInts` for a game that keeps its switches as 0/1 |
-| `Mouse.cs` | mouse look and the mouse buttons: capture, the per-frame poll, the stale-motion rule, what a tick spends and what it turned by; the game hands it a `MouseGame` (units, step cap, pitch limit, base angle addresses, default buttons, its frame clock and text-editing test) and keeps the look hook and the settings page |
-| `WindowIcon.cs` | the game's memory-card icon as the window icon: `{Tag}_ICON` (`orb`, `off`, a frame), a 4bpp card icon decoded at any row stride, scaled by whole multiples to every size a desktop asks for and set at once; the game finds the icon on its disc |
+| `FocusPause.cs` | the game stands still and goes quiet while its window has no focus: the switch (`{Tag}_FOCUS_PAUSE`, its saved key, on), the focus, and the sound (the SPU's voice and CD gains to nothing, put back from the runtime's audio settings); the game asks `Active` from its own pause, and passes `driven` for a run a program drives, which is off unless the variable asks |
+| `Mouse.cs` | mouse look and the mouse buttons: capture (a click on the picture, released on focus loss, by a popup and while the game holds it with `Suspend`), the per-frame poll, the stale-motion rule, what a tick spends and what it turned by; the game hands it a `MouseGame` (units, step cap, pitch limit, base angle addresses, default buttons and capture key, its frame clock and text-editing test) and keeps the look hook and the settings page |
+| `WindowIcon.cs` | the game's memory-card icon as the window icon: `{Tag}_ICON` (`orb`, `off`, a frame), a 4bpp card icon decoded at any row stride, scaled by whole multiples to every size a desktop asks for and set at once, and kept as `icon.png` in the data directory so the next run (and the launcher's build popup) wears it before the disc is read; the game finds the icon on its disc |
 | `DesktopEntry.cs` | the Wayland half of the window icon: the same sizes into `$XDG_DATA_HOME/icons/hicolor` under the app id, and a desktop entry under the game's `Name`, `GenericName` and `Comment` only when no packager wrote one; `{Tag}_ICON_INSTALL=0` writes nothing |
+| `ShortcutIcon.cs` | the Windows half: the same sizes as `icon.ico` in the data directory, and every desktop, Start menu and pinned taskbar shortcut whose target is this process (or the package's stub above `bin\`) pointed at it, since the executable's own icon is the release's; an all-users shortcut only when the user may write it; `{Tag}_ICON_INSTALL=0` writes nothing |
 
 ## The launcher
 
@@ -84,7 +85,7 @@ the launcher builds the game on the player's machine on first run. It settles th
 data directory and chdirs into it, validates the disc, recompiles it in process,
 compiles the result with the port's sources in one Roslyn pass, caches the
 assembly under a key of what went into it, and hands over; it also checks GitHub
-for a newer release once a day and says so (it downloads nothing).
+for a newer release at most once an hour and says so (it downloads nothing).
 
 It is **not** compiled into the game. A game's launcher project
 (`Verdite2.Launcher/Verdite2.Launcher.csproj`) sets its names and imports
@@ -115,12 +116,24 @@ compiles the same sources on the developer path: a difference is a bug that
 exists only in the release. Both games' csprojs set what it assumes (unsafe,
 nullable, implicit usings plus `Verdite.Core`, QuickJit off in the runtimeconfig).
 
+**The build reads only what the release shipped.** `Launcher.targets` writes
+`content/manifest.txt`, every staged payload file's link, and `Build/Payload.cs`
+compiles, hashes and seeds only the files it lists. A release unpacked over an
+older one keeps the files the new one deleted, and the build used to compile every
+`.cs` under `content/src`: Verdite3 0.1.1 unpacked over 0.1.0 kept three patches
+that 0.1.1 had moved into this tree, and failed with seven errors. Anything
+unlisted is named at startup (`[Verdite3] ignoring 14 file(s) under content/ …`),
+and an install with no manifest builds from the whole directory as before. The
+installer also deletes `{app}\content` and `{app}\bin` before it copies, so an
+upgrade starts clean; the zip cannot, which is what the manifest is for.
+
 ### Telling the player about a new release
 
 `UpdateCheck` asks `api.github.com/repos/<UpdateRepository>/releases/latest`
 (which leaves out drafts and prereleases) on a worker after the window is up, at
-most once a day; `update.json` in the data directory keeps the answer and any
-skipped version, and a cached answer is still announced when the network is down.
+most once an hour (GitHub allows 60 unauthenticated requests an hour per address);
+`update.json` in the data directory keeps the answer and any skipped version, and
+a cached answer is still announced when the network is down.
 `UpdatePopup` opens once, outside play (`PlayAfter`) and never over another popup;
 `UpdateBadge` puts a gold button in the menu bar until the player hides it. *Check
 for updates at launch* is in Settings ▸ Interface; `<prefix>UPDATE_CHECK=0` turns
@@ -133,11 +146,12 @@ measurements.
 
 | file | what |
 |---|---|
-| `linux/build-appimage.sh` | `dist/<Name>-<VERSION>-x86_64.AppImage`: the self-contained publish, `AppRun`, the desktop entry and icon, the licences |
-| `windows/build-windows.ps1` | `dist/<Name>-<VERSION>-win-x64.zip` (the stub, `bin/`, `content/`, `licenses/`) and, with `iscc` on PATH, the installer |
+| `linux/build-appimage.sh` | `dist/<Name>-<version>-x86_64.AppImage`: the self-contained publish, `AppRun`, the desktop entry and icon, the licences |
+| `windows/build-windows.ps1` | `dist/<Name>-<version>-win-x64.zip` (the stub, `bin/`, `content/`, `licenses/`) and, with `iscc` on PATH, the installer |
 | `windows/verdite.iss` | the Inno Setup script; every name from the environment the PowerShell script sets |
 | `windows/Stub/` | the few-KB .NET Framework executable at the install root, built under the launcher's name, that starts `bin\<Name>.exe` |
-| `../scripts/release.sh` | bump `VERSION`, commit, tag `v<VERSION>`; never pushes |
+| `../scripts/release.sh` | tag `v<version>` (after bumping and committing `VERSION`, for a game that keeps one); never pushes |
+| `../scripts/version.sh` | print the version by the rule below |
 
 Each finds the game as the checkout it is vendored in (or `VERDITE_GAME_ROOT`) and
 reads the game's `packaging/package.env`:
@@ -146,11 +160,22 @@ reads the game's `packaging/package.env`:
 NAME=Verdite2
 APP_ID=verdite2
 INNO_APP_ID=9F1F0C1E-6A3E-4C69-9C2A-9E5F2B8D4A11   # one per game, never reused
+INNO_PRIVILEGES=lowest                              # optional: a per-user install; admin by default
 ```
 
-beside `packaging/shared/<app id>.desktop`, `.png` (256×256) and `.ico`, and the
-game's `VERSION`, `LICENSE` and `<Name>.Launcher/`. A game keeps one-line wrappers
+beside `packaging/shared/<app id>.desktop`, `.png` (256×256) and `.ico` (both
+optional: a port with no mark of its own ships a stub with no icon and an AppImage
+with a transparent one, and wears the card icon once the game has read it), and the
+game's `LICENSE` and `<Name>.Launcher/`. A game keeps one-line wrappers
 at `packaging/linux/build-appimage.sh`, `packaging/windows/build-windows.ps1` and
 `scripts/release.sh`, so its commands and CI do not name this path. The CI
 workflows stay in each game (GitHub reads them from there), and their release body
 is the game's.
+
+**The version** is `MAJOR.MINOR.PATCH`, resolved by one rule that
+`scripts/version.sh`, `build-windows.ps1` and `launcher/Launcher.targets` all
+follow: the game's `VERSION` file when it keeps one; else `VERDITE_VERSION`, which
+a release workflow sets from the tag it was pushed for; else the newest
+`vMAJOR.MINOR.PATCH` tag reachable from `HEAD`; else `0.0.0`. Verdite2 keeps a
+`VERSION` file, so a release there is a commit and a tag; Verdite3 keeps none, so
+a release is the tag alone.

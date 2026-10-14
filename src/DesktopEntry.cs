@@ -115,7 +115,7 @@ public static class DesktopEntry
 
     /// <summary>Writes only a file that is not already exactly this, so a boot that
     /// changes nothing touches nothing.</summary>
-    static bool Write(string path, byte[] data)
+    internal static bool Write(string path, byte[] data)
     {
         if (File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(data)) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -123,7 +123,7 @@ public static class DesktopEntry
         return true;
     }
 
-    static byte[] Png(byte[] rgba, int w, int h)
+    internal static byte[] Png(byte[] rgba, int w, int h)
     {
         var raw = new byte[h * (w * 4 + 1)];
         for (int y = 0; y < h; y++)

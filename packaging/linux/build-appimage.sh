@@ -4,7 +4,7 @@
 # Run through the game's packaging/linux/build-appimage.sh, or directly; the game
 # is the checkout this subtree sits in (tools/verdite-core), or $VERDITE_GAME_ROOT.
 # Its packaging/package.env names it (NAME, APP_ID), and packaging/shared/ holds
-# its $APP_ID.desktop and $APP_ID.png.
+# its $APP_ID.desktop and, if it ships a mark, $APP_ID.png.
 #
 # Needs the RecompOne subtree built (the game's scripts/setup_tools.sh) and the
 # .NET 10 SDK. It does NOT need the disc: the launcher carries the inputs to a
@@ -20,10 +20,11 @@ ROOT="${VERDITE_GAME_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && 
 
 OUT="${OUT:-$ROOT/dist}"
 APPDIR="$OUT/$NAME.AppDir"
-# One source of the number, for everything that names a build: the launcher's
-# csproj reads this same file, so a package can never be named something other
-# than what is inside it.
-VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION")}"
+# One rule for the number, for everything that names a build: the launcher's
+# csproj resolves it the same way (VERSION, else $VERDITE_VERSION, else the newest
+# version tag), so a package can never be named something other than what is
+# inside it.
+VERSION="${VERSION:-$(VERDITE_GAME_ROOT="$ROOT" bash "$(dirname "${BASH_SOURCE[0]}")/../../scripts/version.sh")}"
 
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
@@ -53,8 +54,19 @@ for d in "$APPDIR/usr/share/applications/$APP_ID.desktop" "$APPDIR/$APP_ID.deskt
     mkdir -p "$(dirname "$d")"
     { cat "$ROOT/packaging/shared/$APP_ID.desktop"; echo "X-AppImage-Version=$VERSION"; } > "$d"
 done
-cp "$ROOT/packaging/shared/$APP_ID.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/$APP_ID.png"
-cp "$ROOT/packaging/shared/$APP_ID.png" "$APPDIR/$APP_ID.png"
+# appimagetool refuses an AppDir without the icon its entry names. A port that
+# ships no mark (its icon is the game's own, read off the player's disc and put
+# into the icon theme by the game, which outranks this copy) gets a transparent
+# square, so the build passes and nothing is drawn in its place.
+ICON="$ROOT/packaging/shared/$APP_ID.png"
+if [ ! -f "$ICON" ]; then
+    ICON="$OUT/$APP_ID-blank.png"
+    base64 -d > "$ICON" <<'PNG'
+iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAABFUlEQVR42u3BMQEAAADCoPVP7WsIoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAMBPAAB2ClDBAAAAABJRU5ErkJggg==
+PNG
+fi
+cp "$ICON" "$APPDIR/usr/share/icons/hicolor/256x256/apps/$APP_ID.png"
+cp "$ICON" "$APPDIR/$APP_ID.png"
 
 # Third-party licences the artifact is obliged to carry. Noto Sans is embedded in
 # RecompOne.Runtime.dll (tools/RecompOne/patches/0033) and is SIL OFL 1.1, which

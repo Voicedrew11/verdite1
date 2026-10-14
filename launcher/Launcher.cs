@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using RecompOne.Runtime;
 using RecompOne.Runtime.Host.Window;
+using Verdite.Core;
 using Verdite.Launcher.Build;
 
 namespace Verdite.Launcher;
@@ -52,6 +53,7 @@ public static class Launcher
             // which an installed build cannot write to, or in whatever directory a
             // shortcut happened to start us in.
             Paths.Prepare();
+            Payload.Report();
 
             Runtime.DiscValidator = DiscCheck.Validate;
 
@@ -62,12 +64,25 @@ public static class Launcher
             Localization.Merge(game.Fill(BuildProgressPopup.Strings));
             Localization.Merge(game.Fill(UpdateBadge.Strings));
 
+            // The runtime's picker is written for a disc that went missing ("Disc
+            // image not found"). Here it is the welcome, so the launcher's own
+            // title and text replace those.
+            Localization.Merge(game.Fill(DiscStrings));
+
             // In the background; the badge appears in the menu bar once it has an answer.
             UpdateBadge.Install();
             UpdateCheck.Start();
 
-            var icon = Path.Combine(AppContext.BaseDirectory, game.AppId + ".png");
-            if (File.Exists(icon)) Runtime.SetIcon(File.ReadAllBytes(icon));
+            // The card icon the game kept on an earlier run (Verdite Core's
+            // WindowIcon.Saved, in the data directory, which is the working
+            // directory from Paths.Prepare on), else the port's shipped mark if it
+            // ships one. A first run has neither until the game reads the disc.
+            foreach (var icon in new[] { "icon.png", Path.Combine(AppContext.BaseDirectory, game.AppId + ".png") })
+            {
+                if (!File.Exists(icon)) continue;
+                Runtime.SetIcon(File.ReadAllBytes(icon));
+                break;
+            }
 
             // The runtime's own picker: it opens a native file dialog, refuses
             // anything DiscValidator rejects, saves the accepted path, and pumps the
@@ -97,7 +112,15 @@ public static class Launcher
 
             var gameDll = Path.Combine(Paths.Builds, BuildKey.Compute(discPath), game.GameAssembly + ".dll");
 
-            if (!File.Exists(gameDll)) BuildGame(discPath, gameDll);
+            // The first-run setup, shown while the game builds when there is a build
+            // to wait for, and on its own when there is not (a spec raised past the
+            // one the player finished, never seen, or VERDITE2_SETUP=1; Onboarding.Due).
+            // Either way the game starts after it.
+            var setup = Onboarding.Load(game.Name, Path.Combine(Paths.ContentConfig, "onboarding.json"));
+            if (setup is not null && !Onboarding.Due(setup) && game.Env("SETUP") is not "1") setup = null;
+
+            if (!File.Exists(gameDll)) BuildGame(discPath, gameDll, setup);
+            else if (setup is not null) RunSetup(new OnboardingPopup(setup, game.Name, inGame: false));
 
             Play(gameDll, discPath);
         }
@@ -114,6 +137,27 @@ public static class Launcher
     }
 
     /// <summary>
+    /// The disc picker's title and text for a first run, in the launcher's voice.
+    /// Overrides of existing keys, so all three languages are the override's own.
+    /// </summary>
+    const string DiscStrings = """
+    {
+      "strings": {
+        "disc.title": {
+          "en": "Choose your disc",
+          "pt-BR": "Escolha seu disco",
+          "es-419": "Elige tu disco"
+        },
+        "disc.description": {
+          "en": "Choose the disc image (.cue or .chd) of %GAME% (%SERIAL%) to begin. %NAME% builds the game from your own copy, and the first launch takes a moment while it does.",
+          "pt-BR": "Escolha a imagem do disco (.cue ou .chd) de %GAME% (%SERIAL%) para começar. O %NAME% constrói o jogo a partir da sua própria cópia, e o primeiro início leva um momento enquanto isso acontece.",
+          "es-419": "Elige la imagen del disco (.cue o .chd) de %GAME% (%SERIAL%) para comenzar. %NAME% construye el juego a partir de tu propia copia, y el primer inicio tarda un momento mientras lo hace."
+        }
+      }
+    }
+    """;
+
+    /// <summary>
     /// Build the game assembly, with the window alive throughout.
     ///
     /// The work runs on a worker thread and the main thread pumps, because both
@@ -121,11 +165,23 @@ public static class Launcher
     /// window the desktop offers to force-quit. The main thread is the one that
     /// must do the pumping: it owns the GL context.
     /// </summary>
-    static void BuildGame(string discPath, string gameDll)
+    static void BuildGame(string discPath, string gameDll, OnboardingSpec? setup)
     {
         var popup = new BuildProgressPopup();
         PopupManager.Register(popup);
-        popup.Open();
+
+        // With setup due, setup is what the player looks at, and the build's
+        // progress is a strip at its foot read from the same fields.
+        OnboardingPopup? wizard = setup is null ? null : new OnboardingPopup(setup, Game.Name, inGame: false)
+        {
+            Build = () => new(popup.Status, popup.Step, popup.Steps, popup.Error, popup.Step >= popup.Steps),
+        };
+        if (wizard is not null)
+        {
+            PopupManager.Register(wizard);
+            wizard.Open();
+        }
+        else popup.Open();
 
         var generated = Path.Combine(Paths.Data, "generated");
         var log = new System.Text.StringBuilder();
@@ -165,13 +221,19 @@ public static class Launcher
         { IsBackground = true, Name = Game.AppId + "-build" };
 
         work.Start();
-        while (work.IsAlive) Runtime.Pump();
+        // The build, and setup if it is up: the game starts when both are done. A
+        // failed build still waits for setup, whose strip now says the build
+        // failed, so the player's choices are kept, and the failure popup follows.
+        while (work.IsAlive || wizard is { IsOpen: true }) Runtime.Pump();
 
         if (popup.Error is null)
         {
             popup.Close();
             return;
         }
+
+        wizard?.Close();
+        popup.Open();
 
         // The build log is the file a failed first run asks the player to send, so
         // it leads with the build that wrote it.
@@ -181,6 +243,14 @@ public static class Launcher
         // the window is closed, so this is how the player reads the message and
         // then leaves -- there is no game to fall back to.
         while (true) Runtime.Pump();
+    }
+
+    /// <summary>Setup with no build beside it: the game is already built.</summary>
+    static void RunSetup(OnboardingPopup wizard)
+    {
+        PopupManager.Register(wizard);
+        wizard.Open();
+        while (wizard.IsOpen) Runtime.Pump();
     }
 
     /// <summary>
