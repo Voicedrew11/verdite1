@@ -47,7 +47,8 @@ recompiled and running, following Verdite3's method but applied to this disc.
   the model walk and its five submitters in C# (with the smoothing passed in), then
   the pose routine `func_800205D4`, then the map path. **The selected item's
   display steps on every renderer call**, so under pacing it turns in faster;
-  hold it to the tick.
+  hold it to the tick. The whole renderer port, step by step, is in
+  `docs/RENDERER_PLAN.md`.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
