@@ -21,7 +21,7 @@ public static class LinearDepthCue
             // reciprocal: an exact boundary can otherwise become one unit short.
             if (all(equal(pair, trunc(pair))) && all(lessThanEqual(abs(pair), vec2(65535.0))) && abs(depth) <= 65535.0) {
                 int numerator = (int(floor(depth * 0.25)) - int(floor(pair.x * 0.25))) * 16384;
-                return float(clamp(numerator / (int(pair.y) - int(pair.x)), 0, 7951));
+                return float(clamp(numerator / (int(pair.y) - int(pair.x)), 0, 7951)); // int-ok: pair is integral and pair.x != pair.y is tested above
             }
             return clamp(trunc((floor(depth * 0.25) - floor(pair.x * 0.25)) * 16384.0 / (pair.y - pair.x)), 0.0, 7951.0);
         }

@@ -1,0 +1,113 @@
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlModelMeshes.cs
+@@ -44,6 +44,8 @@ public sealed partial class GlCore
+     int _uwModelTile = -1, _uwnModelTile = -1;
+     // 0098. ModelInstance.FadeOut, as the weight drawn, per program.
+     int _uwModelKeep = -1, _uwnModelKeep = -1;
++    // 0103. RetainedScene.ModelNearClip, per program.
++    int _uwModelClip = -1, _uwnModelClip = -1;
+     // The view-space placement (the arm), per program: uModelView, then the three rows and T.
+     readonly int[] _uwView = [-1, -1, -1, -1, -1], _uwnView = [-1, -1, -1, -1, -1];
+     static readonly string[] ViewNames = ["uModelView", "uModelVR0", "uModelVR1", "uModelVR2", "uModelVT"];
+@@ -56,7 +58,7 @@ public sealed partial class GlCore
+         _uwModelFar = L("uModelFar"); _uwModelNear = L("uModelNear"); _uwModelLlm = L("uModelLlm"); _uwModelCue = L("uModelCue");
+         _uwModelRgbc = L("uModelRgbc"); _uwModelMat = L("uModelMat"); _uwModelGteC = L("uModelGteC");
+         _uwModelPose = L("uModelPose"); _uwModelPoseW = L("uModelPoseW"); _uwModelSky = L("uModelSky");
+-        _uwModelTile = L("uModelTile"); _uwModelKeep = L("uModelKeep");
++        _uwModelTile = L("uModelTile"); _uwModelKeep = L("uModelKeep"); _uwModelClip = L("uModelClip");
+         for (int i = 0; i < ViewNames.Length; i++) _uwView[i] = L(ViewNames[i]);
+         _gl.UseProgram(_progWorld);
+         if (_uwModelKeep >= 0) _gl.Uniform1(_uwModelKeep, 1f);
+@@ -74,7 +76,7 @@ public sealed partial class GlCore
+             _uwnModel = N("uModel"); _uwnModelBase = N("uModelBase"); _uwnModelR = N("uModelR"); _uwnModelT = N("uModelT");
+             _uwnModelFar = N("uModelFar"); _uwnModelNear = N("uModelNear"); _uwnModelMat = N("uModelMat"); _uwnModelGteC = N("uModelGteC");
+             _uwnModelPose = N("uModelPose"); _uwnModelPoseW = N("uModelPoseW"); _uwnModelTile = N("uModelTile");
+-            _uwnModelKeep = N("uModelKeep");
++            _uwnModelKeep = N("uModelKeep"); _uwnModelClip = N("uModelClip");
+             for (int i = 0; i < ViewNames.Length; i++) _uwnView[i] = N(ViewNames[i]);
+             _gl.UseProgram(_progWorldNrm);
+             if (_uwnModelKeep >= 0) _gl.Uniform1(_uwnModelKeep, 1f);
+@@ -331,6 +333,7 @@ public sealed partial class GlCore
+         {
+             _gl.Uniform1(_uwnModelBase, m.VertBase);
+             if (_uwnModelTile >= 0) _gl.Uniform1(_uwnModelTile, m.Tile ? 1 : 0);
++            if (_uwnModelClip >= 0) _gl.Uniform1(_uwnModelClip, RetainedScene.ModelNearClip ? 1 : 0);
+             if (_uwnModelPose >= 0) _gl.Uniform1(_uwnModelPose, pose);
+             if (_uwnModelPoseW >= 0) _gl.Uniform1(_uwnModelPoseW, weight);
+             _gl.UniformMatrix3(_uwnModelR, 1, true, _m9);
+@@ -344,6 +347,7 @@ public sealed partial class GlCore
+         _gl.Uniform1(_uwModelBase, m.VertBase);
+         if (_uwModelSky >= 0) _gl.Uniform1(_uwModelSky, m.Sky ? 1 : 0);
+         if (_uwModelTile >= 0) _gl.Uniform1(_uwModelTile, m.Tile ? 1 : 0);
++        if (_uwModelClip >= 0) _gl.Uniform1(_uwModelClip, RetainedScene.ModelNearClip ? 1 : 0);
+         if (_uwModelPose >= 0) _gl.Uniform1(_uwModelPose, pose);
+         if (_uwModelPoseW >= 0) _gl.Uniform1(_uwModelPoseW, weight);
+         _gl.UniformMatrix3(_uwModelR, 1, true, _m9);
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -744,6 +744,12 @@ internal static class GlShaders
+         // whole loop, and any other goes to the game's clipper, which here is the GPU's
+         // near clip and the face's plane against the eye.
+         uniform int   uModelTile;
++        // 0103. A face with a corner the GTE cannot project (RetainedScene.ModelNearClip)
++        // is kept by its plane against the eye and drawn in the ordinary projection,
++        // clipped at the GPU's near plane, as a Tile instance's is; modelFaceKept sets
++        // gModelClip for its corners.
++        uniform int   uModelClip;
++        bool gModelClip = false;
+ 
+         ivec3 modelPosed(int i) {
+             if (uModelPose < 0) return texelFetch(uModelVerts, uModelBase + i).xyz;
+@@ -789,7 +795,7 @@ internal static class GlShaders
+         // assembler clips nothing, so neither does the near plane here. Anywhere else
+         // the projection is the ordinary one, unchanged.
+         vec4 modelPlace(vec4 p, vec3 v) {
+-            if (uModel == 0 || uModelTile != 0) return p;
++            if (uModel == 0 || uModelTile != 0 || gModelClip) return p;
+             if (v.z >= uH * 0.5) {
+                 vec2 raw = uModelGteC + uH * v.xy / v.z;
+                 if (all(greaterThanEqual(raw, vec2(-1024.0))) && all(lessThanEqual(raw, vec2(1023.0)))) return p;
+@@ -830,11 +836,20 @@ internal static class GlShaders
+             int z1 = int(clamp(v1.z, 0.0, 65535.0)) >> 2;
+             int z2 = int(clamp(v2.z, 0.0, 65535.0)) >> 2;
+             int z;
+-            if (f3 != 0xFFFFFFFFu) {
+-                vec3 v3 = modelEye(f3);
+-                z = (z0 + z1 + z2 + (int(clamp(v3.z, 0.0, 65535.0)) >> 2)) >> 2;
+-            } else z = (z0 + z1 + z2) / 3;
++            bool quad = f3 != 0xFFFFFFFFu;
++            vec3 v3 = quad ? modelEye(f3) : v2;
++            if (quad) z = (z0 + z1 + z2 + (int(clamp(v3.z, 0.0, 65535.0)) >> 2)) >> 2;
++            else z = (z0 + z1 + z2) / 3;
+             if (uModelSky == 0 && (z <= 0 || float(z) < uModelNear || float(z) >= uModelFar)) return false;
++            // 0103. A face reaching past the eye, or off the divide's range: its corners'
++            // saturated places drew it as a sheared slab (and the GPU's size limit had the
++            // packets drop it); clipped instead, its facing is its plane's against the eye.
++            if (uModelClip != 0 && uModelSky == 0 && uModelView == 0
++                && !(modelProjects(v0) && modelProjects(v1) && modelProjects(v2) && modelProjects(v3))) {
++                gModelClip = true;
++                vec3 n = quad ? cross(v3 - v0, v2 - v1) : cross(v1 - v0, v2 - v0);
++                return dot(v0, n) > 0.0;
++            }
+             vec2 s0 = modelScreen(v0), s1 = modelScreen(v1), s2 = modelScreen(v2);
+             if (uModelSky != 0) { s0 = floor(s0); s1 = floor(s1); s2 = floor(s2); }
+             return (s1.x - s0.x) * (s2.y - s0.y) - (s1.y - s0.y) * (s2.x - s0.x) > 0.0;
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -1102,6 +1102,16 @@ public static class RetainedScene
+     /// default, is the walk as it was.</summary>
+     public static int UnderSlots;
+ 
++    /// <summary>0103. Draw a retained model's face that has a corner the GTE cannot
++    /// project (nearer than H/2, or off the divide's range) in the ordinary projection,
++    /// clipped at the GPU's near plane and kept by its plane against the eye, as a
++    /// <c>Tile</c> instance's is. Placed at the divide's saturated ends instead, a large
++    /// flat face reaching past the eye drew as a long sheared slab; the packets never
++    /// drew it, the GPU refusing a triangle more than 1023 pixels across or 511 down.
++    /// Not the sky nor a model placed in view space. False, the default, is the draw as
++    /// it was.</summary>
++    public static bool ModelNearClip;
++
+     /// <summary>0096. Set by the table walk while it is in <see cref="UnderSlots"/> after
+     /// a main view that drew; false outside a walk.</summary>
+     public static bool UnderWorld;

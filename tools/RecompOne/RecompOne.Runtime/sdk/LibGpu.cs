@@ -61,6 +61,9 @@ public static class LibGpu
         var arm = RetainedScene.ArmSerial > 0 && RetainedScene.ArmSerial == RetainedScene.MainSerial
                   && !custom && !PlanarReflections.Capturing;
         var armDue = false;
+        // 0096. The last slot the game linked to be drawn before the world; -1 until a
+        // main view has drawn.
+        var underTo = -1;
         for (var guard = 0; guard < 0x100000; guard++)
         {
             // Where in the table this primitive was linked, counted from the head —
@@ -82,14 +85,20 @@ public static class LibGpu
                 if (slot == 1 && !custom && PlanarReflections.Capturing && RetainedScene.MirrorSerial > 0)
                 {
                     if (!gpu.DrawRetainedMain()) RetainedScene.MirrorMissed++;
+                    else underTo = slot + RetainedScene.UnderSlots;
                     RetainedScene.MirrorSerial = 0;
                 }
                 else if (slot == 1 && RetainedScene.MainSerial > 0 && !custom && !PlanarReflections.Capturing)
                 {
                     if (!gpu.DrawRetainedMain()) RetainedScene.MainMissed++;
-                    else water = RetainedScene.WaterPending && reorder;
+                    else
+                    {
+                        water = RetainedScene.WaterPending && reorder;
+                        underTo = slot + RetainedScene.UnderSlots;
+                    }
                     RetainedScene.MainSerial = 0;
                 }
+                RetainedScene.UnderWorld = slot > 1 && slot <= underTo;
                 armDue |= arm && slot >= RetainedScene.ArmSlot && slot >= 1;
             }
             GteDepth.OtSlot = slot;
@@ -116,8 +125,9 @@ public static class LibGpu
                         else SendHeld(gpu, m, onEntry, probe, guard, slot, ref water);
                     }
                     // The water walked before a barrier that draws goes before it, as
-                    // the held packets do.
-                    if (water && kind == BlendOrder.Kind.Barrier && Draws(m, addr))
+                    // the held packets do; not before one under the world (0096),
+                    // which the water is drawn over.
+                    if (water && kind == BlendOrder.Kind.Barrier && !RetainedScene.UnderWorld && Draws(m, addr))
                         water = gpu.DrawRetainedWater(WaterCut(slot));
                     onEntry?.Invoke(guard);
                     if (probe) BlendOrder.ProbePacket(m, addr, count);
@@ -139,6 +149,7 @@ public static class LibGpu
         if (GteDepth.OtEntry >= 0) GteDepth.OtLength = GteDepth.OtEntry + 1;
         GteDepth.OtEntry = -1;
         GteDepth.OtSlot = -1;
+        RetainedScene.UnderWorld = false;
         if (custom) GpuPrims.Clear();
     }
 

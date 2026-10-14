@@ -28,7 +28,7 @@ public static class BiosB
         public readonly SemaphoreSlim Baton = new(0, 1);
     }
 
-    private sealed class ThreadGone : Exception;
+    internal sealed class ThreadGone : Exception;
 
     private const int MaxThreads = 8;
     private static readonly TCB[] _tcbs = Build();

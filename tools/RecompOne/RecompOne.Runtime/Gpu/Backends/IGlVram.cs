@@ -61,5 +61,10 @@ public interface IGlVram
     /// target.</summary>
     void BlitSample(int sx, int sy, int sw, int sh, uint dstFbo, int dstW, int dstH, int dx, int dy, int dw, int dh);
 
+    /// <summary>0097. The render scale changed from <paramref name="from"/> to
+    /// <see cref="GlVram.Scale"/>: reallocate every texture sized by it, carrying
+    /// the scaled framebuffer's picture across.</summary>
+    void Rescale(int from);
+
     void Dispose();
 }

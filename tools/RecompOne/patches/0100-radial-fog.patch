@@ -1,0 +1,285 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index 281ebed..df1cd7b 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -81,7 +81,7 @@ public sealed partial class GlCore : IGpuBackend
+     bool _ssrInfo;
+     int _uSsrOrigin, _uSsrSize, _uSsrTexSize, _uSsrProjH, _uSsrCentre;
+     int _uSsrMaxDist, _uSsrThickness, _uSsrSky, _uSsrSteps, _uSsrMarchOn, _uSsrMurkDist, _uSsrMurkColor, _uSsrMurkUp;
+-    int _uSsrDqa, _uSsrDqb, _uSsrFogCurve;
++    int _uSsrDqa, _uSsrDqb, _uSsrFogCurve, _uSsrRadialFog = -1;
+     int _uPresentSsrOn;
+     int _uPresentAoMatOn;
+     // The reflection blur's mip chains of the picture and of the planar texture,
+@@ -94,6 +94,8 @@ public sealed partial class GlCore : IGpuBackend
+     int _uSsrPlanarOn, _uSsrPlanarPlane, _uSsrPlanarTol, _uSsrRipple, _uSsrCompare;
+     int _uClipOn, _uClipPlane, _uClipCentre, _uClipH, _uClipLevel, _uClipDq;
+     int _clipOnSent = -1;
++    // 0100. GteDepth.RadialFog, as last sent to the prim program; -1 unsent.
++    int _uRadialFog = -1, _radialSent = -1;
+     // 0071. Authored lights.
+     int _uLightN, _uLightPos, _uLightCol, _uLightDir, _uLightCentre, _uLightH;
+     // 0078. Ripples on water.
+@@ -248,6 +250,8 @@ public sealed partial class GlCore : IGpuBackend
+         _uClipLevel = _gl.GetUniformLocation(_progPrim, "uClipLevel");
+         _uClipDq = _gl.GetUniformLocation(_progPrim, "uClipDq");
+         _clipOnSent = -1;
++        _uRadialFog = _gl.GetUniformLocation(_progPrim, "uRadialFog");
++        _radialSent = -1;
+         _uLightN = _gl.GetUniformLocation(_progPrim, "uLightN");
+         _uLightPos = _gl.GetUniformLocation(_progPrim, "uLightPos");
+         _uLightCol = _gl.GetUniformLocation(_progPrim, "uLightCol");
+@@ -433,6 +437,7 @@ public sealed partial class GlCore : IGpuBackend
+                 _uSsrDqa = _gl.GetUniformLocation(_progSsr, "uDqa");
+                 _uSsrDqb = _gl.GetUniformLocation(_progSsr, "uDqb");
+                 _uSsrFogCurve = _gl.GetUniformLocation(_progSsr, "uFogCurve");
++                _uSsrRadialFog = _gl.GetUniformLocation(_progSsr, "uRadialFog");
+                 _uSsrAtmosOn = _gl.GetUniformLocation(_progSsr, "uAtmosOn");
+                 _uSsrAtmosColour = _gl.GetUniformLocation(_progSsr, "uAtmosColour");
+                 _uSsrAtmosShape = _gl.GetUniformLocation(_progSsr, "uAtmosShape");
+@@ -1922,6 +1927,20 @@ public sealed partial class GlCore : IGpuBackend
+                 if (_uClipDq >= 0) _gl.Uniform2(_uClipDq, (float)GteDepth.ProjDqa, GteDepth.ProjDqb / 4096f);
+             }
+         }
++        // 0100. Radial fog takes a pixel back to the view through the clip's centre
++        // and H, which a planar batch has just sent for its own view.
++        int radial = GteDepth.RadialFog ? 1 : 0;
++        if (_uRadialFog >= 0 && (radial != 0 || _radialSent != 0))
++        {
++            if (radial != _radialSent) _gl.Uniform1(_uRadialFog, radial);
++            _radialSent = radial;
++            if (radial != 0 && clipOn == 0)
++            {
++                _gl.Uniform2(_uClipCentre, GteDepth.ProjCx + (rt?.Margin ?? 0), GteDepth.ProjCy);
++                _gl.Uniform1(_uClipH, Math.Max(1f, GteDepth.ProjH));
++                if (_uClipDq >= 0) _gl.Uniform2(_uClipDq, (float)GteDepth.ProjDqa, GteDepth.ProjDqb / 4096f);
++            }
++        }
+         // 0071. The light list, sent when the port publishes a new one. Not into
+         // VRAM or a planar texture, whose view is not the one the lights are in.
+         int lightN = RemasterUniforms.Active && rt is { IsPlanar: false } ? RemasterUniforms.LightCount : 0;
+@@ -3220,6 +3239,7 @@ public sealed partial class GlCore : IGpuBackend
+         if (_uSsrDqa >= 0) _gl.Uniform1(_uSsrDqa, (float)GteDepth.ProjDqa);
+         if (_uSsrDqb >= 0) _gl.Uniform1(_uSsrDqb, (float)GteDepth.ProjDqb);
+         if (_uSsrFogCurve >= 0) _gl.Uniform1(_uSsrFogCurve, ScreenReflections.FogCurve);
++        if (_uSsrRadialFog >= 0) _gl.Uniform1(_uSsrRadialFog, GteDepth.RadialFog ? 1 : 0);
+         if (_uSsrAtmosOn >= 0)
+         {
+             bool on = RemasterUniforms.FogActive;
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+index c2e298c..b7db62a 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlMainView.cs
+@@ -39,6 +39,7 @@ public sealed partial class GlCore
+         _uwBk = L("uLightBk"); _uwLcmR = L("uLcmR"); _uwLcmG = L("uLcmG"); _uwLcmB = L("uLcmB");
+         _uwClipOn = L("uClipOn"); _uwClipPlane = L("uClipPlane"); _uwClipCentre = L("uClipCentre");
+         _uwClipH = L("uClipH"); _uwClipLevel = L("uClipLevel"); _uwClipDq = L("uClipDq");
++        _uwRadialFog = L("uRadialFog");
+         _gl.UseProgram(_progWorld);
+         if (_uwSwellOn >= 0) _gl.Uniform1(_uwSwellOn, 0);
+         if (_uwWaveOn >= 0) _gl.Uniform1(_uwWaveOn, 0);
+@@ -177,6 +178,7 @@ public sealed partial class GlCore
+     }
+ 
+     int _uwClipOn = -1, _uwClipPlane = -1, _uwClipCentre = -1, _uwClipH = -1, _uwClipLevel = -1, _uwClipDq = -1;
++    int _uwRadialFog = -1;
+ 
+     /// <summary>
+     /// The planar walk's mirror, drawn as the main view is: the map's opaque faces of
+@@ -461,6 +463,17 @@ public sealed partial class GlCore
+             if (_uwClipLevel >= 0) _gl.Uniform3(_uwClipLevel, la[0], la[1], la[2]);
+             if (_uwClipDq >= 0) _gl.Uniform2(_uwClipDq, (float)GteDepth.ProjDqa, GteDepth.ProjDqb / 4096f);
+         }
++        // 0100. Radial fog, through the same centre and H; the mirror's are sent above.
++        if (_uwRadialFog >= 0)
++        {
++            _gl.Uniform1(_uwRadialFog, GteDepth.RadialFog ? 1 : 0);
++            if (GteDepth.RadialFog && !mirror && _uwClipCentre >= 0)
++            {
++                _gl.Uniform2(_uwClipCentre, cx, cy);
++                _gl.Uniform1(_uwClipH, Math.Max(1f, v.H));
++                if (_uwClipDq >= 0) _gl.Uniform2(_uwClipDq, (float)GteDepth.ProjDqa, GteDepth.ProjDqb / 4096f);
++            }
++        }
+         SetWorldView(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, cy, rt.Wide1x, rt.H, v.H, true, GlVram.Scale);
+         if (_uwModelGteC >= 0) _gl.Uniform2(_uwModelGteC, v.Cx, v.Cy);
+         if (_uwNear >= 0) _gl.Uniform1(_uwNear, RetainedScene.MainNear);
+@@ -536,6 +549,7 @@ public sealed partial class GlCore
+         if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, 0f);
+         if (_uwSwellOn >= 0) _gl.Uniform1(_uwSwellOn, 0);
+         if (_uwClipOn >= 0) _gl.Uniform1(_uwClipOn, 0);
++        if (_uwRadialFog >= 0) _gl.Uniform1(_uwRadialFog, 0);
+         if (_uwDepthCapZ >= 0) _gl.Uniform1(_uwDepthCapZ, 0f);
+         EndWorldLights();
+     }
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+index 775e58c..f56eb83 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlShaders.cs
+@@ -1016,6 +1016,8 @@ internal static class GlShaders
+         uniform float uDqa;
+         uniform float uDqb;
+         uniform int   uFogCurve;
++        // 0100. Fog by the distance to the eye (GteDepth.RadialFog), as the world's.
++        uniform int   uRadialFog;
+         // 0074. The area's fog colour and curve, as PrimFs takes them (the colour
+         // 0..1 here), and the sky the frame is cleared to: fog turns a colour towards
+         // the fog's rather than to black, and a cubemap miss reflects the sky.
+@@ -1077,6 +1079,11 @@ internal static class GlShaders
+             return clamp(1.0 - w / 4096.0, 0.0, 1.0);
+         }
+ 
++        // 0100. The depth a surface at view position q is fogged at, and the depth of
++        // the image a ray from p that travels t further stands at.
++        float fogZ(vec3 q) { return uRadialFog != 0 ? length(q) : q.z; }
++        float fogImage(vec3 p, float t) { return uRadialFog != 0 ? length(p) + t : p.z * (length(p) + t) / length(p); }
++
+         // A colour kept `keep` of by the fog, the rest the fog's colour.
+         vec3 fogTo(vec3 c, float keep) {
+             return uAtmosOn != 0 ? mix(uAtmosColour, c, keep) : c * keep;
+@@ -1370,7 +1377,7 @@ internal static class GlShaders
+                 }
+                 float run = (d <= 0.0 || d >= 1.0) ? FAR : max(d * FAR - zs, 0.0) * length(p) / zs;
+                 gMurk = 1.0 - exp(-run / uMurkDist);
+-                gMurkCol = fogTo(uMurkColor, fogKeep(zs));
++                gMurkCol = fogTo(uMurkColor, fogKeep(fogZ(p)));
+             }
+             if (refl <= 0.0) { emit(vec3(0.0), 0.0); return; }
+             vec3 n = octDecode(s.rg);
+@@ -1415,7 +1422,7 @@ internal static class GlShaders
+                     // (the wrong way round, for this one) as the control.
+                     oInfo.a += 4.0 / 255.0;
+                     if (cubeHit) {
+-                        vec3 sc = fogTo(cc, fogKeep(p.z * (length(p) + ct) / length(p)));
++                        vec3 sc = fogTo(cc, fogKeep(fogImage(p, ct)));
+                         oInfo.b = abs(luma(pc) - luma(sc));
+                         oInfo.g = abs(luma(texture(uPlanar, tc(vec2(vUv.x, 2.0 * uCentre.y - vUv.y))).rgb) - luma(sc));
+                         oInfo.a += 16.0 / 255.0;
+@@ -1428,7 +1435,7 @@ internal static class GlShaders
+                     else emit(vec3(0.0), 0.0);
+                     return;
+                 }
+-                float zImage = p.z * (length(p) + ct) / length(p);
++                float zImage = fogImage(p, ct);
+                 float keep = fogKeep(zImage);
+                 w *= 1.0 - smoothstep(0.7, 1.0, ct / uMaxDist);
+                 oInfo.a += 1.0 / 255.0;
+@@ -1500,8 +1507,8 @@ internal static class GlShaders
+                 oInfo.a += 4.0 / 255.0;
+                 if (hit && !overlayAt(huv) && edgeFade(huv) > 0.99) {
+                     vec3 sc = texture(uColor, tc(huv)).rgb;
+-                    float zHit = viewAt(huv, depthAt(huv) * FAR).z;
+-                    float zImage = p.z * (length(p) + ht) / length(p);
++                    float zHit = fogZ(viewAt(huv, depthAt(huv) * FAR));
++                    float zImage = fogImage(p, ht);
+                     sc = refog(sc, clamp(fogKeep(zImage) / max(fogKeep(zHit), 1e-3), 0.0, 1.0));
+                     oInfo.b = abs(luma(pc) - luma(sc));
+                     oInfo.g = abs(luma(texture(uPlanar, tc(vUv)).rgb) - luma(sc));
+@@ -1528,8 +1535,8 @@ internal static class GlShaders
+                 // darkening, so a surface lost in it reflects black -- which is what
+                 // the void past the draw distance reflects too, so nothing pops at
+                 // the fog's edge.
+-                float zHit = viewAt(huv, depthAt(huv) * FAR).z;
+-                float zImage = p.z * (length(p) + ht) / length(p);
++                float zHit = fogZ(viewAt(huv, depthAt(huv) * FAR));
++                float zImage = fogImage(p, ht);
+                 float keep = clamp(fogKeep(zImage) / max(fogKeep(zHit), 1e-3), 0.0, 1.0);
+                 c = refog(c, keep);
+                 oInfo.b = keep;
+@@ -2088,6 +2095,10 @@ internal static class GlShaders
+         // target's own pixels, and H).
+         uniform int   uClipOn;
+         uniform vec4  uClipPlane;
++        // 0100. Fog by the distance to the eye (GteDepth.RadialFog), from the view
++        // position taken back through uClipCentre and uClipH, which are sent for it
++        // outside a planar capture too, with uClipDq.
++        uniform int   uRadialFog;
+         uniform vec2  uClipCentre;
+         uniform float uClipH;
+         // 0068, amended. The view's level forward in that space, and the frame's
+@@ -2422,6 +2433,9 @@ internal static class GlShaders
+         // 0088. A pixel some neighbour of whose half lights or fogs otherwise: its lit
+         // colour (when the light blends) and its cue weight from the records around
+         // it, at its own depth. Every other pixel is drawn as before.
++        // 0100. The depth the fog is taken at, in vDepth's units: the distance under
++        // RadialFog, the view depth everywhere else.
++        float fogDepth() { return uRadialFog != 0 ? vDepth / gCueScale : vDepth; }
+         bool gNbOn = false, gNbLit = false;
+         float gNbW = 0.0;
+         vec3 gNbColor = vec3(0.0);
+@@ -2430,7 +2444,7 @@ internal static class GlShaders
+             ivec4 rec;
+             vec4 k;
+             nbAround(int((vNb.x >> 14) & 63u), int(vNb.x & 0x3FFFu), vNbXZ, rec, k);
+-            float z = vDepth * 65536.0, w = 0.0;
++            float z = fogDepth() * 65536.0, w = 0.0;
+             bool fogOn = (vNb.x & 0x40000000u) != 0u;
+             bool fog = fogOn && (vNb.x & 0x20000000u) != 0u && nbFog(rec, k, z, w);
+             gNbLit = (vNb.x & 0x10000000u) != 0u && nbLight(rec, k, ivec3(round(vNbDots)), vNb.y, gNbColor);
+@@ -2445,17 +2459,22 @@ internal static class GlShaders
+             gNbW = w;
+         }
+ 
++        // The cue was taken at fogDepth() itself, so the level rescale is not wanted.
++        bool gFogAtDepth = false;
++
+         float fogRaw() {
+-            if (((vLight >> 24) & 7u) == 5u) return linearDepthCue(vDepth * 65536.0, vCue);
++            gFogAtDepth = false;
++            if (((vLight >> 24) & 7u) == 5u) return linearDepthCue(fogDepth() * 65536.0, vCue);
+             if (uCueFromZ <= 0.0 || vDepth <= 0.0) return vFog;
+-            float q = min(uCueFromZ / max(vDepth, 1.0 / 65536.0), 131071.0);
++            gFogAtDepth = uRadialFog != 0;
++            float q = min(uCueFromZ / max(fogDepth(), 1.0 / 65536.0), 131071.0);
+             return (vCue.x * q + vCue.y) / 4096.0;
+         }
+ 
+         float cueWeight() {
+             uint curve = (vLight >> 24) & 7u;
+-            bool level = gCueScale < 1.0 && curve != 0u && curve != 5u;
+             float fog = gNbOn ? gNbW : fogRaw();
++            bool level = gCueScale < 1.0 && curve != 0u && curve != 5u && !gFogAtDepth;
+             float raw = level ? levelCue(fog, curve) : fog;
+             float ir0 = clamp(raw, 0.0, 4096.0);
+             float w = gNbOn ? fog
+@@ -2556,15 +2575,17 @@ internal static class GlShaders
+             dz = min(dz, uDepthCap);
+             gl_FragDepth = vDepth > 0.0 ? max(vDepth - dz, 0.0) : 1.0;
+             if (uFarPlane != 0) gl_FragDepth = 1.0;
+-            if (uClipOn != 0 && vDepth > 0.0) {
++            if ((uClipOn != 0 || uRadialFog != 0) && vDepth > 0.0) {
+                 float cz = vDepth * 65536.0;
+                 vec3 cp = vec3((gl_FragCoord.xy / float(uScale) - uClipCentre) * (cz / uClipH), cz);
+-                if (dot(uClipPlane.xyz, cp) + uClipPlane.w < 0.0) discard;
++                if (uClipOn != 0 && dot(uClipPlane.xyz, cp) + uClipPlane.w < 0.0) discard;
+                 // The game's map is culled by a level cone and fogged by view depth,
+                 // so the cone's far edge is black only to a level camera. The
+                 // mirrored one looks up by the eye's pitch and saw it lit: fog at the
+                 // larger of the two depths, which is the game's fog looking level.
+-                float lz = dot(uClipLevel, cp);
++                // 0100. Radial: at the distance, which is never less than either (in a
++                // mirror, the path through the water to the reflected thing).
++                float lz = uRadialFog != 0 ? length(cp) : dot(uClipLevel, cp);
+                 if (lz > cz) { gCueScale = cz / lz; gCueZ = cz; }
+             }
+             // 0072, amended. A half fading in or out of a reflection: an ordered
+diff --git a/RecompOne.Runtime/Gpu/GteDepth.cs b/RecompOne.Runtime/Gpu/GteDepth.cs
+index dcff8c2..d11fd4e 100644
+--- a/RecompOne.Runtime/Gpu/GteDepth.cs
++++ b/RecompOne.Runtime/Gpu/GteDepth.cs
+@@ -557,6 +557,15 @@ public static class GteDepth
+ 
+     public static void NoteDepthCue(int dqa, int dqb) { ProjDqa = dqa; ProjDqb = dqb; }
+ 
++    /// <summary>0100. Fog by the eye's distance to a pixel rather than by its view
++    /// depth: the GTE cues by SZ, so a pixel at the side of the picture, or below a
++    /// camera looking down, was fogged as if nearer than it is and the fog moved as the
++    /// view turned. The depth cue is taken at the distance instead, by the shaders that
++    /// recover a pixel's view position (the retained world, the packets with a depth,
++    /// the reflection pass). At the picture's centre the two agree. Off by default: the
++    /// game's own look.</summary>
++    public static bool RadialFog;
++
+     /// <summary>
+     /// True color (24-bit). While false the GL backend renders into an RGB5A1
+     /// display target and the fragment shader crushes every shaded pixel to five

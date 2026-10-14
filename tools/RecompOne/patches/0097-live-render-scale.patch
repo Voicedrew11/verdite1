@@ -1,0 +1,319 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+index c75b039..11997d3 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlCore.cs
+@@ -1386,19 +1386,7 @@ public sealed partial class GlCore : IGpuBackend
+         {
+             if (snap != null) SnapDestroy(snap);
+             snap = new VramSnap { W = w, H = h, Scale = s, Data = new ushort[n] };
+-            snap.Tex = _gl.GenTexture();
+-            _gl.BindTexture(TextureTarget.Texture2D, snap.Tex);
+-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
+-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
+-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
+-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+-            _gl.TexImage2D<ushort>(TextureTarget.Texture2D, 0, InternalFormat.Rgb5A1, (uint)(w * s), (uint)(h * s), 0,
+-                PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, new ushort[(long)w * s * h * s].AsSpan());
+-            snap.Fbo = _gl.GenFramebuffer();
+-            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, snap.Fbo);
+-            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+-                TextureTarget.Texture2D, snap.Tex, 0);
+-            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++            SnapAlloc(snap);
+             _snaps[slot] = snap;
+         }
+ 
+@@ -1457,6 +1445,43 @@ public sealed partial class GlCore : IGpuBackend
+         return false;
+     }
+ 
++    void SnapAlloc(VramSnap snap)
++    {
++        int w = snap.W * snap.Scale, h = snap.H * snap.Scale;
++        snap.Tex = _gl.GenTexture();
++        _gl.BindTexture(TextureTarget.Texture2D, snap.Tex);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
++        _gl.TexImage2D<ushort>(TextureTarget.Texture2D, 0, InternalFormat.Rgb5A1, (uint)w, (uint)h, 0,
++            PixelFormat.Rgba, PixelType.UnsignedShort1555Rev, new ushort[(long)w * h].AsSpan());
++        snap.Fbo = _gl.GenFramebuffer();
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, snap.Fbo);
++        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
++            TextureTarget.Texture2D, snap.Tex, 0);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++    }
++
++    /// <summary>0097. A snapshot taken at the old render scale, redrawn at the new
++    /// one, so a menu open across the change keeps restoring its scaled picture
++    /// rather than missing and uploading the 1x one.</summary>
++    void SnapRescale(VramSnap snap, int to)
++    {
++        uint oldTex = snap.Tex, oldFbo = snap.Fbo;
++        int ow = snap.W * snap.Scale, oh = snap.H * snap.Scale;
++        snap.Scale = to;
++        SnapAlloc(snap);
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, oldFbo);
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, snap.Fbo);
++        _gl.BlitFramebuffer(0, 0, ow, oh, 0, 0, snap.W * to, snap.H * to,
++            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++        _gl.DeleteFramebuffer(oldFbo);
++        _gl.DeleteTexture(oldTex);
++    }
++
+     void SnapDestroy(VramSnap snap)
+     {
+         if (snap.Fbo != 0) _gl.DeleteFramebuffer(snap.Fbo);
+@@ -2366,6 +2391,38 @@ public sealed partial class GlCore : IGpuBackend
+         }
+     }
+ 
++    void DropTargets()
++    {
++        for (int i = 0; i < _rts.Length; i++)
++            if (_rts[i] is { } rt)
++            {
++                if (rt.Dirty) Writeback(rt);
++                rt.Destroy(_gl);
++                _rts[i] = null;
++            }
++        _kTarget = null;
++        _lastZRt = null;
++    }
++
++    /// <summary>0097. Change the render scale between two frames. Everything else
++    /// sized by it -- the retained present target, the occlusion, reflection and
++    /// normal buffers, the present texture, the prim shader's uScale -- is checked
++    /// against it where it is used and follows on its own; the 24-bit present's
++    /// uniforms are the only ones set once at init.</summary>
++    void Rescale(int to)
++    {
++        DropTargets();
++        foreach (var snap in _snaps) if (snap is { Tex: not 0 }) SnapRescale(snap, to);
++        int from = GlVram.Scale;
++        GlVram.Scale = to;
++        _vram.Rescale(from);
++        _gl.UseProgram(_progPresent24);
++        SetScaleUniform(_progPresent24);
++        int uVramSize24 = _gl.GetUniformLocation(_progPresent24, "uVramSize");
++        if (uVramSize24 >= 0) _gl.Uniform2(uVramSize24, (float)GlVram.Width, GlVram.Height);
++        Console.WriteLine($"[Gpu] render scale {from}x -> {to}x");
++    }
++
+     public void Present(in HleDispEnv disp) => PresentDisplay(disp.X, disp.Y, disp.W, disp.H, disp.Rgb24);
+ 
+     public unsafe (uint tex, int w, int h, float aspect) PresentDisplay(int dispX, int dispY, int w, int h, bool rgb24 = false, int outW = 0, int outH = 0)
+@@ -2389,15 +2446,18 @@ public sealed partial class GlCore : IGpuBackend
+         if (_rtsTrueColor != GteDepth.TrueColor)
+         {
+             _rtsTrueColor = GteDepth.TrueColor;
+-            for (int i = 0; i < _rts.Length; i++)
+-                if (_rts[i] is { } rt)
+-                {
+-                    if (rt.Dirty) Writeback(rt);
+-                    rt.Destroy(_gl);
+-                    _rts[i] = null;
+-                }
+-            _kTarget = null;
+-            _lastZRt = null;
++            DropTargets();
++        }
++
++        // 0097. The render scale was changed in the window. Same point and same
++        // reason as the true color toggle: the targets are written back at the old
++        // scale and dropped, then the scaled VRAM is reallocated with its picture
++        // carried across, and the next draw recreates each target at the new size.
++        if (GlVram.Requested != 0)
++        {
++            int to = Math.Clamp(GlVram.Requested, 1, GlVram.MaxScale);
++            GlVram.Requested = 0;
++            if (to != GlVram.Scale) Rescale(to);
+         }
+ 
+         for (int i = 0; i < _rts.Length; i++)
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs
+index ae5f4ad..b3834a8 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlVram.cs
+@@ -6,6 +6,15 @@ public static class GlVram
+     public static int Width => VramShadow.Width * Scale;
+     public static int Height => VramShadow.Height * Scale;
+ 
++    /// <summary>0097. A render scale asked for while running; 0 is none. The
++    /// backend takes it at the next present, between two frames, and sets
++    /// <see cref="Scale"/> itself.</summary>
++    public static int Requested { get; set; }
++
++    /// <summary>0097. The largest scale whose VRAM texture fits the context's
++    /// texture size limit; a request above it is taken at this.</summary>
++    public static int MaxScale { get; set; } = 8;
++
+     /// <summary>Keep a scaled copy of every framebuffer readback, so an upload of
+     /// the same pixels back into VRAM is served by that copy instead of by the 1x
+     /// data the game read. See GlCore's snapshot block. On by default;
+diff --git a/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs b/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs
+index 864f230..7eec192 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Gl21/Gl21Vram.cs
+@@ -357,6 +357,27 @@ public sealed class Gl21Vram : IGlVram
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+     }
+ 
++    public void Rescale(int from)
++    {
++        uint oldTex = _tex, oldFbo = _fbo;
++        _tex = CreateTex(GlVram.Width, GlVram.Height);
++        _fbo = CreateFbo(_tex);
++        int ow = VramShadow.Width * from, oh = VramShadow.Height * from;
++        BlitScaled(oldTex, ow, oh, _fbo, GlVram.Width, GlVram.Height,
++            0, 0, ow, oh, 0, 0, GlVram.Width, GlVram.Height);
++        _gl.DeleteFramebuffer(oldFbo);
++        _gl.DeleteTexture(oldTex);
++        _gl.DeleteFramebuffer(_destVramFbo);
++        _gl.DeleteTexture(_destVramTex);
++        _destVramTex = CreateTex(GlVram.Width, GlVram.Height);
++        _destVramFbo = CreateFbo(_destVramTex);
++        _gl.DeleteFramebuffer(_scratchFbo);
++        _gl.DeleteTexture(_scratchTex);
++        _scratchTex = CreateTex(GlVram.Width, GlVram.Height);
++        _scratchFbo = CreateFbo(_scratchTex);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++    }
++
+     public void Dispose()
+     {
+         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs b/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs
+index b7e89e9..9e2fcf0 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Gl33/Gl33Vram.cs
+@@ -283,6 +283,25 @@ public sealed class Gl33Vram : IGlVram
+         else _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+     }
+ 
++    public void Rescale(int from)
++    {
++        uint oldTex = _tex, oldFbo = _fbo;
++        _tex = CreateTex(GlVram.Width, GlVram.Height);
++        _fbo = CreateFbo(_tex);
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, oldFbo);
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
++        _gl.BlitFramebuffer(0, 0, VramShadow.Width * from, VramShadow.Height * from,
++            0, 0, GlVram.Width, GlVram.Height, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        _gl.DeleteFramebuffer(oldFbo);
++        _gl.DeleteTexture(oldTex);
++        _gl.DeleteFramebuffer(_destVramFbo);
++        _gl.DeleteTexture(_destVramTex);
++        _destVramTex = CreateTex(GlVram.Width, GlVram.Height);
++        _destVramFbo = CreateFbo(_destVramTex);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++    }
++
+     public void Dispose()
+     {
+         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
+diff --git a/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs b/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs
+index 4b21874..ec9bda1 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Gl45/Gl45Vram.cs
+@@ -221,6 +221,23 @@ public sealed class Gl45Vram : IGlVram
+         _scratchTex = CreateTex(GlVram.Width, GlVram.Height);
+     }
+ 
++    public void Rescale(int from)
++    {
++        uint oldTex = _tex, oldFbo = _fbo;
++        _tex = CreateTex(GlVram.Width, GlVram.Height);
++        _fbo = CreateFbo(_tex);
++        _gl.Disable(EnableCap.ScissorTest);
++        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, oldFbo);
++        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
++        _gl.BlitFramebuffer(0, 0, VramShadow.Width * from, VramShadow.Height * from,
++            0, 0, GlVram.Width, GlVram.Height, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
++        _gl.DeleteFramebuffer(oldFbo);
++        _gl.DeleteTexture(oldTex);
++        if (_scratchTex != 0) _gl.DeleteTexture(_scratchTex);
++        _scratchTex = 0;
++    }
++
+     public void Dispose()
+     {
+         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
+diff --git a/RecompOne.Runtime/Gpu/Backends/GpuBackendFactory.cs b/RecompOne.Runtime/Gpu/Backends/GpuBackendFactory.cs
+index 09f778c..0c3e492 100644
+--- a/RecompOne.Runtime/Gpu/Backends/GpuBackendFactory.cs
++++ b/RecompOne.Runtime/Gpu/Backends/GpuBackendFactory.cs
+@@ -83,6 +83,9 @@ public static class GpuBackendFactory //fkn hate these factories
+ 
+         if (max <= 0) return;
+ 
++        // 0097. A scale asked for while running is held to the same limit.
++        GlVram.MaxScale = Math.Max(1, Math.Min(max / VramShadow.Width, max / VramShadow.Height));
++
+         while (GlVram.Scale > 1 &&
+                (VramShadow.Width * GlVram.Scale > max || VramShadow.Height * GlVram.Scale > max))
+         {
+diff --git a/RecompOne.Runtime/Gpu/Backends/IGlVram.cs b/RecompOne.Runtime/Gpu/Backends/IGlVram.cs
+index 4276f7a..c83bd16 100644
+--- a/RecompOne.Runtime/Gpu/Backends/IGlVram.cs
++++ b/RecompOne.Runtime/Gpu/Backends/IGlVram.cs
+@@ -61,5 +61,10 @@ public interface IGlVram
+     /// target.</summary>
+     void BlitSample(int sx, int sy, int sw, int sh, uint dstFbo, int dstW, int dstH, int dx, int dy, int dw, int dh);
+ 
++    /// <summary>0097. The render scale changed from <paramref name="from"/> to
++    /// <see cref="GlVram.Scale"/>: reallocate every texture sized by it, carrying
++    /// the scaled framebuffer's picture across.</summary>
++    void Rescale(int from);
++
+     void Dispose();
+ }
+\ No newline at end of file
+diff --git a/RecompOne.Runtime/Host/Window/Assets/languages.json b/RecompOne.Runtime/Host/Window/Assets/languages.json
+index 92132c3..570b023 100644
+--- a/RecompOne.Runtime/Host/Window/Assets/languages.json
++++ b/RecompOne.Runtime/Host/Window/Assets/languages.json
+@@ -668,14 +668,6 @@
+       "zh-CN": "当前状态下为 {1} 行数, 缩放后为 {3} 行数 ({4}x)",
+       "fr-FR": "{1} lignes à l'origine, {3} après mise à l'échelle ({4}x)"
+     },
+-    "settings.display.restart_pending": {
+-      "en": "restart is required",
+-      "pt-BR": "é necessário reiniciar",
+-      "es-419": "se requiere reiniciar",
+-      "ja-JP": "再起動が必要です",
+-      "zh-CN": "需要重新启动",
+-      "fr-FR": "Un redémarrage est requis"
+-    },
+     "settings.display.backend": {
+       "en": "Graphics backend",
+       "pt-BR": "Backend gráfico",
+diff --git a/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs b/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
+index 13f495a..8bf610f 100644
+--- a/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
++++ b/RecompOne.Runtime/Host/Window/Settings/Sections/DisplaySettingsSection.cs
+@@ -47,7 +47,8 @@ internal sealed class DisplaySettingsSection : ISettingsSection
+         {
+             ConfigManager.View.RenderScale = scale;
+             ConfigManager.SaveView(PanelManager.Panels);
+-            NoticePopup.Show(Localization.T("common.restart_required"));
++            // 0097. Taken by the backend at the next present.
++            Hle.GlVram.Requested = scale;
+         }
+ 
+         if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("settings.display.render_scale_hint"));
+@@ -58,9 +59,6 @@ internal sealed class DisplaySettingsSection : ISettingsSection
+             ImGui.TextDisabled(Localization.T("settings.display.render_scale_lines",
+                 width, lines, width * scale, lines * scale, scale));
+ 
+-        if (scale != Hle.GlVram.Scale)
+-            ImGui.TextDisabled(Localization.T("settings.display.restart_pending"));
+-
+         // How big the picture is drawn, and how wide it is presented, are the same
+         // kind of choice, so a port offering an aspect ratio has somewhere to put it
+         // that is not a group appended below the whole section.

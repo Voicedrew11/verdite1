@@ -798,3 +798,19 @@ index dac22f9..fdcd6cb 100644
      {
          var gpu = Runtime.Gpu;
          if (gpu == null) return;
+diff --git a/RecompOne.Runtime/Diagnostics/Profiler.cs b/RecompOne.Runtime/Diagnostics/Profiler.cs
+index 0a889c5..3d2120f 100644
+--- a/RecompOne.Runtime/Diagnostics/Profiler.cs
++++ b/RecompOne.Runtime/Diagnostics/Profiler.cs
+@@ -438,7 +438,9 @@ public static class Profiler
+         g1 = GC.CollectionCount(1);
+         g2 = GC.CollectionCount(2);
+         alloc = GC.GetAllocatedBytesForCurrentThread();
+-        jit = System.Runtime.JitInfo.GetCompilationTime();
+-        jitMethods = System.Runtime.JitInfo.GetCompiledMethodCount();
++        // 0045, amended: this thread's compiles only. A port that compiles ahead
++        // on other threads would otherwise have their work charged to the frame.
++        jit = System.Runtime.JitInfo.GetCompilationTime(currentThread: true);
++        jitMethods = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true);
+     }
+ }

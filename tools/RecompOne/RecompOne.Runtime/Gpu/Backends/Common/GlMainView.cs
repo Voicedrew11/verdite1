@@ -39,6 +39,7 @@ public sealed partial class GlCore
         _uwBk = L("uLightBk"); _uwLcmR = L("uLcmR"); _uwLcmG = L("uLcmG"); _uwLcmB = L("uLcmB");
         _uwClipOn = L("uClipOn"); _uwClipPlane = L("uClipPlane"); _uwClipCentre = L("uClipCentre");
         _uwClipH = L("uClipH"); _uwClipLevel = L("uClipLevel"); _uwClipDq = L("uClipDq");
+        _uwRadialFog = L("uRadialFog");
         _gl.UseProgram(_progWorld);
         if (_uwSwellOn >= 0) _gl.Uniform1(_uwSwellOn, 0);
         if (_uwWaveOn >= 0) _gl.Uniform1(_uwWaveOn, 0);
@@ -177,6 +178,7 @@ public sealed partial class GlCore
     }
 
     int _uwClipOn = -1, _uwClipPlane = -1, _uwClipCentre = -1, _uwClipH = -1, _uwClipLevel = -1, _uwClipDq = -1;
+    int _uwRadialFog = -1;
 
     /// <summary>
     /// The planar walk's mirror, drawn as the main view is: the map's opaque faces of
@@ -461,6 +463,17 @@ public sealed partial class GlCore
             if (_uwClipLevel >= 0) _gl.Uniform3(_uwClipLevel, la[0], la[1], la[2]);
             if (_uwClipDq >= 0) _gl.Uniform2(_uwClipDq, (float)GteDepth.ProjDqa, GteDepth.ProjDqb / 4096f);
         }
+        // 0100. Radial fog, through the same centre and H; the mirror's are sent above.
+        if (_uwRadialFog >= 0)
+        {
+            _gl.Uniform1(_uwRadialFog, GteDepth.RadialFog ? 1 : 0);
+            if (GteDepth.RadialFog && !mirror && _uwClipCentre >= 0)
+            {
+                _gl.Uniform2(_uwClipCentre, cx, cy);
+                _gl.Uniform1(_uwClipH, Math.Max(1f, v.H));
+                if (_uwClipDq >= 0) _gl.Uniform2(_uwClipDq, (float)GteDepth.ProjDqa, GteDepth.ProjDqb / 4096f);
+            }
+        }
         SetWorldView(r, v.CamX, v.CamY, v.CamZ, v.Tx, v.Ty, v.Tz, v.H, cx, cy, rt.Wide1x, rt.H, v.H, true, GlVram.Scale);
         if (_uwModelGteC >= 0) _gl.Uniform2(_uwModelGteC, v.Cx, v.Cy);
         if (_uwNear >= 0) _gl.Uniform1(_uwNear, RetainedScene.MainNear);
@@ -536,6 +549,7 @@ public sealed partial class GlCore
         if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, 0f);
         if (_uwSwellOn >= 0) _gl.Uniform1(_uwSwellOn, 0);
         if (_uwClipOn >= 0) _gl.Uniform1(_uwClipOn, 0);
+        if (_uwRadialFog >= 0) _gl.Uniform1(_uwRadialFog, 0);
         if (_uwDepthCapZ >= 0) _gl.Uniform1(_uwDepthCapZ, 0f);
         EndWorldLights();
     }
@@ -1264,6 +1278,7 @@ public sealed partial class GlCore
             if (_uNrmDepthCull >= 0) _gl.Uniform1(_uNrmDepthCull, 0);
         }
         if (_progWorldNrm == 0) return;
+        GlShaders.RequireTexel(_gl, _progWorldNrm, "worldnormal", "inUV", "inTexpageF", "inClutF");
         int L(string n) => _gl.GetUniformLocation(_progWorldNrm, n);
         _uwnR = L("uR"); _uwnCam = L("uCam"); _uwnT = L("uT"); _uwnH = L("uH"); _uwnC = L("uC"); _uwnFb = L("uFb");
         _uwnNear = L("uNear"); _uwnHalfGate = L("uHalfGate"); _uwnSnap = L("uWorldSnap");
@@ -1291,7 +1306,9 @@ public sealed partial class GlCore
         if (geo.WorldSerial == 0 || src.Depth == 0 || !RetainedScene.MainSurfaces) return false;
         _gl.ActiveTexture(TextureUnit.Texture0 + FrameDepthUnit);
         _gl.BindTexture(TextureTarget.Texture2D, src.Depth);
+        // NormalFs reads a textured face's texel from sample VRAM, as for the table's.
         _gl.ActiveTexture(TextureUnit.Texture0);
+        _gl.BindTexture(TextureTarget.Texture2D, _vram.SampleTexture);
         float stepX = (float)src.TexW / Math.Max(1, src.NormalW), stepY = (float)src.TexH / Math.Max(1, src.NormalH);
 
         var f = RetainedScene.Find(geo.WorldSerial);
@@ -1372,7 +1389,7 @@ public sealed partial class GlCore
             _gl.CullFace(TriangleFace.Back);
         }
         foreach (int range in (ReadOnlySpan<int>)[1, 4])
-            if (RetainedScene.StaticCount[range] > 0) RetainedScene.MainNormalTriangles += DrawStaticChunks(range) / 3;
+            if (_worldStaticCount[range] > 0) RetainedScene.MainNormalTriangles += DrawStaticChunks(range) / 3;
         _gl.Disable(EnableCap.CullFace);
         if (_uwnZSlice >= 0) _gl.Uniform2(_uwnZSlice, 0f, 0f);
     }
@@ -1467,6 +1484,8 @@ public sealed partial class GlCore
             RetainedScene.SurfaceIds[id < 0.5f ? 0 : id < 1.5f ? 1 : id < 2.5f ? 2 : id < 3.5f ? 3 : id < 255.5f ? 4 : 5]++;
             if (id < 0.5f || z <= 0f) { if (id < 2.5f || id > 3.5f) RetainedScene.SurfaceMissing++; continue; }
             if (z > dz + 64f + dz / 64f) RetainedScene.SurfaceBehind++;
+            // Water and blended faces wrote no depth by right; an opaque one did.
+            else if ((id < 1.5f || id > 3.5f && id < 255.5f) && z < dz - 64f - dz / 64f) RetainedScene.SurfaceAhead++;
         }
         RetainedScene.SurfaceChecks++;
     }

@@ -84,11 +84,24 @@ public static class ModLoader
         _loaded = true;
 
         root ??= Path.GetFullPath("mods");
-        Directory.CreateDirectory(root);
         Root = root;
         _cacheDir = Path.Combine(root, ".cache");
 
-        var discovered = Order(Discover(root));
+        //0108. The game starts with no mods rather than not at all: a mods folder
+        //that cannot be made or read threw out of LoadAll, which the generated
+        //entry calls before the game's first instruction.
+        List<ModEntry> discovered;
+        try
+        {
+            Directory.CreateDirectory(root);
+            discovered = Order(Discover(root));
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"[Mods] could not read {root}, no mods loaded: {e.Message}");
+            discovered = [];
+        }
+
         lock (_mods)
         {
             _mods.Clear();
@@ -340,7 +353,19 @@ public static class ModLoader
                 continue;
             }
 
-            var info = ParseInfo(File.ReadAllText(jsonPath), sub);
+            //0108. One unreadable mod.json skips that mod, not every mod.
+            string json;
+            try
+            {
+                json = File.ReadAllText(jsonPath);
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine($"[Mods] skipping {sub}: could not read mod.json ({e.Message})");
+                continue;
+            }
+
+            var info = ParseInfo(json, sub);
             if (info == null) continue;
             list.Add(new ModEntry
             {
@@ -534,6 +559,13 @@ public static class ModLoader
         {
             mod.LoadError = ex.Message;
             Console.Error.WriteLine($"[Mods] failed to load {mod.Info.Id}: {ex.Message}");
+            //0108. A mod whose OnLoad threw had its hooks registered already, and
+            //they stayed, running for a mod the list showed as failed.
+            if (mod.Loaded)
+            {
+                HookManager.RemoveMod(mod.Info);
+                mod.Loaded = false;
+            }
         }
     }
 

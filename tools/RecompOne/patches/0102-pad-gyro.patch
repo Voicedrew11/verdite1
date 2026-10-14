@@ -1,0 +1,95 @@
+--- a/RecompOne.Runtime/Hardware/Controller.cs
++++ b/RecompOne.Runtime/Hardware/Controller.cs
+@@ -28,6 +28,18 @@
+     public static byte LeftX = 0x80;
+     public static byte LeftY = 0x80;
+ 
++    /// <summary>Set by a port that reads the gyroscope; the host switches pad 1's
++    /// on while this is true and off again when it is not (0102).</summary>
++    public static bool WantGyro;
++
++    /// <summary>Whether pad 1's gyroscope is on and reporting.</summary>
++    public static bool Gyro;
++
++    /// <summary>Pad 1's angular rate in radians a second, on SDL's axes: X
++    /// across the pad (pitch), Y up out of it (yaw), Z toward the player (roll).
++    /// Zero while <see cref="Gyro"/> is false.</summary>
++    public static float GyroX, GyroY, GyroZ;
++
+     public static ushort State2 = 0xFFFF;
+     public static bool Connected2;
+     public static byte RightX2 = 0x80;
+--- a/RecompOne.Runtime/Host/InputManager.cs
++++ b/RecompOne.Runtime/Host/InputManager.cs
+@@ -20,6 +20,12 @@
+     private static GameController* _pad0;
+     private static GameController* _pad1;
+ 
++    // The handle whose gyroscope this file last switched, and whether it is on.
++    // A handle comes back from GameControllerOpen with its sensors off, so a
++    // rescan forgets both (0102).
++    private static GameController* _gyroPad;
++    private static bool _gyroOn;
++
+     private const int AxisThreshold = 8000;
+     private const int StickThreshold = 16000;
+     private const int LeftTrigger = 100;
+@@ -183,6 +189,7 @@
+         PollGamepadEvents();
+         PollKeyboard();
+         PollGamepads();
++        PollGyro();
+         Controller.Connected2 = _pad1 != null || HasAnyKey(ConfigManager.Game.Keys2);
+     }
+ 
+@@ -271,6 +278,9 @@
+ 
+     private static void CloseControllers()
+     {
++        _gyroPad = null;
++        _gyroOn = false;
++
+         if (_pad0 != null)
+         {
+             _sdl?.GameControllerClose(_pad0);
+@@ -464,6 +474,40 @@
+         }
+     }
+ 
++    /// <summary>Pad 1's gyroscope into <see cref="Controller.GyroX"/> and its
++    /// siblings, switched on only while a port asks (<see cref="Controller.WantGyro"/>):
++    /// a pad streams its motion in a larger report once it is on (0102).</summary>
++    private static void PollGyro()
++    {
++        if (_pad0 != _gyroPad)
++        {
++            _gyroPad = _pad0;
++            _gyroOn = false;
++        }
++
++        var want = Controller.WantGyro && _sdl != null && _pad0 != null &&
++                   _sdl.GameControllerHasSensor(_pad0, SensorType.Gyro) == SdlBool.True;
++        if (want != _gyroOn && _sdl != null && _pad0 != null)
++        {
++            var ok = _sdl.GameControllerSetSensorEnabled(_pad0, SensorType.Gyro,
++                want ? SdlBool.True : SdlBool.False) == 0;
++            _gyroOn = want && ok;
++        }
++
++        Controller.Gyro = _gyroOn;
++        if (!_gyroOn)
++        {
++            Controller.GyroX = Controller.GyroY = Controller.GyroZ = 0f;
++            return;
++        }
++
++        var data = stackalloc float[3];
++        if (_sdl!.GameControllerGetSensorData(_pad0, SensorType.Gyro, data, 3) != 0) return;
++        Controller.GyroX = data[0];
++        Controller.GyroY = data[1];
++        Controller.GyroZ = data[2];
++    }
++
+     private static byte Axis(GameController* ctrl, int index)
+     {
+         if (_sdl == null || index < 0) return 0x80;

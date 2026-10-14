@@ -83,6 +83,9 @@ public static class GpuBackendFactory //fkn hate these factories
 
         if (max <= 0) return;
 
+        // 0097. A scale asked for while running is held to the same limit.
+        GlVram.MaxScale = Math.Max(1, Math.Min(max / VramShadow.Width, max / VramShadow.Height));
+
         while (GlVram.Scale > 1 &&
                (VramShadow.Width * GlVram.Scale > max || VramShadow.Height * GlVram.Scale > max))
         {

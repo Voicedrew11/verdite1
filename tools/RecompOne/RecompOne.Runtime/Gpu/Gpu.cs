@@ -69,6 +69,12 @@ public sealed partial class Gpu
     private bool _dither;
     private bool _texDisable;
 
+    /// <summary>0094. Every draw-mode word (GP0 E1) is taken as asking for no dither,
+    /// whichever way it arrives: in a packet the table walk sends, from PutDrawEnv's
+    /// <c>dtd</c>, or from anything else that writes GP0. A port's switch for the
+    /// crosshatch, in place of rewriting the words in RAM. Off is the GPU as it was.</summary>
+    public static bool SuppressDither;
+
     private int _texWinMaskX, _texWinMaskY, _texWinOffX, _texWinOffY;
 
     private bool _setMask, _checkMask;

@@ -47,7 +47,8 @@ internal sealed class DisplaySettingsSection : ISettingsSection
         {
             ConfigManager.View.RenderScale = scale;
             ConfigManager.SaveView(PanelManager.Panels);
-            NoticePopup.Show(Localization.T("common.restart_required"));
+            // 0097. Taken by the backend at the next present.
+            Hle.GlVram.Requested = scale;
         }
 
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("settings.display.render_scale_hint"));
@@ -57,9 +58,6 @@ internal sealed class DisplaySettingsSection : ISettingsSection
         if (lines > 0)
             ImGui.TextDisabled(Localization.T("settings.display.render_scale_lines",
                 width, lines, width * scale, lines * scale, scale));
-
-        if (scale != Hle.GlVram.Scale)
-            ImGui.TextDisabled(Localization.T("settings.display.restart_pending"));
 
         // How big the picture is drawn, and how wide it is presented, are the same
         // kind of choice, so a port offering an aspect ratio has somewhere to put it

@@ -32,25 +32,37 @@ public static class ConfigManager
 
     public static void Load()
     {
+        //0106. A file that will not parse falls back to the defaults, as before, but
+        //is kept aside first: the defaults are written over it at the next save.
         if (File.Exists(GameConfigPath))
             try
             {
                 Game = JsonSerializer.Deserialize<GameConfig>(File.ReadAllText(GameConfigPath), _opts) ??
                        new GameConfig();
             }
-            catch
+            catch (Exception e)
             {
+                var kept = IO.DurableFile.Keep(GameConfigPath, "damaged");
+                Console.Error.WriteLine($"[Config] {GameConfigPath} unreadable, defaults used ({e.Message}); " +
+                                        $"kept as {kept ?? "(none)"}");
                 Game = new GameConfig();
             }
         else
             SaveGame();
 
         if (File.Exists(InterfaceFile))
-        {
-            var (view, imguiIni) = ParseInterfaceFile(File.ReadAllText(InterfaceFile));
-            View = view;
-            _pendingImGuiIni = imguiIni;
-        }
+            try
+            {
+                var (view, imguiIni) = ParseInterfaceFile(File.ReadAllText(InterfaceFile));
+                View = view;
+                _pendingImGuiIni = imguiIni;
+            }
+            catch (Exception e)
+            {
+                var kept = IO.DurableFile.Keep(InterfaceFile, "damaged");
+                Console.Error.WriteLine($"[Config] {InterfaceFile} unreadable, defaults used ({e.Message}); " +
+                                        $"kept as {kept ?? "(none)"}");
+            }
     }
 
 
@@ -83,7 +95,9 @@ public static class ConfigManager
             sb.AppendLine($"Panels.{name}={state.Open}");
         sb.AppendLine();
         sb.Append(imguiIni);
-        File.WriteAllText(InterfaceFile, sb.ToString());
+        //0106. Replaced in one step (DurableFile); a failure is logged, not thrown
+        //into whichever settings widget changed a value.
+        IO.DurableFile.TryWriteText(InterfaceFile, sb.ToString(), "the interface settings");
     }
 
     public static void ResetView(IReadOnlyList<IPanel> panels)
@@ -97,7 +111,7 @@ public static class ConfigManager
 
     public static void SaveGame()
     {
-        File.WriteAllText(GameConfigPath, JsonSerializer.Serialize(Game, _opts));
+        IO.DurableFile.TryWriteText(GameConfigPath, JsonSerializer.Serialize(Game, _opts), "the settings");
     }
 
     private static (ViewConfig view, string imguiIni) ParseInterfaceFile(string content)

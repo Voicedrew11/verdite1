@@ -13,6 +13,14 @@ public sealed partial class GlCore
 {
     uint _progWorld, _worldVao, _worldVbo, _worldDynVao, _worldDynVbo;
     int _worldGen = -1, _worldCap, _worldDynCap;
+    // The chunk table _worldVbo holds and its length, as UploadStatic put them there.
+    // The game thread rebuilds RetainedScene's own whenever the map changes, and the
+    // normal pass draws from this buffer at a present, before the next main draw has
+    // uploaded the new map: drawn by the new table, a larger map's ranges ran past the
+    // old buffer's end, which NVIDIA's driver faults on.
+    readonly int[] _worldChunkStart = new int[5 * RetainedScene.Chunks], _worldChunkCount = new int[5 * RetainedScene.Chunks];
+    readonly int[] _worldStaticCount = new int[5];
+    int _worldVerts;
     int _uwR, _uwCam, _uwT, _uwH, _uwC, _uwFb, _uwNear, _uwCueH, _uwFogOn, _uwMirror, _uwPlaneY, _uwPlaneBias;
     int _uwScale, _uwAniso, _uwBlend, _uwBlendOpaque, _uwFluidN;
     int _uwAtmosOn, _uwAtmosColour, _uwAtmosShape, _uwAtmosSkip;
@@ -317,7 +325,19 @@ public sealed partial class GlCore
         var s = RetainedScene.Static;
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldVbo);
         _gl.BufferData<RetainedScene.Vertex>(BufferTargetARB.ArrayBuffer, s, BufferUsageARB.StaticDraw);
+        // The mip entries are attribute 9 of the same VAO, and UpdateWorldMips sizes them
+        // to the new map only after the shadows have drawn it: zeros as long as the map
+        // until then, so no draw reads past their end.
+        if (_mipKeysGen != RetainedScene.StaticGeneration)
+        {
+            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldMipVbo);
+            _gl.BufferData<uint>(BufferTargetARB.ArrayBuffer, new uint[Math.Max(s.Length, 1)], BufferUsageARB.StaticDraw);
+        }
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
+        Array.Copy(RetainedScene.ChunkStart, _worldChunkStart, _worldChunkStart.Length);
+        Array.Copy(RetainedScene.ChunkCount, _worldChunkCount, _worldChunkCount.Length);
+        Array.Copy(RetainedScene.StaticCount, _worldStaticCount, _worldStaticCount.Length);
+        _worldVerts = s.Length;
         _worldGen = RetainedScene.StaticGeneration;
     }
 
@@ -447,7 +467,7 @@ public sealed partial class GlCore
     int DrawRange(int r, RetainedScene.Frame? f)
     {
         int drawn = 0;
-        if (RetainedScene.StaticCount[r] > 0)
+        if (_worldStaticCount[r] > 0)
         {
             if (_uwMipIndirect >= 0) _gl.Uniform1(_uwMipIndirect, 1);
             drawn = DrawStaticChunks(r);
@@ -464,7 +484,8 @@ public sealed partial class GlCore
     }
 
     /// <summary>Range <paramref name="r"/> of the visible static chunks through
-    /// whatever program is bound; the vertices drawn.</summary>
+    /// whatever program is bound; the vertices drawn. By the table the buffer was
+    /// uploaded with, and never past its end.</summary>
     int DrawStaticChunks(int r)
     {
         int drawn = 0;
@@ -474,15 +495,16 @@ public sealed partial class GlCore
         for (int c = 0; c <= RetainedScene.Chunks; c++)
         {
             int k = r * RetainedScene.Chunks + c;
-            bool take = c < RetainedScene.Chunks && _chunkVis[c] && RetainedScene.ChunkCount[k] > 0;
-            if (take && first >= 0 && RetainedScene.ChunkStart[k] == first + count) { count += RetainedScene.ChunkCount[k]; continue; }
+            bool take = c < RetainedScene.Chunks && _chunkVis[c] && _worldChunkCount[k] > 0;
+            if (take && first >= 0 && _worldChunkStart[k] == first + count) { count += _worldChunkCount[k]; continue; }
+            count = Math.Min(count, _worldVerts - first);
             if (first >= 0 && count > 0)
             {
                 _gl.DrawArrays(PrimitiveType.Triangles, first, (uint)count);
                 drawn += count;
             }
-            first = take ? RetainedScene.ChunkStart[k] : -1;
-            count = take ? RetainedScene.ChunkCount[k] : 0;
+            first = take ? _worldChunkStart[k] : -1;
+            count = take ? _worldChunkCount[k] : 0;
         }
         return drawn;
     }

@@ -133,3 +133,36 @@ index 47c5312..ddbcdd5 100644
          OutputView.Valid = false;
          OutputView.Hovered = false;
  
+diff --git a/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs b/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs
+index ddbcdd5..c60399b 100644
+--- a/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs
++++ b/RecompOne.Runtime/Host/Window/Panels/Debug/OutputPanel.cs
+@@ -33,6 +33,15 @@ public static class OutputView
+     /// </summary>
+     public static bool Hovered { get; internal set; }
+ 
++    /// <summary>
++    /// The pointer is over some other ImGui window than this panel -- a floating
++    /// panel in front of the picture, say. <see cref="Hovered"/> false cannot say
++    /// that: it is also false while another item is active or a popup blocks, so
++    /// a caller testing a click against the rectangle needs this to tell a click
++    /// on a panel from a click on the game.
++    /// </summary>
++    public static bool Covered { get; internal set; }
++
+     /// <summary>
+     /// The display buffer the *game* programmed, in its own pixels -- 320x240
+     /// here. Published because <see cref="Min"/> and <see cref="Max"/> are a
+@@ -99,6 +108,12 @@ internal sealed class OutputPanel : IPanel
+         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+         var visible = ImGui.Begin(this.Title());
+         ImGui.PopStyleVar(2);
++        //Asked inside Begin, where "this window" is the Output panel: ImGui's
++        //hovered window is someone else's exactly when another window sits under
++        //the pointer, whatever is active or whether the picture was drawn.
++        OutputView.Covered =
++            ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup) &&
++            !ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup);
+         IsDocked = ImGui.IsWindowDocked();
+         OutputView.DockId = IsDocked ? ImGui.GetWindowDockID() : 0u;
+         OutputView.Valid = false;

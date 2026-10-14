@@ -1,0 +1,30 @@
+diff --git a/RecompOne.Runtime/Gpu/Gpu.cs b/RecompOne.Runtime/Gpu/Gpu.cs
+index d7250bd..8f6ec53 100644
+--- a/RecompOne.Runtime/Gpu/Gpu.cs
++++ b/RecompOne.Runtime/Gpu/Gpu.cs
+@@ -69,6 +69,12 @@ public sealed partial class Gpu
+     private bool _dither;
+     private bool _texDisable;
+ 
++    /// <summary>0094. Every draw-mode word (GP0 E1) is taken as asking for no dither,
++    /// whichever way it arrives: in a packet the table walk sends, from PutDrawEnv's
++    /// <c>dtd</c>, or from anything else that writes GP0. A port's switch for the
++    /// crosshatch, in place of rewriting the words in RAM. Off is the GPU as it was.</summary>
++    public static bool SuppressDither;
++
+     private int _texWinMaskX, _texWinMaskY, _texWinOffX, _texWinOffY;
+ 
+     private bool _setMask, _checkMask;
+diff --git a/RecompOne.Runtime/Gpu/GpuCommands.cs b/RecompOne.Runtime/Gpu/GpuCommands.cs
+index 296bb43..de36bcb 100644
+--- a/RecompOne.Runtime/Gpu/GpuCommands.cs
++++ b/RecompOne.Runtime/Gpu/GpuCommands.cs
+@@ -91,7 +91,7 @@ public sealed partial class Gpu
+         _texPageY = (int)((word >> 4) & 1) * 256;
+         _blendMode = (int)((word >> 5) & 3);
+         _texDepth = (int)((word >> 7) & 3);
+-        _dither = (word & (1u << 9)) != 0;
++        _dither = (word & (1u << 9)) != 0 && !SuppressDither;
+         _texDisable = (word & (1u << 11)) != 0;
+     }
+ 

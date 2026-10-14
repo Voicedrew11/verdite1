@@ -94,6 +94,10 @@ public sealed class AoGeometry
     /// (-1 for nowhere), and the frame it was drawn from.</summary>
     public int ArmAt = -1, ArmSerial;
 
+    /// <summary>0099. The target's picture was copied before the list's first see-through
+    /// 2D primitive (<c>GlDisplayRt.PreHud</c>) in this list's frame.</summary>
+    public bool PreHud;
+
     /// <summary>Start this target's list over when it is first drawn in a new frame,
     /// or when the depth generation moved under it.</summary>
     public void Frame(long frame, int gen)
@@ -105,6 +109,7 @@ public sealed class AoGeometry
         WorldSerial = 0;
         Water.Clear();
         ArmAt = -1;
+        PreHud = false;
         _breaks.Clear();
         _inVeil = false;
     }

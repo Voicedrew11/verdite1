@@ -25,6 +25,13 @@ internal sealed class CdDebugPanel : IPanel
         }
 
         var cd = Runtime.Cd;
+        if (cd == null)
+        {
+            ImGui.TextDisabled("No CD drive yet.");
+            IsOpen = open;
+            ImGui.End();
+            return;
+        }
 
         cd.CaptureDebug(out var d, _events);
 

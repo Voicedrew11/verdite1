@@ -110,6 +110,7 @@ public static class Runtime
         {
             _hostReady = true;
             Diagnostics.ConsoleMirror.Install();
+            Diagnostics.CrashReport.Install();
             Host.GpuJobs.Run(() => HostWindow.Initialize(title));
             Audio.Initialize();
         }
@@ -208,14 +209,27 @@ public static class Runtime
     {
         Cpu = c;
         Mem = m;
+        (m as PSMemory)?.PublishDevices();
     }
 
     private static volatile bool _hardResetPending;
 
     public static bool HardResetPending => _hardResetPending;
 
+    //0108. A hard reset unwinds the game with HardResetSignal and boots it again,
+    //which only Run's loop does; a port that calls its Entry.Run itself has no
+    //such loop, and the signal ended the process. Such a port says so here, and
+    //the menu's Hard Reset then explains instead.
+    public static bool CanHardReset = true;
+
     public static void HardReset()
     {
+        if (!CanHardReset)
+        {
+            ShowNotice("Hard Reset is not available in this port. Quit and start the game again instead.");
+            return;
+        }
+
         _hardResetPending = true;
     }
 
@@ -264,6 +278,30 @@ public static class Runtime
         
         while (!_gameDone)
             PresentLoop();
+
+        if (_crashed) HoldAfterCrash(_crashReport);
+    }
+
+    private static volatile bool _crashed;
+    private static string? _crashReport;
+
+    //0107. After a crash: the window stays, with the report's path and a way to
+    //it, until the player closes it. Before, it closed with the exception on a
+    //stderr that a player starting the game from a launcher never sees. Returns
+    //at once with no window; returns if the window itself cannot be drawn.
+    public static void HoldAfterCrash(string? report)
+    {
+        Diagnostics.Watchdog.Paused = true;
+        if (!HostWindow.Ready) return;
+        Host.Window.CrashPopup.Show(report);
+        try
+        {
+            while (true) HostWindow.Pump();
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"[Runtime] the crash screen could not be drawn: {e.Message}");
+        }
     }
     
     private static void RunGame(Action boot)
@@ -282,6 +320,8 @@ public static class Runtime
             catch (Exception e)
             {
                 Console.Error.WriteLine($"[Runtime] runtime has crashed: {e}");
+                _crashReport = Diagnostics.CrashReport.Write("crash", e);
+                _crashed = true;
                 break;
             }
         
@@ -368,6 +408,7 @@ public static class Runtime
     
     public static void PresentFrame()
     {
+        Diagnostics.Watchdog.Frame();
         if (_hardResetPending)
         {
             _hardResetPending = false;

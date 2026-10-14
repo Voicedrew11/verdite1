@@ -54,6 +54,12 @@ Four files in the directory have no entry below:
   `GlCore.Flush`, `LibGpu.DrawOTag` and the two host waits. The frame boundary is
   the end of `PresentFrame`. One bool per site while off. **No recompile.** See
   "Profiling a frame" in `docs/DEVELOPMENT.md`.
+  Since amended (2026-10-06): a frame's JIT is the game thread's own
+  (`JitInfo.GetCompilationTime(currentThread: true)`, and the method count), not the
+  process's. With Verdite3's `Prejit` compiling on four threads, the process-wide
+  figure charged their work to whichever frame was running: `JIT 453.26 ms` inside a
+  208 ms frame, and the first 5 s windows' `JIT ms/s` was the pass, not the game.
+  Without a background compiler the two are the same.
 - `0046-frame-capture-trace.patch` — a diagnostic: `Hle/GpuTrace.cs`, an
   `IGpuTrace` sink that receives every GP0 word with its source address, every GP1
   write, the end of each command, and each `GlCore` batch submit with **why** it
@@ -331,6 +337,14 @@ Four files in the directory have no entry below:
   with `DockBuilder` to dock a panel of its own beside the picture: the remaster
   editor opens at the right edge that way. The third diff in the patch file. See
   "Modes" in `docs/REMASTER.md`.
+  Since amended: `OutputView.Covered`, whether ImGui's hovered window is another
+  window than the Output panel, asked inside its `Begin`. A click is tested
+  against the rectangle as well as `Hovered`, since just after a release ImGui
+  can still hold the locked pointer's virtual position, and the rectangle alone
+  also holds under a floating panel in front of the picture: a click on that
+  panel captured the pointer. `Hovered` false cannot exclude it, being false
+  too while another item is active. The fourth diff in the patch file. See
+  "Capture behaves as a desktop game's" in `docs/INPUT.md`.
 
 - `0030-expose-host-pump.patch` — the shipped launcher has to build the game
   before there is a game to run, and that blocks for seconds; a window that stops
@@ -758,6 +772,20 @@ Four files in the directory have no entry below:
   normal, so AO shaded the wall behind at that normal: a faint box round every
   sprite with AO on. A texture window or an image keeps the whole face (the decode
   has no window). The normal pass now always binds sample VRAM on unit 0.
+  *Amended again (2026-10-06):* the box came back with the retained renderer, which
+  draws the map and its models into the same buffers through a second vertex
+  program, `WorldNormalVs`, and that one wrote `vTex = 0`, so `NormalFs` never
+  dropped a retained face's transparent texels. It now passes the corner's UV and
+  texpage/CLUT in `VeilTex`'s packing (`WorldVs`'s attributes 2-4), and
+  `DrawWorldNormals` binds sample VRAM on unit 0 first. **The guard:**
+  `GlShaders.RequireTexel` throws at GL setup if either program linked with
+  `NormalFs` (`aonormal`, `worldnormal`) leaves the texel attributes unread, as a
+  `vTex = 0` does after the link; and 0085's surface probe counts `SurfaceAhead`,
+  an opaque surface nearer than the frame's depth, which is the box itself.
+  Measured with `KF3_AO=1 KF3_GPU_SURFACE_PROBE=1`, five saves, 12 checks each while
+  turning: with `vTex = 0` put back, fdat05 read 784 and 1,239 ahead (fdat17, 14 and
+  41 read 0); fixed, all five read 0 ahead, with ~2.75M depth pixels each. With the
+  guard in, `vTex = 0` stops the window at setup: `worldnormal: 'inUV' is unread`.
 
 - `0059-world-space-occlusion.patch` — the occlusion pass also marches the area's own
   80x80 tile grid, so a wall behind the camera occludes as one in front of it does,
@@ -802,7 +830,7 @@ Four files in the directory have no entry below:
   the binary — KWin had nothing to match a desktop entry against and could not have
   shown an icon whatever the port did, the shipped AppImage's own included.
   `HostWindow.AppId` (`Runtime.AppId`, set before `Initialize`) is hinted at window
-  creation as `GLFW_WAYLAND_APP_ID` — the raw `0x00026001`, because Silk 2.22 has
+  creation as `GLFW_WAYLAND_APP_ID` — the raw `0x00026001`, because Silk 2.23 has
   no name for a GLFW 3.4 hint — and as the X11 class and instance name beside it.
   Measured after: `xdg_toplevel#45.set_app_id("verdite2")` on the wire. What wants
   both is each game's `patches/CardIcon.cs` and Verdite Core's `WindowIcon` and
@@ -826,7 +854,7 @@ Four files in the directory have no entry below:
   surface waits in `eglSwapBuffers` until the window is shown again, and the game
   presents from inside its own `VSync`, so **minimising the window stopped the
   whole game**. Silk's VSync is now always false and `ApplySwapInterval` owns the
-  interval: 1 with VSync on, except on Wayland (`glfwGetPlatform`, which Silk 2.22
+  interval: 1 with VSync on, except on Wayland (`glfwGetPlatform`, which Silk 2.23
   does not bind), where the swap stays at 0 — the compositor never tears — and
   `FrameClock.WaitRefresh` holds one present per monitor refresh on the CPU
   (`Profiler.VSyncWait`). `FrameClock.VSync` now means "the swap blocks". **No
@@ -1598,6 +1626,22 @@ Four files in the directory have no entry below:
   (`RetainedScene.DepthStageProbe`, `RetainedScene.SurfaceCheck`). The sixteenth
   diff in the patch file; the fields are under "Retained contract additions under
   verification" below.
+  Since amended (2026-10-08): NVIDIA's driver (615.78) faulted inside
+  `libnvidia-eglcore` with geometry normals, planar reflections or murky water on,
+  each of which runs `RenderSurfaces` (murk and planar through
+  `GteDepth.Reflections`). The game thread rebuilds the map (`RetainedScene.SetStatic`
+  from Verdite3's `RetainedMap`) whenever its chunks change, and only a main draw,
+  which the game thread waits on, uploads it into `_worldVbo`; the normal pass draws
+  from that buffer at a present, on the main thread, by `RetainedScene`'s chunk table,
+  which by then could be the new map's. A larger map's ranges ran past the old buffer's
+  end; Mesa reads zeros there, NVIDIA does not bound the fetch. `UploadStatic` now
+  keeps the table it uploaded with (`_worldChunkStart`, `_worldChunkCount`,
+  `_worldStaticCount`, `_worldVerts`) and `DrawStaticChunks` draws by it, clamped to
+  the buffer's length. The mip entries, attribute 9 of the same VAO, were sized to the
+  new map only by `UpdateWorldMips`, after the shadows (`RenderShadow`, which calls
+  `UploadStatic` and draws through `WorldVs`) had drawn it; `UploadStatic` now gives
+  them zeros as long as the map until then. Static reasoning from the trace; not
+  reproduced on NVIDIA here. Not in the patch file.
 
 - `0086-retained-model-mask.patch` — the retained models (`0085`) are drawn at slot 1,
   ahead of every packet the walk sends after them, and `0051`'s tolerance (1 unit
@@ -1684,6 +1728,346 @@ Four files in the directory have no entry below:
   normal program. `NormalFs` is now a `static readonly` composed string. **A frame
   with no fade and no added half is the program before.** **No recompile.**
   Measured in Verdite3's `WIDESCREEN.md` ("Render distance").
+- `0090-no-system-cnf.patch` — a disc with no `SYSTEM.CNF` could not be recompiled:
+  `SystemCfg.Parse` read it unconditionally. With none, the BIOS boots `PSX.EXE`
+  with TCB 4, EVENT 16 and the stack at `0x801FFF00`, the class's own defaults, so
+  `Parse` now returns them; `DiscProbe.SystemCfgBoot` answers `PSX.EXE` the same
+  way, so `--autoconfigure` names the boot file rather than guessing the first
+  executable. King's Field (`SLPS-00017`, Verdite1) has no `SYSTEM.CNF`. A disc
+  with one reads it as before. **Forces a recompile** only for such a disc.
+
+- `0091-vblank-from-the-poll.patch` — on `0021`'s timeline the vblank is delivered
+  only from inside `LibEtc.VSync`, so a game that waits for its own vblank handler
+  without calling `VSync` waits forever: King's Field (`SLPS-00017`) spins in its
+  frame gate on a counter its `RCntCNT3` handler bumps, and drew four frames after
+  the first area loaded. `LibEtc.VBlankFromPoll` (off by default; the port sets it)
+  has `Interrupts.PollSlow` deliver the vblanks that are due on the same wall-clock
+  grid, inside the poll's register snapshot and exception stack, before draining
+  pending IRQs. `AdvanceVBlanks` marks itself running, and a poll that arrives from
+  inside a delivery (a handler is recompiled code, and polls too) does not deliver
+  again. With the switch off the only change is that mark, so a game that does not
+  set it runs as before. Measured in Verdite1: about 20 frames a second in the first
+  area, the gate's three vblanks a frame. **No recompile.**
+
+- `0092-wrapped-image-load.patch` — an image load (GP0 `A0`) that runs past VRAM's
+  right or bottom edge wraps on the console, and `StoreImageHalfword` wraps it into
+  the shadow, but `HleLoadFlush` handed the backend the whole rectangle, and every
+  GL backend's `WriteRect` is one `TexSubImage2D`, which refuses a rectangle past
+  the texture with `GL_INVALID_VALUE`: the backend received none of it. King's
+  Field (`SLPS-00017`) loads its HUD and menu palettes as 16x16 TIM CLUT blocks at
+  rows 497-500, so the backend's palettes read zero, every texel transparent, and
+  the HUD and every menu were drawn and invisible. A wrapping load now goes to the
+  backend as up to four pieces, each at its wrapped position; a load that fits is
+  passed as before, so a game that never wraps one is unchanged. Measured in
+  Verdite1: 35 palette words differed between the backend's VRAM and the shadow,
+  and 0 after, with all of VRAM outside the display buffers equal through the boot,
+  the first area and the in-game menu. Fills and VRAM copies that wrap are not
+  split. **No recompile.**
+
+- `0093-disc-image-decorator.patch` — `DiscImage.Decorate`, a
+  `Func<IDiscImage, string, IDiscImage>` that `DiscImage.Open` hands each image it
+  opens, with its path, and returns the result of. Null, the default, passes the
+  image through, so a game that does not set it is unchanged. The disc is opened
+  inside the generated `Entry.Run`, so a port had no other place to stand between
+  the image and the runtime's reads. King's Field (`SLPS-00017`) lays the English
+  fan translation's PPF over the sectors this way, leaving its executable's
+  records out. **No recompile.**
+- `0094-gpu-suppress-dither.patch` — a port that turned the GPU's ordered dither
+  off had to clear bit 9 of every draw-mode word in RAM before the GPU saw it and
+  put it back after: PutDrawEnv's `dtd` byte, and every E1 word in the ordering
+  table, which meant walking the whole table a second time before each DrawOTag
+  (0.05 ms a frame in Verdite3, measured 2026-10-06). `Gpu.SuppressDither`, a
+  static the port sets, masks the bit where every E1 word lands, `SetDrawMode`, so
+  the packets, PutDrawEnv's word and anything else written to GP0 take it the same
+  way, and GPUSTAT bit 9 reads 0 as it did. **Off is the GPU as it was.** **No
+  recompile.** Verdite3's `NoDither` uses it ("Unit 1" in its `docs/PICTURE.md`).
+- `0095-otc-clear-direct.patch` — DMA channel 6's ordering-table clear wrote each
+  entry through `PSMemory.WriteU32`, so an 8192-entry table was 8192 calls down the
+  full store path every frame (0.055 ms a frame of Verdite3's stage 15, measured
+  2026-10-06). `PSMemory.ClearOrderingTable` stores the same words into RAM
+  directly when that path would only have stored them (`DirectRam`, `RamProbe`
+  off) and the table lies in RAM without wrapping; otherwise `Dma` keeps its loop.
+  `GteVertexMap` sees the same stores: one by one through `WriteU32` while one
+  could still bind a pending value (`MayBind`), then `NoteStores`, which advances
+  the store count, clears the pending filter and unbinds the words, as that many
+  `NoteWrite` calls take their early return. Measured in Verdite3, slot 5,
+  uncapped, with the vertex map active: 343,606,352 words over 83,870 clears, every
+  one equal to the loop's, none falling back; the clear 0.055 → 0.018 ms a frame.
+  **No recompile.**
+- `0096-retained-under-world.patch` — the walk draws the retained main view at slot
+  1, and a game can splice a second table in right after it that it meant to be drawn
+  first (Verdite3's eight-entry front table, linked after the main table's entry
+  8190). Those packets carry no depth record, so they were drawn over the finished
+  world. `RetainedScene.UnderSlots`, which the port sets: for that many slots after a
+  main view (or mirror) that drew, the walk sets `RetainedScene.UnderWorld`, and
+  `GlCore` gives a packet there with no recovered depth zMode 5, at the far plane,
+  tested `LEQUAL` and writing nothing, so it shows only where the world left the far
+  plane, as painter's order would have it. The water is not drawn ahead of such a
+  packet; a sprite there is not an overlay to the reflection pass, and the
+  opaque-texel depth pass skips it. `UnderTriangles` counts; `UnderProbe` counts its
+  samples and those that pass, with occlusion queries. **0 is the walk as it was.**
+  **No recompile.** Measured in Verdite3's `GPU_RENDERER.md` ("Far scenery over the
+  world").
+- `0097-live-render-scale.patch` — the render scale was read once, when the window
+  loaded, so the slider in Settings ▸ Display said a restart was required. Now it
+  sets `GlVram.Requested`, and `GlCore.PresentDisplay` takes it after the trailing
+  flush, at the point the true colour toggle already drops its targets for the same
+  reason: each display target is written back at the old scale and dropped, the
+  scaled VRAM texture (with each backend's scaled scratch and destination copies)
+  is reallocated with its picture blitted across, `0039`'s snapshots are redrawn at
+  the new scale so a menu open across the change keeps restoring its scaled frame,
+  and the 24-bit present's `uScale`/`uVramSize`, the only scale uniforms set once at
+  init, are sent again. Everything else sized by the scale -- the retained present
+  target, the occlusion, reflection and normal buffers, the present texture, the
+  prim shader's `uScale` -- is already checked against it where it is used. A
+  request is held to `GlVram.MaxScale`, the texture size limit the GL 2.1 clamp
+  already computed. Measured in Verdite3 (2026-10-06, GL 4.5, `KF2_GLDEBUG=1`):
+  6→1→8→2→6→3→4 in an area and 7→4 in the pause menu, each taken at the next
+  present, no driver report; 144 fps held except one second at 126 (1→8) and 133
+  (2→6), the new texture's allocation. Verdite3's shell drives it (`scale`). **No
+  recompile.**
+- `0098-retained-model-fade.patch` — `0089`'s distance fade weighs a pixel by one
+  edge for the whole frame, so a port could not fade one model at a distance of its
+  own: Verdite3 draws creatures past the game's radius, and a creature appears 16
+  tiles away, nearer than the map's edge. `RetainedScene.ModelInstance.FadeOut` (0
+  drawn in full, the default; 1 gone) is sent with each instance as `uModelKeep`
+  (`1 - FadeOut`): `WorldVs` multiplies it into a model's `vFade`, so `PrimFs`
+  dithers it with the distance fade by the same table, and `WorldNormalVs` passes it
+  to `NormalFs` (`vKeep`; `NormalVs` writes 1), which drops the same pixels, so AO
+  and the surface buffer do not see what the colour pass dithered away. The mirror
+  and the blended faces are drawn through the same instance uniforms and take it too.
+  **An instance with no `FadeOut` is the program before.** **No recompile.**
+  Measured in Verdite3's `WIDESCREEN.md` ("Render distance", "The models").
+- `0099-hud-over-surface.patch` — the reflection and occlusion passes composite at
+  present over the finished picture, HUD included. Text a game draws added or
+  subtracted (Verdite3's bottom message box: each glyph subtracted, then added,
+  which on the console is a lighten) was marked a cover in the surface buffer, so
+  the passes skipped its pixels: over murky water the letters were the raw water's
+  colour inside the murk, only their edges readable. Marked as a veil instead it
+  would have been murked with the water, text and all. Now `GlCore` copies a target's
+  picture once a frame, just before the first see-through 2D primitive is batched
+  (`CopyPreHud`, into `GlDisplayRt.PreHud`; `AoGeometry.PreHud` says the list's
+  frame has it), and add/subtract texels keep the surface under them as any other
+  see-through texel does (`NormalFs`). Where the surface buffer carries a veil's
+  mark, the present takes the copy as the picture under the HUD, lays the occlusion
+  (at the veil's share) and the reflection pass's colour on it, and adds back what
+  the HUD changed (`c + r.rgb - r.a * under`, exact for every blend mode: the
+  change a see-through primitive makes depends on what is under it, and the copy is
+  what was). The reflection pass reads the copy for the water's own colour where a
+  veil lies (`sceneAt`: the ripple bend, the metal tint). Opaque texels are covers
+  as before. A primitive drawn after the copy and under a veil is kept as HUD. Only
+  with reflections on; a frame with no veil copies nothing. Measured in Verdite3
+  (2026-10-07, area 5's pool, murk, waves and planar on, scale 6): the message's
+  letters stand 261 (sum of RGB) over the murked water against 270 over the plain
+  water, where before they stood 30, and with only the subtracted pass drawn they
+  were 106 *brighter* than the murk around them; 342 → 336 fps uncapped, the copy.
+  **No recompile.** See "The HUD over the water" in Verdite3's `WATER.md`.
+- `0100-radial-fog.patch` — the GTE's depth cue is a function of SZ, so the
+  retained shaders, which recompute it per pixel, fogged a pixel at the side of the
+  picture as if nearer than it is, and the fog moved as the view turned.
+  `GteDepth.RadialFog`, which the port sets: `PrimFs` (the retained world's and the
+  packets') takes a pixel with a depth back to its view position through
+  `uClipCentre`/`uClipH`, now sent for it outside a planar capture too
+  (`GlCore`'s flush, `BeginWorldMain`; `EndWorldUniforms` clears it), and sets
+  `0068`'s `gCueScale` to depth over distance, so the corner-fogged and pre-fogged
+  colours are re-fogged as the level fog re-fogs them. Fog from pixel depth
+  (`uCueFromZ`) and the linear curve 5 are taken at the distance itself
+  (`fogDepth()`, `gFogAtDepth`), each record's own DQA and DQB, and so is the
+  neighbour blend (`nbPrepare`). In a planar capture the distance replaces the level
+  depth, being never less. `SsrFs` fogs the murk's colour at the surface's distance
+  and a reflection at its image's (`fogZ`, `fogImage`). **Off is the program
+  before.** **No recompile.** Measured in Verdite3's `WIDESCREEN.md` ("Radial
+  fog").
+
+- `0101-window-focus.patch` — a port that locks the pointer had no way to learn
+  that the window lost focus, so a pointer captured before Alt-Tab stayed
+  captured in the port's own state while the desktop had it, and the click that
+  brought the window back reached the game as a button. `HostWindow.Focused` and
+  `HostWindow.FocusChanged` forward Silk's `IView.FocusChanged`, raised from the
+  host's event pump. Verdite Core's `Mouse` is the only caller: it releases on
+  focus loss and captures again on a click over the picture. Input only — **no
+  recompile**. See "Mouse look" in Verdite3's `docs/INPUT.md`.
+
+- `0102-pad-gyro.patch` — the runtime opened pad 1 through SDL but read only its
+  buttons and sticks, so a port had no way to the gyroscope a DualShock 4,
+  DualSense or Switch Pro carries. `Controller.WantGyro` is the port's request:
+  while it is true and the pad has one, `InputManager.PollGyro` switches the
+  sensor on (`GameControllerSetSensorEnabled`) and fills `Controller.GyroX`,
+  `GyroY` and `GyroZ` (radians a second, SDL's axes: x across the pad, y up, z
+  toward the player) with `Controller.Gyro` true; when it goes false the sensor is
+  switched off, since a pad streams a larger report while it is on. A rescan
+  forgets the state (`CloseControllers`), as a reopened handle starts with its
+  sensors off. Input only — **no recompile**. Verdite3's `ItemTurn` is the only
+  caller; see "Turning a picked-up item" in Verdite3's `docs/INPUT.md`.
+
+- `0103-model-near-clip.patch` — a retained model's face is kept by the lit
+  assembler's tests (facing, mean depth), and a corner the GTE's divide saturates
+  (nearer than H/2, or off its range) was placed where the packets put it, at the
+  ends of that range (`modelPlace`). A large flat face reaching past the eye then
+  drew as a long sheared slab (Verdite3's billboards, looked at from below); the
+  packets never drew it at all, the GPU refusing a triangle more than 1023 pixels
+  across or 511 down, which `GpuRaster` and `GpuHleForward` follow, so dropping it
+  made the trees vanish. `RetainedScene.ModelNearClip` (`uModelClip`): a face
+  with a corner `modelProjects` refuses is kept by its plane against the eye and
+  drawn in the ordinary projection, clipped at the GPU's near plane (`uNear`, 16,
+  as the map's), which is what a `Tile` instance already gets; `modelFaceKept`
+  sets `gModelClip` for its corners and `modelPlace` leaves them alone. Not the
+  sky, nor a model placed in view space (the arm). Colour and normal programs, the
+  main view and the mirror. False, the default, is the draw as it was. **No
+  recompile.** See "Billboards sheared from below" in Verdite3's
+  `docs/GPU_RENDERER.md`.
+- `0104-pad-rumble.patch` — the runtime rumbled pad 1 only for the game's own
+  `PadSetAct`, so a port had no way to rumble for an effect of its own, and a Switch
+  pad's HD rumble (two actuators, each playing a band at a chosen frequency) was out
+  of reach: SDL 2.32's `GameControllerRumble` gives it two fixed bands, and its
+  Switch driver takes no raw rumble through `GameControllerSendEffect`.
+  `Controller.Rumble` is the port's request, a `RumbleWave` record (a low and a
+  high band, hertz and amplitude 0..1) or null; `InputManager.PollRumble` sends a new
+  record at once and a standing one again every 30 ms, and stops the motors once
+  when it goes null, so nothing is sent while no port asks and the game's own rumble
+  is left alone. `Controller.WantHdRumble` asks for HD: on a Switch Pro Controller
+  or a single Joy-Con (`GameControllerGetType`) the pad's HID path
+  (`GameControllerPathS`) is opened beside SDL's handle (`HidOpenPath`) and output
+  report `0x10` written to it, both bands encoded as the reverse-engineered rumble
+  table has them; `Controller.HdRumble` says it took. A pad with no HID path, one
+  that will not open, or a refused write falls back to the two motors. Under one
+  lock, as `Poll` runs on more than one thread; a rescan writes the neutral report
+  and closes the handle. Output only — **no recompile**. Verdite3's `Rumble` (a
+  drawn bow) is the only caller; see "Rumble" in Verdite3's `docs/INPUT.md`.
+- `0105-pad-haptics.patch` — a DualSense has voice-coil actuators, not motors, and
+  SDL only makes them imitate two motors; over USB the pad is also a sound card
+  with four output channels, the last two its left and right actuators, so a wave
+  played there is felt at the frequencies it carries. `Host/PadHaptics.cs`: while
+  `Controller.WantHdRumble` holds and pad 1 is a DualSense (`ControllerTypePS5`),
+  SDL's audio subsystem is started and the first output whose name holds
+  "DualSense" or "Wireless Controller" opened at 48 kHz, float, four channels
+  (`SDL_AUDIO_ALLOW_CHANNELS_CHANGE`, so a stereo profile is refused rather than
+  downmixed); `Controller.Rumble`'s two bands are summed as sines into channels 3
+  and 4 and queued 40 ms ahead, topped up on every `Poll`, with the phases carried
+  and the amplitudes ramped across each block; a null wave clears the queue.
+  SDL's DualSense driver sets its "audio haptics off" bit whenever it is asked for
+  non-zero rumble and a zero report clears it, so the motors are stopped once on
+  opening and not asked for anything after. No such output (Bluetooth), one that
+  will not open or one with other than four channels keeps the two motors. The
+  game's sound is OpenAL's and untouched. Verdite3 measured, 2026-10-08, PipeWire:
+  `"DualSense wireless controller (PS5) Direct DualSense Wireless Controller",
+  48000 Hz, 4 channels`; whether channels 3 and 4 are the actuators is from the
+  community's reports, not felt yet. The same day the stream was muted: WirePlumber
+  restores mute per application name, and both streams took the process's name,
+  `dotnet`, so a saved mute for the game's sound silenced the haptics too (the pad
+  itself felt a `pw-play` wave into channels 3 and 4). The stream now names itself
+  `<assembly> haptics`, so it has its own saved state: SDL2 takes
+  `SDL_AUDIO_DEVICE_APP_NAME`, but Fedora's `sdl2-compat` (2.32.72, loaded from
+  `/usr/lib64` ahead of the package's bundled SDL2) runs SDL3 3.4.16, which ignores it
+  and names the stream from `SDL_APP_NAME`; that one is set only around
+  `OpenAudioDevice` and reset after, since it names the whole program. Stream name
+  `Haptics`. With it, haptics were felt on a cold start, no replug. Output only — **no recompile**. Verdite3's
+  `Rumble` is the only caller; see "Rumble" in Verdite3's `docs/INPUT.md`.
+- `0106-durable-player-files.patch` — `File.WriteAllBytes`/`WriteAllText` empty a
+  file before writing it, so a crash, a power cut or a full disk in between left
+  a memory card with no saves, or a `settings.json`/`interface.ini` with no
+  settings. `IO/DurableFile.cs` writes `<path>.tmp` and renames it over the file
+  (one step: a reader sees the old file or the new), optionally forced to disk
+  first. `MemoryCard.Flush` writes the card so, forced to disk, after copying the
+  card as the session found it to `<path>.bak` once, before the session's first
+  write; a write that fails is logged and shown once (`Runtime.ShowNotice`), never
+  thrown into the emulated BIOS call that saves. Loading, a card that is not
+  128 KB or has no `MC` header is kept as `<path>.damaged-<time>` and the `.bak`
+  restored if it is good; with no good backup it loads as before (the game sees
+  an unformatted card and offers the format). `ConfigManager` writes both files
+  durably (not forced: they are written on every settings change), logs a failed
+  write, and keeps an unreadable `settings.json` or `interface.ini` as
+  `.damaged-<time>` before the defaults are written over it (an unreadable
+  `interface.ini` threw out of `Load` before). Measured 2026-10-08 in Verdite3 by a
+  test program against the built runtime: a fresh card, the backup on a session's
+  first save, a card cut to 5000 bytes restored from it with the damaged copy
+  kept, a 100-byte card with no backup left as it was, and a write into a
+  read-only folder logged with the card on disk intact. **No recompile.**
+- `0107-crash-reports.patch` — a crash printed the exception to stderr and closed
+  the window, and a player who starts the game from a launcher has no stderr.
+  `Diagnostics/CrashReport.cs` writes `crashes/<time>-<kind>.log`: the exception,
+  the CPU registers, the last 64 indirect calls (a ring `Dispatcher.Call` writes),
+  the overlays, the hooks turned off (`0108`), the port's own sections
+  (`AddSection`: its version, its place, its switches) and the console's last 300
+  lines, with the 2 MB of game RAM beside it as `.ram.bin`; the newest 20 are
+  kept and a session writes at most 12. `Install` (from `Runtime.Initialize`)
+  reports an exception on any other thread and an unobserved task's, and starts
+  `Diagnostics/Watchdog.cs`: no `PresentFrame` for `HangSeconds` (15) writes a hang
+  report, whose stack is the game thread's own, taken by the game thread when it
+  next passes `Dispatcher.Call` or a memory access off the RAM fast path (a game
+  spinning on a hardware flag reads one) after the watchdog asks; it stays quiet
+  under a debugger, while `Paused`, and before the first frame.
+  `Runtime.HoldAfterCrash(report)` keeps the window up with `CrashPopup` (the
+  report's path, its folder, Quit) until the player closes it; `Run`'s loop does
+  so after `RunGame` catches a crash, and a port that calls its `Entry.Run` itself
+  calls it from its own catch. English strings `crash.*`. Measured 2026-10-08 in
+  Verdite3 with its `KF3_FAULT`: a crash report with the managed stack through the
+  recompiled functions, and a hang report whose stack is the spinning hook's, under
+  the function that called it. **No recompile.**
+- `0108-hook-fault-containment.patch` — every port patch and every mod is a set of
+  `HookManager` hooks, and an exception out of one went into the recompiled caller
+  and ended the session, for C# that only stands in for a routine the game still
+  has. `Invoke` runs each pre, replacement and post in its own `try`: a hook whose
+  own code threw has its whole mod taken off every function for the session (not
+  one hook, so none is left half-working; and refused if it hooks again), a fault
+  report written (`0107`), the player told once, and the call goes on — a pre as
+  if it had let the routine run, a post as if it had returned, a replacement by
+  running the game's routine unless it had already called it (counted through a
+  wrapper made once per function, since the detour hands over the same
+  trampoline). Whose code threw is the first frame from the throw that is either
+  the game's (namespace `Recompiled`, or a detour's typeless copy of it: the game's
+  crash, marked so no hook further out claims it) or anything not the runtime or
+  a library (the hook's); a hook that called the runtime directly is the hook's.
+  `HardResetSignal`, a guest thread's `ThreadGone` (now `internal`),
+  out-of-memory and the like pass through untouched. `NotAHookFault(e)` marks an
+  exception as the game's. What a hook wrote before it threw stays written. Also:
+  `ModLoader` skips a mod whose `mod.json` cannot be read and loads no mods when
+  the folder cannot be read (both threw out of `LoadAll`, before the game's first
+  instruction), and unhooks a mod whose `OnLoad` threw; `Runtime.CanHardReset`,
+  false in a port whose `Program.cs` calls `Entry.Run` with no boot loop, makes
+  the menu's Hard Reset a notice instead of a `HardResetSignal` that ended the
+  process (its hunk is in `0107`'s file, which holds all of `Runtime.cs`). Measured 2026-10-08 in Verdite3 with `KF3_FAULT=hook`: the fault report,
+  the hook off, the game running on. **No recompile.**
+- `0109-mixer-thread-guard.patch` — the SPU mixer thread runs the SPU's whole
+  emulation (`Spu.Mix`) as well as OpenAL, with nothing catching, and an exception
+  on a thread nobody catches ends the process without a word. `MixerLoop` reports
+  the first failure (a fault report, `0107`) and goes on; 30 failures in a row (a
+  second and a half) stop the sound with a notice and leave the game running.
+  `Shutdown` no longer calls OpenAL for a source and buffers that were never made
+  when no device opened, and waits a second at most for the mixer. Not measured:
+  nothing makes the mixer throw on purpose. **No recompile.**
+- `0110-keep-displayed-target.patch` — `PresentDisplay` destroyed any render
+  target not drawn for 300 frames, the one the display was showing included. A
+  game that holds a still and waits for a button without drawing (KF2's map item;
+  a sign before `MenuWorld` drew it) kept presenting, so five seconds in its only
+  wide target was reaped and every present after was the 4:3 VRAM fallback: black
+  bars outside the 4:3 area. A target containing the display rect is no longer
+  reaped; it is never staler than VRAM (writeback each present, `WriteVram` syncs
+  into it). Measured in KF2 with `KF2_MENUWORLD=0 KF2_MESSAGETEXT_TEST=3:0
+  KF2_PRESENT_PROBE=2`: before, `rt0 none ... idle 300` and `vram fallback 125`
+  every 2 s from five seconds into the message; after, `wide 125, vram fallback 0`
+  for the whole wait. The map item itself not reached by the shell; **not looked
+  at.** **No recompile.**
+
+## Package bumps
+
+Not patches, so not numbered: a dependency moved, recorded here so the reason
+travels with the fork.
+
+- **Silk.NET and Silk.NET.OpenGL.Extensions.ImGui 2.22.0 → 2.23.0** (2026-10-08;
+  Silk.NET.SDL was already 2.23.0). 2.22's `ImGuiController.TranslateInputKeyToImGuiKey`
+  ends its switch in `_ => throw new NotImplementedException()`, so any key Silk
+  reports that ImGui has no name for — `Key.Unknown` among them, which GLFW on
+  Wayland can raise around Alt+Tab — threw from the key callback and **took the
+  whole game down** (Verdite2 issue #48, on its AppImage under Wayland). 2.23 returns
+  `ImGuiKey.None` there, which Dear ImGui's `AddKeyEvent` drops; that arm and its doc
+  comment are the file's entire diff. Nothing the fork leans on moved: the private
+  `WindowResized` `0080` reaches by reflection keeps its signature, the integer
+  `DisplayFramebufferScale` `0018` corrects is still integer, `glfwGetPlatform` and a
+  `GLFW_WAYLAND_APP_ID` name are still unbound, the native GLFW is still
+  `Ultz.Native.GLFW` 3.4.0, and `IView.FocusChanged`, `ShouldSwapAutomatically`,
+  `IMonitor.Bounds` and the lazy `VSync` in `DoRender` are unchanged. Verdite3 built
+  clean and ran with no exception. **No recompile.**
 
 - `0090-no-system-cnf.patch` — a disc with no `SYSTEM.CNF` could not be recompiled:
   `SystemCfg.Parse` read it unconditionally. With none, the BIOS boots `PSX.EXE`
