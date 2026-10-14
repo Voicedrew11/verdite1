@@ -127,7 +127,7 @@ delegate, so each hook on it still fires.
 | site | callee | what |
 |---|---|---|
 | View | `func_8001C184(pos, rot)` | the camera block, below |
-| FrameHead | `func_8001BFB8` | flips the buffer index `0x80070E98`, points the ordering table (`0x80070EB8`) and packet pointer (`0x80090EBC`) at its half, `ClearOTagR(ot, 0x4000)`, zeroes three counters |
+| FrameHead | `func_8001BFB8` | flips the buffer index `0x80070E98`, points the packet record pointer `0x80070EB8` (a record of start, end and cursor at `+0`/`+4`/`+8`; every writer bumps the cursor) and the ordering-table pointer `0x80090EBC` (`0x80070EBC + idx * 0x10000`) at its half, `ClearOTagR(ot, 0x4000)`, zeroes three counters |
 | PoseMark | `func_800209A8` | marks each of the 12 pose slots at `0x800910C0` (0x14 bytes) in use as unclaimed (`1`) |
 | GeomScreen | `SetGeomScreen(200)` | |
 | Map | `func_8001E83C` | the map walk: cells through one of 16 stencils (`func_8001E5EC`, `func_8001DE18`) |

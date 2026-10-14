@@ -19,6 +19,8 @@ switch is added.
 | `KF1_VBLANKPACING` | on | `0`: menus' `VSync` calls on the runtime's clock, a comparison |
 | `KF1_VBLANKPACING_PROBE` | off | `1`: a line a second of held `VSync` calls |
 | `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
+| `KF1_STAGEPROBE` | off | `1`: per stage A-I and the gate, calls a second, ordering-table words written, presents, every 5 s |
+| `KF1_PRIMBUF_PROBE` | off | `1`: the frame's primitive buffer spent, peak and mean, and frames that ran out, every 2 s |
 | `KF1_RENDERER` | on | `0`: the recompiled renderer (stage I); `verify`: both, compared (`docs/GAME_INTERNALS.md`) |
 | `KF1_CAMERABLOCK` | on | `0`: the recompiled camera block; `verify`: both, compared |
 | `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |

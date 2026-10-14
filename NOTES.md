@@ -46,6 +46,7 @@ in `docs/TODO.md`.
 - [docs/SMOOTHING.md](docs/SMOOTHING.md) — drawing between ticks: what is carried, and how.
 - [docs/PICTURE.md](docs/PICTURE.md) — 24-bit colour, no dither, perspective, sub-pixel, the Z-buffer.
 - [docs/RENDERER_PLAN.md](docs/RENDERER_PLAN.md) — the plan for porting Verdite2's and Verdite3's renderer work.
+- [docs/GPU_RENDERER.md](docs/GPU_RENDERER.md) — the plan's working log: who draws what, and where.
 - [docs/ENV_VARS.md](docs/ENV_VARS.md) — every `KF1_*` switch.
 - [docs/TODO.md](docs/TODO.md) — next steps: the Phase 2 bring-up.
 

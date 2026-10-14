@@ -73,6 +73,14 @@ Kf1.Renderer.Install();
 Kf1.CameraBlock.Configure(Environment.GetEnvironmentVariable("KF1_CAMERABLOCK"));
 Kf1.CameraBlock.Install();
 
+// Probes, measurements only: which stages submit primitives (KF1_STAGEPROBE) and
+// how much of the primitive buffer the frame spends (KF1_PRIMBUF_PROBE). See
+// "The renderer in C#" in docs/GAME_INTERNALS.md.
+Kf1.StageProbe.Configure(Environment.GetEnvironmentVariable("KF1_STAGEPROBE"));
+Kf1.StageProbe.Install();
+Kf1.PrimBufferProbe.Configure(Environment.GetEnvironmentVariable("KF1_PRIMBUF_PROBE"));
+Kf1.PrimBufferProbe.Install();
+
 // The camera carried between ticks, whenever pacing is on (KF1_SMOOTH=0 compares).
 // See "The camera carried" in docs/SMOOTHING.md.
 Kf1.ViewSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH"),
