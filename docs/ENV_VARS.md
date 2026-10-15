@@ -24,6 +24,7 @@ switch is added.
 | `KF1_VRAMCENSUS_AFTER` | `3` | seconds after GAME.EXE loads before `KF1_VRAMCENSUS` counts |
 | `KF1_STAGEPROBE` | off | `1`: per stage A-I and the gate, calls a second, ordering-table words written, presents, every 5 s; and, when the in-game menu runs, its present and clear, and its writers' calls and cursor words per call, on a `menu:` line |
 | `KF1_PRIMBUF_PROBE` | off | `1`: the frame's primitive buffer spent, peak and mean, and frames that ran out, every 2 s |
+| `KF1_SEMI_ABR` | off | `1`: the blend mode each untextured semi model face's packet draws with, walked from the table at `DrawOTag` and checked against the GPU's own state; a line every 2 s (`patches/SemiAbr.cs`, "Semi-transparent model faces", `docs/GAME_INTERNALS.md`) |
 | `KF1_GEOPROBE` | off | `1`: what each renderer draw call adds to the ordering table, by packet type, every 5 s (`patches/GeometryProbe.cs`) |
 | `KF1_MAPCOVERAGE` | off | `1`: the address map's coverage by packet writer: packets, vertices and hit % a second, every 2 s (`patches/MapCoverage.cs`) |
 | `KF1_DRAWCENSUS` | off | `1`: the primitive buffer bytes a frame spends, exclusive and inclusive, by renderer routine, every 2 s (`patches/DrawCensus.cs`) |

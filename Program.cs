@@ -88,6 +88,9 @@ Kf1.PrimBufferProbe.Install();
 // What each renderer draw call adds to the ordering table, by packet type (KF1_GEOPROBE).
 Kf1.GeometryProbe.Configure(Environment.GetEnvironmentVariable("KF1_GEOPROBE"));
 Kf1.GeometryProbe.Install();
+// The blend mode each semi model face's packet draws with (KF1_SEMI_ABR).
+Kf1.SemiAbr.Configure(Environment.GetEnvironmentVariable("KF1_SEMI_ABR"));
+Kf1.SemiAbr.Install();
 // The address map's coverage by packet writer (KF1_MAPCOVERAGE), and the draw census:
 // which renderer routine draws how much of the frame (KF1_DRAWCENSUS).
 Kf1.MapCoverage.Configure(Environment.GetEnvironmentVariable("KF1_MAPCOVERAGE"));

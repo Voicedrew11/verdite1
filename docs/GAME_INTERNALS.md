@@ -277,6 +277,26 @@ semi face has no blend mode in its primitive: the GPU takes the ABR from its dra
 mode, which the game's packets set (E1 or a textured prim's texpage word) in the
 order they are written.
 
+**The ABR the semi packets draw with** (`KF1_SEMI_ABR=1`, `patches/SemiAbr.cs`, measured
+2026-10-15 on a capture walk of areas 1-4, 3,770 table walks). The probe walks the
+table in `DrawOTag` the way `LibGpu.WalkOTag` does and follows the GP0 state. Its end
+state matched the GPU's own `_blendMode` at every walk. The game sends no E1 packets;
+the mode comes from textured prims' texpage. Blend order was not active.
+
+| mesh (header/hash) | area | ABR seen | packets walked |
+|---|---|---|---|
+| `80182240` (8018225C) | 1 | 0 only | 107,918 |
+| `800E805C` | 1 | 0 only | 766 |
+| `80176528` (80176544) | 2 | 0 only | 72,018 |
+| `8016A510` (8016A52C, 617 prims) | 2 | 0 only | 501 |
+| `8016DA24` (8016DA40) | 3 | 0 only | 35,982 |
+| `80163F4C` (80163F68) | 4 | 0 only | 56,030 |
+| `800E9320` | 4 | 0 only | 5,622 |
+| `800EED50` (64 faces) | 1 | not seen | |
+
+All seven seen meshes draw every untextured semi face with ABR 0. The 64-face mesh in
+area 1 was not in view in any walk. Area 5 was not walked.
+
 ## The frame gate
 
 `func_800149F4` spins, with interrupts masked around each read, until the vblank

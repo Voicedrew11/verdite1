@@ -42,6 +42,8 @@ public static class RetainedModels
     sealed class Mesh
     {
         public int Start, Opaque, Total, MaxVertex, Gen;
+        public uint Header;
+        public ulong Hash;
         public bool Semi;
         public string? Reject;
     }
@@ -130,6 +132,7 @@ public static class RetainedModels
         ulong hash = Hash(m, prims, (int)(at - prims)) ^ (ulong)normals * 31;
         if (Meshes.TryGetValue((header, hash), out var mesh)) { MeshHits++; return mesh; }
         mesh = Build(m, prims, nprims, normals);
+        mesh.Header = header; mesh.Hash = hash;
         Meshes[(header, hash)] = mesh;
         MeshBuilds++;
         return mesh;
@@ -245,6 +248,7 @@ public static class RetainedModels
     /// retained and drawn, and the writer is skipped.</summary>
     public static bool Submit(CpuContext c, PSMemory m)
     {
+        SemiAbr.Current = null;
         if (!GpuWorld.Capture) return false;
         // The arm, the compass and the menu's model keep their packets: drawn over the
         // world in painter's order, with no depth record (PacketDepth).
@@ -255,7 +259,12 @@ public static class RetainedModels
         if (!InRam(tmd, 16) || obj >= m.ReadU32(tmd + 8)) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-object-range"); return false; }
         var mesh = GetMesh(m, tmd, obj);
         if (mesh.Reject != null) { GpuWorld.Fallback(0x8001C7F8, c.RA, mesh.Reject); return false; }
-        if (mesh.Semi) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-semi-faces"); return false; }
+        if (mesh.Semi)
+        {
+            SemiAbr.Current = (mesh.Header, mesh.Hash);
+            GpuWorld.Fallback(0x8001C7F8, c.RA, "model-semi-faces");
+            return false;
+        }
         uint header = tmd + 0xC + obj * 28;
         uint own = tmd + 0xC + m.ReadU32(header), count = m.ReadU32(header + 4);
         uint list = m.ReadU32(VertexList);
