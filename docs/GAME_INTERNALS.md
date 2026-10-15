@@ -241,6 +241,31 @@ after `off`, and the player does not move.
 - The frame head `0x8001BFB8` leaves the GTE's H at 1000 (another draw's); the
   map and model walks run at H = 200, centre (160, 120).
 
+### Semi-transparent model faces
+
+Scanned 2026-10-15 by the polygon writer's mesh build (`RetainedModels.Build`),
+one line per mesh built, over the walk: area 1 (warp 1 at 17000,121000), area 2
+(57000,37000), area 3 (51000,23000), area 4 (17000,72000 and 79000,71000), area 5
+(79000,139000). Meshes are the TMD objects the writer submits, by their primitive
+address. Code `0x32` is a Gouraud untextured triangle with the semi bit; `0x22` is
+the flat one.
+
+| area | prims at | faces | semi faces | code |
+|---|---|---|---|---|
+| 1 | `8018225C` | 240 | 240 untextured | `0x32` |
+| 1 | `800EED50` | 64 | 64 untextured | `0x22` |
+| 2 | `80176544` | 240 | 240 untextured | `0x32` |
+| 2 | `8016A52C` | 617 | 28 untextured | `0x32` |
+| 3 | `8016DA40` | 240 | 240 untextured | `0x32` |
+| 4 | `80163F68` | 240 | 240 untextured | `0x32` |
+| 5 | `800F1730` | 152 | 152 untextured | `0x22` |
+| 5 | `8015F8BC` | 240 | 240 untextured | `0x32` |
+
+No textured semi face (code bit 2 with bit 1) was met in any of them. An untextured
+semi face has no blend mode in its primitive: the GPU takes the ABR from its draw
+mode, which the game's packets set (E1 or a textured prim's texpage word) in the
+order they are written.
+
 ## The frame gate
 
 `func_800149F4` spins, with interrupts masked around each read, until the vblank

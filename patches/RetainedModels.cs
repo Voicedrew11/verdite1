@@ -146,7 +146,8 @@ public static class RetainedModels
             uint word = m.ReadU32(at), body = at + 4, code = word >> 24;
             at = body + ((word >> 6) & 0x3FC);
             if (!Layout(code, out int n, out bool textured, out bool gouraud, out int normal, out int vertex)) continue;
-            bool semi = textured && (code & 2) != 0;
+            // Untextured semi-transparent faces too: their blend mode is the GPU's draw mode, not the prim's.
+            bool semi = (code & 2) != 0;
             if (semi) mesh.Semi = true;
             int step = gouraud ? 4 : 2;
             int u0 = 255, v0 = 255, u1 = 0, v1 = 0;

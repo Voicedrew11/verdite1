@@ -435,8 +435,24 @@ Each of these is counted with its reason.
 | hud | `8001C7F8`, `8001F9A0` | `packet-owned-hud`: the compass and the menu's model |
 | models | `8001E230`, `8001EE9C` | `sprite-writer`: the flipbook sprites |
 | models | `8001D730` | `model-cached-writer`: area 5's objects |
-| models | `8001C7F8` | `model-semi-faces`: any model with a semi-transparent face (none met in areas 1 and 4) |
+| models | `8001C7F8` | `model-semi-faces`: any model with a semi-transparent face, textured or not. Eight untextured meshes in areas 1-5 have one (`GAME_INTERNALS.md`, "Semi-transparent model faces"); before 2026-10-15 the check looked only at textured faces and these drew opaque. Their blend mode is the GPU's draw mode, set by the game's packet stream (`SetDrawMode`, GP0 E1), not by the prim, so the retained path keeps them as packets. No textured semi face was met in any area, so `AddBlendFace` has no caller yet |
 | map | `8001DE18`, `8001E5EC` | `map-not-built`, `map-source-changing`: the walks before a build |
+
+### Semi-transparent models, 2026-10-15
+
+The semi check (`RetainedModels.Build`) now covers every face with the semi bit,
+untextured too. Measured on the five-area walk (`warp` to areas 1-5, the stops of
+`GAME_INTERNALS.md`'s table): eight meshes, all untextured, all kept as packets.
+The walk under `KF1_GPU_WORLD=capture KF1_GPU_CHECK=1` read a model screen max of
+1.13 px, depth exact, posed vertices all exact; the same walk on the check before
+this change read 1.12 px (both over the 1.11 px of the earlier walk; the difference
+is the walk, not the change). The walk crashes at the warp into area 5 (an
+unmapped read in `SubmitObject`'s patch, `0x81175F49`), with or without this change.
+
+Under `KF1_GPU_WORLD=1` on the same walk (to the area 5 warp): 2,201 main-view
+draws, none missed; 10,201 instances of 13,047 models; the semi meshes counted
+as `model-semi-faces` (2,592 in one caller's count, over the walk, the largest
+entry) and not drawn by the GPU.
 
 ### Measured
 
