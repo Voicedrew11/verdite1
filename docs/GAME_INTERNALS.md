@@ -190,6 +190,17 @@ after `off`, and the player does not move.
 **Under the renderer** (2026-10-14; each routine in "The draw path in C#",
 `docs/GPU_RENDERER.md`):
 
+- **Flipbook sprites.** `SubmitSprite` (`func_8001ED90`) draws each record of the
+  counted list at `0x80095098` through the writer `func_8001E230`. The writer's
+  argument is a 12-byte cel entry at `0x80055B00 + 12 × (u16 at record +0 + the
+  cel byte at +0x14)`: bytes 0-3 the texture rectangle (u, v, w, h), shorts `+4`,
+  `+6`, `+8`, `+A` the quad in its plane (x, y, w, h). The packet's CLUT is the u16
+  at `0x80095058`, its tpage the u16 at `0x8009505A`, its colour the RGBC word at
+  `0x8009505C`, lit by NCDS from the normal at `0x80057B64`. The writer's RTPS of
+  the origin (`func_8004DA4C`) gives the OT index, SZ >> 2 plus the record's bias,
+  and leaves IR0 at SP+0x54; a2 == 1 scales that IR0 by 3/2 (the depth cue, not the
+  size). Measured 2026-10-15: every sprite in areas 1-5 has code `0x2C` and tpage
+  `0x8E` (ABR 0), so none is semi-transparent.
 - **Object types' flags.** `u8[0x8006BD99 + 152 × type]`, read by the object
   submitter. The low nibble is the animation model. A non-zero high nibble draws
   through the cached writer `func_8001D730`, with colours from the halfwords at

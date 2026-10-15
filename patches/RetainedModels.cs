@@ -305,7 +305,7 @@ public static class RetainedModels
 
     /// <summary>The world placement (what lights and fogs by position read): the view
     /// matrix's transpose undoes the camera.</summary>
-    static void PlaceWorld(ref RetainedScene.ModelInstance i, in RetainedScene.View v)
+    internal static void PlaceWorld(ref RetainedScene.ModelInstance i, in RetainedScene.View v)
     {
         // World = Rv^T (Rgte p + T - Tv) + cam.
         float[] rv = [v.R00, v.R01, v.R02, v.R10, v.R11, v.R12, v.R20, v.R21, v.R22];

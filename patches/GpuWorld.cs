@@ -20,6 +20,7 @@ namespace Kf1;
 ///     KF1_GPU_MAP=0              the map left to its packets
 ///     KF1_GPU_MODELS=0           the models left to their packets
 ///     KF1_GPU_ARM=0              the arm left to its packets
+///     KF1_GPU_SPRITES=0          the flipbook sprites left to their packets
 ///     KF1_GPU_CHECK=1            the map's and models' corners checked against the GTE (capture)
 ///     KF1_GPU_CENSUS=1           a line every 5 s
 ///     KF1_GPU_CENSUS_FILE=path   the census as JSON, every 5 s
@@ -46,7 +47,7 @@ public static class GpuWorld
         }
     }
 
-    public static bool MapOn = true, ModelsOn = true, ArmOn = true;
+    public static bool MapOn = true, ModelsOn = true, ArmOn = true, SpritesOn = true;
     public static bool Check, CensusOn;
     static string? _censusFile;
 
@@ -107,6 +108,7 @@ public static class GpuWorld
         MapOn = Flag("KF1_GPU_MAP", true);
         ModelsOn = Flag("KF1_GPU_MODELS", true);
         ArmOn = Flag("KF1_GPU_ARM", true);
+        SpritesOn = Flag("KF1_GPU_SPRITES", true);
         Check = Flag("KF1_GPU_CHECK", false);
         CensusOn = Flag("KF1_GPU_CENSUS", false);
         _censusFile = Environment.GetEnvironmentVariable("KF1_GPU_CENSUS_FILE") is { Length: > 0 } f ? f : null;
@@ -249,7 +251,8 @@ public static class GpuWorld
             $"packet bytes map/models/arm={MapBytes}/{ModelBytes}/{ArmBytes} fallbacks={Reasons.Values.Sum()}");
         Console.WriteLine($"[KF1] map grid: walks={RetainedMap.GridWalks} changed walks={RetainedMap.GridChangedWalks} " +
             $"changed bytes={RetainedMap.GridChangedBytes}");
-        if (Check) Console.WriteLine($"[KF1] gpu check: {RetainedMap.CheckReport()} | {RetainedModels.CheckReport()}");
+        if (CensusOn) Console.WriteLine($"[KF1] gpu sprites: {SpriteAssembler.Report()}");
+        if (Check) Console.WriteLine($"[KF1] gpu check: {RetainedMap.CheckReport()} | {RetainedModels.CheckReport()} | {SpriteAssembler.CheckReport()}");
         foreach (var (k, v) in Reasons.OrderByDescending(kv => kv.Value).Take(8))
             Console.WriteLine($"[KF1] gpu fallback: {k} x{v}");
         if (_censusFile != null)

@@ -433,7 +433,8 @@ Each of these is counted with its reason.
 |---|---|---|
 | arm | `8001C7F8`, `8001F89C` | `packet-owned-arm`: view space, no depth record, painter's order over the world |
 | hud | `8001C7F8`, `8001F9A0` | `packet-owned-hud`: the compass and the menu's model |
-| models | `8001E230`, `8001EE9C` | `sprite-writer`: the flipbook sprites |
+| models | `8001E230` from `8001EE9C` (the flipbook sprites) | none while drawing: retained as textured quads; `sprite-semi` for a semi-transparent one (none met) |
+| models | `8001E230` from the creature submitter `8001EEDC` and the HUD | `sprite-writer`: the same writer, still packets |
 | models | `8001D730` | `model-cached-writer`: area 5's objects |
 | models | `8001C7F8` | `model-semi-faces`: any model with a semi-transparent face, textured or not. Eight untextured meshes in areas 1-5 have one (`GAME_INTERNALS.md`, "Semi-transparent model faces"); before 2026-10-15 the check looked only at textured faces and these drew opaque. Their blend mode is the GPU's draw mode, set by the game's packet stream (`SetDrawMode`, GP0 E1), not by the prim, so the retained path keeps them as packets. No textured semi face was met in any area, so `AddBlendFace` has no caller yet |
 | map | `8001DE18`, `8001E5EC` | `map-not-built`, `map-source-changing`: the walks before a build |
@@ -484,8 +485,50 @@ Under `KF1_GPU_WORLD=1`:
 - 54,893 GPU main-view draws, none missed; 267,379 instances drawn.
 - Packet bytes written while drawing:
   - map: 172 KB, all from the 1,071 cells walked before a build;
-  - models: 1.6 MB, the sprites;
+  - models: 1.6 MB, the sprites (before they were retained; see below);
   - arm: 14 MB, the arm's swings.
+
+### Sprites on the retained scene
+
+`SubmitSprite`'s writer calls (`func_8001E230` from `8001EE9C`) are retained as
+textured quads. `SpriteAssembler` runs the writer's own GTE work (RTPS, RTPT, NCDS)
+and writes the packet at the cursor without advancing it. While drawing, it then
+publishes an instance instead, with no link and no cursor move. The creature
+submitter and the HUD still call the same writer and stay packets (table above).
+
+- **Quad**: a rigid pose of the four corners in the plane, one per (x, y, w, h), and
+  a six-corner textured mesh per (cel rectangle, CLUT, tpage), both uploaded once.
+  Placement is the GTE's R and T at the writer's entry, which carry the smoothing
+  and are the same ones the packet uses.
+- **Colour**: the flat cue is an offset-curve instance cue with its ir0 at
+  800 + IR0/2, so the curve's w is IR0 at any depth. The lit colour is the shader's
+  NCDS dots path, the same one the models use.
+- **Blend**: the packet's code and tpage are read every call. All sprites met are
+  code `0x2C`, tpage `0x8E` (ABR 0), so none is semi-transparent. A semi sprite is
+  kept as a packet and counted `sprite-semi`.
+- **Gate**: `KF1_GPU_CHECK` compares the four corners against the packet's xy, the
+  OT index against the writer's, and the colour the shader's formula gives against
+  the packet's colour.
+
+Measured 2026-10-15 (the worktree's build; the disc loaded; areas 1, 4, 3, 5, 2, 1):
+
+- **Check** (`KF1_GPU_WORLD=capture KF1_GPU_CHECK=1`): 2,399 sprites written as
+  packets, 9,596 corners. Worst corner error 0.57 px (none over 1.5 px); OT index
+  off 0; colour: 7,197 channels, worst 0.2 of 255 (none over 2). The colour figure
+  is the shader's formula evaluated in C#, against the packet's NCDS colour; it is
+  not a readback of the GPU's pixels.
+- **Retained** (`KF1_GPU_WORLD=1`): 2,403 sprites retained and drawn; the census
+  shows `sprite-writer` at 0 bytes and 0 packets. Sprite meshes built 3 (2,300
+  hits); sprite poses built 1, 4 texels, once (2,402 hits). No model or sprite
+  vertex is uploaded per frame. The main view made 2,402 draws, none missed.
+- **Open, found in this run**: with `KF1_GPU_CHECK=1` the game aborted in area 5
+  twice in three runs of this build (`PoseBlend` read an unmapped address through
+  the object walk, at an area 5 warp followed by presses). The HEAD build with the
+  check ran the same route once with no abort, and this build without the check
+  ran it once with no abort, and retained once with no abort. The cause is not
+  known. Reading the sprite path, its writes go to the packet cursor and to the
+  retained store, not to the objects the faulting walk reads; that is a reading,
+  not a test. Treat the sample as too small to call it a regression.
 
 **Not yet looked at by eye**: the picture under `KF1_GPU_WORLD=1`, the order of
 the sprites and the arm against the retained world, and the frame at an area's

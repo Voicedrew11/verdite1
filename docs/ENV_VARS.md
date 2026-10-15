@@ -58,6 +58,7 @@ switch is added.
 | `KF1_GPU_MAP` | on | `0`: the map left to its packets ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_MODELS` | on | `0`: the models left to their packets ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_ARM` | on | `0`: reserved; the arm is always packets for now ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_SPRITES` | on | `0`: the flipbook sprites left to their packets; a sprite is retained only while the world is drawn ("Sprites on the retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CHECK` | off | `1`: under `capture`, every map and model vertex placed as the GPU places it, checked against the GTE's vertex cache (screen position, depth, behind-the-eye agreement, the depth cue, the map's corner colours, and the blended poses); reported with the census ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CENSUS` | off | `1`: a line every 5 s: builds, cache hits, GPU draws, packet bytes per domain and fallbacks by routine, caller and reason ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CENSUS_FILE` | off | a path: the census as JSON, every 5 s; implies `KF1_GPU_CENSUS` ("The retained scene", `docs/GPU_RENDERER.md`) |
