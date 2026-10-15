@@ -162,9 +162,11 @@ has not been judged. Verdite3's mechanism on this game's loop:
   flip `func_8001C050` is `DrawSync`, `VSync`, `PutDrawEnv`, `PutDispEnv`,
   `DrawOTag`. The frame is paced there to `KF1_FPS`, and the world clock advanced
   by wall time.
-- **Stages A-H run only on a tick of the 20 Hz world clock**, decided once per
+- **Stages A-H run only on a tick of the world clock**, decided once per
   loop iteration at stage A. Only calls from the main loop's own call sites are
-  gated. Stage I, the renderer, runs every frame.
+  gated. Stage I, the renderer, runs every frame. **The clock runs at 15 Hz by
+  default** (since 2026-10-15, at the user's choice; `KF1_TICKRATE`), where
+  the frame gate it replaces allows 20. The measurements below were taken at 20.
 - **A watchdog**: no boundary for 500 ms and stage A ticks the world off the wall
   clock and paces the loop itself. `KF1_PACING_NOBOUNDARY=1` removes the
   boundary to test it.
@@ -236,7 +238,7 @@ second while the area loads.
 Settings ▸ **Testing** (`patches/TestingSection.cs`, Verdite3's) holds every
 switch the port has, live, so a change can be compared without a restart: frame
 pacing (on or off, the frame rate 30-360 or uncapped, the live tick rate 5-60 Hz
-with a reset to the original 20, and a readout), the menus' vblank hold, the
+with a reset to the default 15, and a readout), the menus' vblank hold, the
 camera and the models carried, the Shading combo, perspective, sub-pixel, the
 Z-buffer, and the console probes. Every patch behind it attaches in every state
 and checks its switch on each call.

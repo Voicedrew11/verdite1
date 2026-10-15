@@ -10,10 +10,10 @@ using RecompOne.Runtime.Sdk;
 namespace Kf1;
 
 /// <summary>
-/// Draw at any rate and tick the world at the game's own 20 Hz:
+/// Draw at any rate and tick the world at 15 Hz by default (the gate's own is 20):
 ///
 ///     KF1_FPS=60|144|off   the picture's rate (off unless set: not judged yet)
-///     KF1_TICKRATE=20      the world's (a comparison only)
+///     KF1_TICKRATE=15      the world's; 20 is the frame gate's
 ///     KF1_FPS_PROBE=1      a line a second: fps drawn, ticks taken, packets drawn
 ///
 /// The main loop's call of the frame gate func_800149F4 (three vblanks, 20 fps at
@@ -26,7 +26,7 @@ namespace Kf1;
 /// </summary>
 public static class FramePacing
 {
-    public const double DefaultTickRate = 20.0;
+    public const double DefaultTickRate = 15.0;
     public static double LogicHz { get; private set; } = DefaultTickRate;
     public static double TargetFps { get; private set; }
     public static bool Enabled { get; private set; }

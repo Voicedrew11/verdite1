@@ -33,11 +33,11 @@ public sealed class TestingSection : ISettingsSection
           "es-419": "Actualiza el mundo a la frecuencia de ticks de abajo y dibuja a la frecuencia de cuadros elegida."
         },
         "kf1testing.tickrate": { "en": "Tick rate", "pt-BR": "Taxa de ticks", "es-419": "Frecuencia de ticks" },
-        "kf1testing.tickrate.reset": { "en": "Reset to 20 Hz", "pt-BR": "Restaurar 20 Hz", "es-419": "Restablecer 20 Hz" },
+        "kf1testing.tickrate.reset": { "en": "Reset to 15 Hz", "pt-BR": "Restaurar 15 Hz", "es-419": "Restablecer 15 Hz" },
         "kf1testing.tickrate.tip": {
-          "en": "World updates per second. The original is 20 Hz; changing this changes gameplay speed. Requires frame pacing. Saved for the next launch; KF1_TICKRATE overrides it at boot.",
-          "pt-BR": "Atualizações do mundo por segundo. O original é 20 Hz; alterar isso muda a velocidade do jogo. Requer controle de quadros. Salvo para a próxima execução; KF1_TICKRATE tem prioridade ao iniciar.",
-          "es-419": "Actualizaciones del mundo por segundo. La frecuencia original es 20 Hz; cambiarla cambia la velocidad del juego. Requiere control de cuadros. Se guarda para el próximo inicio; KF1_TICKRATE tiene prioridad al iniciar."
+          "en": "World updates per second. The default is 15 Hz; the frame gate's own is 20 Hz. Changing this changes gameplay speed. Requires frame pacing. Saved for the next launch; KF1_TICKRATE overrides it at boot.",
+          "pt-BR": "Atualizações do mundo por segundo. O padrão é 15 Hz; o do próprio jogo é 20 Hz. Alterar isso muda a velocidade do jogo. Requer controle de quadros. Salvo para a próxima execução; KF1_TICKRATE tem prioridade ao iniciar.",
+          "es-419": "Actualizaciones del mundo por segundo. La predeterminada es 15 Hz; la del propio juego es 20 Hz. Cambiarla cambia la velocidad del juego. Requiere control de cuadros. Se guarda para el próximo inicio; KF1_TICKRATE tiene prioridad al iniciar."
         },
         "kf1testing.widescreen.aspect": { "en": "Aspect", "pt-BR": "Proporção", "es-419": "Relación de aspecto" },
         "kf1testing.widescreen.tip": {

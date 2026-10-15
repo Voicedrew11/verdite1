@@ -13,7 +13,7 @@ switch is added.
 | `KF1_AUTOPAD` | off | scripted pad input, `seconds:button:holdMs,…` (`docs/DEVELOPMENT.md`) |
 | `KF1_AUTOPAD_FROM` | `game` | the overlay whose load starts `KF1_AUTOPAD`'s clock: `open` or `game` |
 | `KF1_FPS` | off | `60`, `144`, … or `off` (uncapped): frame pacing, the picture's rate (`docs/DEVELOPMENT.md`) |
-| `KF1_TICKRATE` | `20` | the world's rate under pacing, a comparison only |
+| `KF1_TICKRATE` | `15` | the world's rate under pacing; the frame gate's own is 20 |
 | `KF1_FPS_PROBE` | off | `1`: a pacing line a second |
 | `KF1_PACING_NOBOUNDARY` | off | `1`: leave `DrawOTag` unhooked, to test the watchdog |
 | `KF1_VBLANKPACING` | on | `0`: `VSync` calls outside the main loop's renderer call, and `DrawOTag`s with no `VSync` before them (the event picture), on the runtime's clock, a comparison |
