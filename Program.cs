@@ -72,6 +72,9 @@ Kf1.Renderer.Configure(Environment.GetEnvironmentVariable("KF1_RENDERER"));
 Kf1.Renderer.Install();
 Kf1.CameraBlock.Configure(Environment.GetEnvironmentVariable("KF1_CAMERABLOCK"));
 Kf1.CameraBlock.Install();
+// The draw path under it, routine by routine (KF1_LITERAL, KF1_<NAME>: 0, 1 or
+// verify). See "The draw path in C#" in docs/GPU_RENDERER.md.
+Kf1.Literal.InstallAll();
 
 // Probes, measurements only: which stages submit primitives (KF1_STAGEPROBE) and
 // how much of the primitive buffer the frame spends (KF1_PRIMBUF_PROBE). See

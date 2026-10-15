@@ -269,6 +269,8 @@ public sealed class TestingSection : ISettingsSection
             "Stage I, which draws the whole frame.");
         RoutineCombo("Camera block", () => CameraBlock.Setting, v => CameraBlock.Setting = v,
             "The view matrices from the camera.");
+        foreach (var r in Literal.All)
+            RoutineCombo(r.Name, () => r.Setting, v => r.Setting = v, r.Tip);
 
         ImGui.SeparatorText("Console probes");
         bool p = FramePacing.ProbeOn;
