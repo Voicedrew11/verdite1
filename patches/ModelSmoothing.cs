@@ -15,9 +15,10 @@ namespace Kf1;
 ///
 /// Verdite3's seam: the carry happens at each record's own submit, keyed by table
 /// and slot with an identity, so whatever the walk draws is carried and nothing
-/// else is touched. A pre hook on each of the walk's five submitters samples the
-/// record on a tick's first draw, writes it interpolated at the pacing clock's
-/// fraction, and the post hook puts the tick's values back. A clip time is carried
+/// else is touched. Around each of its five submitters, the C# walk calls
+/// BeforeSubmit and AfterSubmit (hooks on the submitters stand in when the walk is
+/// recompiled). Before samples the record on a tick's first draw and writes it
+/// interpolated at the pacing clock's fraction; after puts the tick's values back. A clip time is carried
 /// without writing it: the pose routine func_800205D4 is handed the tick the
 /// carried time lies in, and its one blend weight (gteMIMefunc, return address
 /// 0x8002092C) the fraction's share of that segment on top. The list's flipbook
@@ -163,7 +164,7 @@ public static class ModelSmoothing
         if (Hook(GteMime, nameof(BeforeMime), null) == null) return false;
         if (Hook(ArmSubmit, nameof(BeforeArm), nameof(AfterSubmit)) == null) return false;
         foreach (var t in Tables)
-            if (Hook(t.Submit, nameof(BeforeSubmit), nameof(AfterSubmit)) == null) return false;
+            if (Hook(t.Submit, nameof(HookedBefore), nameof(HookedAfter)) == null) return false;
         HookManager.Commit();
         return targets.All(HookAttach.Installed);
     }
@@ -177,6 +178,10 @@ public static class ModelSmoothing
     public static void AfterRenderer(CpuContext c, IMemory m) => _mainDraw = false;
 
     // ---- the submit seam ----
+
+    // The submitters' hooks, for the recompiled walk; the walk in C# calls the seam itself.
+    public static void HookedBefore(CpuContext c, IMemory m) { if (!ModelWalk.Carrying) BeforeSubmit(c, m); }
+    public static void HookedAfter(CpuContext c, IMemory m) { if (!ModelWalk.Carrying) AfterSubmit(c, m); }
 
     public static void BeforeSubmit(CpuContext c, IMemory m)
     {

@@ -1,5 +1,4 @@
 using RecompOne.Runtime.Context;
-using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 using Recompiled;
 using static Kf1.Mips;
@@ -7,7 +6,12 @@ using static Kf1.Mips;
 namespace Kf1;
 
 /// <summary>
-/// <c>func_8001F0C4</c>, the people, transcribed literally. <c>KF1_SUBMIT_PERSON</c>.
+/// <c>func_8001F0C4(a0 = person record)</c>, the people, transcribed literally.
+/// Builds the matrices from 0x800956A0 and the record's position (+0x24, +0x28, +0x2C
+/// less the origin at 0x80095744..0x8009574C), then the record's rotation through
+/// <c>func_8004E9B8</c> and <c>func_8004CDD4</c>, and draws the model at the object
+/// selected by <c>func_8001C114</c>: <c>func_8001C60C</c> projects its vertices and
+/// <c>func_8001C7F8</c> writes the polygons. <c>KF1_SUBMIT_PERSON</c>.
 /// </summary>
 public static class SubmitPerson
 {
@@ -34,6 +38,8 @@ public static class SubmitPerson
         KingsField1_game.SetTransMatrix_game(c, mem);
         c.S2 = 0x80090000u;
         c.S2 = c.S2 + 0x5744u;
+
+        // Record x, y, z (+0x24, +0x28, +0x2C) less the origin at 0x80095744..0x8009574C.
         c.V0 = mem.ReadU16(c.S1 + 0x24u);
         c.V1 = mem.ReadU16(c.S2);
         c.A0 = c.SP + 0x18u;
@@ -88,26 +94,26 @@ public static class SubmitPerson
         mem.WriteU32(c.SP + 0x10u, c.V0);
         c.RA = 0x8001F1BCu;
         KingsField1_game.func_800205D4(c, mem);
-        if (c.V0 != 0u) {
-            goto L8001F1E8;
+
+        // func_800205D4 result: zero takes the object from func_8001C114 (+4 list),
+        // nonzero projects the list at +4 of S2 directly.
+        if (c.V0 == 0u) {
+            c.A0 = 0u;
+            c.RA = 0x8001F1CCu;
+            KingsField1_game.func_8001C148(c, mem);
+            c.A0 = 0u;
+            c.RA = 0x8001F1D4u;
+            KingsField1_game.func_8001C114(c, mem);
+            c.A0 = mem.ReadU32(c.V0 + 0x4u);
+            c.RA = 0x8001F1E0u;
+            KingsField1_game.func_8001C60C(c, mem);
+            c.A0 = 0u;
+        } else {
+            c.A0 = mem.ReadU32(c.S2 + 0x4u);
+            c.RA = 0x8001F1F4u;
+            KingsField1_game.func_8001C60C(c, mem);
+            c.A0 = 0u;
         }
-        c.A0 = 0u;
-        c.RA = 0x8001F1CCu;
-        KingsField1_game.func_8001C148(c, mem);
-        c.A0 = 0u;
-        c.RA = 0x8001F1D4u;
-        KingsField1_game.func_8001C114(c, mem);
-        c.A0 = mem.ReadU32(c.V0 + 0x4u);
-        c.RA = 0x8001F1E0u;
-        KingsField1_game.func_8001C60C(c, mem);
-        c.A0 = 0u;
-        goto L8001F1F8;
-        L8001F1E8: ;
-        c.A0 = mem.ReadU32(c.S2 + 0x4u);
-        c.RA = 0x8001F1F4u;
-        KingsField1_game.func_8001C60C(c, mem);
-        c.A0 = 0u;
-        L8001F1F8: ;
         c.A1 = 0u;
         c.RA = 0x8001F200u;
         KingsField1_game.func_8001C7F8(c, mem);

@@ -1,5 +1,4 @@
 using RecompOne.Runtime.Context;
-using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 using Recompiled;
 using static Kf1.Mips;
@@ -8,6 +7,9 @@ namespace Kf1;
 
 /// <summary>
 /// <c>func_800209A8</c>, the pose mark, transcribed literally. <c>KF1_POSEMARK</c>.
+/// Walks the 12 pose slots at <c>0x800910C0</c> (0x14 bytes each). A slot whose
+/// first halfword is nonzero is set to <c>1</c>, unclaimed, for <c>PoseSweep</c>
+/// to free. Takes no arguments.
 /// </summary>
 public static class PoseMark
 {
@@ -23,22 +25,20 @@ public static class PoseMark
         c.A0 = 0u | 0x000Cu;
         c.A2 = 0u | 0x0001u;
         c.A1 = 0u | 0xFFFFu;
-        L800209BC: ;
-        Poll(c, mem);
-        c.V0 = (uint)(short)mem.ReadU16(c.V1);
-        if (c.V0 == 0u) {
+        while (true)
+        {
+            Poll(c, mem);
+            c.V0 = (uint)(short)mem.ReadU16(c.V1);
+            bool unused = c.V0 == 0u;
             c.A0 = c.A0 + c.A1;
-            goto L800209D0;
-        }
-        c.A0 = c.A0 + c.A1;
-        mem.WriteU16(c.V1, (ushort)c.A2);
-        L800209D0: ;
-        c.V0 = c.A0 & 0xFFFFu;
-        if (c.V0 != 0u) {
+            if (!unused)
+            {
+                mem.WriteU16(c.V1, (ushort)c.A2);
+            }
+            c.V0 = c.A0 & 0xFFFFu;
+            bool more = c.V0 != 0u;
             c.V1 = c.V1 + 0x14u;
-            goto L800209BC;
+            if (!more) break;
         }
-        c.V1 = c.V1 + 0x14u;
-        return;
     }
 }

@@ -1,5 +1,4 @@
 using RecompOne.Runtime.Context;
-using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 using Recompiled;
 using static Kf1.Mips;
@@ -8,6 +7,12 @@ namespace Kf1;
 
 /// <summary>
 /// <c>func_8001E9A4</c>, the objects, transcribed literally. <c>KF1_SUBMIT_OBJECT</c>.
+/// Argument a0 is the object record (72 bytes), kept in S2. The routine sets the
+/// camera matrices from 0x800956A0, positions the record's three shorts (at +0x1C,
+/// +0x20, +0x24) less the origin at 0x80095744 into the frame at SP+0x18, runs the
+/// TMD code on the record's object (<c>func_8001C114</c>, <c>func_8001C60C</c>,
+/// <c>func_8001C7F8</c>), and reads the record's flags byte from the table at
+/// 0x80070000 - 0x4267 indexed by its type.
 /// </summary>
 public static class SubmitObject
 {
@@ -27,12 +32,16 @@ public static class SubmitObject
         c.A0 = 0x80090000u;
         c.A0 = c.A0 + 0x56A0u;
         mem.WriteU32(c.SP + 0x90u, c.S0);
+
+        // Camera: rotation and translation matrices from 0x800956A0.
         c.RA = 0x8001E9CCu;
         KingsField1_game.SetRotMatrix_game(c, mem);
         c.A0 = 0x80090000u;
         c.A0 = c.A0 + 0x56A0u;
         c.RA = 0x8001E9DCu;
         KingsField1_game.SetTransMatrix_game(c, mem);
+
+        // Record position less the origin at 0x80095744, three shorts at SP+0x18.
         c.S3 = 0x80090000u;
         c.S3 = c.S3 + 0x5744u;
         c.V0 = mem.ReadU16(c.S2 + 0x1Cu);
@@ -54,6 +63,7 @@ public static class SubmitObject
         mem.WriteU16(c.SP + 0x1Cu, (ushort)c.V0);
         c.RA = 0x8001EA2Cu;
         KingsField1_game.func_8004DADC(c, mem);
+
         c.S1 = c.SP + 0x40u;
         c.A0 = (uint)(short)mem.ReadU16(c.S2 + 0x2Cu);
         c.A1 = c.S1;
@@ -89,6 +99,8 @@ public static class SubmitObject
         c.A0 = c.S0;
         c.RA = 0x8001EA98u;
         KingsField1_game.SetLightMatrix_game(c, mem);
+
+        // Flags byte of the record's type, from the table at 0x80070000 - 0x4267.
         c.V1 = mem.ReadU8(c.S2 + 0x1u);
         c.V0 = c.V1 << 2;
         c.V0 = c.V0 + c.V1;
@@ -115,56 +127,56 @@ public static class SubmitObject
         mem.WriteU32(c.SP + 0x10u, c.V0);
         c.RA = 0x8001EAFCu;
         KingsField1_game.func_800205D4(c, mem);
-        if (c.V0 != 0u) {
-            goto L8001EB28;
+
+        // func_800205D4's result (V0) picks which record's vertex list is cached.
+        if (c.V0 == 0u) {
+            c.A0 = 0u;
+            c.RA = 0x8001EB0Cu;
+            KingsField1_game.func_8001C148(c, mem);
+            c.A0 = 0u;
+            c.RA = 0x8001EB14u;
+            KingsField1_game.func_8001C114(c, mem);
+            c.A0 = mem.ReadU32(c.V0 + 0x4u);
+            c.RA = 0x8001EB20u;
+            KingsField1_game.func_8001C60C(c, mem);
+            c.V0 = c.S1 & 0x00FFu;
+        } else {
+            c.A0 = mem.ReadU32(c.S3 + 0x4u);
+            c.RA = 0x8001EB34u;
+            KingsField1_game.func_8001C60C(c, mem);
+            c.V0 = c.S1 & 0x00FFu;
         }
-        c.A0 = 0u;
-        c.RA = 0x8001EB0Cu;
-        KingsField1_game.func_8001C148(c, mem);
-        c.A0 = 0u;
-        c.RA = 0x8001EB14u;
-        KingsField1_game.func_8001C114(c, mem);
-        c.A0 = mem.ReadU32(c.V0 + 0x4u);
-        c.RA = 0x8001EB20u;
-        KingsField1_game.func_8001C60C(c, mem);
-        c.V0 = c.S1 & 0x00FFu;
-        goto L8001EB38;
-        L8001EB28: ;
-        c.A0 = mem.ReadU32(c.S3 + 0x4u);
-        c.RA = 0x8001EB34u;
-        KingsField1_game.func_8001C60C(c, mem);
-        c.V0 = c.S1 & 0x00FFu;
-        L8001EB38: ;
+
+        // High nibble of the flags byte: zero draws one polygon set, nonzero draws
+        // a table-driven set (halfwords at 0x80095038, indexed by S1).
         c.V0 = c.V0 >> 4;
-        if (c.V0 != 0u) {
-            c.S1 = c.V0 - 0x1u;
-            goto L8001EB58;
-        }
+        bool upper = c.V0 != 0u;
         c.S1 = c.V0 - 0x1u;
-        c.A0 = 0u;
-        c.A1 = 0u;
-        c.RA = 0x8001EB50u;
-        KingsField1_game.func_8001C7F8(c, mem);
-        goto L8001EB9C;
-        L8001EB58: ;
-        c.A0 = 0u;
-        c.V1 = c.S1 & 0x00FFu;
-        c.V1 = c.V1 << 1;
-        c.At = 0x80090000u;
-        c.At = c.At + 0x5038u;
-        c.At = c.At + c.V1;
-        c.A1 = mem.ReadU16(c.At);
-        c.V0 = 0x80090000u;
-        c.V0 = c.V0 + 0x505Au;
-        mem.WriteU16(c.V0, (ushort)c.A1);
-        c.V0 = c.V0 + c.V1;
-        c.V0 = mem.ReadU16(c.V0 - 0x12u);
-        c.At = 0x80090000u;
-        mem.WriteU16(c.At + 0x5058u, (ushort)c.V0);
-        c.A1 = 0u;
-        c.RA = 0x8001EB9Cu;
-        KingsField1_game.func_8001D730(c, mem);
-        L8001EB9C: ;
+        if (!upper) {
+            c.A0 = 0u;
+            c.A1 = 0u;
+            c.RA = 0x8001EB50u;
+            KingsField1_game.func_8001C7F8(c, mem);
+        } else {
+            c.A0 = 0u;
+            c.V1 = c.S1 & 0x00FFu;
+            c.V1 = c.V1 << 1;
+            c.At = 0x80090000u;
+            c.At = c.At + 0x5038u;
+            c.At = c.At + c.V1;
+            c.A1 = mem.ReadU16(c.At);
+            c.V0 = 0x80090000u;
+            c.V0 = c.V0 + 0x505Au;
+            mem.WriteU16(c.V0, (ushort)c.A1);
+            c.V0 = c.V0 + c.V1;
+            c.V0 = mem.ReadU16(c.V0 - 0x12u);
+            c.At = 0x80090000u;
+            mem.WriteU16(c.At + 0x5058u, (ushort)c.V0);
+            c.A1 = 0u;
+            c.RA = 0x8001EB9Cu;
+            KingsField1_game.func_8001D730(c, mem);
+        }
+
         c.RA = mem.ReadU32(c.SP + 0xA0u);
         c.S3 = mem.ReadU32(c.SP + 0x9Cu);
         c.S2 = mem.ReadU32(c.SP + 0x98u);

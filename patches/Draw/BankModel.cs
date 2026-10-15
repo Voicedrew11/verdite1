@@ -8,6 +8,10 @@ namespace Kf1;
 
 /// <summary>
 /// <c>func_8001ED38</c>, the bank model, transcribed literally. <c>KF1_BANKMODEL</c>.
+/// Takes no arguments. It sets the geometry screen to 200, selects TMD 4
+/// (<c>func_8001C0E8</c>), takes its first object (<c>func_8001C114</c>), projects
+/// that object's vertices (<c>func_8001C60C</c>) and draws its polygons at depth
+/// 1000 (<c>func_8001C7F8</c>).
 /// </summary>
 public static class BankModel
 {

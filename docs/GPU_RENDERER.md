@@ -262,3 +262,117 @@ or mode packet appeared in any place, standing, walking, swinging or dying.
   unchanged; Cross while it shows opens the menu.
 - **Death** runs on the renderer (above): 60-145 renderer calls a second, with 0-9
   calls a second from its own paths.
+
+## The draw path in C#
+
+Step 1 of `docs/RENDERER_PLAN.md`, 2026-10-14. All 24 routines under the renderer
+are transcribed literally from `generated/`, in `patches/Draw/`, one class each,
+and all are on by default. A transcription keeps every register store, memory
+access and call of the recompiled body, in the same order: only the control flow
+is rewritten as `if`/`while`. Gotos are left where removing one would duplicate
+or reorder code: 52 in the polygon writer (its jump table and shared quad tails),
+10 in the map cell's stencil state machine and 4 in the pose blender. Callees are
+called through `KingsField1_game`, so their hooks still fire.
+
+| routine | address | `KF1_` | what |
+|---|---|---|---|
+| vertex cache | `8001C60C` | `VERTEXCACHE` | RTPS into the cache at `0x800911B0`: SXY, SZ at +4, IR0×2 at +6 |
+| vertex cache (arm) | `8001C6A8` | `VERTEXCACHE_ARM` | the same, for the arm |
+| vertex cache (compass) | `8001C754` | `VERTEXCACHE_COMPASS` | RTPT; stores SZ at both +4 and +6 (the game's own quirk, kept) |
+| polygon writer | `8001C7F8` | `POLYASSEMBLER` | a TMD object's 12 face kinds through the table at `0x8001222C` |
+| polygon writer (objects) | `8001D730` | `POLYASSEMBLER_CACHED` | GT3/GT4/FT3/FT4 with the colours at `0x80095058`/`5A` |
+| map writer | `8001DE18` | `MAPASSEMBLER` | a map object's GT3/GT4 |
+| sprite writer | `8001E230` | `SPRITEASSEMBLER` | the flipbook sprites |
+| HUD sprite writer | `8001E480` | `HUDSPRITEASSEMBLER` | the HUD's FT4s |
+| map cell | `8001E5EC` | `MAPCELL` | one cell's stencil |
+| map walk | `8001E83C` | `MAPWALK` | the cells around the eye |
+| objects … people | `8001E9A4`, `EBB8`, `ED90`, `EEDC`, `F0C4` | `SUBMIT_OBJECT`, `_INTERACTION`, `_SPRITE`, `_CREATURE`, `_PERSON` | the five submitters |
+| bank model | `8001ED38` | `BANKMODEL` | TMD 4's object 0 at depth +1000: the menu's item view (`func_800279C4`, `80027B7C`, `800292F8`) |
+| model walk | `8001F218` | `MODELWALK` | the five tables |
+| arm, compass, HUD sprites | `8001F798`, `F8B0`, `F9D4` | `ARM`, `COMPASS`, `HUDSPRITES` | |
+| item display | `8001FAFC` | `ITEMDISPLAY` | the selected item's model turning in |
+| pose blender, mark, sweep | `800205D4`, `209A8`, `20A98` | `POSEBLEND`, `POSEMARK`, `POSESWEEP` | |
+
+The object submitter draws through the cached writer when the high nibble of its
+type's flags byte (`u8[0x8006BD99 + 152 × type]`) is set. That holds for types 13,
+16, 22, 25, 31, 34 and 43 in every area, none of them placed in areas 1-4, and
+for types 0, 2 and 4 in area 5, which places them. **Only area 5 exercises the
+cached writer.**
+
+### Verifying
+
+`patches/Literal.cs` is the harness. `KF1_<NAME>=verify` re-executes each call
+the way the renderer's `Differential` does. It snapshots RAM, the scratchpad, the
+registers and the GTE, runs the recompiled body, restores the snapshot and runs
+the C# body, then compares. The recompiled result stands. The comparison skips a
+0x2000-byte window under SP. Interrupts are deferred for both runs (the poll
+countdown is raised and then restored), so a long routine is not cut short
+differently in each run. `KF1_LITERAL_DUMP=dir` writes the three RAM images at a
+routine's first mismatch.
+
+Results, with pacing off:
+
+- **The corpus with the menu** (`scratch/drive.py`, every routine at `verify`):
+  0 mismatches in all 24 in the first run. Calls included the vertex cache
+  258,541, the map writer 123,638, the map cell 86,310, the polygon writer
+  10,201, the pose blender 5,061, the bank model 838 and the item display 635.
+  The re-run on the final tree read 0 except at the pose slots (arm 3, model
+  walk 1, objects 2, pose blender 10).
+- **Nested, through area 5** (0 interrupted): the map writer 236,757 calls,
+  creatures 4,275, interaction objects 2,855, the map walk 644 and the model
+  walk 628, all at 0. The only mismatches were at the pose slots (below): arm 3,
+  pose blender 10, objects 3, model walk 1. Re-run on the final tree, with the
+  depth records in: the same, 0 except the pose slots (pose blender 18 of 10,769
+  calls).
+- **Area 5 by hand**: the cached writer 865 calls, 0 mismatches. Objects 1,188
+  calls, 13 of them at the pose slots.
+- **The person in area 1** (`warp 1 17000 121000`; the corpus passes no person):
+  people 163 calls, model walk 505, pose blender 2,440. All 18 mismatches were at
+  the pose slots.
+- **The renderer's own verify** (`KF1_RENDERER=verify`) with every routine on
+  its C# body: 1,683 frames, 0 mismatches.
+
+Two artifacts of re-execution, not defects:
+
+- **The pose slots.** The pose blender takes a slot through `func_8001AAB0` →
+  `func_800502DC`, which is the BIOS `malloc` (A(0x33)), run by the runtime's HLE.
+  The second run gets a different block, so any routine whose call reaches the
+  blender can differ at a slot's block pointer. The 12 slots are 0x14 bytes from
+  `0x800910C0`, with the pointer at +0xC, so `0x800910CC`, `0x800910E0` and
+  `0x800910F4` are slots 0-2. Every mismatch in every run starts at one of
+  these, and the dumps show nothing else.
+- **Stateful hooks run twice.** Under pacing, `ModelSmoothing`'s cel hold runs in
+  both runs of the walk, so the walk is verified with pacing off
+  (`kf1.pacing=0` in `interface.ini`).
+
+With pacing at 144 fps and every routine on, the corpus plays. The walk runs
+720 times every 5 s, and the item display 100 times, which is the 20 Hz tick.
+
+### What moved with it
+
+- **The model smoothing carry sits in the walk.** `ModelWalk` calls
+  `ModelSmoothing.BeforeSubmit`/`AfterSubmit` around each of its five submitters
+  and sets `ModelWalk.Carrying`. The submitter hooks stand down while it is set,
+  and still carry when the walk is recompiled (`KF1_MODELWALK=0`). What is carried
+  is unchanged.
+- **The item display steps once a tick** (`ItemDisplay`). Under pacing, its body
+  runs only on a frame on which the tick moved, so its state (`u8[0x80095088]`,
+  the countdown `u8[0x80095089]`, the angle `u16[0x8009508A]` stepping 0x80 up to
+  0x200) moves at the console's rate. `KF1_ITEMDISPLAY_HOLD=0` lets it step on
+  every frame again.
+- **Packet depths** (`PacketDepth`, Verdite3's `PolyAssemblerDepth`). Just
+  before `AddPrim`, the map writer and both polygon writers seal each packet's
+  four corner SZ values from the vertex cache with its command word and its first
+  and last vertex words. The polygon writers record only inside the model walk.
+  For the arm, the compass and the item view they drop the record at that
+  address, so those keep painter's order. The cache holds the full 16-bit SZ, so
+  no bits are lost, unlike Verdite3's model path. Measured 2026-10-14 over the
+  corpus at `KF1_ZBUFFER=1`:
+  - every record written is found (hits equal records);
+  - 95% of polygons have a depth and 97% of triangles are tested;
+  - the polygons with no depth, about 23 a frame, are the arm, the compass and
+    the HUD.
+- **No HUD transform to port.** The compass projects through the GTE (RTPT,
+  `func_8004DADC`), so the address map already sees its fraction. Nothing in the
+  24 routines clips or subdivides: the writers cull by NCLIP and drop a packet
+  whose table slot is below 5 (the map writer also drops one at 0x4000 and above).

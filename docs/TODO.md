@@ -45,10 +45,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
   `docs/GAME_INTERNALS.md`): verified, 0 mismatches over 8,588 frames with all
   twenty sites called; on by default. Next on the way to the retained renderer:
   the model walk and its five submitters in C# (with the smoothing passed in), then
-  the pose routine `func_800205D4`, then the map path. **The selected item's
-  display steps on every renderer call**, so under pacing it turns in faster;
-  hold it to the tick. The whole renderer port, step by step, is in
-  `docs/RENDERER_PLAN.md`.
+  the pose routine `func_800205D4`, then the map path. Done 2026-10-14 as Step 1
+  of `docs/RENDERER_PLAN.md` ("The draw path in C#" in `docs/GPU_RENDERER.md`):
+  all 24 draw routines in C# and verified, and the selected item's display held
+  to the tick. **Next is Step 2**, the things that run at the drawn rate.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

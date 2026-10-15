@@ -30,6 +30,11 @@ switch is added.
 | `KF1_PROFILE_FUNCS` | off | `stages`, or `game:hex+hex` to time more functions: an empty pre-hook makes each one a section |
 | `KF1_RENDERER` | on | `0`: the recompiled renderer (stage I); `verify`: both, compared (`docs/GAME_INTERNALS.md`) |
 | `KF1_CAMERABLOCK` | on | `0`: the recompiled camera block; `verify`: both, compared |
+| `KF1_LITERAL` | on | `0`/`1`/`verify` for all 24 draw routines at once; each `KF1_<NAME>` below overrides it ("The draw path in C#", `docs/GPU_RENDERER.md`) |
+| `KF1_<NAME>` | on | one draw routine: `0` recompiled, `verify` both, compared. Names: `VERTEXCACHE`, `VERTEXCACHE_ARM`, `VERTEXCACHE_COMPASS`, `POLYASSEMBLER`, `POLYASSEMBLER_CACHED`, `MAPASSEMBLER`, `SPRITEASSEMBLER`, `HUDSPRITEASSEMBLER`, `MAPCELL`, `MAPWALK`, `SUBMIT_OBJECT`, `SUBMIT_INTERACTION`, `BANKMODEL`, `SUBMIT_SPRITE`, `SUBMIT_CREATURE`, `SUBMIT_PERSON`, `MODELWALK`, `ARM`, `COMPASS`, `HUDSPRITES`, `ITEMDISPLAY`, `POSEBLEND`, `POSEMARK`, `POSESWEEP` |
+| `KF1_LITERAL_DUMP` | off | a directory: the entry, recompiled and C# RAM images at each routine's first verify mismatch |
+| `KF1_LITERAL_PROBE` | off | `1`: each draw routine's C# runs every 5 s |
+| `KF1_ITEMDISPLAY_HOLD` | on | `0`: the selected item's display steps on every frame under pacing, not once a tick |
 | `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |
 | `KF1_SMOOTH_PROBE` | off | `1`: a view-smoothing line a second |
 | `KF1_SMOOTH_MODELS` | on | `0`: the model walk's records and clips not carried under pacing |
@@ -41,8 +46,9 @@ switch is added.
 | `KF1_PERSPECTIVE_PROBE` | off | `1`: the address map's counters every 2 s |
 | `KF1_SUBPIXEL` | off | `1`: sub-pixel vertices |
 | `KF1_SUBPIXEL_PROBE` | off | `1`: the fractions carried every 2 s |
-| `KF1_ZBUFFER` | off | `1`: per-pixel occlusion from the address map's depths |
-| `KF1_ZBUFFER_PROBE` | off | `1`: triangles tested every 2 s |
+| `KF1_ZBUFFER` | off | `1`: per-pixel occlusion from the C# writers' packet depths, or the address map's when a world writer is recompiled |
+| `KF1_ZBUFFER_PACKETS` | on | `0`: the address map's depths even when the packet records are complete |
+| `KF1_ZBUFFER_PROBE` | off | `1`: every 2 s, packet depths recorded and found, triangles tested |
 | `KF1_BLENDORDER` | on | `0`: blended surfaces in table order (`0079`) |
 | `KF1_ZBUFFER_THRESHOLD` | `0` | restart the depth buffer on a step this large (`0051`) |
 | `KF1_KEYS` | `fps` | `stock` leaves RecompOne's keyboard bindings (`docs/INPUT.md`) |

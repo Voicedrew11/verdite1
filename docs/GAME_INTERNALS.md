@@ -187,6 +187,25 @@ yaw roll | off]`; its reply's `drawn` is the camera the last frame was drawn
 with. Checked: `drawn` reads the given camera while it is set and the handed one
 after `off`, and the player does not move.
 
+**Under the renderer** (2026-10-14; each routine in "The draw path in C#",
+`docs/GPU_RENDERER.md`):
+
+- **Object types' flags.** `u8[0x8006BD99 + 152 × type]`, read by the object
+  submitter. The low nibble is the animation model. A non-zero high nibble draws
+  through the cached writer `func_8001D730`, with colours from the halfwords at
+  `0x80095038` written to `0x80095058`/`0x8009505A`. Set for types 0, 2 and 4 in
+  area 5 only, and for 13, 16, 22, 25, 31, 34 and 43 everywhere.
+- **Pose slots.** The blender `func_800205D4` takes a slot through
+  `func_8001AAB0` → `func_800502DC`, the BIOS `malloc` (A(0x33)). There are 12
+  slots of 0x14 bytes from `0x800910C0`, each with its block pointer at +0xC.
+- **The selected item's display** (`func_8001FAFC`). The state is
+  `u8[0x80095088]` (0, 2, 3), the countdown `u8[0x80095089]` (from 15), and the
+  angle `u16[0x8009508A]` (+0x80 a step, up to 0x200).
+- **The vertex cache** at `0x800911B0`: 8 bytes a vertex, SXY, then SZ at +4 and
+  IR0×2 at +6.
+- **The menu's item view** draws through `func_8001ED38`: TMD 4's object 0 at
+  depth +1000.
+
 ## The frame gate
 
 `func_800149F4` spins, with interrupts masked around each read, until the vblank

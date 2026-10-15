@@ -1,5 +1,4 @@
 using RecompOne.Runtime.Context;
-using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 using Recompiled;
 using static Kf1.Mips;
@@ -7,7 +6,11 @@ using static Kf1.Mips;
 namespace Kf1;
 
 /// <summary>
-/// <c>func_8001E230</c>, the sprite writer, transcribed literally. <c>KF1_SPRITEASSEMBLER</c>.
+/// <c>func_8001E230</c>, the sprite writer. <c>KF1_SPRITEASSEMBLER</c>.
+/// a0 is the sprite record (its shorts at +4, +6, +8, +A give the position and
+/// size), a1 a signed halfword added to the ordering-table index, and a2 == 1
+/// scales the size by 3/2. The FT4 packet is written at the cursor of the record
+/// at 0x80070EB8 and added to the ordering table at 0x80090EBC.
 /// </summary>
 public static class SpriteAssembler
 {
@@ -86,80 +89,82 @@ public static class SpriteAssembler
         c.V1 = mem.ReadU32(c.V0 + 0x8u);
         c.V0 = mem.ReadU32(c.V0 + 0x4u);
         c.V0 = c.V0 < c.V1 ? 1u : 0u;
-        if (c.V0 != 0u) {
-            goto L8001E460;
-        }
-        c.A0 = c.S0;
-        c.RA = 0x8001E358u;
-        KingsField1_game.SetPolyFT4_game(c, mem);
-        c.A1 = 0x80090000u;
-        c.A1 = c.A1 + 0x5058u;
-        c.V0 = mem.ReadU16(c.A1);
-        mem.WriteU16(c.S0 + 0xEu, (ushort)c.V0);
-        c.V0 = mem.ReadU32(c.SP + 0x5Cu);
-        c.V1 = 0x80090000u;
-        c.V1 = mem.ReadU16(c.V1 + 0x505Au);
-        mem.WriteU32(c.S0 + 0x8u, c.V0);
-        c.V0 = mem.ReadU32(c.SP + 0x60u);
-        mem.WriteU32(c.S0 + 0x10u, c.V0);
-        c.V0 = mem.ReadU32(c.SP + 0x64u);
-        mem.WriteU32(c.S0 + 0x18u, c.V0);
-        c.V0 = mem.ReadU32(c.SP + 0x68u);
-        mem.WriteU16(c.S0 + 0x16u, (ushort)c.V1);
-        mem.WriteU32(c.S0 + 0x20u, c.V0);
-        c.V0 = mem.ReadU8(c.S2);
-        mem.WriteU8(c.S0 + 0x1Cu, (byte)c.V0);
-        mem.WriteU8(c.S0 + 0xCu, (byte)c.V0);
-        c.V0 = mem.ReadU8(c.S2);
-        c.V1 = mem.ReadU8(c.S2 + 0x2u);
-        c.V0 = c.V0 + c.V1;
-        mem.WriteU8(c.S0 + 0x24u, (byte)c.V0);
-        mem.WriteU8(c.S0 + 0x14u, (byte)c.V0);
-        c.V0 = mem.ReadU8(c.S2 + 0x1u);
-        mem.WriteU8(c.S0 + 0x15u, (byte)c.V0);
-        mem.WriteU8(c.S0 + 0xDu, (byte)c.V0);
-        c.V0 = mem.ReadU8(c.S2 + 0x1u);
-        c.V1 = mem.ReadU8(c.S2 + 0x3u);
-        c.V0 = c.V0 + c.V1;
-        mem.WriteU8(c.S0 + 0x25u, (byte)c.V0);
-        mem.WriteU8(c.S0 + 0x1Du, (byte)c.V0);
-        c.V1 = mem.ReadU8(c.S0 + 0x7u);
-        c.V0 = 0u | 0x0001u;
-        c.At = 0x80090000u;
-        mem.WriteU8(c.At + 0x505Fu, (byte)c.V1);
-        if (c.S3 != c.V0) {
+        // out of buffer space: the sprite is not written and not added
+        bool outOfSpace = c.V0 != 0u;
+        if (!outOfSpace)
+        {
+            c.A0 = c.S0;
+            c.RA = 0x8001E358u;
+            KingsField1_game.SetPolyFT4_game(c, mem);
+            c.A1 = 0x80090000u;
+            c.A1 = c.A1 + 0x5058u;
+            c.V0 = mem.ReadU16(c.A1);
+            mem.WriteU16(c.S0 + 0xEu, (ushort)c.V0);
+            c.V0 = mem.ReadU32(c.SP + 0x5Cu);
+            c.V1 = 0x80090000u;
+            c.V1 = mem.ReadU16(c.V1 + 0x505Au);
+            mem.WriteU32(c.S0 + 0x8u, c.V0);
+            c.V0 = mem.ReadU32(c.SP + 0x60u);
+            mem.WriteU32(c.S0 + 0x10u, c.V0);
+            c.V0 = mem.ReadU32(c.SP + 0x64u);
+            mem.WriteU32(c.S0 + 0x18u, c.V0);
+            c.V0 = mem.ReadU32(c.SP + 0x68u);
+            mem.WriteU16(c.S0 + 0x16u, (ushort)c.V1);
+            mem.WriteU32(c.S0 + 0x20u, c.V0);
+            c.V0 = mem.ReadU8(c.S2);
+            mem.WriteU8(c.S0 + 0x1Cu, (byte)c.V0);
+            mem.WriteU8(c.S0 + 0xCu, (byte)c.V0);
+            c.V0 = mem.ReadU8(c.S2);
+            c.V1 = mem.ReadU8(c.S2 + 0x2u);
+            c.V0 = c.V0 + c.V1;
+            mem.WriteU8(c.S0 + 0x24u, (byte)c.V0);
+            mem.WriteU8(c.S0 + 0x14u, (byte)c.V0);
+            c.V0 = mem.ReadU8(c.S2 + 0x1u);
+            mem.WriteU8(c.S0 + 0x15u, (byte)c.V0);
+            mem.WriteU8(c.S0 + 0xDu, (byte)c.V0);
+            c.V0 = mem.ReadU8(c.S2 + 0x1u);
+            c.V1 = mem.ReadU8(c.S2 + 0x3u);
+            c.V0 = c.V0 + c.V1;
+            mem.WriteU8(c.S0 + 0x25u, (byte)c.V0);
+            mem.WriteU8(c.S0 + 0x1Du, (byte)c.V0);
+            c.V1 = mem.ReadU8(c.S0 + 0x7u);
+            c.V0 = 0u | 0x0001u;
+            c.At = 0x80090000u;
+            mem.WriteU8(c.At + 0x505Fu, (byte)c.V1);
+            // a2 == 1: the size at SP+0x54 is scaled by 3/2
+            bool notHalf = c.S3 != c.V0;
             c.A1 = c.A1 + 0x4u;
-            goto L8001E41C;
-        }
-        c.A1 = c.A1 + 0x4u;
-        c.V1 = mem.ReadU32(c.SP + 0x54u);
-        c.V0 = (uint)((int)c.V1 >> 1);
-        c.V0 = c.V0 + c.V1;
-        mem.WriteU32(c.SP + 0x54u, c.V0);
-        L8001E41C: ;
-        c.A0 = 0x80050000u;
-        c.A0 = c.A0 + 0x7B64u;
-        c.A2 = mem.ReadU32(c.SP + 0x54u);
-        c.A3 = c.S0 + 0x4u;
-        c.RA = 0x8001E430u;
-        KingsField1_game.func_8004DD14(c, mem);
-        c.V0 = c.S4 << 16;
-        c.V0 = (uint)((int)c.V0 >> 16);
-        c.A0 = c.S1 + c.V0;
-        c.V0 = (int)c.A0 < 5 ? 1u : 0u;
-        if (c.V0 != 0u) {
+            if (!notHalf)
+            {
+                c.V1 = mem.ReadU32(c.SP + 0x54u);
+                c.V0 = (uint)((int)c.V1 >> 1);
+                c.V0 = c.V0 + c.V1;
+                mem.WriteU32(c.SP + 0x54u, c.V0);
+            }
+            c.A0 = 0x80050000u;
+            c.A0 = c.A0 + 0x7B64u;
+            c.A2 = mem.ReadU32(c.SP + 0x54u);
+            c.A3 = c.S0 + 0x4u;
+            c.RA = 0x8001E430u;
+            KingsField1_game.func_8004DD14(c, mem);
+            c.V0 = c.S4 << 16;
+            c.V0 = (uint)((int)c.V0 >> 16);
+            c.A0 = c.S1 + c.V0;
+            // the ordering-table index must be inside the table (< 0x4000, and at least 5)
+            c.V0 = (int)c.A0 < 5 ? 1u : 0u;
+            bool badSlot = c.V0 != 0u;
             c.A1 = c.S0;
-            goto L8001E460;
+            if (!badSlot)
+            {
+                c.A0 = c.A0 & 0x3FFFu;
+                c.V0 = 0x80090000u;
+                c.V0 = mem.ReadU32(c.V0 + 0xEBCu);
+                c.A0 = c.A0 << 2;
+                c.A0 = c.A0 + c.V0;
+                c.RA = 0x8001E460u;
+                KingsField1_game.AddPrim_game(c, mem);
+            }
         }
-        c.A1 = c.S0;
-        c.A0 = c.A0 & 0x3FFFu;
-        c.V0 = 0x80090000u;
-        c.V0 = mem.ReadU32(c.V0 + 0xEBCu);
-        c.A0 = c.A0 << 2;
-        c.A0 = c.A0 + c.V0;
-        c.RA = 0x8001E460u;
-        KingsField1_game.AddPrim_game(c, mem);
-        L8001E460: ;
         c.RA = mem.ReadU32(c.SP + 0x84u);
         c.S4 = mem.ReadU32(c.SP + 0x80u);
         c.S3 = mem.ReadU32(c.SP + 0x7Cu);

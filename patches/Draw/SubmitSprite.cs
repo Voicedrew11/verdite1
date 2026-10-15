@@ -1,5 +1,4 @@
 using RecompOne.Runtime.Context;
-using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 using Recompiled;
 using static Kf1.Mips;
@@ -7,7 +6,12 @@ using static Kf1.Mips;
 namespace Kf1;
 
 /// <summary>
-/// <c>func_8001ED90</c>, the flipbook sprites, transcribed literally. <c>KF1_SUBMIT_SPRITE</c>.
+/// <c>func_8001ED90(a0 = sprite record)</c>, the flipbook sprites, transcribed literally.
+/// Builds the rotation and translation matrices from 0x800956A0, takes the record's
+/// x, y, z (+4, +8, +C) less the origin words at 0x80095744..0x8009574C into a short
+/// vector on the stack, and draws it through <c>func_8001E230</c> with the frame
+/// picked from the record's +0x14 counter, which then advances and wraps at the
+/// low nibble of +2. <c>KF1_SUBMIT_SPRITE</c>.
 /// </summary>
 public static class SubmitSprite
 {
@@ -34,6 +38,8 @@ public static class SubmitSprite
         KingsField1_game.SetTransMatrix_game(c, mem);
         c.S2 = 0x80090000u;
         c.S2 = c.S2 + 0x5744u;
+
+        // Record x, y, z (+4, +8, +C) less the origin at 0x80095744, 0x80095748, 0x8009574C.
         c.V0 = mem.ReadU16(c.S1 + 0x4u);
         c.V1 = mem.ReadU16(c.S2);
         c.A0 = c.SP + 0x10u;
@@ -53,34 +59,34 @@ public static class SubmitSprite
         mem.WriteU16(c.SP + 0x14u, (ushort)c.V0);
         c.RA = 0x8001EE14u;
         KingsField1_game.func_8004DADC(c, mem);
+
+        // High nibble of record +2 selects the path: nonzero uses the entry at
+        // (nibble - 0x10) << 6 and draws with S0 = 0x96; zero uses S2 - 0x84 and 0xC8.
         c.V0 = mem.ReadU8(c.S1 + 0x2u);
         c.V0 = c.V0 & 0x00F0u;
         c.V0 = c.V0 & 0x00FFu;
-        if (c.V0 == 0u) {
-            c.S0 = c.SP + 0x18u;
-            goto L8001EE58;
-        }
+        bool none = c.V0 == 0u;
         c.S0 = c.SP + 0x18u;
-        c.A0 = c.V0 - 0x10u;
-        c.A0 = c.A0 << 6;
-        c.A1 = c.S0;
-        c.RA = 0x8001EE3Cu;
-        KingsField1_game.func_80014BEC(c, mem);
-        c.A0 = c.S2 - 0xA4u;
-        c.A1 = c.S0;
-        c.RA = 0x8001EE48u;
-        KingsField1_game.func_8004D11C(c, mem);
-        c.A0 = c.S0;
-        c.RA = 0x8001EE50u;
-        KingsField1_game.SetRotMatrix_game(c, mem);
-        c.S0 = 0u | 0x0096u;
-        goto L8001EE64;
-        L8001EE58: ;
-        c.A0 = c.S2 - 0x84u;
-        c.RA = 0x8001EE60u;
-        KingsField1_game.SetRotMatrix_game(c, mem);
-        c.S0 = 0u | 0x00C8u;
-        L8001EE64: ;
+        if (!none) {
+            c.A0 = c.V0 - 0x10u;
+            c.A0 = c.A0 << 6;
+            c.A1 = c.S0;
+            c.RA = 0x8001EE3Cu;
+            KingsField1_game.func_80014BEC(c, mem);
+            c.A0 = c.S2 - 0xA4u;
+            c.A1 = c.S0;
+            c.RA = 0x8001EE48u;
+            KingsField1_game.func_8004D11C(c, mem);
+            c.A0 = c.S0;
+            c.RA = 0x8001EE50u;
+            KingsField1_game.SetRotMatrix_game(c, mem);
+            c.S0 = 0u | 0x0096u;
+        } else {
+            c.A0 = c.S2 - 0x84u;
+            c.RA = 0x8001EE60u;
+            KingsField1_game.SetRotMatrix_game(c, mem);
+            c.S0 = 0u | 0x00C8u;
+        }
         c.A0 = c.SP + 0x18u;
         c.RA = 0x8001EE6Cu;
         KingsField1_game.SetTransMatrix_game(c, mem);
@@ -97,6 +103,8 @@ public static class SubmitSprite
         c.A0 = c.A0 + c.V0;
         c.RA = 0x8001EE9Cu;
         KingsField1_game.func_8001E230(c, mem);
+
+        // Advance the frame counter (+0x14); it resets to 0 once it reaches the low nibble of +2.
         c.V0 = mem.ReadU8(c.S1 + 0x14u);
         c.V1 = mem.ReadU8(c.S1 + 0x2u);
         c.V0 = c.V0 + 0x1u;
@@ -104,11 +112,9 @@ public static class SubmitSprite
         c.V0 = c.V0 & 0x00FFu;
         c.V1 = c.V1 & 0x000Fu;
         c.V0 = c.V0 < c.V1 ? 1u : 0u;
-        if (c.V0 != 0u) {
-            goto L8001EEC4;
+        if (c.V0 == 0u) {
+            mem.WriteU8(c.S1 + 0x14u, (byte)0u);
         }
-        mem.WriteU8(c.S1 + 0x14u, (byte)0u);
-        L8001EEC4: ;
         c.RA = mem.ReadU32(c.SP + 0x4Cu);
         c.S2 = mem.ReadU32(c.SP + 0x48u);
         c.S1 = mem.ReadU32(c.SP + 0x44u);

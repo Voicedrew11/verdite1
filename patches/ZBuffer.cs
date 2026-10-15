@@ -8,15 +8,17 @@ using RecompOne.Runtime.Modding;
 namespace Kf1;
 
 /// <summary>
-/// The Z-buffer switch: per-pixel occlusion from the view depth the address map
-/// (<see cref="GteVertexMap"/>) recovers for each corner, instead of the console's
-/// ordering table. A triangle with a corner the map missed keeps painter's order,
-/// so a miss is exactly the old picture. Only the switch, the tolerance and the
-/// report are here; the test is the fork's (<see cref="GteDepth"/>,
-/// <see cref="BlendOrder"/>). Verdite3's ZBuffer, without its C# assemblers'
-/// packet records, which this game has none of yet.
+/// The Z-buffer switch: per-pixel occlusion instead of the console's ordering
+/// table. The depths are the C# polygon writers' packet records
+/// (<see cref="PacketDepth"/>) while the map writer, both polygon writers and the
+/// model walk run in C#, and otherwise the view depth the address map
+/// (<see cref="GteVertexMap"/>) recovers for each corner. A triangle with no depth
+/// keeps painter's order, so a miss is exactly the old picture. Only the switch,
+/// the tolerance and the report are here; the test is the fork's
+/// (<see cref="GteDepth"/>, <see cref="BlendOrder"/>). Verdite3's ZBuffer.
 ///
 ///     KF1_ZBUFFER=1             on; 0 or unset leaves the ordering table
+///     KF1_ZBUFFER_PACKETS=0     the address map's depths even when the records are there
 ///     KF1_ZBUFFER_PROBE=1       a line every 2 s: records, hits, tested, unmatched
 ///     KF1_BLENDORDER=0          blended surfaces in table order again (0079)
 ///     KF1_ZBUFFER_THRESHOLD=N   restart the depth buffer on an N-unit step (0051)
@@ -56,6 +58,9 @@ public static class ZBuffer
 
     static float _threshold;
 
+    /// <summary>KF1_ZBUFFER_PACKETS: the packet records when they are complete.</summary>
+    public static bool Packets { get; set; } = true;
+
     static long _frames;
     static double _windowStart = Now;
 
@@ -71,10 +76,13 @@ public static class ZBuffer
 
         // The restart threshold (0051). Zero, the default, is one buffer for the frame.
         _threshold = ParseFloat(Environment.GetEnvironmentVariable("KF1_ZBUFFER_THRESHOLD")) ?? 0f;
+        Packets = (Environment.GetEnvironmentVariable("KF1_ZBUFFER_PACKETS") ?? "1").Trim() is not ("0" or "off");
     }
 
-    /// <summary>No packet records here: the depth comes from the address map.</summary>
-    public static void SyncSource() => GtePacketDepth.Enabled = false;
+    /// <summary>The records stand alone only when every world packet gets one, so
+    /// every writer of the world must be on its C# body.</summary>
+    public static void SyncSource() => GtePacketDepth.Enabled = Enabled && Packets &&
+        MapAssembler.R.InCSharp && PolyAssembler.R.InCSharp && PolyAssemblerCached.R.InCSharp && ModelWalk.R.InCSharp;
 
     public static void Install()
     {
@@ -136,6 +144,14 @@ public static class ZBuffer
     {
         long tested = GteDepth.ZTris, skipped = GteDepth.ZSkipped;
         long total = tested + skipped;
+
+        if (GtePacketDepth.Enabled)
+        {
+            long hits = GtePacketDepth.Hits, misses = GtePacketDepth.Misses;
+            Console.WriteLine($"[KF1] zbuffer: {GtePacketDepth.Recorded / window:F0} packet depths recorded/s, " +
+                              $"{hits / window:F0} polygons found theirs, {misses / window:F0} did not " +
+                              $"({Pct(hits, hits + misses)})");
+        }
 
         Console.WriteLine($"[KF1] zbuffer: {tested / window:F0} triangles tested/s, " +
                           $"{skipped / window:F0} kept painter's order" +

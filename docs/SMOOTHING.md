@@ -76,10 +76,12 @@ into the model table `0x80055B00`, and the submitter steps `+0x14` on every draw
 wrapping at `+2 & 0xF` (`+2 >> 4` is a fixed turn). With pacing on they
 animated at the drawn rate, seven times too fast at 144.
 
-**The carry is at the submitters**, Verdite3's seam: a pre hook on each of the
-five samples the record it is handed, and a post hook puts the tick's values back,
-so what is carried is exactly what the walk draws and nothing is written outside a
-submit. Keyed by table and slot, with an identity per table (an interaction
+**The carry is at the submitters**, Verdite3's seam: before each of the five, the
+record it is handed is sampled, and after it the tick's values are put back. Since
+2026-10-14 the C# model walk (`patches/Draw/ModelWalk.cs`) makes both calls around
+its submitters, and the submitter hooks stand in only when the walk is recompiled.
+Either way, what is carried is exactly what the walk draws, and nothing is written
+outside a submit. Keyed by table and slot, with an identity per table (an interaction
 object's type, an object's type, a sprite's model and `+2`, a creature's model
 and `+2`, a person's model and `+1`). Sampled on the first draw of a tick
 (`FramePacing.Ticks` moved on a ticked iteration); a slot that missed a tick

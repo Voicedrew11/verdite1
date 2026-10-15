@@ -37,16 +37,23 @@ standing still.
 
 ## Unit 3: the Z-buffer
 
-`patches/ZBuffer.cs` (`KF1_ZBUFFER=1`). Verdite3 feeds its depth buffer from
-records its C# polygon assemblers write beside each packet; **this game has no
-assemblers in C# yet, so the depth comes from the address map** (the fork's
-fallback when `GtePacketDepth` is off): a triangle with all three corners
-recovered is depth-tested, any other keeps painter's order. The coplanar
+`patches/ZBuffer.cs` (`KF1_ZBUFFER=1`). As in Verdite3, the depth buffer is fed
+from the records the C# polygon writers write beside each packet
+(`patches/Draw/PacketDepth.cs`, 2026-10-14), whenever the map writer, both
+polygon writers and the model walk run in C#. Otherwise, or with
+`KF1_ZBUFFER_PACKETS=0`, the depth comes from the address map (the fork's
+fallback when `GtePacketDepth` is off), where a triangle with all three corners
+recovered is depth-tested. A triangle with no depth keeps painter's order. The coplanar
 tolerance is Verdite3's (`0051`: 1 SZ unit plus 0.5 of the depth's slope), and
 blended surfaces draw after opaque ones (`0079`, `KF1_BLENDORDER=0` compares).
 
 Measured 2026-10-05, the same walk: **94.2% of submitted triangles are tested**
 (65,088 a second), 4,032 keep painter's order; the depth-clear threshold is off
-and never fires. Open: the address map also answers for the arm, the compass and
-anything else drawn through the GTE, which Verdite3's records left out; whether
-the arm is cut by walls it is pushed into is to be judged by eye.
+and never fires. On the address map, the arm, the compass and anything else drawn
+through the GTE are depth-tested as well, which Verdite3's records leave out.
+
+On the packet records, measured 2026-10-14 over the corpus: every record
+written is found, 95% of polygons have a depth and 97% of triangles are tested.
+The arm, the compass and the HUD (about 23 polygons a frame) keep painter's
+order. Open, by eye: the two sources compared, and whether walls cut the arm
+on the address map.

@@ -136,6 +136,20 @@ area change and the busy scenes from Step 0.
 reads 0 mismatches. Every routine has an exercised fixture, and the census shows
 no world packet written by a recompiled body.
 
+**Status 2026-10-14**: done ("The draw path in C#" in `docs/GPU_RENDERER.md`). All 24
+routines read 0 mismatches over the corpus, area 5 and the menu. The only
+exception is the pose slots, where the HLE `malloc` hands the re-executed call
+a different block. The renderer's verify reads 0 mismatches over 1,683 frames
+with all 24 on. Two writers are exercised only in particular places: the cached object writer in area 5, and the people submitter by area 1's person. Also
+done:
+
+- the smoothing carry is in the walk;
+- the item display is held to the tick;
+- packet depths feed the Z-buffer.
+
+There is no HUD transform to port (the compass goes through RTPT), and no clip
+or subdivide in the draw path.
+
 ## Step 2: things that run at the drawn rate
 
 Run before and after Step 1 with `KF1_RATECENSUS` and moving creatures and

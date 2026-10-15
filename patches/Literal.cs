@@ -16,9 +16,10 @@ namespace Kf1;
 /// Verify runs the recompiled routine, then the transcription from the same state,
 /// and compares all of RAM outside a stack window under the call, the scratchpad,
 /// every register with LO and HI, the GTE and the interrupt poll's countdown (so a
-/// loop that polls a different number of times shows). A call in which either run
-/// reached a slow poll is counted, not compared: its handlers read the clock. **The
-/// recompiled result stands.** Step 1 of docs/RENDERER_PLAN.md; see "The draw path
+/// loop that polls a different number of times shows). Both runs start with the
+/// countdown pushed out of reach, so no interrupt handler runs inside either (they
+/// read the clock); the countdown is put back less the polls taken, and a handler due
+/// runs at the next poll after the call. **The recompiled result stands.** Step 1 of docs/RENDERER_PLAN.md; see "The draw path
 /// in C#" in docs/GPU_RENDERER.md.
 /// </summary>
 public sealed class Literal
@@ -131,12 +132,33 @@ public sealed class Literal
         {
             Runs++;
             _body(c, mem);
+            if (Probe) Report();
         }
+    }
+
+    /// <summary>KF1_LITERAL_PROBE=1: every routine's runs in C# over the last 5 s.</summary>
+    static readonly bool Probe = Environment.GetEnvironmentVariable("KF1_LITERAL_PROBE")?.Trim() == "1";
+    static double _probeAt;
+    static readonly Dictionary<Literal, long> _probeMark = [];
+
+    static void Report()
+    {
+        double now = Environment.TickCount64 / 1000.0;
+        if (now < _probeAt) return;
+        _probeAt = now + 5.0;
+        var parts = All.Select(r =>
+        {
+            long d = r.Runs - _probeMark.GetValueOrDefault(r);
+            _probeMark[r] = r.Runs;
+            return $"{r.Name} {d}";
+        });
+        Console.WriteLine($"[KF1] literal probe (5 s): {string.Join(", ", parts)}");
     }
 
     // ---- verify --------------------------------------------------------------------
 
     const uint StackWindow = 0x2000;
+    const int Deferred = 1 << 30;
     static readonly FieldInfo? Countdown =
         typeof(Interrupts).GetField("_countdown", BindingFlags.NonPublic | BindingFlags.Static);
 
@@ -163,6 +185,7 @@ public sealed class Literal
         var entry = c.Snapshot();
         Gte.Save(_gteEntry);
         int countdown = (int?)Countdown?.GetValue(null) ?? 0;
+        Countdown?.SetValue(null, Deferred);
         uint slow = Interrupts.SlowPolls;
 
         orig(c, mem);
@@ -177,7 +200,7 @@ public sealed class Literal
         Differential.LoadPad(mem, _padBefore);
         c.Restore(entry);
         Gte.Load(_gteEntry);
-        Countdown?.SetValue(null, countdown);
+        Countdown?.SetValue(null, Deferred);
         _body(c, mem);
         Differential.SavePad(mem, _padOurs);
         var ours = c.Snapshot();
@@ -211,7 +234,7 @@ public sealed class Literal
         Differential.LoadPad(mem, _padTheirs);
         c.Restore(theirs);
         Gte.Load(_gteTheirs);
-        Countdown?.SetValue(null, countTheirs);
+        Countdown?.SetValue(null, Math.Max(1, countdown - (Deferred - countTheirs)));
 
         double now = Environment.TickCount64 / 1000.0;
         if (now < _reportAt) return;
