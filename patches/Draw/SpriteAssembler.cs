@@ -21,6 +21,7 @@ public static class SpriteAssembler
 
     static void Run(CpuContext c, PSMemory mem)
     {
+        RetainedModels.Packet(c, R.Address, "sprite-writer");
         c.SP = c.SP - 0x88u;
         mem.WriteU32(c.SP + 0x84u, c.RA);
         mem.WriteU32(c.SP + 0x80u, c.S4);

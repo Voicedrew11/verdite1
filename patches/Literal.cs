@@ -41,6 +41,9 @@ public sealed class Literal
     /// <summary>How many times the transcription has run in place of the routine.</summary>
     public long Runs;
 
+    /// <summary>Non-zero while a verify runs a routine twice: nothing is published then.</summary>
+    public static int Verifying;
+
     readonly ModInfo _self;
 
     /// <param name="owner">The class holding a static <c>Replace(orig, c, m)</c> that forwards here.</param>
@@ -127,7 +130,12 @@ public sealed class Literal
             orig(c, m);
             return;
         }
-        if (_mode == Mode.Verify) Verify(orig, c, mem);
+        if (_mode == Mode.Verify)
+        {
+            Verifying++;
+            try { Verify(orig, c, mem); }
+            finally { Verifying--; }
+        }
         else
         {
             Runs++;

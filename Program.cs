@@ -141,6 +141,11 @@ Kf1.Subpixel.Install();
 Kf1.ZBuffer.Configure(Environment.GetEnvironmentVariable("KF1_ZBUFFER"),
                       Environment.GetEnvironmentVariable("KF1_ZBUFFER_PROBE"));
 Kf1.ZBuffer.Install();
+// The retained scene: the map and the models drawn from meshes kept on the GPU
+// (KF1_GPU_WORLD). See "The retained scene" in docs/GPU_RENDERER.md.
+Kf1.GpuWorld.Configure();
+Kf1.GpuWorld.Install();
+Kf1.RetainedModels.Install();
 
 // Mouse look and the mouse buttons: Verdite Core's Mouse with this game's values,
 // spent through stage A's own turn and look. Escape captures the pointer. See

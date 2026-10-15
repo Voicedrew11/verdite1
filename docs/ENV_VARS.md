@@ -54,6 +54,13 @@ switch is added.
 | `KF1_ZBUFFER_PROBE` | off | `1`: every 2 s, packet depths recorded and found, triangles tested |
 | `KF1_BLENDORDER` | on | `0`: blended surfaces in table order (`0079`) |
 | `KF1_ZBUFFER_THRESHOLD` | `0` | restart the depth buffer on a step this large (`0051`) |
+| `KF1_GPU_WORLD` | `0` | `0`/`reference`: the packets only. `capture` (or `shadow`): the scene published to the runtime's `RetainedScene` beside the packets, nothing suppressed. `1`/`on`/`retained`: the map and models drawn by the GPU from meshes kept on it, their packets not written; turns the Z-buffer on ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_MAP` | on | `0`: the map left to its packets ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_MODELS` | on | `0`: the models left to their packets ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_ARM` | on | `0`: reserved; the arm is always packets for now ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_CHECK` | off | `1`: under `capture`, every map and model vertex placed as the GPU places it, checked against the GTE's vertex cache (screen position, depth, behind-the-eye agreement, the depth cue, the map's corner colours, and the blended poses); reported with the census ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_CENSUS` | off | `1`: a line every 5 s: builds, cache hits, GPU draws, packet bytes per domain and fallbacks by routine, caller and reason ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_CENSUS_FILE` | off | a path: the census as JSON, every 5 s; implies `KF1_GPU_CENSUS` ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_KEYS` | `fps` | `stock` leaves RecompOne's keyboard bindings (`docs/INPUT.md`) |
 | `KF1_MOUSE` | on | `0`: no mouse look |
 | `KF1_MOUSE_TURN`, `KF1_MOUSE_LOOK` | `1.0` | the mouse's sensitivities |

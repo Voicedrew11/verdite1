@@ -277,6 +277,7 @@ public static class MapAssembler
                     c.A0 = c.A0 << 2;
                     c.A0 = c.A0 + c.V0;
                     if (PacketDepth.On) PacketDepth.Face(mem, c.A1, c.S4, c.S2, c.S3, c.S5);
+                    if (RetainedMap.Checking) RetainedMap.CheckFace(mem, c.A1, c.S1, c.S4, c.S2, c.S3, c.S5);
                     c.RA = 0x8001E1E0u;
                     KingsField1_game.AddPrim_game(c, mem);
                 }

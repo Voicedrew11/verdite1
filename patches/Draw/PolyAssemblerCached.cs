@@ -23,6 +23,7 @@ public static class PolyAssemblerCached
 
     static void Run(CpuContext c, PSMemory mem)
     {
+        RetainedModels.Packet(c, R.Address, "model-cached-writer");
         c.SP = c.SP - 0x60u;
         mem.WriteU32(c.SP + 0x5Cu, c.RA);
         mem.WriteU32(c.SP + 0x58u, c.FP);

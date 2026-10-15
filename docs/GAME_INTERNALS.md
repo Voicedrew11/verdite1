@@ -206,6 +206,35 @@ after `off`, and the player does not move.
 - **The menu's item view** draws through `func_8001ED38`: TMD 4's object 0 at
   depth +1000.
 
+### Addresses the retained scene reads
+
+- `u8[0x8009A748 + 100*row + col]`: the map's cell grid; `0xFF` empty, else
+  object = byte - 1. While `s16[0x800A07D2]` is not -1 and its low two bits
+  are under 2, bytes 0x44/0x45/0x46 draw objects 0x16/0x17/0x18. A cell draws
+  only an object under 100; the map cell's a2 = 1 draws object + 100.
+- `u8[0x80095900 + cell]`: the cell's height h, placed at y = -100·h.
+- `u8[0x80069018 + cell]`: the cell's turn k = byte - 1; k 1 adds 2000 to z,
+  2 to x and z, 3 to x. Its orientation matrix is at `0x80095760 + 32k`, its
+  light matrix at `0x800957E0 + 32k`.
+- `0x80095744`/`48`/`4C`: the camera as the map cell subtracts it (s16 x, y,
+  z); the view matrix is at `0x800956A0`.
+- `*0x80090FA8`: TMD 0, the map's; `*0x80090FC8`: the current TMD. Object
+  headers at `tmd + 0xC + 28·obj`, offsets relative to `tmd + 0xC`.
+- `0x800910BC`: the vertex list the writers read: the rigid object's own
+  vertices, or the pose blender's scratch `0x800930F8`.
+- `0x800911B0`: the vertex cache: per vertex s16 SX, SY, u16 SZ, and IR0 << 1
+  at +6 (the depth cue the writers pass to DPCS/NCDS is twice RTPS's IR0).
+- `0x80057B60`: the map's RGBC; `0x80057B58`: the models' textured RGBC.
+- The pose blender `func_800205D4`: its record's +0xC is the block (the vertex
+  list plus every whole key, rebuilt only when the segment changes), +8 the
+  segment's last key (start at +4, count at +8, entries at +0xC). The scratch
+  is the block plus that key times the weight left in IR0; its last
+  gteMIMefunc starts one entry early on both lists and saves and restores the
+  scratch entry before start, so vertex start + i takes entry i. The vertex
+  count is the fifth argument (stack +0x10).
+- The frame head `0x8001BFB8` leaves the GTE's H at 1000 (another draw's); the
+  map and model walks run at H = 200, centre (160, 120).
+
 ## The frame gate
 
 `func_800149F4` spins, with interrupts masked around each read, until the vblank

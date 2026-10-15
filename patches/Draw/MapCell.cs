@@ -22,6 +22,7 @@ public static class MapCell
 
     static void Run(CpuContext c, PSMemory mem)
     {
+        uint col = c.A0, row = c.A1;
         c.SP = c.SP - 0x78u;
         mem.WriteU32(c.SP + 0x74u, c.RA);
         mem.WriteU32(c.SP + 0x70u, c.S2);
@@ -206,12 +207,17 @@ public static class MapCell
             c.RA = 0x8001E810u;
             KingsField1_game.SetLightMatrix_game(c, mem);
             c.S0 = c.S2 & 0x00FFu;
+            // The retained map draws the cell (GpuWorld): the writer is skipped.
+            if (RetainedMap.Submit(mem, col, row, c.S0)) break;
+            bool check = RetainedMap.Checking;
+            if (check) RetainedMap.CheckCell(col, row, c.S0);
             c.A0 = c.S0;
             c.RA = 0x8001E81Cu;
             KingsField1_game.func_8001C148(c, mem);
             c.A0 = c.S0;
             c.RA = 0x8001E824u;
             KingsField1_game.func_8001DE18(c, mem);
+            if (check) { RetainedMap.CheckVertices(mem); RetainedMap.CheckCell(0, 0, 0xFFFFFFFFu); }
         } while (false);
 
         c.RA = mem.ReadU32(c.SP + 0x74u);

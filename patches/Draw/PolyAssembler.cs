@@ -30,6 +30,7 @@ public static class PolyAssembler
 
     static void Run(CpuContext c, PSMemory mem)
     {
+        if (RetainedModels.Submit(c, mem)) return;
         c.SP = c.SP - 0x58u;
         mem.WriteU32(c.SP + 0x54u, c.RA);
         mem.WriteU32(c.SP + 0x50u, c.FP);

@@ -386,3 +386,92 @@ With pacing at 144 fps and every routine on, the corpus plays. The walk runs
   `func_8004DADC`), so the address map already sees its fraction. Nothing in the
   24 routines clips or subdivides: the writers cull by NCLIP and drop a packet
   whose table slot is below 5 (the map writer also drops one at 0x4000 and above).
+
+## The retained scene
+
+Step 3 of `docs/RENDERER_PLAN.md`, 2026-10-15. The map and the model walk's
+models are published to the shared runtime's `RetainedScene` and drawn by its
+main view at the ordering table's far end, under the packets the game still
+writes. No runtime change was needed. `KF1_GPU_WORLD` selects the mode
+(`docs/ENV_VARS.md`). It is off by default until it has been looked at.
+
+- **`GpuWorld`** (`patches/GpuWorld.cs`) holds the switch, the per-domain
+  toggles, the frame and the census. Hooks on the renderer, the map walk, the
+  model walk and the arm keep a domain count. The frame head begins a retained
+  frame with the view matrix at `0x800956A0` and the camera at `0x80095744`.
+  Under pacing these are the carried camera, so the GPU path is smoothed as the
+  packets are. The projection is read in the walks: the frame head leaves the
+  GTE's H at 1000, from another draw, and the walks run at 200. Every face left
+  to the packets is counted by domain, routine, caller and reason.
+- **`RetainedMap`** builds the whole 100 × 100 grid as one world-space static
+  mesh: about 10,000 cell slots and a million corners.
+  - Each cell and variant (object, object + 100) gets its own gate slot.
+  - The map cell notes its slot and skips its writer, so the GPU draws exactly
+    the cells the game's walk visits.
+  - Colours are worked out once per build by NCCS with the turn's light matrix.
+  - The depth cue: the writer passes DPCS twice RTPS's IR0 (the cache's `+6`),
+    which is exactly the runtime's offset curve with DQB raised by 800 × 4096.
+  - The mesh rebuilds only when the grids, the matrices or the GTE's light and
+    fog change, and only once the change has held for ten walks. The fog's fade
+    at an area's exit steps every tick, and those walks draw from packets
+    (`map-source-changing`).
+- **`RetainedModels`** takes the polygon writer `func_8001C7F8` at its entry.
+  - The mesh is the TMD object's faces, kept by header and content hash.
+  - The instance is placed in view space from the GTE's rotation and
+    translation, which already carry the smoothing. It is lit from the GTE's
+    light matrix, colour matrix and back colour.
+  - A rigid model's pose is its vertex list, kept once.
+  - An animated model's pose is the pose blender's block plus its last key, kept
+    once per segment. Only the weight (IR0 after the blender) changes from frame
+    to frame, so **a pose change uploads no vertices**.
+
+### What stays packets, by decision
+
+Each of these is counted with its reason.
+
+| domain | routine, caller | reason |
+|---|---|---|
+| arm | `8001C7F8`, `8001F89C` | `packet-owned-arm`: view space, no depth record, painter's order over the world |
+| hud | `8001C7F8`, `8001F9A0` | `packet-owned-hud`: the compass and the menu's model |
+| models | `8001E230`, `8001EE9C` | `sprite-writer`: the flipbook sprites |
+| models | `8001D730` | `model-cached-writer`: area 5's objects |
+| models | `8001C7F8` | `model-semi-faces`: any model with a semi-transparent face (none met in areas 1 and 4) |
+| map | `8001DE18`, `8001E5EC` | `map-not-built`, `map-source-changing`: the walks before a build |
+
+### Measured
+
+The run starts a new game, walks area 1, warps to area 4 beside a walking
+creature, then turns and swings (`scratch/step3.py`).
+
+Under `capture` with `KF1_GPU_CHECK=1`, unpaced and at `KF1_FPS=144`:
+
+- **Map**:
+  - 26 million vertices checked.
+  - Screen position: within 1.7 px; 31 vertices off by more than 1.5 px. This is
+    measured near the screen, where the GTE's divide is unsaturated, and the
+    worst cases are under 1,300 units from the eye.
+  - Depth: within 2. Behind the eye, 0.04% disagree, all at the near plane.
+  - Depth cue: within 8 of 8192.
+  - Corner colours: 36 million, all exact.
+- **Models**:
+  - 9.5 million vertices checked.
+  - Screen position: within 1.11 px. Depth: exact. Behind the eye: no
+    disagreements.
+  - Blended poses: 4.2 million vertices, all exact.
+- **Uploads**:
+  - The map is built once per area: 124 ms for area 1, 35 ms for area 4.
+  - 13 meshes and 25 poses (5,919 texels) serve 267,000 model draws.
+  - No model vertex is uploaded per frame.
+
+Under `KF1_GPU_WORLD=1`:
+
+- 54,893 GPU main-view draws, none missed; 267,379 instances drawn.
+- Packet bytes written while drawing:
+  - map: 172 KB, all from the 1,071 cells walked before a build;
+  - models: 1.6 MB, the sprites;
+  - arm: 14 MB, the arm's swings.
+
+**Not yet looked at by eye**: the picture under `KF1_GPU_WORLD=1`, the order of
+the sprites and the arm against the retained world, and the frame at an area's
+exit. The map cell grid is rebuilt whole when any cell changes; nothing in the
+runs above changed one mid-area, so no dirty update was written.

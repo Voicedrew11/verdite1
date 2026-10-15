@@ -179,6 +179,10 @@ advancing at the drawn rate.
 
 ## Step 3: the retained scene
 
+**Built and measured 2026-10-15** ("The retained scene" in `docs/GPU_RENDERER.md`):
+the gate's counters hold. The arm, the HUD, the sprites and area 5's cached
+writer stay packets by recorded decision. Off by default until judged.
+
 From here on the work runs on the shared runtime's `RetainedScene`, `GlRetained`,
 `GlMainView`, `GlModelMeshes` and the world shaders. Read their APIs before
 adding any. Changes to the runtime are game-neutral, go in their own commits as

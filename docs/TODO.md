@@ -53,7 +53,12 @@ recompiled and running, following Verdite3's method but applied to this disc.
   or texture animations to hold. **To judge**: the event picture's fade, now
   1.6 s against the console's (instant before; the console's is not known), and
   whether a death's dimming, which steps 20 times a second, shows under the carried
-  fall. **Next is Step 3**, the retained scene.
+  fall. Step 3 built 2026-10-15 (`KF1_GPU_WORLD`, "The retained scene" in
+  `docs/GPU_RENDERER.md`): the map and models drawn from meshes kept on the GPU,
+  checked against the GTE. **To judge**: the picture at `KF1_GPU_WORLD=1`, the
+  sprites and arm against the retained world, an area's exit fade. **Open**:
+  dirty map updates if a cell changes mid-area; models with semi-transparent
+  faces (`AddBlendFace`); the sprites as instances.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
