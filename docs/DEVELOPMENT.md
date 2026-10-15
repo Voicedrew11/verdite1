@@ -122,7 +122,13 @@ on this game's addresses:
   <x> <z> [yaw]` (queues an area transition, run on stage A: `func_80036850` with
   entry 0, then x, z, yaw and the cell bytes written at the requested values; the
   reply is `queued`, and `state` carries `"warp"` with `done` once it has run),
-  `help`. Everything runs on the game thread, from the vblank. A poke of the position
+  `help`. Two warps are known bad (2026-10-15). Area 2 at (61000,113000) drops
+  the player through the floor. A tour of warps through areas 1-4 that ends in area
+  5 at (79000,139000) faults 7 of 7 times: the object walk `func_8001E9A4` reads
+  `0x81175F49` from a TMD pointer at `0x80090FC8`. It does so in the plain recompiled
+  game too (renderer, camera block and all 24 literal routines off), so it is the
+  warp's state, not the port's code. A single warp straight to that cell
+  survived 7 of 7. Everything runs on the game thread, from the vblank. A poke of the position
   (`0x800A0824`) can be lost to a stage that already holds the old one; check
   `state` after it.
 - **`KF1_AUTOSTART=new`** (`patches/AutoStart.cs`): Start is pulsed through

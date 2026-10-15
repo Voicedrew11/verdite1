@@ -61,7 +61,8 @@ recompiled and running, following Verdite3's method but applied to this disc.
   2026-10-15: the sprites as instances, the semi faces retained, and no dirty map
   update needed (a door changes no cell). **Open**: a lift or a gate that changes
   a cell, if one is found; the blend mode of mesh `800EED50` and area 5's semi
-  meshes; area 5's crash after a tour of warps (`GPU_RENDERER.md`).
+  meshes; area 5's fault after a tour of warps, which the plain recompiled game shares
+  ("`warp`" in `DEVELOPMENT.md`).
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
