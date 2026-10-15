@@ -962,7 +962,7 @@ public static class PolyAssembler
             c.V0 = mem.ReadU32(c.S6 - 0x2F4u);
             c.A0 = c.A0 << 2;
             c.A0 = c.A0 + c.V0;
-            SemiAbr.Emit(c.A1, mem.ReadU32(c.SP + 0x20u));
+            SemiAbr.Emit(c.A1, mem.ReadU32(c.SP + 0x20u), c.A0, mem);
             if (PacketDepth.On) Depth(mem, c.A1, c.S2, c.S3, c.S4, c.S5);
             c.RA = 0x8001D6D4u;
             KingsField1_game.AddPrim_game(c, mem);

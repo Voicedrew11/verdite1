@@ -177,11 +177,13 @@ objects (the census so far was taken standing):
 **Gate**: the rate census, taken while things move, shows nothing a frame shows
 advancing at the drawn rate.
 
-## Step 3: the retained scene
+## ~~Step 3: the retained scene~~
 
-**Built and measured 2026-10-15** ("The retained scene" in `docs/GPU_RENDERER.md`):
-the gate's counters hold. The arm, the HUD, the sprites and area 5's cached
-writer stay packets by recorded decision. Off by default until judged.
+**Done 2026-10-15** ("The retained scene" in `docs/GPU_RENDERER.md`): the gate's
+counters hold. The map, the models, the seven measured semi meshes (as blended
+faces) and the flipbook sprites are retained. No cell changes mid-area, so there
+is no dirty update to write. The arm, the HUD, the creature sprites and area 5's
+cached writer stay packets by recorded decision. Off by default until judged.
 
 From here on the work runs on the shared runtime's `RetainedScene`, `GlRetained`,
 `GlMainView`, `GlModelMeshes` and the world shaders. Read their APIs before

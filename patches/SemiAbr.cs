@@ -62,15 +62,56 @@ public static class SemiAbr
 
     static uint Norm(uint a) => (a & 0x1FFFFFu) | 0x80000000u;
 
-    /// <summary>The polygon writer: a packet of a semi mesh's untextured semi face.</summary>
-    public static void Emit(uint pkt, uint primWord)
+    // The blended-face keys (KF1_GPU_CHECK): the slots the retained path expects for the
+    // semi mesh being written, and the packets the writer links for it, in the same order.
+    static readonly Queue<int> _keys = new();
+    static bool _keyActive;
+    public static long KeyChecked, KeyMismatch, KeyExtra, KeyMissing;
+
+    /// <summary>At each model's submit: the previous object's expectations not met are missing.</summary>
+    public static void Begin()
     {
-        if (!_on || Current is not { } cur) return;
+        Current = null;
+        KeyMissing += _keys.Count;
+        _keys.Clear();
+        _keyActive = false;
+    }
+
+    /// <summary>The slots (table index) a semi mesh's writer links, in its prim order.</summary>
+    public static void Expect(List<int> slots)
+    {
+        if (!GpuWorld.Check) return;
+        foreach (int s in slots) _keys.Enqueue(s);
+        _keyActive = true;
+    }
+
+    /// <summary>The polygon writer, at each packet it links: a semi mesh's untextured face is
+    /// tagged for the probe, and under the check its linked slot is compared with the expected one.
+    /// <paramref name="linked"/> is the OT entry address the writer links it at.</summary>
+    public static void Emit(uint pkt, uint primWord, uint linked, IMemory m)
+    {
         uint code = primWord >> 24;
         if (code is < 0x20 or > 0x3F || (code & 4) != 0 || (code & 2) == 0) return;
-        Tagged[Norm(pkt)] = (cur.Header, cur.Hash);
-        _tagged++;
+        if (_on && Current is { } cur)
+        {
+            Tagged[Norm(pkt)] = (cur.Header, cur.Hash);
+            _tagged++;
+        }
+        if (!_keyActive) return;
+        uint ot = m.ReadU32(0x80090EBCu);
+        int index = (int)(((linked - ot) >> 2) & 0x3FFF);
+        KeyChecked++;
+        if (_keys.Count == 0) { KeyExtra++; return; }
+        int want = _keys.Dequeue();
+        if (want != index)
+        {
+            KeyMismatch++;
+            if (KeyMismatch <= 8) Console.WriteLine($"[KF1-KEY] expected {want} linked {index} raw {linked:X8} ot {ot:X8}");
+        }
     }
+
+    public static string KeyReport() =>
+        $"semi keys {KeyChecked}: slot mismatch {KeyMismatch}, extra packets {KeyExtra}, missing {KeyMissing + _keys.Count}";
 
     /// <summary>DrawOTag's entry: walks the table as the runtime will, with the GPU's state.</summary>
     public static void Before(CpuContext c, IMemory m)

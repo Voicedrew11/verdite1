@@ -436,24 +436,39 @@ Each of these is counted with its reason.
 | models | `8001E230` from `8001EE9C` (the flipbook sprites) | none while drawing: retained as textured quads; `sprite-semi` for a semi-transparent one (none met) |
 | models | `8001E230` from the creature submitter `8001EEDC` and the HUD | `sprite-writer`: the same writer, still packets |
 | models | `8001D730` | `model-cached-writer`: area 5's objects |
-| models | `8001C7F8` | `model-semi-faces`: any model with a semi-transparent face, textured or not. Eight untextured meshes in areas 1-5 have one (`GAME_INTERNALS.md`, "Semi-transparent model faces"); before 2026-10-15 the check looked only at textured faces and these drew opaque. Their blend mode is the GPU's draw mode, set by the game's packet stream (`SetDrawMode`, GP0 E1), not by the prim, so the retained path keeps them as packets. No textured semi face was met in any area, so `AddBlendFace` has no caller yet. Measured with `KF1_SEMI_ABR=1` (2026-10-15): every seen semi mesh draws with ABR 0, on every walk (seven of eight meshes in areas 1-4). Drawing them retained still needs `AddBlendFace` per face, with the writer's slot key and screen box, which is not yet derived; the row stays a packet until then |
+| models | `8001C7F8` | `model-semi-abr-unmeasured`: a semi mesh whose blend mode has not been measured (`800EED50` in area 1, and area 5's); `model-semi-quad`: a semi quad (none met). The seven measured meshes are retained, their semi faces as blended faces (below) |
 | map | `8001DE18`, `8001E5EC` | `map-not-built`, `map-source-changing`: the walks before a build |
 
 ### Semi-transparent models, 2026-10-15
 
-The semi check (`RetainedModels.Build`) now covers every face with the semi bit,
-untextured too. Measured on the five-area walk (`warp` to areas 1-5, the stops of
-`GAME_INTERNALS.md`'s table): eight meshes, all untextured, all kept as packets.
-The walk under `KF1_GPU_WORLD=capture KF1_GPU_CHECK=1` read a model screen max of
-1.13 px, depth exact, posed vertices all exact; the same walk on the check before
-this change read 1.12 px (both over the 1.11 px of the earlier walk; the difference
-is the walk, not the change). The walk crashes at the warp into area 5 (an
-unmapped read in `SubmitObject`'s patch, `0x81175F49`), with or without this change.
+Every face with the semi bit counts, untextured too; before 2026-10-15 the check
+looked only at textured faces, and eight untextured meshes in areas 1-5 drew
+opaque (`GAME_INTERNALS.md`, "Semi-transparent model faces"). No textured semi
+face is met in any area.
 
-Under `KF1_GPU_WORLD=1` on the same walk (to the area 5 warp): 2,201 main-view
-draws, none missed; 10,201 instances of 13,047 models; the semi meshes counted
-as `model-semi-faces` (2,592 in one caller's count, over the walk, the largest
-entry) and not drawn by the GPU.
+An untextured semi face takes its blend mode from the GPU's draw mode, which the
+game never sets with E1. `KF1_SEMI_ABR` measured ABR 0 for seven meshes on every
+walk, and `RetainedModels` keeps that table by mesh header and hash. Those meshes
+are retained: the opaque corners first, then the semi ones, each published with
+`AddBlendFace`.
+- The key is the writer's slot (the three SZ summed, over 3, `>> 2`, plus the bias),
+  plus the main view's `0xF0`. A face the writer would drop (NCLIP not positive,
+  slot under 5) is not published.
+- The box is the face's own screen box; the main view uses it only for overlap
+  with pending packets.
+
+Measured over areas 1-4 (seven stops, `warp`, turning and swinging):
+- `KF1_GPU_WORLD=capture KF1_GPU_CHECK=1`: 482,899 semi faces' slots against the
+  slots the writer linked, **0 mismatches**, 0 extra, 0 missing. Models 50.9 M
+  vertices, within 1.13 px, depth exact, posed vertices exact.
+- `KF1_GPU_WORLD=1`: 246,290 main-view draws, 0 missed; 1,033,113 of 1,033,163
+  models retained (the 50 are `800EED50`, `model-semi-abr-unmeasured`); blended
+  faces 853,603 noted, 853,603 drawn; model packet bytes 174 KB, down from 1.6 MB.
+- The map check read 41,860 px on this walk. All of it came at one stop, area 2
+  at (61000,113000): that warp drops the player through the floor, and at y =
+  201,915 under the map the GTE's projection saturates where the GPU's does not.
+  Before that stop the map was within 1.77 px (267 of 67 M vertices over 1.5 px).
+  That stop is a bad warp target, not a renderer fault.
 
 ### Measured
 

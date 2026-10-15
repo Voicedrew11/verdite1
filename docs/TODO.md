@@ -56,11 +56,12 @@ recompiled and running, following Verdite3's method but applied to this disc.
   fall. Step 3 built 2026-10-15 (`KF1_GPU_WORLD`, "The retained scene" in
   `docs/GPU_RENDERER.md`): the map and models drawn from meshes kept on the GPU,
   checked against the GTE. **To judge**: the picture at `KF1_GPU_WORLD=1`, the
-  sprites and arm against the retained world, an area's exit fade. **Open**:
-  a dirty map update is not needed for the door (no cell changes; measured
-  2026-10-15, `GPU_RENDERER.md`), and is open for a lift or a gate if one is found
-  to change a cell; models with semi-transparent
-  faces (`AddBlendFace`); the sprites as instances.
+  sprites and arm against the retained world, an area's exit fade, the
+  semi-transparent models' blending (ABR 0, now drawn as blended faces). Done
+  2026-10-15: the sprites as instances, the semi faces retained, and no dirty map
+  update needed (a door changes no cell). **Open**: a lift or a gate that changes
+  a cell, if one is found; the blend mode of mesh `800EED50` and area 5's semi
+  meshes; area 5's crash after a tour of warps (`GPU_RENDERER.md`).
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

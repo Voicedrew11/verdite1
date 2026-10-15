@@ -248,11 +248,12 @@ public static class GpuWorld
             $"models={ModelSubmits} retained={ModelRetained} arm={ArmRetained} meshes={RetainedModels.MeshBuilds}/{RetainedModels.MeshHits} " +
             $"poses={RetainedModels.PoseBuilds}/{RetainedModels.PoseHits} pose-uploads={RetainedModels.PoseTexelsUploaded} " +
             $"gpu draws/missed={RetainedScene.MainDraws}/{RetainedScene.MainMissed} instances={RetainedScene.InstancesDrawn} " +
+            $"blended noted/drawn={RetainedScene.BlendNoted}/{RetainedScene.BlendDrawn} " +
             $"packet bytes map/models/arm={MapBytes}/{ModelBytes}/{ArmBytes} fallbacks={Reasons.Values.Sum()}");
         Console.WriteLine($"[KF1] map grid: walks={RetainedMap.GridWalks} changed walks={RetainedMap.GridChangedWalks} " +
             $"changed bytes={RetainedMap.GridChangedBytes}");
         if (CensusOn) Console.WriteLine($"[KF1] gpu sprites: {SpriteAssembler.Report()}");
-        if (Check) Console.WriteLine($"[KF1] gpu check: {RetainedMap.CheckReport()} | {RetainedModels.CheckReport()} | {SpriteAssembler.CheckReport()}");
+        if (Check) Console.WriteLine($"[KF1] gpu check: {RetainedMap.CheckReport()} | {RetainedModels.CheckReport()} | {SpriteAssembler.CheckReport()} | {SemiAbr.KeyReport()}");
         foreach (var (k, v) in Reasons.OrderByDescending(kv => kv.Value).Take(8))
             Console.WriteLine($"[KF1] gpu fallback: {k} x{v}");
         if (_censusFile != null)

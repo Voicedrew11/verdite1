@@ -44,11 +44,33 @@ public static class RetainedModels
         public int Start, Opaque, Total, MaxVertex, Gen;
         public uint Header;
         public ulong Hash;
+        /// <summary>The measured blend mode of its semi faces (<see cref="SemiAbrTable"/>), -1 unmeasured.</summary>
+        public int SemiAbr = -1;
+        /// <summary>Its semi triangles: the corner offset from the mesh start and the three
+        /// vertex indices in the writer's order (S2, S3, S4).</summary>
+        public readonly List<(int Offset, uint V0, uint V1, uint V2)> SemiFaces = new();
+        public bool SemiQuad;
         public bool Semi;
         public string? Reject;
     }
 
     static readonly Dictionary<(uint Header, ulong Hash), Mesh> Meshes = new();
+
+    /// <summary>Semi meshes whose blend mode was measured on a walk (KF1_SEMI_ABR, areas 1-4,
+    /// 2026-10-15): every face draws with ABR 0. Any other semi mesh stays on the packets.</summary>
+    static readonly Dictionary<(uint Header, ulong Hash), int> SemiAbrTable = new()
+    {
+        [(0x80182240u, 0xACAAA2D522E4E149UL)] = 0,
+        [(0x800E805Cu, 0x6D833BCEA568C065UL)] = 0,
+        [(0x80176528u, 0xACAAA2D522D20B51UL)] = 0,
+        [(0x8016A510u, 0xF7D647947117B9B2UL)] = 0,
+        [(0x8016DA24u, 0xACAAA2D522CD262DUL)] = 0,
+        [(0x800E9320u, 0x908D51EA6CBAFB69UL)] = 0,
+        [(0x80163F4Cu, 0xACAAA2D522BE66F5UL)] = 0,
+    };
+
+    /// <summary>TileBias (GlMainView): a blended face's key is its table slot plus this.</summary>
+    const int BlendKeyBias = 0xF0;
     static readonly Dictionary<(uint Address, int Count, ulong Hash), int> Rigid = new();
     static readonly Dictionary<(ulong Block, uint Key, int Count), int> Morphs = new();
     static int _gen = -1;
@@ -133,6 +155,7 @@ public static class RetainedModels
         if (Meshes.TryGetValue((header, hash), out var mesh)) { MeshHits++; return mesh; }
         mesh = Build(m, prims, nprims, normals);
         mesh.Header = header; mesh.Hash = hash;
+        mesh.SemiAbr = SemiAbrTable.TryGetValue((header, hash), out int abr) ? abr : -1;
         Meshes[(header, hash)] = mesh;
         MeshBuilds++;
         return mesh;
@@ -197,7 +220,12 @@ public static class RetainedModels
             if ((faces[f][0].Flags & RetainedScene.FlagSemi) == 0) all.AddRange(faces[f]);
         mesh.Opaque = all.Count;
         for (int f = faces.Count - 1; f >= 0; f--)
-            if ((faces[f][0].Flags & RetainedScene.FlagSemi) != 0) all.AddRange(faces[f]);
+        {
+            if ((faces[f][0].Flags & RetainedScene.FlagSemi) == 0) continue;
+            if (faces[f].Length == 6) mesh.SemiQuad = true;
+            else mesh.SemiFaces.Add((all.Count, (uint)faces[f][0].X, (uint)faces[f][1].X, (uint)faces[f][2].X));
+            all.AddRange(faces[f]);
+        }
         mesh.Total = all.Count;
         if (mesh.Total == 0) { mesh.Reject = "model-no-faces"; return mesh; }
         mesh.Start = RetainedScene.AddMesh(CollectionsMarshal.AsSpan(all));
@@ -248,7 +276,7 @@ public static class RetainedModels
     /// retained and drawn, and the writer is skipped.</summary>
     public static bool Submit(CpuContext c, PSMemory m)
     {
-        SemiAbr.Current = null;
+        SemiAbr.Begin();
         if (!GpuWorld.Capture) return false;
         // The arm, the compass and the menu's model keep their packets: drawn over the
         // world in painter's order, with no depth record (PacketDepth).
@@ -262,8 +290,8 @@ public static class RetainedModels
         if (mesh.Semi)
         {
             SemiAbr.Current = (mesh.Header, mesh.Hash);
-            GpuWorld.Fallback(0x8001C7F8, c.RA, "model-semi-faces");
-            return false;
+            if (mesh.SemiAbr < 0) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-semi-abr-unmeasured"); return false; }
+            if (mesh.SemiQuad) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-semi-quad"); return false; }
         }
         uint header = tmd + 0xC + obj * 28;
         uint own = tmd + 0xC + m.ReadU32(header), count = m.ReadU32(header + 4);
@@ -302,8 +330,38 @@ public static class RetainedModels
         PlaceWorld(ref ins, view);
         if (GpuWorld.Check) CheckModel(m, ins, list, (int)count, morph);
         RetainedScene.AddInstance(ins);
+        if (mesh.Semi) AddSemiFaces(m, mesh, bias);
         GpuWorld.ModelRetained++;
         return GpuWorld.Drawing;
+    }
+
+    /// <summary>A measured semi mesh's faces, after the instance they belong to: each face the
+    /// writer would link (front-facing by the GTE's NCLIP, slot at least 5) is a blended face at
+    /// its slot plus <see cref="BlendKeyBias"/>, drawn at the mesh's measured mode. Under the
+    /// check the slots are expected by the writer's packets (<see cref="SemiAbr"/>).</summary>
+    static void AddSemiFaces(PSMemory m, Mesh mesh, int bias)
+    {
+        var slots = GpuWorld.Check ? new List<int>() : null;
+        // Built last first (Build), so the writer's prim order is the list's reverse.
+        for (int i = mesh.SemiFaces.Count - 1; i >= 0; i--)
+        {
+            var f = mesh.SemiFaces[i];
+            uint a = Cache + f.V0 * 8, b = Cache + f.V1 * 8, c = Cache + f.V2 * 8;
+            long x0 = (short)m.ReadU16(a), y0 = (short)m.ReadU16(a + 2);
+            long x1 = (short)m.ReadU16(b), y1 = (short)m.ReadU16(b + 2);
+            long x2 = (short)m.ReadU16(c), y2 = (short)m.ReadU16(c + 2);
+            // The writer's NCLIP: a face is kept when the screen cross product is positive.
+            if (x0 * y1 + x1 * y2 + x2 * y0 - x0 * y2 - x1 * y0 - x2 * y1 <= 0) continue;
+            // The writer's slot: the mean of the three SZ over four (sum / 3, then >> 2), plus the bias.
+            int z = (short)m.ReadU16(a + 4) + (short)m.ReadU16(b + 4) + (short)m.ReadU16(c + 4);
+            int slot = (z / 3 >> 2) + bias;
+            if (slot < 5) continue;
+            RetainedScene.AddBlendFace(slot + BlendKeyBias, mesh.Start + f.Offset, 3, mesh.SemiAbr,
+                Math.Min(x0, Math.Min(x1, x2)), Math.Min(y0, Math.Min(y1, y2)),
+                Math.Max(x0, Math.Max(x1, x2)), Math.Max(y0, Math.Max(y1, y2)));
+            slots?.Add(slot & 0x3FFF);
+        }
+        if (slots != null) SemiAbr.Expect(slots);
     }
 
     /// <summary>A writer the retained scene does not take: counted, its packets kept.</summary>
