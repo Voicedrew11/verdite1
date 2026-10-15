@@ -247,6 +247,8 @@ public static class GpuWorld
             $"poses={RetainedModels.PoseBuilds}/{RetainedModels.PoseHits} pose-uploads={RetainedModels.PoseTexelsUploaded} " +
             $"gpu draws/missed={RetainedScene.MainDraws}/{RetainedScene.MainMissed} instances={RetainedScene.InstancesDrawn} " +
             $"packet bytes map/models/arm={MapBytes}/{ModelBytes}/{ArmBytes} fallbacks={Reasons.Values.Sum()}");
+        Console.WriteLine($"[KF1] map grid: walks={RetainedMap.GridWalks} changed walks={RetainedMap.GridChangedWalks} " +
+            $"changed bytes={RetainedMap.GridChangedBytes}");
         if (Check) Console.WriteLine($"[KF1] gpu check: {RetainedMap.CheckReport()} | {RetainedModels.CheckReport()}");
         foreach (var (k, v) in Reasons.OrderByDescending(kv => kv.Value).Take(8))
             Console.WriteLine($"[KF1] gpu fallback: {k} x{v}");

@@ -224,6 +224,12 @@ after `off`, and the player does not move.
   vertices, or the pose blender's scratch `0x800930F8`.
 - `0x800911B0`: the vertex cache: per vertex s16 SX, SY, u16 SZ, and IR0 << 1
   at +6 (the depth cue the writers pass to DPCS/NCDS is twice RTPS's IR0).
+- **Measured 2026-10-15**: the grid (all three arrays) does not change while a
+  player stays in an area. The double door at (46000, 68500) in area 1, opened with
+  Circle, changes no byte of it; its leaves (interaction records 19 and 21 at
+  `0x8006F124` and `0x8006F17C`) change at +0x1B, +0x21 and +0x28. A warp or an
+  exit replaces the grid whole. `docs/GPU_RENDERER.md`, "Does the grid change
+  mid-area?".
 - `0x80057B60`: the map's RGBC; `0x80057B58`: the models' textured RGBC.
 - The pose blender `func_800205D4`: its record's +0xC is the block (the vertex
   list plus every whole key, rebuilt only when the segment changes), +8 the

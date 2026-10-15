@@ -57,7 +57,9 @@ recompiled and running, following Verdite3's method but applied to this disc.
   `docs/GPU_RENDERER.md`): the map and models drawn from meshes kept on the GPU,
   checked against the GTE. **To judge**: the picture at `KF1_GPU_WORLD=1`, the
   sprites and arm against the retained world, an area's exit fade. **Open**:
-  dirty map updates if a cell changes mid-area; models with semi-transparent
+  a dirty map update is not needed for the door (no cell changes; measured
+  2026-10-15, `GPU_RENDERER.md`), and is open for a lift or a gate if one is found
+  to change a cell; models with semi-transparent
   faces (`AddBlendFace`); the sprites as instances.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's

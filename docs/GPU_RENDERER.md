@@ -473,5 +473,44 @@ Under `KF1_GPU_WORLD=1`:
 
 **Not yet looked at by eye**: the picture under `KF1_GPU_WORLD=1`, the order of
 the sprites and the arm against the retained world, and the frame at an area's
-exit. The map cell grid is rebuilt whole when any cell changes; nothing in the
-runs above changed one mid-area, so no dirty update was written.
+exit.
+
+### Does the grid change mid-area? (2026-10-15)
+
+`RetainedMap.DiffGrid` compares the three grid arrays (cells, heights, turns) at
+every walk with the last walk's copy, and counts the bytes that changed
+(`map grid:` lines, and the census line after `gpu world`). It runs under
+`capture` and `1`, with no switch of its own.
+
+Driven, on port 27911 (`scratch/wt3d_door.py`, `scratch/wt3d_verify.py`):
+
+- **The double door** in area 1 at (46000, 68500), Circle, from four yaw
+  settings (the leaves swung at 0, 16384 and -16384; at 32768 nothing changed).
+  Under `capture`: **1,445 walks, 0 changed walks, 0 changed bytes**. The leaves'
+  records changed, the leaves at `0x8006F124` (record 19) and `0x8006F17C`
+  (record 21): their +0x1B, +0x21 and +0x28 bytes (`GAME_INTERNALS.md`). So the
+  door moves, and its state is the object list's, not the map's.
+- **The Step 3 gate** (warp to area 4, then walk and turn): **870 walks, 2 changed
+  walks, 28,808 bytes**. One is the warp into area 4 at walk 388 (14,404 bytes:
+  the cells of area 1 replaced by area 4's, logged cell by cell); the other,
+  near walk 770, is the walk back out to area 1 by an exit (the final state
+  reads area 1; its frame was not logged). **Neither changed a cell inside an
+  area.**
+
+**Result: nothing rewrites the grid mid-area in the cases driven.** Area
+transitions replace the grid whole, which the rebuild already does. No dirty
+update was written, because there is no mid-area writer to serve. Not measured:
+lifts, the gate that rises (state 2 in `SMOOTHING.md`), and any other interaction
+kind. A lift or a gate that moves a cell would show in the same counter and needs
+driving to be checked. The door's swing alone changes no map cell.
+
+Verification, the same run (Step 3 gate, `KF1_GPU_CENSUS=1`):
+
+- `capture` with `KF1_GPU_CHECK=1`: map 736,819 vertices, screen max 1.61 px
+  (3 over 1.5), depth max 2, behind the eye 12 of 38,711 disagree, cue max 8,
+  corner colours exact (955,618, none off); models 352,437 vertices, screen max
+  1.10 px, no disagreements, posed 99,540 exact. The same figures as above.
+- `KF1_GPU_WORLD=1`: **866 GPU main-view draws, 0 missed**, 4,175 instances, 3
+  map builds, 1.84 MB of map packets written while drawing (the cells walked
+  before a build and the 118 walks in which the source was changing; the
+  pre-existing fallbacks, not the diff).

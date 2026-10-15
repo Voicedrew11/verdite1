@@ -105,6 +105,7 @@ public static class RetainedMap
     {
         uint tmd = m.ReadU32(Tmds);
         if ((tmd & 0x1FFFFF) == 0 || (tmd >> 24) != 0x80) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-tmd-absent"); return; }
+        DiffGrid(m);
         var src = ReadSource(m);
         short remap = (short)m.ReadU16(Remap);
         bool remapOn = remap != -1 && (remap & 3) < 2;
@@ -123,6 +124,43 @@ public static class RetainedMap
         if (!FarBlack) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-far-colour"); return; }
         Build(m, tmd, src, remapOn);
         _built = h;
+    }
+
+    // ---- the grid's writes, measured: which cells change between walks ----------
+
+    static readonly uint[] GridAt = [Cells, Heights, Turns];
+    static readonly byte[] _grid = new byte[3 * Grid * Grid];
+    static bool _gridSeen;
+    public static long GridWalks, GridChangedWalks, GridChangedBytes;
+    static int _gridLogs;
+
+    /// <summary>Each walk: the three grid arrays against the last walk's copy. A change is
+    /// counted and, for the first few, logged with its cell and frame.</summary>
+    static void DiffGrid(PSMemory m)
+    {
+        GridWalks++;
+        int changed = 0;
+        for (int k = 0; k < GridAt.Length; k++)
+        {
+            var now = m.Ram.Slice((int)(GridAt[k] & 0x1FFFFF), Grid * Grid);
+            var old = _grid.AsSpan(k * Grid * Grid, Grid * Grid);
+            for (int i = 0; i < now.Length; i++)
+            {
+                if (now[i] == old[i]) continue;
+                if (_gridSeen)
+                {
+                    changed++;
+                    if (_gridLogs++ < 24)
+                        Console.WriteLine($"[KF1] map grid: frame {GpuWorld.Frames} array {k} " +
+                            $"cell {i % Grid},{i / Grid} {old[i]:X2} -> {now[i]:X2}");
+                }
+                old[i] = now[i];
+            }
+        }
+        if (!_gridSeen) { _gridSeen = true; return; }
+        if (changed == 0) return;
+        GridChangedWalks++;
+        GridChangedBytes += changed;
     }
 
     static Mesh? MeshOf(PSMemory m, int obj)
