@@ -64,6 +64,8 @@ Kf1.FramePacing.Configure(Environment.GetEnvironmentVariable("KF1_FPS"),
                           Environment.GetEnvironmentVariable("KF1_FPS_PROBE"));
 Kf1.FramePacing.Install();
 Kf1.RateCensus.Install();
+Kf1.TintProbe.Install();
+Kf1.VramCensus.Install();
 
 // The renderer (stage I) and its camera block in C#, verified against the
 // recompiled routines (KF1_RENDERER, KF1_CAMERABLOCK: 0, 1 or verify). See "The

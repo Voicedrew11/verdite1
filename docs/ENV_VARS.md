@@ -16,9 +16,12 @@ switch is added.
 | `KF1_TICKRATE` | `20` | the world's rate under pacing, a comparison only |
 | `KF1_FPS_PROBE` | off | `1`: a pacing line a second |
 | `KF1_PACING_NOBOUNDARY` | off | `1`: leave `DrawOTag` unhooked, to test the watchdog |
-| `KF1_VBLANKPACING` | on | `0`: menus' `VSync` calls on the runtime's clock, a comparison |
-| `KF1_VBLANKPACING_PROBE` | off | `1`: a line a second of held `VSync` calls |
+| `KF1_VBLANKPACING` | on | `0`: `VSync` calls outside the main loop's renderer call, and `DrawOTag`s with no `VSync` before them (the event picture), on the runtime's clock, a comparison |
+| `KF1_VBLANKPACING_PROBE` | off | `1`: a line a second of held `VSync` and `DrawOTag` calls |
 | `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
+| `KF1_TINTPROBE` | off | `1`: full-screen tints, and the largest flat semi-transparent primitive, on tick and idle frames, every 2 s (`docs/SMOOTHING.md`) |
+| `KF1_VRAMCENSUS` | off | seconds: the VRAM blocks outside the display buffers that change between ticks |
+| `KF1_VRAMCENSUS_AFTER` | `3` | seconds after GAME.EXE loads before `KF1_VRAMCENSUS` counts |
 | `KF1_STAGEPROBE` | off | `1`: per stage A-I and the gate, calls a second, ordering-table words written, presents, every 5 s; and, when the in-game menu runs, its present and clear, and its writers' calls and cursor words per call, on a `menu:` line |
 | `KF1_PRIMBUF_PROBE` | off | `1`: the frame's primitive buffer spent, peak and mean, and frames that ran out, every 2 s |
 | `KF1_GEOPROBE` | off | `1`: what each renderer draw call adds to the ordering table, by packet type, every 5 s (`patches/GeometryProbe.cs`) |

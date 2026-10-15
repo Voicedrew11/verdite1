@@ -77,6 +77,16 @@ by the menu after the last present, are ever drawn.
 | death | `func_80015164`, ticked by `func_80018540` in stage A | renderer | yes | no |
 | ending | GAME.EXE exits with `0xFE`; OPEN.EXE `func_80014B34`, `func_80014E28` | `func_80016DD0` | read only | yes |
 
+**What each loop waits on** (read 2026-10-15). These loops call the frame gate
+`func_800149F4` after their renderer call, so they draw at 20 a second under
+pacing as on the console: the area load, the area change, the fade, and the
+interactions `80033820`, `80033D80` and `80034438`. The menu, save and load
+screens and the exit picture wait a `VSync(0)` a frame. The card message presents
+once, then spins on the pad. **Death has no loop**: stage A steps it once a tick
+and calls the renderer twice on the tick the roll ends. **The area-5 scene
+`800346A8` and the event picture had no wait under pacing**. They are held now
+("Menus wait for a vblank" in `docs/DEVELOPMENT.md`).
+
 **Death**: the damage routine `func_8001564C` adds to HP, clamps it, and calls
 `func_80015164` at 0 or below, which sets the state byte `0x800A0822` to `0xFF`.
 Stage A's `func_80018540` then drops the eye and rolls it, calling the renderer

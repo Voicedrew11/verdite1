@@ -30,8 +30,8 @@ recompiled and running, following Verdite3's method but applied to this disc.
 - **The camera carried between ticks** (2026-10-05): built and measured, on
   under pacing (`docs/SMOOTHING.md`). So is everything the model walk draws,
   at its submitters, with clip times and the sprites' cels held to the tick;
-  measured on animated objects, a person, a door and a staged falling pickup. A
-  monster's real drop and a walking creature are still to see.
+  measured on animated objects, a person, a door and a staged falling pickup, and
+  (2026-10-15) a creature walking in area 4. A monster's real drop is still to see.
 - **The picture** (2026-10-05, `docs/PICTURE.md`): no dither, 24-bit,
   perspective, sub-pixel and a Z-buffer from the address map, built and measured,
   all off until judged.
@@ -48,7 +48,12 @@ recompiled and running, following Verdite3's method but applied to this disc.
   the pose routine `func_800205D4`, then the map path. Done 2026-10-14 as Step 1
   of `docs/RENDERER_PLAN.md` ("The draw path in C#" in `docs/GPU_RENDERER.md`):
   all 24 draw routines in C# and verified, and the selected item's display held
-  to the tick. **Next is Step 2**, the things that run at the drawn rate.
+  to the tick. Step 2 done 2026-10-15: nothing a frame shows steps at the drawn
+  rate. The event picture and the area-5 scene wait a vblank. There are no tints
+  or texture animations to hold. **To judge**: the event picture's fade, now
+  1.6 s against the console's (instant before; the console's is not known), and
+  whether a death's dimming, which steps 20 times a second, shows under the carried
+  fall. **Next is Step 3**, the retained scene.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

@@ -150,7 +150,14 @@ done:
 There is no HUD transform to port (the compass goes through RTPT), and no clip
 or subdivide in the draw path.
 
-## Step 2: things that run at the drawn rate
+## ~~Step 2: things that run at the drawn rate~~
+
+Done 2026-10-15: the gate holds. The census with creatures, objects and the arm
+moving shows only the frame's working memory with nothing carried. The two loops
+that waited for nothing are held. There are no tints or texture animations to
+hold, and the sprites follow the carried camera ("Sprites and the eye", "Loops
+that draw their own frames", "The tints between ticks" and "Textures" in
+`SMOOTHING.md`; "What runs at the render rate" in `GAME_INTERNALS.md`).
 
 Run before and after Step 1 with `KF1_RATECENSUS` and moving creatures and
 objects (the census so far was taken standing):

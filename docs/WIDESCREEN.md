@@ -15,6 +15,9 @@ margin latches when OPEN.EXE or GAME.EXE loads, and stretches full-screen tints
 (flat, semi-transparent quads spanning the clip rectangle) across the margin
 (`KF1_WIDESCREEN_EFFECTS=0` compares). `KF1_WIDESCREEN_PROBE=1` counts the
 primitives that reach past the 320 columns; `=2` also lists the screen-wide ones.
+The stretch came with Verdite3's file. **This game draws no full-screen tint**
+(measured 2026-10-15; its fades go through the colour matrix, "The tints between
+ticks" in `docs/SMOOTHING.md`), so the stretch has nothing to act on.
 The command channel's `aspect` verb reads or sets it.
 
 Measured 2026-10-05 at 16:9, 144 fps, turning and walking at the start of area 1:

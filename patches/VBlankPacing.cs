@@ -8,7 +8,8 @@ using RecompOne.Runtime.Modding;
 namespace Kf1;
 
 /// <summary>
-/// Hold every VSync outside the renderer to a real vblank, the way the console's did.
+/// Hold every VSync outside the main loop's renderer call to a real vblank, the way
+/// the console's did, and a present that waits no VSync at all to one.
 ///
 ///     KF1_VBLANKPACING=0        leave them on the runtime's clock -- comparison only
 ///     KF1_VBLANKPACING_PROBE=1  a line a second: calls held, by mode, and the mean wait
@@ -17,9 +18,11 @@ namespace Kf1;
 /// (only the per-call ceiling throttles it), so a loop that counts VSync calls as
 /// a delay collapses at any frame rate above 60. This class keeps its own 60 Hz
 /// wall-clock grid and holds such calls: mode 0 one vblank, mode n &gt;= 2 n. Queries
-/// (mode &lt; 0 and 1) pass through. Calls made inside the renderer (stage I) belong
-/// to <see cref="FramePacing"/>'s frame boundary, or in a modal loop to the frame
-/// gate after it, and are exempt. Only GAME.EXE, only with FramePacing on.
+/// (mode &lt; 0 and 1) pass through. The flip of the main loop's renderer call
+/// (stage I) is <see cref="FramePacing"/>'s frame boundary and is exempt; a modal
+/// loop's renderer call waits its vblank as on the console. A <c>DrawOTag</c> with
+/// no VSync since the last one (the event picture's fade) waits one vblank too.
+/// Only GAME.EXE, only with FramePacing on.
 /// Verdite3's VBlankPacing. See "Menus and loading screens wait for a vblank" in
 /// docs/DEVELOPMENT.md.
 /// </summary>
@@ -27,6 +30,8 @@ public static class VBlankPacing
 {
     const uint VSyncThunk = 0x800555E0;  // LibEtc.VSync, GAME.EXE's copy
     const uint Renderer = 0x8001FDE4;     // the renderer, stage I; its flip is FramePacing's
+    const uint MainSite = 0x800148C8;     // the main loop's call of the renderer
+    const uint DrawOTagThunk = 0x80050CF0;
 
     /// <summary>One vblank, the unit both modes are counted in. Not LibEtc's
     /// _vcount: that only advances from a VSync call, so waiting on it deadlocks.</summary>
@@ -54,6 +59,7 @@ public static class VBlankPacing
     static bool _inGame;
     static bool _inRenderer;
     static int _depth;
+    static bool _vsyncSinceDraw = true;
 
     /// <summary>When the next held call may return, in ms. Negative seeds the grid.</summary>
     static double _due = -1.0;
@@ -62,10 +68,10 @@ public static class VBlankPacing
     static double _windowStart;
     static long[] _heldByMode = new long[8];
     static double _waitMs;
-    static long _exempt;
+    static long _exempt, _drawsHeld;
 
     static readonly HashSet<string> _vsHooked = [];
-    static bool _stageHooked;
+    static bool _stageHooked, _drawHooked;
 
     public static void Configure(string? enabled, string? probe)
     {
@@ -83,6 +89,7 @@ public static class VBlankPacing
             _inGame = e.Name == "game";
             _depth = 0;
             _inRenderer = false;
+            _vsyncSinceDraw = true;
         });
         HookAttach.OnOverlayLoad("vblank pacing", Attach, "See \"Menus and loading screens wait for a vblank\" in docs/DEVELOPMENT.md.");
     }
@@ -103,15 +110,21 @@ public static class VBlankPacing
                 && HookManager.AddPost(_self, s, M(nameof(AfterRenderer)), int.MaxValue)) stage = s;
         }
 
+        MethodInfo? draw = null;
+        if (!_drawHooked && SymbolRegistry.Resolve("game", null, DrawOTagThunk) is { } d
+            && HookManager.AddPre(_self, d, M(nameof(BeforeDrawOTag)))) draw = d;
+
         HookManager.Commit();
 
+        if (draw != null && HookAttach.Installed(draw)) _drawHooked = true;
         if (thunk != null && HookAttach.Installed(thunk)) _vsHooked.Add("game");
         if (stage != null && HookAttach.Installed(stage)) _stageHooked = true;
 
         Console.WriteLine($"[KF1] vblank pacing: {(Enabled ? "on" : "off")}, " +
                           $"VSync {(_vsHooked.Contains("game") ? "held" : "NOT held")}, " +
-                          $"renderer {(_stageHooked ? "exempt" : "NOT exempt")}");
-        return _vsHooked.Count == 1 && _stageHooked;
+                          $"main-loop renderer {(_stageHooked ? "exempt" : "NOT exempt")}, " +
+                          $"DrawOTag {(_drawHooked ? "held without a VSync" : "NOT held")}");
+        return _vsHooked.Count == 1 && _stageHooked && _drawHooked;
     }
 
     /// <summary>A VSync call about to run. Queries pass; a present outside the renderer
@@ -123,9 +136,26 @@ public static class VBlankPacing
         int mode = (int)c.A0;
         if (mode < 0 || mode == 1) return;
 
+        _vsyncSinceDraw = true;
         if (_inRenderer) { _exempt++; return; }
 
-        int vblanks = mode == 0 ? 1 : mode;
+        Hold(mode == 0 ? 1 : mode);
+        if (mode < _heldByMode.Length) _heldByMode[mode]++;
+    }
+
+    /// <summary>A present with no VSync since the last: a loop that spins on
+    /// DrawSync alone (the event picture <c>func_8002C794</c>) waits a vblank a pass.</summary>
+    public static void BeforeDrawOTag(CpuContext c, IMemory m)
+    {
+        if (!Enabled || !_inGame || !FramePacing.Enabled) return;
+        if (_vsyncSinceDraw) { _vsyncSinceDraw = false; return; }
+        if (_inRenderer) return;
+        Hold(1);
+        _drawsHeld++;
+    }
+
+    static void Hold(int vblanks)
+    {
         double now = _clock.Elapsed.TotalMilliseconds;
 
         // Seed on the first call, and resync rather than pay back a stall -- the
@@ -141,8 +171,6 @@ public static class VBlankPacing
         }
 
         _waitMs += _clock.Elapsed.TotalMilliseconds - now;
-        if (mode < _heldByMode.Length) _heldByMode[mode]++;
-
         Probe(now);
     }
 
@@ -150,8 +178,7 @@ public static class VBlankPacing
     /// other hook's call, and keep the flip's own VSync out of the wait.</summary>
     public static void BeforeRenderer(CpuContext c, IMemory m)
     {
-        _depth++;
-        _inRenderer = true;
+        if (_depth++ == 0) _inRenderer = c.RA == MainSite;
     }
 
     /// <summary>Close it, at the highest order. Runs even if another pre skipped
@@ -159,7 +186,7 @@ public static class VBlankPacing
     public static void AfterRenderer(CpuContext c, IMemory m)
     {
         if (_depth > 0) _depth--;
-        _inRenderer = _depth > 0;
+        if (_depth == 0) _inRenderer = false;
     }
 
     static void Probe(double now)
@@ -171,7 +198,8 @@ public static class VBlankPacing
 
         long held = 0;
         foreach (var n in _heldByMode) held += n;
-        if (held == 0)
+        long waited = held + _drawsHeld;
+        if (waited == 0)
         {
             _windowStart = now;
             _waitMs = 0.0;
@@ -183,12 +211,13 @@ public static class VBlankPacing
 
         Console.WriteLine($"[KF1] vblank pacing: {held * 1000.0 / elapsed:0.0} VSync call(s)/s held " +
                           $"({mode0 * 1000.0 / elapsed:0.0} mode 0, {(held - mode0) * 1000.0 / elapsed:0.0} mode >= 2), " +
-                          $"mean wait {_waitMs / held:0.0} ms, {_exempt * 1000.0 / elapsed:0.0} exempted/s");
+                          $"{_drawsHeld * 1000.0 / elapsed:0.0} DrawOTag(s)/s held, " +
+                          $"mean wait {_waitMs / waited:0.0} ms, {_exempt * 1000.0 / elapsed:0.0} exempted/s");
         Console.Out.Flush();
 
         _windowStart = now;
         _waitMs = 0.0;
-        _exempt = 0;
+        _exempt = _drawsHeld = 0;
         Array.Clear(_heldByMode);
     }
 }

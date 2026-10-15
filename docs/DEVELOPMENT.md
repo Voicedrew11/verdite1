@@ -206,6 +206,31 @@ Measured 2026-10-05 at `KF1_FPS=144`, the menu open (Cross),
 16.1-16.2 ms, and the pacing probe reads 60.0 fps drawn in the menu. **Not judged
 by eye**: the menu's cursor and its windows.
 
+**Since 2026-10-15 only the main loop's renderer call is exempt** (return address
+`0x800148C8`), and **a `DrawOTag` with no `VSync` since the last one waits a
+vblank too**. Two modal loops were not held ("Loops that draw their own frames"
+in `docs/SMOOTHING.md`):
+
+- **The area-5 scripted scene** `func_800346A8` (from `func_80034A34`, the
+  examine dispatcher's case for area 5) calls the renderer in a loop with no
+  frame gate, so its steps ran at `KF1_FPS`. Its flip's `VSync(0)` now waits a
+  vblank, as the console's did. Read in the code, not run: the scene's trigger (a
+  person record's `+8` reading `0x28010500`) was not staged.
+- **The event picture** `func_8002C794`, which examining a sign shows (an
+  interaction object of kind 13, types `0x82`/`0x83`), fades a 256x128
+  semi-transparent `POLY_FT4` in by adding 1 to its brightness each pass, from
+  `0x20` to 127, then waits for a button. Each pass is `ClearOTagR`, `AddPrim`,
+  `DrawSync` and `DrawOTag`, with **no `VSync`**, so its speed was the host's:
+  **8,400 passes a second**, the fade over in 12 ms. Now one pass waits one
+  vblank: **pass 96 at 1,584 ms**, 60.0 `DrawOTag`s held a second. The console's
+  rate for this loop is not known: it was bound by the GPU walking a 16,384-entry
+  ordering table, so the fade there was probably faster than 1.6 s. **For a person
+  to judge against the console.**
+
+The gated loops are unchanged: a warp lands in 7.1 s with the old rule and with
+the new one (2026-10-15, `KF1_FPS=144`, `KF1_TICKRATE=20`), drawing 20 frames a
+second while the area loads.
+
 ## The Testing tab
 
 Settings ▸ **Testing** (`patches/TestingSection.cs`, Verdite3's) holds every

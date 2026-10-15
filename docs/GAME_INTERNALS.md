@@ -294,8 +294,28 @@ of idle frames, 2026-10-05), finds:
   `0x800A8FD0`-`0x800A8FEC`, which no GAME.EXE instruction addresses directly
   (DMA, the BIOS pad buffers, or a pointer); unread.
 
-**Nothing a frame shows advances at the render rate while standing.** A census
-with creatures and objects moving has not been taken.
+**Nothing a frame shows advances at the render rate while standing.**
+
+**Nor while things move** (2026-10-15, `scratch/census_moving.py`, `KF1_FPS=144`
+at the 15.1 Hz tick rate kept in `interface.ini`, 75 s): area 4 by (17000, 72000), where creature 11 (model 9) walks about 8,000
+units a second, then turning, walking and swinging, with the model-smoothing probe
+reading creatures, objects and the arm carried on 144 frames a second.
+
+- **With nothing carried** (`KF1_SMOOTH=0 KF1_SMOOTH_MODELS=0`, the C# path,
+  3,013 idle pairs): only the working memory above changes, and the stack.
+- **Before Step 1** (`KF1_LITERAL=0`, carried) and **after** (carried) read the
+  same working memory, plus `0x80090FC8`, `0x800931A8`-`0x80093200` and, in one
+  run of the recompiled path, `0x800AAC88`-`0x800ACBAC` and
+  `0x800C42C8`-`0x800C628C`. None of these change with nothing carried, so they
+  are what the carry writes for the frame it draws, not state the renderer steps.
+  They are not the pose slots, which sit at `0x801E17B8` and up in area 4.
+
+The census samples RAM at a vblank, which can fall partway through a frame, so
+the working memory it lists changes because of where it was caught. A probe of
+every vertex-cache call over about 1,500 pairs of idle frames, standing in area 1
+and by the walking creature in area 4, found no call that projected anything
+different from one idle frame to the next.
+
 One thing the census missed, read in the code: **the flipbook sprites' cel**
 (`+0x14` of the list at `0x80095098`) steps on every draw of the sprite, so it
 advances at the render rate; `ModelSmoothing` holds it to one step a tick ("Creatures,

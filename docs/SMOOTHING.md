@@ -151,3 +151,87 @@ routine standing in for a submitter. Measured at `KF1_FPS=144`: one swing draws
 the negated yaw of the renderer's own camera copy (`0x80095756`) every frame: a
 view-fixed model, likely the compass. It follows the carried camera with nothing
 more; its own clip is not carried.
+
+## Sprites and the eye
+
+Read 2026-10-15 in `patches/Draw/SubmitSprite.cs`. **The flipbook sprites follow
+the carried camera with nothing more.** The submitter `func_8001ED90` transforms a
+sprite's position (`+4`, `+8`, `+0xC`, carried) by the view matrix `0x800956A0`
+less the eye `0x80095744`, then turns the quad, which the writer `func_8001E230`
+builds flat in its own plane (z 0), by one of two rotations, picked by the high
+nibble of `+2`:
+
+- **0**: the pitch-only matrix `0x800956C0`. The quad faces the picture plane,
+  upright: a billboard.
+- **otherwise**: the view matrix times a fixed turn of `(nibble - 0x10) << 6`
+  (`func_80014BEC`, then `func_8004D11C`). The quad is turned once, with the
+  world.
+
+The three come from the camera block `func_8001C184`, run from the renderer's
+copy of the camera, which `ViewSmoothing` hands it. They are written together, so
+they agree on every drawn frame. No sprite reads the player's own state. Verdite3's
+`BillboardFacing` fixed quads that went edge-on to a carried eye. Here a
+billboard is built facing the picture, so this game has nothing like that to fix.
+Whether a turned sprite (nonzero nibble) can go edge-on is a question about the game
+itself, not about the carry.
+
+**The cel stays held in `ModelSmoothing`.** The plan offered stepping it once a
+tick inside the C# submitter instead. That would need the same first-draw-of-the-tick
+record, would not cover the recompiled submitter (`KF1_SUBMIT_SPRITE=0`), and would
+make the submitter's verify differ from the recompiled body on every held draw. The
+hold puts `+0x14` back after the submitter, so all three modes read the same.
+Measured 2026-10-15 at 144 fps: 129 of 144 draws a second held, so a sprite steps
+on 15 draws, one per tick at that run's 15.1 Hz tick rate.
+
+## Loops that draw their own frames
+
+Verdite3's `LoopPacing` runs a loop that calls the renderer once per world tick
+and fills the frames between with redraws. Here, every loop that calls the
+renderer but one waits the game's own frame gate after it ("What each loop waits
+on" in `docs/GPU_RENDERER.md`). So these loops already step 20 times a second
+under pacing, as on the console. Redraws between their steps would draw the same
+picture again, because only the main loop's renderer call is carried. So they are
+left at the gate's 20 frames a second. The two loops that waited for nothing, the
+area-5 scene and the event picture, wait a vblank now ("Menus wait for a vblank"
+in `docs/DEVELOPMENT.md`).
+
+## The tints between ticks
+
+**This game draws no full-screen tint**, so there is nothing to hold. Verdite2's
+`TintHold` fixed a full-screen quad drawn only on tick frames, a strobe.
+`KF1_TINTPROBE=1` (`patches/TintProbe.cs`, Verdite3's probe) looks for flat
+semi-transparent primitives that span the draw area, and reports the largest one
+covering half its width and height. Measured 2026-10-15 at `KF1_FPS=144`,
+`KF1_TICKRATE=20`: two warps, so two area fades and loads; the area-1 trap at
+(51000, -11500, 19000), HP 30 to 4 and then to 0; and three deaths and respawns.
+**Not one tint and not one large primitive.** The probe does see the event
+picture's 256x128 quad, so it works.
+
+The fades go through the GTE's colour matrix instead (read in the code):
+
+- **The area fade** `func_80036D3C` lerps the colour block it saved with
+  `ReadColorMatrix` (`func_80020364`) and sets it with `SetColorMatrix`, 0 to
+  `0x1000` and back by `0x40`, one step per renderer call, then the frame gate:
+  130 steps at 20 a second, as on the console.
+- **Death** (`func_80018540` in stage A) lerps the colour matrix and the fog's
+  near distance (`SetFogNear`) once a tick.
+
+Neither is stepped by the renderer, and nothing carries the colour matrix between
+ticks, so a death's dimming steps 20 times a second while the eye's fall is
+carried. Whether that shows is for a person to look at. The damage flash was not
+found: at 30 to 4 HP no large primitive was drawn.
+
+## Textures
+
+**This game animates no texture or palette through VRAM.** Verdite3's
+`TextureScroll` and Verdite2's `FluidSmoothing` step water by moving VRAM
+rectangles. Reading for this game's image uploads found no caller of a
+`LoadImage` or `MoveImage` that runs during play ("libgpu image routines" are not
+bound), so it was measured. `KF1_VRAMCENSUS=<s>` (`patches/VramCensus.cs`) compares
+the CPU's VRAM, which holds every upload, tick by tick in 64x16 blocks outside the
+two display buffers. Measured 2026-10-15 at `KF1_FPS=144`, `KF1_TICKRATE=20`,
+200 tick pairs standing in each of areas 1-5 after the warp: **no block changed in
+any area**. The control, a window that spans the warp into area 4, catches the
+load: one tick, blocks of 1,024 changed pixels from (320,0). A scroll written into
+a model's UVs in RAM would not show here, and none was looked for. Without a place
+in the game known to have flowing water or lava, none was visited.
