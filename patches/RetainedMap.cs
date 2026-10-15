@@ -105,7 +105,7 @@ public static class RetainedMap
     {
         uint tmd = m.ReadU32(Tmds);
         if ((tmd & 0x1FFFFF) == 0 || (tmd >> 24) != 0x80) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-tmd-absent"); return; }
-        DiffGrid(m);
+        if (GpuWorld.CensusOn || GpuWorld.Check) DiffGrid(m);
         var src = ReadSource(m);
         short remap = (short)m.ReadU16(Remap);
         bool remapOn = remap != -1 && (remap & 3) < 2;
