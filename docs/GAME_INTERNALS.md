@@ -242,6 +242,17 @@ after `off`, and the player does not move.
   exit replaces the grid whole. `docs/GPU_RENDERER.md`, "Does the grid change
   mid-area?".
 - `0x80057B60`: the map's RGBC; `0x80057B58`: the models' textured RGBC.
+- **The fog pair** (measured 2026-10-16, areas 1-5): DQA -17,600, DQB 20,971,520,
+  with H = 200: the cue starts at 11,000 units and is black at 18,333. DQA moves
+  (-17,169 seen in area 4) only while the death or damage dimming runs.
+- **The draw stencils**: 16 at `0x80065BE8`, `0xCC` bytes each: u16 width,
+  height (14, 14), origin x, z, then one byte a cell; 0 undrawn, 1 object + 100,
+  2 the base object. The walk uses stencil 15 - (yaw >> 8). The eye's cell is u16
+  `0x8009575C` (column) and `0x8009575E` (row).
+- **The light leaves** the polygon writer calls: `func_8004DD40` is NCDT (normals
+  at a0-a2, RGBC at a3, IR0 at sp+0x10, colours to the words sp+0x14/0x18/0x1C
+  point at); `func_8004DD14` is NCDS (normal at a0, RGBC at a1, IR0 in a2, colour
+  to a3). Both leave the a-registers as they found them.
 - The pose blender `func_800205D4`: its record's +0xC is the block (the vertex
   list plus every whole key, rebuilt only when the segment changes), +8 the
   segment's last key (start at +4, count at +8, entries at +0xC). The scratch

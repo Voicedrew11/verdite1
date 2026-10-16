@@ -588,3 +588,109 @@ Verification, the same run (Step 3 gate, `KF1_GPU_CENSUS=1`):
   map builds, 1.84 MB of map packets written while drawing (the cells walked
   before a build and the 118 walks in which the source was changing; the
   pre-existing fallbacks, not the diff).
+
+## The picture on the retained scene
+
+Step 4 of `RENDERER_PLAN.md`, built 2026-10-16. Every switch is the runtime's
+existing mechanism, set from `patches/SceneFeatures.cs` (Settings ▸ Testing,
+"World on the GPU", and the `KF1_*` switches in `ENV_VARS.md`). Each acts only
+while the retained renderer draws (`KF1_GPU_WORLD=1`), and each is off until
+judged.
+
+| switch | what it sets |
+|---|---|
+| `KF1_PERPIXEL` | `GteLightMap.Enabled`: the world shader lights a pixel, not a corner |
+| `KF1_FOG` | `corners` (the GTE's), `depth` (`MainFogFromZ`), `distance` (`RadialFog` too); the last two need per-pixel |
+| `KF1_AO`, `KF1_AO_NORMALS`, `KF1_AO_QUALITY` | screen-space AO, its normal buffer and its resolution and samples |
+| `KF1_ANISO`, `KF1_MIPMAPS` | the world textures' filtering |
+| `KF1_ENHANCEDIST` | `PlainDepth`: the enhancements stop past this many cells (2-16) |
+| `KF1_RENDERDIST`, `KF1_RENDERDIST_FADE` | "Render distance", below |
+
+### The game's fog
+
+The depth cue is GTE fog: the writers pass DPCS twice RTPS's IR0 (the vertex
+cache's +6), toward a black far colour, so the retained path draws it as the
+runtime's curve 1 with DQB + 800 × 4096, keeping `1 - 2·IR0/4096`. **One pair for
+the whole game** (measured on a walk of areas 1-5, `scratch/fog_measure.py`): DQA
+-17,600, DQB 20,971,520 at H = 200. The cue starts at 11,000 units (5.5 cells) and
+is black at 18,333 (9.17 cells). DQA reads -17,169 in area 4 during the death and
+damage dimming, which rebuilds the map (66 builds in a run with no Step 4 switch
+on): a game effect, not Step 4's.
+
+So this is Verdite2's kind of fog, not Verdite3's near/far kind. `Fog`'s
+`depth` and `distance` modes evaluate the same curve per pixel, from the pixel's
+depth or its distance to the eye.
+
+**Not applicable: `EvenFog`** (`0088`, neighbour blending across tile edges).
+KF1's cue is per vertex from the GTE curve, with no per-tile fog level to blend.
+
+### Checks (`KF1_GPU_CHECK=1` under `capture`)
+
+- **Interior fog** (`RetainedMap.CheckInterior`): at each face triangle's
+  centroid and edge midpoints, the cue interpolated the way the shader does
+  against the GTE's DPCS at that point's depth. 97,964,032 samples: 76.4 M
+  exact, 21.6 M off by 1, **none worse** (max 1 of 255).
+- **Model light** (`patches/LightCheck.cs`): at every corner the polygon writer
+  lights through `func_8004DD40` (NCDT) and `func_8004DD14` (NCDS), the world
+  shader's sum (LLM · normal, BK + LCM, × RGBC, kept by the cue) in floats against
+  the packet's colour. 16,459,976 corners: 7.67 M exact, 8.79 M off by 1, **none
+  worse** (max 1).
+- The map in the same run: 34 M vertices within 1.79 px, and 42.4 M corner colours
+  exact.
+
+### Measured with everything on
+
+Route `scratch/step4.py` (area 1 walk, warp to area 4, warp to area 2) with
+per-pixel, depth fog, AO, anisotropy 8, mipmaps, render distance 16, fade 2 and
+`KF1_GPU_SURFACE_PROBE=1`:
+
+- 59,969 GPU main-view draws, **0 missed**; no errors.
+- Mipmaps: 665 of 2,831 texture keys found mipped.
+- AO: 60,282 passes; 335 frames without a target (the menus and loads).
+- Normal triangles drawn: map 5.44 G. The model instances' normals are not in
+  that counter; the surface probe shows they reach the buffer: 13 checks,
+  314,519 pixels, 119 behind, 72 ahead, 84 missing.
+- Render distance: 102.5 cells added a frame (max 185) and 183,401 models past
+  the stencil.
+
+`fog=distance` with `KF1_ENHANCEDIST=6` and fade 2: `plain = 12000`, no errors.
+
+### Not built
+
+- **`Pgxp`**: neither Verdite2's retained path nor Verdite3 uses it, and the
+  retained scene leaves no world packet geometry that needs it.
+- **`AoWorld`**: the fork's world-AO grid is hard-coded for 80 × 80 tiles, a
+  2,048-unit height span and a 128 height unit. It needs a game-neutral fork
+  patch making those settable, and a KF1 adapter, and which cells stop sight here
+  is not known. Deferred.
+- **`ProjectileLights`**: the glowing effects are not identified, and every
+  sprite drawn so far is opaque. Deferred.
+
+## Render distance
+
+`patches/RenderDistance.cs`, Verdite3's mechanism on this game's walk.
+
+**The game's reach.** The map walk `0x8001E83C` draws the cells of one of
+sixteen 14 × 14 stencils around the eye's cell (`GAME_INTERNALS.md`), and the
+model walk's five walks test the same stencil. The nearest an undrawn cell inside
+the 4:3 cone comes to the eye, over every stencil, heading and place in the eye's
+cell, is **15,285 units (7.64 cells)**, measured in-game (`KF1_RENDERDIST_PROBE`).
+That is inside the fog's black (9.17 cells), so at 4:3 the game's reach shows
+fog-dimmed edges. At 16:9 the wider cone sees cells beside the eye that no 14 × 14
+stencil holds, about 1.6 cells away, so the edge is measured on the 4:3 cone and
+those side cells are left to the render distance.
+
+**Past it.** After the map walk, every cell whose nearest point is within the
+distance and whose box meets the horizontal cone (plus 0.25 rad for pitch) gets
+its gate byte in `CurrentMainHalves` (a KF1 slot is its gate index). The model
+walk's stencil tests ask `RenderDistance.Reach` before each record advance
+(`ModelWalk.Past`), so the models standing there are submitted too. The guest's
+stencils are never changed, and the packet path keeps the game's reach. With 10
+cells: 12.5 cells added a frame (max 23) and 36,575 models past the stencil over
+the route.
+
+**The fade.** Runtime `0089`'s `DistanceFade`, ending at the render distance, or
+at the game's edge when the distance is off.
+
+Since the fog is black by 9.17 cells, a distance past that adds only black at
+4:3. What it buys is the wide aspect's side cells, and the fade's softer edge.

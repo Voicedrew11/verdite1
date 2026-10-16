@@ -32,9 +32,26 @@ public static class ModelWalk
     /// <summary>A submitter's call, with ModelSmoothing's carry around it.</summary>
     static void Submit(CpuContext c, PSMemory mem, Action<CpuContext, IMemory> submitter)
     {
+        _sent = true;
         ModelSmoothing.BeforeSubmit(c, mem);
         submitter(c, mem);
         ModelSmoothing.AfterSubmit(c, mem);
+    }
+
+    static bool _sent;
+
+    /// <summary>After a record's stencil test: one it left out, standing where the frame's
+    /// render distance reaches (RenderDistance), is submitted all the same.</summary>
+    static void Past(CpuContext c, PSMemory mem, bool eligible, uint col, uint row, uint record, uint ra,
+        Action<CpuContext, IMemory> submitter)
+    {
+        bool sent = _sent;
+        _sent = false;
+        if (sent || !eligible || !RenderDistance.Reach(col, row)) return;
+        c.A0 = record;
+        c.RA = ra;
+        Submit(c, mem, submitter);
+        _sent = false;
     }
 
     static void Run(CpuContext c, PSMemory mem)
@@ -115,6 +132,7 @@ public static class ModelWalk
                     }
                 }
             }
+            Past(c, mem, mem.ReadU8(c.S1) < 0x85u, mem.ReadU16(c.S0), mem.ReadU16(c.S0 + 0x2u), c.S1, 0x8001F304u, Submit_8001EBB8);
             c.S0 = c.S0 + 0x2Cu;
             c.V0 = c.S2 - 0x1u;
             c.S2 = c.V0;
@@ -194,6 +212,8 @@ public static class ModelWalk
                     Submit(c, mem, Submit_8001E9A4);
                 }
             }
+            Past(c, mem, mem.ReadU8(c.S0 - 0x10u) == 1u && mem.ReadU8(c.S0 - 0x14u) == 0u,
+                mem.ReadU16(c.S0), mem.ReadU16(c.S0 + 0x2u), c.S1, 0x8001F404u, Submit_8001E9A4);
             c.S0 = c.S0 + 0x48u;
             c.V0 = c.S2 - 0x1u;
             c.S2 = c.V0;
@@ -277,6 +297,8 @@ public static class ModelWalk
                         }
                     }
                 }
+                Past(c, mem, true, (uint)((int)mem.ReadU32(c.S0) / 2000), (uint)((int)mem.ReadU32(c.S0 + 0x8u) / 2000),
+                    c.S4, 0x8001F568u, Submit_8001ED90);
                 c.S0 = c.S0 + 0x18u;
                 c.V0 = c.S2 - 0x1u;
                 c.S2 = c.V0;
@@ -346,6 +368,8 @@ public static class ModelWalk
                     }
                 }
             }
+            Past(c, mem, mem.ReadU8(c.S1) != 0xFFu && mem.ReadU8(c.S0 - 0x9u) != 0xFFu,
+                (uint)((int)mem.ReadU32(c.S0) / 2000), (uint)((int)mem.ReadU32(c.S0 + 0x8u) / 2000), c.S1, 0x8001F698u, Submit_8001EEDC);
             c.S0 = c.S0 + 0x3Cu;
             c.V0 = c.S2 - 0x1u;
             c.S2 = c.V0;
@@ -405,6 +429,7 @@ public static class ModelWalk
                     }
                 }
             }
+            Past(c, mem, mem.ReadU8(c.S0) == 1u, mem.ReadU16(c.S1), mem.ReadU16(c.S1 + 0x2u), c.S0, 0x8001F750u, Submit_8001F0C4);
             c.S1 = c.S1 + 0x44u;
             c.V0 = c.S2 - 0x1u;
             c.S2 = c.V0;

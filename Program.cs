@@ -149,6 +149,12 @@ Kf1.ZBuffer.Install();
 Kf1.GpuWorld.Configure();
 Kf1.GpuWorld.Install();
 Kf1.RetainedModels.Install();
+// The picture on it: render distance and the runtime's enhancements, each off until
+// judged. See "The picture on the retained scene" in docs/GPU_RENDERER.md.
+Kf1.RenderDistance.Configure();
+Kf1.RenderDistance.Install();
+Kf1.LightCheck.Install();
+Kf1.SceneFeatures.Configure();
 
 // Mouse look and the mouse buttons: Verdite Core's Mouse with this game's values,
 // spent through stage A's own turn and look. Escape captures the pointer. See

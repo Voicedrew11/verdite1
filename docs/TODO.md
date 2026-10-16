@@ -63,6 +63,14 @@ recompiled and running, following Verdite3's method but applied to this disc.
   a cell, if one is found; the blend mode of mesh `800EED50` and area 5's semi
   meshes; area 5's fault after a tour of warps, which the plain recompiled game shares
   ("`warp`" in `DEVELOPMENT.md`).
+  Step 4 built 2026-10-16 ("The picture on the retained scene" in
+  `docs/GPU_RENDERER.md`), every switch off. **To judge**, at `KF1_GPU_WORLD=1`:
+  per-pixel lighting, the fog modes (corners, depth, distance), AO and its
+  quality, anisotropy, mipmaps, the enhancement distance, and the render distance
+  with its fade (at 16:9 especially, where it fills the side cells the stencils
+  miss). **Open**: `AoWorld` (a game-neutral fork patch for the grid's sizes, a KF1
+  adapter, and which cells stop sight); `ProjectileLights` (identify the glowing
+  effects first).
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

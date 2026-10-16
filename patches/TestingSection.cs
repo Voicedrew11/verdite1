@@ -97,6 +97,7 @@ public sealed class TestingSection : ISettingsSection
             if (Unset(k.Env) && Rt.View.GetInt(k.Key, -1) is >= 0 and var v) k.Set(v != 0);
         if (Unset("KF1_TRUECOLOR") && Unset("KF1_NODITHER") && Rt.View.GetInt(ShadingKey, -1) is >= 0 and var sh)
             SetShading(sh);
+        SceneFeatures.Ready();
     }
 
     static bool Unset(string env) => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(env));
@@ -256,6 +257,8 @@ public sealed class TestingSection : ISettingsSection
             "Corners keep the fraction of a pixel the GTE dropped, so edges stop jittering as the view moves.");
         Toggle("Z-buffer", K("kf1.zbuffer"),
             "Per-pixel occlusion from the depths the address map recovers; a triangle it missed keeps painter's order.");
+
+        SceneFeatures.Draw();
 
         ImGui.SeparatorText("Mouse");
         Toggle("Mouse look", K(Mouse.OnKey),

@@ -216,7 +216,18 @@ GPU projection and pose results match the C# reference on sampled vertices,
 including near and negative depth. With the GPU on, the census shows no world
 packets except those listed by caller and reason.
 
-## Step 4: the picture on the retained scene
+## ~~Step 4: the picture on the retained scene~~
+
+**Built 2026-10-16** ("The picture on the retained scene" and "Render distance" in
+`docs/GPU_RENDERER.md`). The numerical gate holds: interior fog and model light
+are within 1 of 255 everywhere checked, and the map and the models reach the
+depth, normal and surface buffers. Built: render and enhancement distance with the
+fade, the game's fog (GTE curve, one pair) with corners/depth/distance modes,
+per-pixel lighting, AO, anisotropy and mipmaps, all off until judged. Not built:
+`EvenFog` (not applicable: there is no per-tile fog level), `Pgxp` (not used by
+Verdite2's retained path or Verdite3), `AoWorld` (needs a fork patch for the
+grid's sizes, and a KF1 adapter) and `ProjectileLights` (effects not identified).
+The user's judging is what is left.
 
 The enhancements, in the order Verdite2 shipped them. Each is a switch, off until
 the user has looked at it, and live in Settings ▸ Testing:

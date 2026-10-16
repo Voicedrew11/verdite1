@@ -40,6 +40,10 @@ public static class RetainedMap
 
     // Each cell's gate slot for its own object and for object + 100, -1 for none.
     static readonly int[] SlotLow = new int[Grid * Grid], SlotHigh = new int[Grid * Grid];
+
+    /// <summary>A built cell's gate slot for its object (or object + 100); -1 for none.</summary>
+    public static int SlotOf(int cell, bool high) =>
+        !Ready || (uint)cell >= Grid * Grid ? -1 : (high ? SlotHigh : SlotLow)[cell];
     static ulong _built, _seen;
     static int _held;
     static bool _remap;
@@ -418,6 +422,66 @@ public static class RetainedMap
             _maxCue = Math.Max(_maxCue, dc);
             if (dc > 16f) { _cueBad++; Sample($"cue {ir0 * 2:0} vs {ir2}", i, sx, sy, z, gx, gy, gz, w, view); }
         }
+        CheckInterior(m, mesh, r, o, view);
+    }
+
+    static long _interior, _interiorExact, _interiorOne, _interiorWorse;
+    static int _interiorMax;
+
+    /// <summary>The fog inside the faces: at each triangle's centroid and edge midpoints,
+    /// the shader's per-pixel cue (the corners' raw IR0, interpolated affinely on screen,
+    /// then clamped and put through the offset curve) against DPCS at the point's own
+    /// depth, on a white face (the worst case), in levels of 255.</summary>
+    static void CheckInterior(PSMemory m, Mesh mesh, ReadOnlySpan<short> r, (int X, int Y, int Z) o, in RetainedScene.View view)
+    {
+        Span<(float X, float Y, float Z)> w = stackalloc (float, float, float)[4];
+        Span<(float Sx, float Sy, float Z)> p = stackalloc (float, float, float)[4];
+        Span<ushort> vi = stackalloc ushort[4];
+        foreach (var face in mesh.Faces)
+        {
+            vi[0] = face.V0; vi[1] = face.V1; vi[2] = face.V2; vi[3] = face.V3;
+            for (int k = 0; k < face.N; k++) { w[k] = World(m, mesh, r, o, vi[k] * 8); p[k] = Project(view, w[k].X, w[k].Y, w[k].Z); }
+            Triangle(view, w, p, 0, 1, 2);
+            if (face.N == 4) Triangle(view, w, p, 1, 3, 2);
+        }
+    }
+
+    static void Triangle(in RetainedScene.View view, Span<(float X, float Y, float Z)> w, Span<(float Sx, float Sy, float Z)> p, int a, int b, int c)
+    {
+        if (p[a].Z < view.H / 2 || p[b].Z < view.H / 2 || p[c].Z < view.H / 2) return;
+        float det = (p[b].Sx - p[a].Sx) * (p[c].Sy - p[a].Sy) - (p[c].Sx - p[a].Sx) * (p[b].Sy - p[a].Sy);
+        if (Math.Abs(det) < 4f) return;
+        float ra = Raw(view, p[a].Z), rb = Raw(view, p[b].Z), rc = Raw(view, p[c].Z);
+        ReadOnlySpan<(float, float, float)> at = [(1 / 3f, 1 / 3f, 1 / 3f), (0.5f, 0.5f, 0), (0, 0.5f, 0.5f), (0.5f, 0, 0.5f)];
+        foreach (var (ka, kb, kc) in at)
+        {
+            float x = ka * w[a].X + kb * w[b].X + kc * w[c].X, y = ka * w[a].Y + kb * w[b].Y + kc * w[c].Y,
+                  z = ka * w[a].Z + kb * w[b].Z + kc * w[c].Z;
+            var q = Project(view, x, y, z);
+            if (q.Z < view.H / 2) continue;
+            // Screen barycentrics of the point's projection.
+            float u = ((q.Sx - p[a].Sx) * (p[c].Sy - p[a].Sy) - (p[c].Sx - p[a].Sx) * (q.Sy - p[a].Sy)) / det;
+            float v = ((p[b].Sx - p[a].Sx) * (q.Sy - p[a].Sy) - (q.Sx - p[a].Sx) * (p[b].Sy - p[a].Sy)) / det;
+            float raw = (1 - u - v) * ra + u * rb + v * rc;
+            float wgt = Math.Max(Math.Clamp(raw, 0f, 4096f) - 800f, 0f) * 2f;
+            int mine = (int)MathF.Round(Math.Clamp(255f * (1f - wgt / 4096f), 0f, 255f));
+            // The GTE: RTPS's IR0 at the point's SZ, DPCS at twice it.
+            long sz = Math.Min((long)q.Z, 65535);
+            long qd = Math.Min((long)view.H * 65536L / Math.Max(sz, 1), 131071L);
+            int ir0 = (int)Math.Clamp((_src.Dqa * qd + _src.Dqb) >> 12, 0, 4096);
+            int gte = Dpcs(255, 2 * ir0);
+            int d = Math.Abs(mine - gte);
+            _interior++;
+            if (d == 0) _interiorExact++; else if (d == 1) _interiorOne++; else _interiorWorse++;
+            _interiorMax = Math.Max(_interiorMax, d);
+        }
+    }
+
+    /// <summary>The raw IR0 the shader interpolates for a corner at view depth z.</summary>
+    static float Raw(in RetainedScene.View view, float z)
+    {
+        float q = Math.Min(view.H * 65536f / Math.Max(z, 1f), 131071f);
+        return (_src.Dqa * q + _src.Dqb + 800f * 4096f) / 4096f;
     }
 
     static int _samples;
@@ -475,5 +539,6 @@ public static class RetainedMap
     public static string CheckReport() =>
         $"map vertices {_checked}: screen max {_maxScreen:0.00} px (over 1.5: {_screenBad}), z max {_maxZ:0.0}, " +
         $"behind agree/disagree {_behindAgree}/{_behindDisagree}, cue max {_maxCue:0} (over 16: {_cueBad}); " +
-        $"corner colours exact {_colourExact}, off {_colourBad}";
+        $"corner colours exact {_colourExact}, off {_colourBad}; interior fog {_interior}: exact {_interiorExact}, " +
+        $"off by 1 {_interiorOne}, more {_interiorWorse} (max {_interiorMax} of 255)";
 }

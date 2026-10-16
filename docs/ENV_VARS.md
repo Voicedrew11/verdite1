@@ -60,9 +60,23 @@ switch is added.
 | `KF1_GPU_MODELS` | on | `0`: the models left to their packets ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_ARM` | on | `0`: reserved; the arm is always packets for now ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_SPRITES` | on | `0`: the flipbook sprites left to their packets; a sprite is retained only while the world is drawn ("Sprites on the retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_GPU_CHECK` | off | `1`: under `capture`, every map and model vertex placed as the GPU places it, checked against the GTE's vertex cache (screen position, depth, behind-the-eye agreement, the depth cue, the map's corner colours, and the blended poses); reported with the census ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_CHECK` | off | `1`: under `capture`, every map and model vertex placed as the GPU places it, checked against the GTE's vertex cache (screen position, depth, behind-the-eye agreement, the depth cue, the map's corner colours, and the blended poses), the map's fog inside its faces against DPCS, and the models' light at every corner against NCDT/NCDS; reported with the census ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CENSUS` | off | `1`: a line every 5 s: builds, cache hits, GPU draws, packet bytes per domain and fallbacks by routine, caller and reason ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CENSUS_FILE` | off | a path: the census as JSON, every 5 s; implies `KF1_GPU_CENSUS` ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_SURFACE_PROBE` | off | `1`: with the census, the main view's depth against its surface buffer, sampled every 5 s: pixels with a depth but no surface (`missing`), surfaces ahead or behind it, by surface id ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_PERPIXEL` | off | `1`: the retained world lit and fogged per pixel (`GteLightMap.Enabled`); kept as `kf1.perpixel` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_FOG` | `corners` | `corners`/`0`: the game's fog at the corners; `depth`/`1`: per pixel from its view depth; `distance`/`radial`/`2`: per pixel from its distance to the eye. The last two act through `KF1_PERPIXEL`; kept as `kf1.fog` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_AO` | off | `1`: ambient occlusion; kept as `kf1.ao` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_AO_NORMALS` | on | `0`: the occlusion's normals from depth differences instead of the geometry; kept as `kf1.ao.normals` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_AO_QUALITY` | `medium` | `low`/`medium`/`high`: the occlusion's resolution and samples; kept as `kf1.ao.quality` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_AO_PROBE` | off | `1`: the runtime's occlusion probe ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_ANISO` | `1` | `1`-`16`: anisotropic taps; `1` is off; kept as `kf1.aniso` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_MIPMAPS` | off | `1`: mipmapped textures on the retained world; kept as `kf1.mipmaps` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_ENHANCEDIST` | `0` | cells (2-16): per-pixel shading, filtering and occlusion only nearer than this, the game's look past it; `0` at every distance; kept as `kf1.enhancedistance` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_RENDERDIST` | `0` | cells (1-30): the retained map and models drawn out to this distance; `0` the game's reach. Retained only; kept as `kf1.renderdistance` ("Render distance", `docs/GPU_RENDERER.md`) |
+| `KF1_RENDERDIST_FADE` | `0` | cells (0.25-8): the world faded out over this band at the edge of what is drawn (the render distance, or the game's edge); `0` none. Retained only; kept as `kf1.renderdistance.fade` ("Render distance", `docs/GPU_RENDERER.md`) |
+| `KF1_RENDERDIST_MODELS` | on | `0`: the models kept at the game's reach under `KF1_RENDERDIST` ("Render distance", `docs/GPU_RENDERER.md`) |
+| `KF1_RENDERDIST_PROBE` | off | `1`: the game's edge when worked out, and a line every 5 s: cells and models added past the stencil ("Render distance", `docs/GPU_RENDERER.md`) |
 | `KF1_KEYS` | `fps` | `stock` leaves RecompOne's keyboard bindings (`docs/INPUT.md`) |
 | `KF1_MOUSE` | on | `0`: no mouse look |
 | `KF1_MOUSE_TURN`, `KF1_MOUSE_LOOK` | `1.0` | the mouse's sensitivities |

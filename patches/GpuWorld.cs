@@ -48,7 +48,7 @@ public static class GpuWorld
     }
 
     public static bool MapOn = true, ModelsOn = true, ArmOn = true, SpritesOn = true;
-    public static bool Check, CensusOn;
+    public static bool Check, CensusOn, SurfaceProbe;
     static string? _censusFile;
 
     // Nesting counts of the renderer's domains, kept by hooks on their routines.
@@ -111,6 +111,8 @@ public static class GpuWorld
         SpritesOn = Flag("KF1_GPU_SPRITES", true);
         Check = Flag("KF1_GPU_CHECK", false);
         CensusOn = Flag("KF1_GPU_CENSUS", false);
+        SurfaceProbe = Flag("KF1_GPU_SURFACE_PROBE", false);
+        GteDepth.AoProbe = Flag("KF1_AO_PROBE", false);
         _censusFile = Environment.GetEnvironmentVariable("KF1_GPU_CENSUS_FILE") is { Length: > 0 } f ? f : null;
         if (_censusFile != null) CensusOn = true;
         // The main view needs a depth buffer: retained turns the Z-buffer on.
@@ -253,7 +255,23 @@ public static class GpuWorld
         Console.WriteLine($"[KF1] map grid: walks={RetainedMap.GridWalks} changed walks={RetainedMap.GridChangedWalks} " +
             $"changed bytes={RetainedMap.GridChangedBytes}");
         if (CensusOn) Console.WriteLine($"[KF1] gpu sprites: {SpriteAssembler.Report()}");
-        if (Check) Console.WriteLine($"[KF1] gpu check: {RetainedMap.CheckReport()} | {RetainedModels.CheckReport()} | {SpriteAssembler.CheckReport()} | {SemiAbr.KeyReport()}");
+        if (Check) Console.WriteLine($"[KF1] gpu check: {RetainedMap.CheckReport()} | {RetainedModels.CheckReport()} | {SpriteAssembler.CheckReport()} | {SemiAbr.KeyReport()} | {LightCheck.Report()}");
+        // Step 4's switches and what reached the buffers: the normal pass's triangles, the
+        // occlusion's passes, the mip keys and the live uniforms.
+        Console.WriteLine($"[KF1] gpu picture: perpixel={(GteLightMap.Enabled ? 1 : 0)} fog={SceneFeatures.Fog} ao={(GteDepth.AmbientOcclusion ? 1 : 0)} " +
+            $"aniso={GteDepth.Anisotropy} live={(GteDepth.AnisotropyLive ? 1 : 0)} mips={(GteDepth.Mipmaps ? 1 : 0)} found/keys={RetainedScene.MipsFound}/{RetainedScene.MipsKeys} " +
+            $"plain={GteDepth.PlainDepth:0} live={(GteDepth.PlainDepthLive ? 1 : 0)} ao passes/no-target={GteDepth.AoPasses}/{GteDepth.AoNoTarget} " +
+            $"normal triangles map/models={RetainedScene.MainNormalTriangles}/{RetainedScene.MainModelNormalTriangles} map prepasses={RetainedScene.MainMapPrepasses} " +
+            $"fade={RenderDistance.FadeCells:0.#} reach={RenderDistance.Cells:0.#} edge={RenderDistance.GameEdge:0}");
+        if (SurfaceProbe)
+        {
+            // Every pixel with a depth should carry a surface: missing counts a family
+            // that wrote depth but no normal, ahead an opaque surface in front of the depth.
+            Console.WriteLine($"[KF1] surface probe: checks={RetainedScene.SurfaceChecks} pixels={RetainedScene.SurfaceDepthPixels} " +
+                $"behind={RetainedScene.SurfaceBehind} ahead={RetainedScene.SurfaceAhead} missing={RetainedScene.SurfaceMissing} " +
+                $"ids none/opaque/water/overlay/authored/blended={string.Join('/', RetainedScene.SurfaceIds)}");
+            RetainedScene.SurfaceCheck = true;
+        }
         foreach (var (k, v) in Reasons.OrderByDescending(kv => kv.Value).Take(8))
             Console.WriteLine($"[KF1] gpu fallback: {k} x{v}");
         if (_censusFile != null)
