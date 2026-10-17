@@ -127,9 +127,11 @@ public static class RetainedMap
         bool remapOn = remap != -1 && (remap & 3) < 2;
         ulong h = 0xCBF29CE484222325UL ^ tmd ^ (remapOn ? 1UL << 40 : 0);
         h = Hash(m, Cells, Grid * Grid, h);
+        ulong hCells = h;
         h = Hash(m, Heights, Grid * Grid, h);
         h = Hash(m, Turns, Grid * Grid, h);
         h = Hash(m, Orient, 0x100, h);
+        ulong hGrid = h;
         var srcBytes = MemoryMarshal.AsBytes(new ReadOnlySpan<Source>(in src));
         foreach (byte b in srcBytes) h = (h ^ b) * 0x100000001B3UL;
         if (Ready && h == _built) return;
@@ -139,8 +141,14 @@ public static class RetainedMap
         if (++_held < 10) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-source-changing"); return; }
         if (!FarBlack) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-far-colour"); return; }
         int bp = Profiler.Begin(ProfBuild);
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try { Build(m, tmd, src, remapOn); }
         finally { Profiler.End(bp); }
+        if (GpuWorld.CensusOn)
+            Console.WriteLine($"[KF1] map build {Builds}: frame {GpuWorld.Frames}, {Corners} corners, " +
+                $"{System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:F1} ms; tmd {tmd:X8} remap {remapOn} " +
+                $"cells {hCells:X16} grid {hGrid:X16} dq {src.Dqa}/{src.Dqb} rgbc {src.Rgbc:X6} bk {src.Bk0}/{src.Bk1}/{src.Bk2} " +
+                $"l {src.L0}/{src.L4}/{src.L8}");
         _built = h;
     }
 

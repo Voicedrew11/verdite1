@@ -63,6 +63,9 @@ public static class MapCoverage
     static readonly long[] _packets = new long[(int)Owner.Count];
     static readonly long[] _vertices = new long[(int)Owner.Count];
     static readonly long[] _hits = new long[(int)Owner.Count];
+    // Each row's table slots, and the packets that are not polygons (fills, modes, rects), by command.
+    static readonly int[] _slotLo = new int[(int)Owner.Count], _slotHi = new int[(int)Owner.Count];
+    static readonly SortedDictionary<uint, (long N, int Lo, int Hi)> _other = new();
 
     static bool _on, _warned;
     static long _windowStart = -1;
@@ -171,10 +174,12 @@ public static class MapCoverage
         if (ot < 0x80000000u || ot - 0x80000000u + OtWords * 4u > 0x200000u) return;
         uint lo = ot, hi = ot + OtWords * 4u;
         uint p = hi - 4u;
+        int slot = OtWords - 1;
         for (int guard = 0; guard < 1 << 17; guard++)
         {
             uint tag = m.ReadU32(p);
-            if ((p < lo || p >= hi) && (tag >> 24) != 0) Count(m, p & Mask);
+            if (p >= lo && p < hi) slot = (int)((p - lo) / 4u);
+            else if ((tag >> 24) != 0) Count(m, p & Mask, slot);
             uint next = tag & 0xFFFFFFu;
             if (next == 0xFFFFFFu) break;
             p = 0x80000000u | next;
@@ -183,13 +188,20 @@ public static class MapCoverage
 
     // A polygon's vertex words: the xy word of each corner, after the command word.
     // bit 26 textured (a uv word per corner), bit 28 shaded (a colour word per corner).
-    static void Count(IMemory m, uint pkt)
+    static void Count(IMemory m, uint pkt, int slot)
     {
         uint body = pkt + 4u;
         uint cmd = m.ReadU32(body) >> 24;
-        if (cmd < 0x20u || cmd > 0x3Fu) return;
+        if (cmd < 0x20u || cmd > 0x3Fu)
+        {
+            var o = _other.TryGetValue(cmd, out var e) ? e : (0L, slot, slot);
+            _other[cmd] = (o.Item1 + 1, Math.Min(o.Item2, slot), Math.Max(o.Item3, slot));
+            return;
+        }
 
         int row = (int)OwnerOf(pkt);
+        if (_packets[row] == 0) _slotLo[row] = _slotHi[row] = slot;
+        _slotLo[row] = Math.Min(_slotLo[row], slot); _slotHi[row] = Math.Max(_slotHi[row], slot);
         _packets[row]++;
 
         int n = (cmd & 0x08u) != 0 ? 4 : 3;
@@ -238,9 +250,13 @@ public static class MapCoverage
         {
             double v = _vertices[i];
             double hit = v == 0.0 ? 0.0 : 100.0 * _hits[i] / v;
-            Console.WriteLine($"[KF1] mapcov {_names[i]}: {_packets[i] / s:F0}/s, {v / s:F0}/s, {hit:F1}%.");
+            string slots = _packets[i] == 0 ? "" : $" slots {_slotLo[i]}-{_slotHi[i]}";
+            Console.WriteLine($"[KF1] mapcov {_names[i]}: {_packets[i] / s:F0}/s, {v / s:F0}/s, {hit:F1}%.{slots}");
             _packets[i] = _vertices[i] = _hits[i] = 0;
         }
+        foreach (var (cmd, o) in _other)
+            Console.WriteLine($"[KF1] mapcov not a polygon {cmd:X2}: {o.N / s:F0}/s, slots {o.Lo}-{o.Hi}.");
+        _other.Clear();
         Console.Out.Flush();
         _windowStart = now;
     }
