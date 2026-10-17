@@ -13,8 +13,10 @@ namespace Kf1;
 /// switch, the fractional cull's switch and the probe. Off until judged.
 ///
 ///     KF1_SUBPIXEL=1          on; 0 or unset snaps every vertex to a whole pixel
-///     KF1_SUBPIXEL_PROBE=1    a line every 2 s: the map's counters and how far
-///                             the recovered vertices actually moved, in pixels
+///     KF1_SUBPIXEL_PROBE=1    a line every 2 s: the map's counters, how far
+///                             the recovered vertices actually moved, in pixels,
+///                             and the faces the fractional cull decided otherwise
+///     KF1_SUBPIXEL_CULL=0     the back-face test on whole pixels (<see cref="Facing"/>)
 ///
 /// See "Unit 2" in docs/PICTURE.md.
 /// </summary>
@@ -128,6 +130,10 @@ public static class Subpixel
         double mean = n == 0 ? 0.0 : GteDepth.Offset / n;
         Console.WriteLine($"[KF1] subpixel: {n / window:F0} vertices/s carrying a fraction, " +
                           $"mean offset {mean:F3} px, max {GteDepth.OffsetMax:F3} px");
+
+        Console.WriteLine($"[KF1] subpixel: the cull at fractional corners kept {Facing.Kept / window:F0}/s whole pixels " +
+                          $"dropped, dropped {Facing.Dropped / window:F0}/s they kept");
+        Facing.Kept = Facing.Dropped = 0;
 
         Baseline();
         GteDepth.ResetOffsets();

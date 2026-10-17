@@ -122,7 +122,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001C8E4u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -200,7 +200,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001CA70u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -238,7 +238,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001CAF4u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -305,7 +305,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001CC1Cu;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -374,7 +374,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001CD24u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -456,7 +456,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001CE94u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -544,7 +544,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001CFF8u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -612,7 +612,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001D124u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -677,7 +677,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001D230u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -740,7 +740,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001D370u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -817,7 +817,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001D488u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);
@@ -885,7 +885,7 @@ public static class PolyAssembler
             c.S3 = c.V0 + c.S6;
             c.A1 = mem.ReadU32(c.S3);
             c.RA = 0x8001D5D4u;
-            KingsField1_game.func_8004DE4C(c, mem);
+            Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
             if ((int)c.V0 > 0) {
                 c.V1 = 0x80070000u;
                 c.V1 = mem.ReadU32(c.V1 + 0xEB8u);

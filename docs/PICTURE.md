@@ -35,6 +35,58 @@ vertex lookups hit** (150,624 a second, 9,360 misses), 87,120 vertices a second
 carry a fraction, mean offset 0.764 px. The earlier `kf1-port` attempt read 96.2%
 standing still.
 
+### The compass's fraction
+
+The compass (`func_8001F8B0`) does not project: its vertex cache `func_8001C754`
+transforms each vertex with `func_8004DADC`, a bare MVMVA (`sf` 12, rotation and
+translation, no divide) at a screen-space translation (286, 34), and copies MAC1
+and MAC2 into the cache as halfwords. No screen coordinate leaves the GTE through
+SXY, so the address map never saw a compass vertex: **0 of 5,184 a window were
+mapped**, with the recompiled routines and with the C#.
+
+Verdite3's `PublishScreenVertex` (`PolyAssemblerHud`) is the fix, in
+`patches/Draw/VertexCacheCompass.cs`: with sub-pixel on, each vertex's fraction
+(the low 12 bits of `(TR << 12) + R·V`, recomputed from the GTE's own registers;
+none where the integer disagrees) is published at depth 0, placed rather than
+projected, and the cache's X and Y are stored as one word, the same bytes, so the
+map follows it into the packet. The needle always turns, so Verdite3's exception
+for unturned pieces is not needed; the HUD's 2D sprites are left whole.
+
+Measured 2026-10-17 (`KF1_HUD_PROBE=1` looks each G3 the compass writes up in the
+map): **6,048 of 6,048 vertices a window mapped, all with a fraction** (7
+triangles a frame then; 10 since the cull below), standing
+and turning; `KF1_VERTEXCACHE_COMPASS=verify` and `KF1_COMPASS=verify` 0
+mismatches over 576 and 288 calls. The about 54 misses a frame the sub-pixel probe
+counts were the compass's 18 and the HUD sprites' 36. Perspective has nothing to
+do on it (untextured G3) and the Z-buffer leaves it in painter's order. **Not judged
+by eye.**
+
+### A thin face was culled on whole pixels
+
+Verdite2's `0052` ("A thin face was culled on whole pixels" in its
+`docs/RENDERING.md`), seen here as gaps along the compass needle at a high render
+scale. Every polygon writer keeps a face when NCLIP (`func_8004DE4C`) of its three
+cached **whole-pixel** screen words is positive. With sub-pixel on, a face a pixel
+wide collapses to a line on whole pixels at some angles, is dropped, and leaves a
+hole between neighbours drawn at their fractional corners. The needle is made of
+such slivers.
+
+`patches/Draw/Facing.cs`: the 18 cull sites in the C# writers (`PolyAssembler`,
+`PolyAssemblerCached`, `MapAssembler`) call `Facing.Nclip`, which runs NCLIP (so the
+GTE is left as the game leaves it) and then, with sub-pixel on and the writer not
+under `verify`, decides on the signed area at the fractional corners read from the
+vertex map at the three cache words, both ways. A corner with no fraction or
+clamped leaves the game's answer. A quad is still decided on its first triangle,
+as the game does; Verdite2 later took a quad's whole loop (`QuadFaces`), not ported.
+`KF1_SUBPIXEL_CULL=0` compares; `KF1_SUBPIXEL_PROBE=1` counts the faces decided
+otherwise.
+
+Measured 2026-10-17, 144 fps, area 1, standing and holding Left (`KF1_HUD_PROBE=1`
+counts the compass's G3s): **on the whole-pixel cull the compass drew 7 of its 10
+triangles standing and 6 to 7 while turning; with this, all 10 on every frame**.
+Over everything drawn it kept 432-576 faces a second that whole pixels dropped, and
+dropped 0 they kept. **Not judged by eye**: the needle at a high render scale.
+
 ## Unit 3: the Z-buffer
 
 `patches/ZBuffer.cs` (`KF1_ZBUFFER=1`). As in Verdite3, the depth buffer is fed

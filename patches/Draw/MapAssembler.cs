@@ -88,7 +88,7 @@ public static class MapAssembler
                         c.S2 = c.V0 + c.S6;
                         c.A1 = mem.ReadU32(c.S2);
                         c.RA = 0x8001DEF0u;
-                        KingsField1_game.func_8004DE4C(c, mem);
+                        Facing.Nclip(c, mem, R, c.S4, c.S2, c.S3);
                         if ((int)c.V0 > 0)
                         {
                             // the packet's cursor record (0x80070EB8): take 0x34 bytes
@@ -192,7 +192,7 @@ public static class MapAssembler
                     c.S2 = c.V0 + c.S6;
                     c.A1 = mem.ReadU32(c.S2);
                     c.RA = 0x8001E078u;
-                    KingsField1_game.func_8004DE4C(c, mem);
+                    Facing.Nclip(c, mem, R, c.S4, c.S2, c.S3);
                     if ((int)c.V0 > 0)
                     {
                         c.V1 = 0x80070000u;

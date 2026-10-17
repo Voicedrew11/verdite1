@@ -478,8 +478,9 @@ With pacing at 144 fps and every routine on, the corpus plays. The walk runs
   - 95% of polygons have a depth and 97% of triangles are tested;
   - the polygons with no depth, about 23 a frame, are the arm, the compass and
     the HUD.
-- **No HUD transform to port.** The compass projects through the GTE (RTPT,
-  `func_8004DADC`), so the address map already sees its fraction. Nothing in the
+- **No HUD transform to port**, but the compass does not project: `func_8004DADC`
+  is a bare MVMVA, so the address map did not see its fraction until 2026-10-17
+  ("The compass's fraction" in `PICTURE.md`). Nothing in the
   24 routines clips or subdivides: the writers cull by NCLIP and drop a packet
   whose table slot is below 5 (the map writer also drops one at 0x4000 and above).
 
