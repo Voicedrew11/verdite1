@@ -862,3 +862,66 @@ the margin behind them reads right at a wide aspect is for a person to look at.
 No frame ran out at any aspect. The first window after an area loads reaches
 about 28,800 at every aspect. The render distance draws only through the
 retained scene, so it adds no packets.
+
+## Diagnostics on the GPU path (Step 7, 2026-10-16)
+
+`FrameCapture` and its viewer are not ported: they replay one renderer run
+through the software path, which `KF1_GPU_WORLD=1` does not draw with. What was
+ported instead reads what the GPU path does, and every probe is off unless set
+(`docs/ENV_VARS.md`).
+
+**The frame profiler sees the retained scene.** Sections registered in the
+patches, not the runtime: `retained scene: begin frame` (`GpuWorld.Begin`),
+`retained map: walk` and `retained map: mesh build` (`RetainedMap`),
+`retained models: submit`, `retained models: mesh build` and `retained models:
+pose upload` (`RetainedModels`). The GPU's world pass was already timed
+(`GpuTimes.Pass.World`). Measured uncapped, standing at a New Game in area 1
+(`KF1_PROFILE_OUT`, `profile_report.py --from 30`):
+
+| | `KF1_GPU_WORLD=1` | `KF1_GPU_WORLD=0` |
+|---|---|---|
+| frame rate | 1,430 fps | 818 fps |
+| work a frame | 0.636 ms | 1.155 ms |
+| GPU a present | 0.343 ms (world 0.266, scene 0.061) | 0.212 ms (scene 0.197) |
+| map writers (`MapAssembler`, `VertexCache`, `MapCell`, self) | 0.063 ms | 0.458 ms |
+| retained sections | walk 0.004, submit 0.004, begin 0.001 ms | submit 0.000 ms |
+
+The mesh builds run only around an area load: `retained map: mesh build` took
+0.035 ms a frame averaged over the five seconds that held one, and no build or
+pose upload fell in the steady window.
+
+**`CrossProbe`** (Verdite3's, `KF1_CROSSPROBE`) reads back every presented
+picture through `PresentSnap`, so it sees the retained world, and keys on the
+area transition `func_80036850`, since this game loads no `fdat`. Verdite2's
+`BlackProbe` is folded into it, not ported: it read the display area from VRAM,
+which the retained world does not reliably fill, and its one extra, the PNGs, is
+`KF1_CROSSPROBE_OUT`. Measured on a warp from area 1 to area 2 at (61000, 113000),
+`KF1_FPS=144`: no present under luminance 4 at either setting; 47 of 85 presents
+over 30 ms at `KF1_GPU_WORLD=0` (longest 89.1 ms) and 46 of 88 at `1` (longest
+68.3 ms), but every present is read back, so those times are the probe's as
+much as the load's. At `1`, 127 retained draws and 255,817 triangles a present
+before the load, and `ready` held through it. The position columns show area 1's
+spot for the whole 3 s: the warp writes x and z after the area loads.
+
+**`TexProbe`** (Verdite2's, `KF1_TEXPROBE`) adds the retained scene's share to its
+packet census, since at `1` the world's faces never pass `RenderPrimEvent`.
+Area 2 after the warp: 18,680 packets a second at `0`, 41% textured; 2,000 at
+`1`, 9% textured, with 20 world frames, 20 draws and 5.08 M triangles a second
+retained. The VRAM page census read the same at both (pages 5-15 of the top row
+full, page 26 and 31 a single word). Its read uses `GlCore.ReadVram`'s
+non-evicting form.
+
+**`PacketMatch`** (Verdite2's, `KF1_PACKETMATCH`) on this game's DrawOTag
+(`open` `0x800309D4`, `game` `0x80050CF0`), the packet record `0x80070EB8`, the
+five model submitters and the map cell `func_8001E5EC` as contexts. Standing in
+area 2 at `0`: 446-526 model packets a tick, 99.9-100% found again by ordinal,
+98.5% by texture words; 368 map-cell packets, 100%; 16 others (HUD). At `1`, once
+the retained map is ready (the first second shows 134 map-cell packets), only
+the 16 HUD packets remain. The models' 145-290 px mean ordinal displacement
+standing still is unexplained (a matched ordinal that is not the same face
+would read so); not looked into.
+
+`CrossProbe` and `PacketMatch` are verified in the main checkout only: in an
+agent worktree the game spun in the BIOS (the worktree's `disc/` held only the
+tracked README until the image was linked in, and stalled after that too, not
+traced).

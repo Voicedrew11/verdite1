@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using RecompOne.Runtime;
 using RecompOne.Runtime.Context;
+using RecompOne.Runtime.Diagnostics;
 using RecompOne.Runtime.Memory;
 using RecompOne.Runtime.Modding;
 
@@ -82,6 +83,11 @@ public static class RetainedModels
 
     static readonly ModInfo _self = new() { Id = "kf1.retained-models", Name = "Retained models", Version = "1.0" };
 
+    // The frame profiler's sections for the models' CPU work (free while profiling is off).
+    static readonly int ProfSubmit = Profiler.Register("retained models: submit", ProfileGroup.Hook);
+    static readonly int ProfMesh = Profiler.Register("retained models: mesh build", ProfileGroup.Hook);
+    static readonly int ProfPose = Profiler.Register("retained models: pose upload", ProfileGroup.Hook);
+
     public static void Install() => HookAttach.OnOverlayLoad("retained models", Attach);
 
     static bool Attach()
@@ -153,7 +159,9 @@ public static class RetainedModels
         for (uint i = 0; i < nprims && i < 8192; i++) at += 4 + ((m.ReadU32(at) >> 6) & 0x3FC);
         ulong hash = Hash(m, prims, (int)(at - prims)) ^ (ulong)normals * 31;
         if (Meshes.TryGetValue((header, hash), out var mesh)) { MeshHits++; return mesh; }
-        mesh = Build(m, prims, nprims, normals);
+        int b = Profiler.Begin(ProfMesh);
+        try { mesh = Build(m, prims, nprims, normals); }
+        finally { Profiler.End(b); }
         mesh.Header = header; mesh.Hash = hash;
         mesh.SemiAbr = SemiAbrTable.TryGetValue((header, hash), out int abr) ? abr : -1;
         Meshes[(header, hash)] = mesh;
@@ -237,7 +245,9 @@ public static class RetainedModels
         ulong hash = Hash(m, address, count * 8);
         var key = (address, count, hash);
         if (Rigid.TryGetValue(key, out int pose)) { PoseHits++; return pose; }
-        pose = RetainedScene.AddPose(MemoryMarshal.Cast<byte, short>(m.Ram.Slice((int)(address & 0x1FFFFF), count * 8))) + 1;
+        int u = Profiler.Begin(ProfPose);
+        try { pose = RetainedScene.AddPose(MemoryMarshal.Cast<byte, short>(m.Ram.Slice((int)(address & 0x1FFFFF), count * 8))) + 1; }
+        finally { Profiler.End(u); }
         Rigid[key] = pose; PoseBuilds++; PoseTexelsUploaded += count;
         return pose;
     }
@@ -253,17 +263,22 @@ public static class RetainedModels
         if (start + keys > count || !InRam(key + 0xC, keys * 8)) return 0;
         var id = (Hash(m, block, count * 8), key, count);
         if (Morphs.TryGetValue(id, out int pose)) { PoseHits++; return pose; }
-        if (_texels.Length < count * 8) _texels = new short[count * 8];
-        var t = _texels.AsSpan(0, count * 8);
-        t.Clear();
-        for (int i = 0; i < count; i++)
-            for (int k = 0; k < 4; k++) t[i * 8 + k] = (short)m.ReadU16(block + (uint)(i * 8 + k * 2));
-        // gteMIMefunc is called one entry early on both lists and one long (the
-        // scratch's entry before start saved and restored), so vertex start + i takes
-        // the key's entry i, at +0xC.
-        for (uint i = 0; i < keys; i++)
-            for (int k = 0; k < 3; k++) t[(int)(start + i) * 8 + 4 + k] = (short)m.ReadU16(key + 0xC + i * 8 + (uint)k * 2);
-        pose = RetainedScene.AddPose(t) + 1;
+        int u = Profiler.Begin(ProfPose);
+        try
+        {
+            if (_texels.Length < count * 8) _texels = new short[count * 8];
+            var t = _texels.AsSpan(0, count * 8);
+            t.Clear();
+            for (int i = 0; i < count; i++)
+                for (int k = 0; k < 4; k++) t[i * 8 + k] = (short)m.ReadU16(block + (uint)(i * 8 + k * 2));
+            // gteMIMefunc is called one entry early on both lists and one long (the
+            // scratch's entry before start saved and restored), so vertex start + i takes
+            // the key's entry i, at +0xC.
+            for (uint i = 0; i < keys; i++)
+                for (int k = 0; k < 3; k++) t[(int)(start + i) * 8 + 4 + k] = (short)m.ReadU16(key + 0xC + i * 8 + (uint)k * 2);
+            pose = RetainedScene.AddPose(t) + 1;
+        }
+        finally { Profiler.End(u); }
         Morphs[id] = pose; PoseBuilds++; PoseTexelsUploaded += count * 2;
         return pose;
     }
@@ -275,6 +290,13 @@ public static class RetainedModels
     /// <summary>From <see cref="PolyAssembler"/>'s entry: true when the model is
     /// retained and drawn, and the writer is skipped.</summary>
     public static bool Submit(CpuContext c, PSMemory m)
+    {
+        int p = Profiler.Begin(ProfSubmit);
+        try { return SubmitCore(c, m); }
+        finally { Profiler.End(p); }
+    }
+
+    static bool SubmitCore(CpuContext c, PSMemory m)
     {
         SemiAbr.Begin();
         if (!GpuWorld.Capture) return false;

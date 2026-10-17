@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using RecompOne.Runtime;
 using RecompOne.Runtime.Context;
+using RecompOne.Runtime.Diagnostics;
 using RecompOne.Runtime.Memory;
 using RecompOne.Runtime.Modding;
 
@@ -76,6 +77,9 @@ public static class GpuWorld
     const uint Renderer = 0x8001FDE4, FrameHead = 0x8001BFB8, Present = 0x8001C050;
     const uint MapWalk = 0x8001E83C, ModelWalk = 0x8001F218, Arm = 0x8001F798;
     const uint PacketRecord = 0x80070EB8;
+
+    // The frame profiler's section for the scene's per-frame setup (free while profiling is off).
+    static readonly int ProfBegin = Profiler.Register("retained scene: begin frame", ProfileGroup.Hook);
 
     public static string Domain => _arm > 0 ? "arm" : _models > 0 ? "models" : _map > 0 ? "map" : "hud";
 
@@ -193,14 +197,19 @@ public static class GpuWorld
     {
         _frame = false;
         if (Mode == 0 || _scene == 0 || Literal.Verifying != 0 || m is not PSMemory mem) return;
-        var view = ReadView(mem);
-        RetainedScene.BeginFrame(view);
-        RetainedScene.MainView = Mode == 2 && Blocker == null;
-        RetainedScene.MainSerial = RetainedScene.MainView ? RetainedScene.Serial : 0;
-        RetainedModels.Frame();
-        _frame = true;
-        Frames++;
-        if (Drawing) DrawingFrames++;
+        int p = Profiler.Begin(ProfBegin);
+        try
+        {
+            var view = ReadView(mem);
+            RetainedScene.BeginFrame(view);
+            RetainedScene.MainView = Mode == 2 && Blocker == null;
+            RetainedScene.MainSerial = RetainedScene.MainView ? RetainedScene.Serial : 0;
+            RetainedModels.Frame();
+            _frame = true;
+            Frames++;
+            if (Drawing) DrawingFrames++;
+        }
+        finally { Profiler.End(p); }
     }
 
     /// <summary>The world's projection, as the walks find the GTE (the frame head's is

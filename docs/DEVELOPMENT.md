@@ -277,7 +277,9 @@ opens the panel, and recording runs while it is open; `KF1_PROFILE=1` records
 from boot and prints a summary every five seconds; `KF1_PROFILE_OUT=profile.csv`
 writes every frame for `scripts/profile_report.py` (Verdite3's script). Every
 hooked function is already a section, so the stages and the renderer's callees
-need no `KF1_PROFILE_FUNCS`. The figure to chase is **work**, the frame less its
+need no `KF1_PROFILE_FUNCS`; the retained scene's own work has sections named
+`retained map: …`, `retained models: …` and `retained scene: begin frame`
+("Diagnostics on the GPU path", `GPU_RENDERER.md`). The figure to chase is **work**, the frame less its
 waits and swap. Verdite3's `docs/DEVELOPMENT.md` explains the rest.
 
 ```bash

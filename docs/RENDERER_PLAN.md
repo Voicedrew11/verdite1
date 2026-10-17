@@ -297,7 +297,12 @@ Nothing is built.
 - **`PrimBuffer`**: move and enlarge the packet buffers if Step 0's probe shows
   them close to full at wide aspects or long distances.
 
-## Step 7: diagnostics worth keeping
+## ~~Step 7: diagnostics worth keeping~~
+
+**Done 2026-10-16** ("Diagnostics on the GPU path" in `GPU_RENDERER.md`): the
+profiler's sections for the retained scene, `CrossProbe` (with `BlackProbe`'s
+PNGs), `TexProbe` and `PacketMatch`. `FrameCapture` and `FrameViewerPanel` are
+not ported: they replay the software path.
 
 `FrameCapture` and `FrameViewerPanel` (Shift+F; one renderer run captured and
 scrubbed a command at a time), `TexProbe`, `CrossProbe`, `BlackProbe` and

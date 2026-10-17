@@ -97,6 +97,10 @@ Kf1.MapCoverage.Configure(Environment.GetEnvironmentVariable("KF1_MAPCOVERAGE"))
 Kf1.MapCoverage.Install();
 Kf1.DrawCensus.Configure(Environment.GetEnvironmentVariable("KF1_DRAWCENSUS"));
 Kf1.DrawCensus.Install();
+Kf1.PacketMatch.Configure(Environment.GetEnvironmentVariable("KF1_PACKETMATCH"));
+Kf1.PacketMatch.Install();
+// The texture census: what was drawn, the retained scene's share, and the VRAM pages (KF1_TEXPROBE).
+Kf1.TexProbe.Configure(Environment.GetEnvironmentVariable("KF1_TEXPROBE"));
 
 // The frame profiler (Verdite Core's): where each frame's time goes, by section. Shift+P
 // opens the panel, and recording runs while it is open. See "Profiling a frame" in
@@ -149,6 +153,10 @@ Kf1.ZBuffer.Install();
 Kf1.GpuWorld.Configure();
 Kf1.GpuWorld.Install();
 Kf1.RetainedModels.Install();
+// Every presented picture across an area change (KF1_CROSSPROBE; see patches/CrossProbe.cs).
+Kf1.CrossProbe.Configure(Environment.GetEnvironmentVariable("KF1_CROSSPROBE"),
+    Environment.GetEnvironmentVariable("KF1_CROSSPROBE_OUT"));
+Kf1.CrossProbe.Install();
 // The picture on it: render distance and the runtime's enhancements, each off until
 // judged. See "The picture on the retained scene" in docs/GPU_RENDERER.md.
 Kf1.RenderDistance.Configure();

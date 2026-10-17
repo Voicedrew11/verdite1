@@ -28,6 +28,10 @@ switch is added.
 | `KF1_GEOPROBE` | off | `1`: what each renderer draw call adds to the ordering table, by packet type, every 5 s (`patches/GeometryProbe.cs`) |
 | `KF1_MAPCOVERAGE` | off | `1`: the address map's coverage by packet writer: packets, vertices and hit % a second, every 2 s (`patches/MapCoverage.cs`) |
 | `KF1_DRAWCENSUS` | off | `1`: the primitive buffer bytes a frame spends, exclusive and inclusive, by renderer routine, every 2 s (`patches/DrawCensus.cs`) |
+| `KF1_PACKETMATCH` | off | `1`: whether each primitive is found again in the previous tick's table, by context (models, map cells, other), once a second; `2` also the worst-matched and the moving contexts (`patches/PacketMatch.cs`, "Diagnostics on the GPU path", `docs/GPU_RENDERER.md`) |
+| `KF1_TEXPROBE` | off | `1`: a line a second, on the console and into `texprobe.log`: the packet census (textured, flat, gouraud, semi), the retained scene's draws, triangles and instances, and the distinct words in each of the 32 texture pages (`patches/TexProbe.cs`) |
+| `KF1_CROSSPROBE` | off | `1`: every presented picture from 400 ms before an area transition (`func_80036850`) to 3 s after it, read back and reduced to a row: luminance, repeat, frame time, the retained world's counters, the tick and position (`patches/CrossProbe.cs`) |
+| `KF1_CROSSPROBE_OUT` | off | a directory (`1`: `scratch/crossprobe`): with `KF1_CROSSPROBE`, the same pictures as PNGs, the last 12 before the transition and every one after |
 | `KF1_PROFILE` | off | `1`: the frame profiler, a section summary every 5 s; `panel` also opens its panel (Shift+P toggles it) |
 | `KF1_PROFILE_OUT` | off | a path: every frame's sections as CSV rows, for `scripts/profile_report.py` |
 | `KF1_PROFILE_SPIKE` | off | milliseconds: a console line for each frame whose work passes it |

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using RecompOne.Runtime;
+using RecompOne.Runtime.Diagnostics;
 using RecompOne.Runtime.Memory;
 
 namespace Kf1;
@@ -33,6 +34,10 @@ public static class RetainedMap
     const uint Orient = 0x80095760, Lights = 0x800957E0, Remap = 0x800A07D2;
     const uint Tmds = 0x80090FA8, Rgbc = 0x80057B60, Cache = 0x800911B0;
     const int Grid = 100, CellSize = 2000;
+
+    // The frame profiler's sections for the map's CPU work (free while profiling is off).
+    static readonly int ProfWalk = Profiler.Register("retained map: walk", ProfileGroup.Hook);
+    static readonly int ProfBuild = Profiler.Register("retained map: mesh build", ProfileGroup.Hook);
 
     public static bool Ready { get; private set; }
     public static long Builds, Corners;
@@ -107,6 +112,13 @@ public static class RetainedMap
     /// from moved.</summary>
     public static void Walk(PSMemory m)
     {
+        int p = Profiler.Begin(ProfWalk);
+        try { WalkCore(m); }
+        finally { Profiler.End(p); }
+    }
+
+    static void WalkCore(PSMemory m)
+    {
         uint tmd = m.ReadU32(Tmds);
         if ((tmd & 0x1FFFFF) == 0 || (tmd >> 24) != 0x80) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-tmd-absent"); return; }
         if (GpuWorld.CensusOn || GpuWorld.Check) DiffGrid(m);
@@ -126,7 +138,9 @@ public static class RetainedMap
         if (h != _seen) { _seen = h; _held = 0; }
         if (++_held < 10) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-source-changing"); return; }
         if (!FarBlack) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-far-colour"); return; }
-        Build(m, tmd, src, remapOn);
+        int bp = Profiler.Begin(ProfBuild);
+        try { Build(m, tmd, src, remapOn); }
+        finally { Profiler.End(bp); }
         _built = h;
     }
 

@@ -80,6 +80,11 @@ recompiled and running, following Verdite3's method but applied to this disc.
   Step 6 not applicable, 2026-10-16: nothing clips at the screen's edge, the
   menus clear to black, and the packet buffer peaks at 46.2% at 21:9. **To look
   at**: the margin behind the card message and the event picture at 16:9.
+  Step 7 done 2026-10-16: the profiler's retained sections and `CrossProbe`,
+  `TexProbe`, `PacketMatch` (`FrameCapture` not ported). **To look at**: area 2's
+  arrival after a warp, where `CrossProbe`'s luminance swings 39-177 on a period
+  of about 0.4 s (`KF1_CROSSPROBE_OUT` writes the frames). **Open**: the models'
+  ordinal displacement in `PacketMatch` standing still.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
