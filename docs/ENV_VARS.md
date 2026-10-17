@@ -46,6 +46,7 @@ switch is added.
 | `KF1_ITEMDISPLAY_HOLD` | on | `0`: the selected item's display steps on every frame under pacing, not once a tick |
 | `KF1_ITEMDISPLAY_CARRY` | on | `0`: the item display's turn-out drawn at the tick's angle, not carried between ticks (`docs/SMOOTHING.md`) |
 | `KF1_ITEMDISPLAY_PROBE` | off | `1`: a line a second while the turn is carried: frames carried, distinct angles drawn |
+| `KF1_PAD_LAYOUT` | `west` | `jp`: the controller's face buttons as the disc has them (Triangle attack, Circle examine, Cross menu, Square item); `west` is the US releases' (Square attack, Cross examine, Circle menu, Triangle item) (`docs/INPUT.md`) |
 | `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |
 | `KF1_SMOOTH_PROBE` | off | `1`: a view-smoothing line a second |
 | `KF1_SMOOTH_MODELS` | on | `0`: the model walk's records and clips not carried under pacing |

@@ -122,7 +122,7 @@ on this game's addresses:
   `docs/GAME_INTERNALS.md`.
 - **`KF1_SHELL=1`** (or a port), the command channel (`patches/AgentServer.cs`):
   TCP `127.0.0.1:27901` (Verdite2 uses 27900 and Verdite3 27903), one request a
-  line, one JSON line back: `state`, `press <button> [ms]`, `peek <hex addr>
+  line, one JSON line back: `state`, `press <button> [ms]` (the game's button), `pad <button> [ms]` (the controller's, through the button layout), `peek <hex addr>
   [bytes]`, `dump <file>` (the 2 MB of RAM, for diffing), `poke <hex addr> <hex
   bytes>` (a diagnostic: it writes the game's own state), `view [x y z pitch yaw
   roll | off]` (draw from a fixed camera; needs the renderer in C#), `warp <area 1-5>

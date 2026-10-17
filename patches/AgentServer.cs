@@ -34,6 +34,12 @@ public static class AgentServer
 
     static volatile ushort _pressBits;
     static long _pressUntil;
+    static volatile ushort _padBits;
+    static long _padUntil;
+
+    /// <summary>What `pad` holds, in Controller's layout: pressed as the controller is,
+    /// so PadLayout's remap applies to it, where `press` is the game's own button.</summary>
+    public static ushort PadBits => _padBits != 0 && Environment.TickCount64 < _padUntil ? _padBits : (ushort)0;
     static long _vsyncMs;
     const long FramelessDrainMs = 100;
 
@@ -53,6 +59,7 @@ public static class AgentServer
     [
         "state - the player/area snapshot as JSON",
         "press <button> [holdMs=150] - press a pad button; one press at a time, replaced by the next",
+        "pad <button> [holdMs=150] - press a button as the controller does, through the button layout's remap",
         "peek <addr> [bytes=16] - read guest memory, hex",
         "dump <file> - write the 2 MB of guest RAM to a file",
         "poke <addr> <hex bytes> - write guest memory (a diagnostic: it moves the game's own state)",
@@ -187,7 +194,7 @@ public static class AgentServer
 
         switch (cmd.Name)
         {
-            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect" or "view" or "warp" or "stick":
+            case "state" or "press" or "pad" or "help" or "peek" or "dump" or "poke" or "aspect" or "view" or "warp" or "stick":
                 Enqueue(_fast, cmd);
                 break;
             default:
@@ -224,6 +231,7 @@ public static class AgentServer
     {
         "state" => "{\"ok\":true,\"cmd\":\"state\",\"state\":" + AgentBeacon.Snapshot() + ",\"warp\":" + Warp.Last + "}",
         "press" => DoPress(cmd.Arg1, cmd.Arg2),
+        "pad" => DoPad(cmd.Arg1, cmd.Arg2),
         "help" => "{\"ok\":true,\"cmd\":\"help\",\"commands\":[" + string.Join(',', HelpCommands.Select(Q)) + "]}",
         "peek" => DoPeek(cmd.Arg1, cmd.Arg2),
         "dump" => DoDump(cmd.Arg1),
@@ -245,6 +253,18 @@ public static class AgentServer
         _pressBits = bits;
         _pressUntil = Environment.TickCount64 + hold;
         return "{\"ok\":true,\"cmd\":\"press\",\"button\":" + Q(name) + ",\"holdMs\":" + hold + "}";
+    }
+
+    static string DoPad(string name, string msArg)
+    {
+        if (!Buttons.TryGetValue(name, out ushort bits))
+            return Err($"no such button '{name}'");
+        long hold = DefaultHoldMs;
+        if (msArg.Length > 0 && (!long.TryParse(msArg, out hold) || hold < 1 || hold > 5000))
+            return Err("holdMs must be 1..5000");
+        _padBits = bits;
+        _padUntil = Environment.TickCount64 + hold;
+        return "{\"ok\":true,\"cmd\":\"pad\",\"button\":" + Q(name) + ",\"holdMs\":" + hold + "}";
     }
 
     static long _stickUntil;

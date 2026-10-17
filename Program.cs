@@ -33,6 +33,11 @@ if (channels.Count > 0)
 // docs/INPUT.md.
 Kf1.KeyLayout.Configure();
 Kf1.KeyLayout.Install();
+// The controller's face buttons in the Western layout or the disc's own
+// (KF1_PAD_LAYOUT=west|jp). Installed before every listener that presses buttons of
+// its own. See "The button layout" in docs/INPUT.md.
+Kf1.PadLayout.Configure(Environment.GetEnvironmentVariable("KF1_PAD_LAYOUT"));
+Kf1.PadLayout.Install();
 
 // libapi's interrupt-callback table, per executable: the table InterruptCallback
 // indexes by irq*4. See "The interrupt-callback table" in docs/RECOMPILATION.md.

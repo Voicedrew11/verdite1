@@ -33,6 +33,52 @@ adds `rate >> 2` to the yaw velocity and clamps it at `rate` (the s32 at
 subtracts, neither decays it by 2; then the pitch takes it and is clamped to
 ±`0xBF` (about 17 degrees) as a signed angle, not a 12-bit one.
 
+## The button layout
+
+`patches/PadLayout.cs`, **the Western layout by default** (`KF1_PAD_LAYOUT=jp`, or
+**Button layout** on the Testing tab, for the disc's own). The Western layout is
+the one the US King's Field (`SLUS-00158`) and King's Field II (`SLUS-00255`) start
+a New Game with: Verdite2's mask table, and Verdite3's face preset 3. This disc has
+no control-config screen and no table. Stage A tests the buttons inline, so the
+port permutes the controller's face buttons:
+
+| on the controller | Western: the game's button | does |
+|---|---|---|
+| Square | Triangle | attack |
+| Cross | Circle | examine; confirm in the menus |
+| Circle | Cross | the in-game menu; back out of one |
+| Triangle | Square | the held item or spell |
+
+The rest of the pad is the same in both layouts. **Cross confirms and Circle backs
+out in the Western layout**: the game's menus confirm on Circle (`GAME_INTERNALS.md`,
+saving and loading), and the permutation moves that to Cross.
+
+**The remap is applied in `PAD_dr` and to the controller only.** It is a `PadReadEvent`
+listener installed before every other listener that presses buttons (the command
+channel, the auto-start, the mouse), so every overlay and modal loop sees it. The
+runtime has already merged the keyboard into the word, so the listener works out which
+face buttons the keyboard holds (`ConfigManager.Game.Keys` and `HostWindow.IsKeyDown`,
+refreshed once a millisecond) and leaves those bits alone. The keyboard layout binds
+keys to the game's own buttons (Space is Triangle, attack), and the mouse buttons and
+`press` press the game's own buttons, so those keep their verbs in both layouts. A face
+button held on the pad and on the keyboard at once is taken as the keyboard's. On
+the command channel, `pad <button> [ms]` presses as the controller does, before the
+remap.
+
+Measured 2026-10-17, a New Game in area 1 at `KF1_FPS=144`, the arm's swing clock
+`0x800A07F0` (-1 at rest) read after each press:
+
+- **Western**: `pad Square` swings (`0x0A8C`), `pad Triangle` does not, and `press
+  Triangle` swings (the game's button, unremapped). `pad Circle` opens the menu (the
+  beacon's `loop` false), a second `pad Circle` closes it, and `pad Cross` with
+  nothing in front leaves the loop running.
+- **Japanese**: `pad Triangle` swings (`0x0BB8`), `pad Square` does not.
+
+**Not measured**: a real controller (the runs pressed through `pad`), the
+keyboard's exclusion (nothing scripted holds a key), and OPEN.EXE's title menus. **To
+judge**: whether any of the game's own text names a button (the Japanese text, or the
+fan translation's) and so reads wrong in the Western layout.
+
 ## The keyboard layout
 
 `patches/KeyLayout.cs`, Verdite3's mechanism (Verdite Core's `KeyLayoutApply`):

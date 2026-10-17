@@ -99,6 +99,7 @@ public sealed class TestingSection : ISettingsSection
             SetShading(sh);
         SceneFeatures.Ready();
         Analog.Ready();
+        PadLayout.Ready();
     }
 
     static bool Unset(string env) => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(env));
@@ -127,6 +128,18 @@ public sealed class TestingSection : ISettingsSection
         ImGui.SliderFloat(label, ref v, min, max, format, ImGuiSliderFlags.AlwaysClamp);
         if (ImGui.IsItemDeactivatedAfterEdit()) KeepFloat(key, v);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(tip);
+    }
+
+    static void ButtonLayout()
+    {
+        string[] layouts = ["US/EU (Square attacks)", "Japanese (Triangle attacks)"];
+        int l = PadLayout.Western ? 0 : 1;
+        ImGui.SetNextItemWidth(240);
+        if (ImGui.Combo("Button layout", ref l, layouts, layouts.Length)) { PadLayout.Western = l == 0; Keep(PadLayout.Key, PadLayout.Western ? 1 : 0); }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("US/EU: Square attacks, Cross examines and confirms, Circle opens the menu and backs out, Triangle uses the item or spell.\n" +
+                             "Japanese: the original's Triangle attack, Circle examine and confirm, Cross menu and back, Square item or spell.\n" +
+                             "The controller only; the keyboard and mouse keep their keys.");
     }
 
     static void AnalogSticks()
@@ -328,6 +341,9 @@ public sealed class TestingSection : ISettingsSection
             "Per-pixel occlusion from the depths the address map recovers; a triangle it missed keeps painter's order.");
 
         SceneFeatures.Draw();
+
+        ImGui.SeparatorText("Controller");
+        ButtonLayout();
 
         ImGui.SeparatorText("Mouse");
         Toggle("Mouse look", K(Mouse.OnKey),
