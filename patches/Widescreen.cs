@@ -1,6 +1,10 @@
+using System.Reflection;
 using RecompOne.Runtime;
+using RecompOne.Runtime.Context;
 using RecompOne.Runtime.Events;
 using RecompOne.Runtime.Hle;
+using RecompOne.Runtime.Memory;
+using RecompOne.Runtime.Modding;
 
 namespace Kf1;
 
@@ -9,13 +13,16 @@ namespace Kf1;
 /// disc. The runtime already does the work: a display buffer is drawn into a render
 /// target carrying a margin of extra columns either side (<c>GpuHle.WideMargin</c>),
 /// only the original columns go back to VRAM, and the widened target is presented
-/// at <c>Display.WideAspect</c>. This file is the switch, the latch clear and the
-/// full-screen tint stretch.
+/// at <c>Display.WideAspect</c>. This file is the switch, the latch clear, the
+/// full-screen tint stretch, the menu's background tiled across the margin and the
+/// HUD at the screen edges.
 ///
 ///     KF1_WIDESCREEN=16:9       aspect for the run; "1.777" and "off" also parse
 ///     KF1_WIDESCREEN_PROBE=1    the margin census, on the console
 ///     KF1_WIDESCREEN_PROBE=2    the census plus every wide primitive, once per shape
 ///     KF1_WIDESCREEN_EFFECTS=0  leave the death fade and the damage flash 320 wide
+///     KF1_WIDESCREEN_HUD=1      move the HUD out to the new edges (0 leaves it), over the kept choice
+///     KF1_WIDESCREEN_MENU=0     leave the menu's background 320 wide
 ///
 /// The runtime's implement is not a stretch: the projection is untouched, so pixels
 /// keep their aspect and the extra picture is only there where the game submits
@@ -25,10 +32,20 @@ namespace Kf1;
 /// rectangle exactly; keyed on that shape rather than a drawer address. On
 /// whenever an aspect is chosen; <c>KF1_WIDESCREEN_EFFECTS=0</c> is the comparison.
 ///
-/// The HUD anchoring and the DrawOTag replacement are NOT ported. Verdite2 ships
-/// the anchoring off, so the HUD keeps its authored 4:3 box here, and the
-/// replacement exists only to feed it the ordering-table position -- with no
-/// anchoring there is nothing to walk the table for.
+/// <see cref="AnchorHud"/> is Verdite3's HUD at the screen edges, by the same means:
+/// the records each HUD drawer reads have their screen X moved out by the margin
+/// for the call and put back after it, so nothing downstream is told and a menu's
+/// primitives are never touched. Two drawers: the sprites (<c>func_8001F9D4</c>, X at
+/// <c>+6</c>: the gauges, their numbers and marks, the compass's dial) and the compass
+/// model (<c>func_8001F8B0</c>, its translation's X at <c>+6</c>, at a Z equal to the
+/// projection's H of 200, so its X is screen pixels). The selected item's display is
+/// centred and left alone. Verdite2's DrawOTag replacement is not ported; it fed
+/// only the older, guessed anchoring.
+///
+/// The menu's background is four FT4s of one tile, 160 x 120 each, prebuilt per
+/// buffer and linked on slot 3000 by several page routines. Before the menu's
+/// presenter <c>func_8002AC34</c>, copies of whichever of them are linked go in 320
+/// px apart on the same slot until the margin is covered.
 ///
 /// It is a setting, under Testing ▸ Picture. The saved aspect is read on
 /// <see cref="RuntimeReadyEvent"/> rather than in <see cref="Configure"/>, since
@@ -71,6 +88,17 @@ public static class Widescreen
     /// <summary>Whether the aspect is actually widening anything.</summary>
     public static bool On => Display.WideAspect > 0f;
 
+    /// <summary>Whether the HUD is moved out to the new edges. Off until judged;
+    /// kept as <c>kf1.widescreen.hud</c> by the Testing tab.</summary>
+    public static bool AnchorHud { get; private set; }
+
+    /// <summary>Takes effect on the next frame the HUD is drawn.</summary>
+    public static void SetAnchorHud(bool on) => AnchorHud = on;
+
+    /// <summary>Whether the menu's background is tiled across the margin.
+    /// KF1_WIDESCREEN_MENU=0 is the comparison.</summary>
+    public static bool TileMenu { get; private set; } = true;
+
     /// <summary>Extra columns a side, by the runtime's own sizing rule -- so the
     /// number the settings combo shows and the number the render target is built
     /// with are the same one. 320 is this game's display width.</summary>
@@ -107,8 +135,15 @@ public static class Widescreen
 
     static double Now => Environment.TickCount64 / 1000.0;
 
-    public static void Configure(string? aspect, string? probe, string? effects = null)
+    public static void Configure(string? aspect, string? probe, string? effects = null, string? hud = null,
+                                 string? menu = null)
     {
+        if (!string.IsNullOrWhiteSpace(menu))
+            TileMenu = !menu.Equals("0", StringComparison.Ordinal);
+
+        if (!string.IsNullOrWhiteSpace(hud))
+            AnchorHud = !hud.Equals("0", StringComparison.Ordinal);
+
         if (Parse(aspect) is { } ratio) _forced = ratio;
 
         if (!string.IsNullOrWhiteSpace(probe) && !probe.Equals("0", StringComparison.Ordinal))
@@ -148,6 +183,9 @@ public static class Widescreen
                   $"screen tints {(StretchEffects ? "stretched across it" : "left 320 wide")}"
                 : "[KF1] widescreen: off (4:3)");
         });
+
+        // Attached at every aspect: the aspect and the anchoring change mid-session.
+        HookAttach.OnOverlayLoad("widescreen HUD", AttachHud);
 
         // Attached whether or not an aspect is set: the aspect is a setting that can
         // be changed mid-session, and the latch clear must run under every overlay.
@@ -337,5 +375,163 @@ public static class Widescreen
         }
 
         return float.TryParse(value, out float ratio) && ratio > 0f ? ratio : null;
+    }
+
+    // ---- the HUD, moved by its records -----------------------------------------
+
+    static readonly ModInfo _self = new() { Id = "kf1.widescreen", Name = "Widescreen HUD", Version = "1.0" };
+
+    /// <summary>One table of HUD records and the routine that draws it: records of
+    /// <paramref name="Stride"/> bytes from <paramref name="Table"/> until a first byte
+    /// of 0xFF, a first byte of 0 hidden, the screen X a halfword at
+    /// <paramref name="X"/>.</summary>
+    sealed record HudTable(string Name, uint Drawer, uint Table, uint Stride, uint X, int Max)
+    {
+        public readonly short[] Saved = new short[Max];
+        public int Moved;
+        public readonly HashSet<string> Seen = [];
+    }
+
+    static readonly HudTable[] HudTables =
+    [
+        new("sprites", 0x8001F9D4, 0x80055C5C, 0x0E, 0x06, 16),
+        new("compass", 0x8001F8B0, 0x80055D74, 0x1C, 0x06, 4),
+    ];
+
+    /// <summary>The middle of the 320-pixel screen: a record whose X is left of it
+    /// belongs to the left edge. The X, not the sprite's middle: the gauges at 129
+    /// are as wide as <c>u16[0x800A0798] / 100</c> each frame, so their middle can
+    /// cross 160.</summary>
+    const int ScreenCentre = 160;
+
+    static bool _hudQueued;
+
+    static bool AttachHud()
+    {
+        SymbolRegistry.Build();
+        var targets = HudTables.Select(t => SymbolRegistry.Resolve("game", null, t.Drawer)).ToArray();
+        var window = SymbolRegistry.Resolve("game", null, MenuPresenter);
+        if (targets.Any(t => t == null) || window == null) return false;
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+        if (!_hudQueued)
+        {
+            for (int i = 0; i < HudTables.Length; i++)
+            {
+                HookManager.AddPre(_self, targets[i]!, typeof(Widescreen).GetMethod(i == 0 ? nameof(BeforeSprites) : nameof(BeforeCompass), flags)!);
+                HookManager.AddPost(_self, targets[i]!, typeof(Widescreen).GetMethod(i == 0 ? nameof(AfterSprites) : nameof(AfterCompass), flags)!);
+            }
+            HookManager.AddPre(_self, window, typeof(Widescreen).GetMethod(nameof(BeforeMenuPresent), flags)!);
+            _hudQueued = true;
+        }
+        HookManager.Commit();
+        return targets.All(HookAttach.Installed) && HookAttach.Installed(window);
+    }
+
+    public static void BeforeSprites(CpuContext c, IMemory m) => MoveOut(HudTables[0], m);
+    public static void AfterSprites(CpuContext c, IMemory m) => PutBack(HudTables[0], m);
+    public static void BeforeCompass(CpuContext c, IMemory m) => MoveOut(HudTables[1], m);
+    public static void AfterCompass(CpuContext c, IMemory m) => PutBack(HudTables[1], m);
+
+    /// <summary>Move every record out to its edge for the drawer: left of the screen's
+    /// middle by the margin to the left, right of it to the right. Hidden records
+    /// are moved too, so the put-back needs no record of which were drawn.</summary>
+    static void MoveOut(HudTable t, IMemory m)
+    {
+        t.Moved = 0;
+        if (_measure) ProbeHud(t, m);
+        if (!(AnchorHud && On)) return;
+        int margin = Margin;
+        if (margin <= 0) return;
+
+        for (int i = 0; i < t.Max; i++)
+        {
+            uint rec = t.Table + (uint)i * t.Stride;
+            if (m.ReadU8(rec) == 0xFF) break;
+            short x = (short)m.ReadU16(rec + t.X);
+            t.Saved[i] = x;
+            m.WriteU16(rec + t.X, (ushort)(x + (x < ScreenCentre ? -margin : margin)));
+            t.Moved = i + 1;
+        }
+    }
+
+    /// <summary>Put every record's X back the moment the drawer has drawn it.</summary>
+    static void PutBack(HudTable t, IMemory m)
+    {
+        for (int i = 0; i < t.Moved; i++)
+            m.WriteU16(t.Table + (uint)i * t.Stride + t.X, (ushort)t.Saved[i]);
+        t.Moved = 0;
+    }
+
+    /// <summary>KF1_WIDESCREEN_PROBE: each distinct set of drawn records' positions
+    /// (index@x,y), once per table, up to 24 sets.</summary>
+    static void ProbeHud(HudTable t, IMemory m)
+    {
+        var line = new System.Text.StringBuilder();
+        for (int i = 0; i < t.Max; i++)
+        {
+            uint rec = t.Table + (uint)i * t.Stride;
+            byte on = m.ReadU8(rec);
+            if (on == 0xFF) break;
+            if (on == 0) continue;
+            line.Append($" {i}@{(short)m.ReadU16(rec + t.X)},{(short)m.ReadU16(rec + t.X + 2)}");
+        }
+        string s = line.ToString();
+        if (t.Seen.Count < 24 && t.Seen.Add(s))
+            Console.WriteLine($"[KF1] widescreen: HUD {t.Name} drawn at{(s.Length == 0 ? " (none)" : s)}" +
+                              $"{(AnchorHud && On ? $", moved {Margin} px out" : "")}");
+    }
+
+    // ---- the menu's background, tiled into the margin ----------------------------
+
+    const uint MenuPresenter = 0x8002AC34;
+    const uint PacketSize = 0x28;
+    const uint BackgroundEnd = MenuDraw.WindowPackets + 2 * 0xA0;
+    static readonly uint[] _linked = new uint[8];
+    static uint _lastTile;
+    static readonly HashSet<long> _menuSeen = [];
+
+    /// <summary>Before the menu presents: find the background's packets on slot 3000
+    /// (four a buffer from <c>0x800580E8</c>, linked by the window writer
+    /// <c>func_8002A510</c> or inline by <c>func_80022D7C</c>, <c>func_80025DA0</c> and
+    /// <c>func_800292F8</c>), then copy each 320 px left and right, and further while
+    /// the copy still reaches the margin, from the menu's own packet cursor onto the
+    /// same slot. A period of 320 repeats whatever the four quads hold.</summary>
+    public static void BeforeMenuPresent(CpuContext c, IMemory m)
+    {
+        if (!(TileMenu && On)) return;
+        uint entry = m.ReadU32(MenuDraw.OrderingTable) + (uint)MenuDraw.WindowPacketSlot * 4;
+        uint next = entry - 4;
+
+        // Slot 3000's chain runs to the entry below it (ClearOTagR). A head that is
+        // our own last tile means this table was already tiled.
+        uint p = m.ReadU32(entry) & 0x00FFFFFF;
+        if (_lastTile != 0 && p == (_lastTile & 0x00FFFFFF)) return;
+        int found = 0;
+        for (int steps = 0; steps < 64 && p != (next & 0x00FFFFFF) && p != 0x00FFFFFF; steps++)
+        {
+            uint a = 0x80000000 | p;
+            if (a >= MenuDraw.WindowPackets && a < BackgroundEnd && found < _linked.Length) _linked[found++] = a;
+            p = m.ReadU32(a) & 0x00FFFFFF;
+        }
+
+        int margin = Margin, tiles = 0;
+        for (int shift = 320; shift - 320 < margin; shift += 320)
+            foreach (int dx in (ReadOnlySpan<int>)[-shift, shift])
+                for (int i = 0; i < found; i++)
+                {
+                    uint src = _linked[i];
+                    int x0 = (short)m.ReadU16(src + 0x08) + dx, x1 = (short)m.ReadU16(src + 0x10) + dx;
+                    if (Math.Max(x0, x1) <= -margin || Math.Min(x0, x1) >= 320 + margin) continue;
+                    uint q = m.ReadU32(MenuDraw.Cursor);
+                    for (uint o = 0; o < PacketSize; o += 4) m.WriteU32(q + o, m.ReadU32(src + o));
+                    foreach (uint o in (ReadOnlySpan<uint>)[0x08, 0x10, 0x18, 0x20])
+                        m.WriteU16(q + o, (ushort)(m.ReadU16(q + o) + dx));
+                    MenuDraw.Link(m, MenuDraw.WindowPacketSlot);
+                    _lastTile = q;
+                    tiles++;
+                }
+        if (_measure && _menuSeen.Add(((long)c.RA << 8) | (uint)tiles))
+            Console.WriteLine($"[KF1] widescreen: menu presented from {c.RA - 8:X8}, {found} background packet(s), " +
+                              $"{tiles} tile(s) added across a {margin} px margin");
     }
 }

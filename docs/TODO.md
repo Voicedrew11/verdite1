@@ -91,6 +91,11 @@ recompiled and running, following Verdite3's method but applied to this disc.
   Step 6 not applicable, 2026-10-16: nothing clips at the screen's edge, the
   menus clear to black, and the packet buffer peaks at 46.2% at 21:9. **To look
   at**: the margin behind the card message and the event picture at 16:9.
+  The menu path in C# and the HUD at the edges ported 2026-10-17 (V2's
+  `MenuDraw`, V3's anchored HUD; "The menu path in C#" in `GPU_RENDERER.md`,
+  "The HUD at the edges" in `WIDESCREEN.md`). **To look at**: the HUD at the
+  edges at 16:9 and 21:9 (`KF1_WIDESCREEN_HUD=1`). **Open**: prebuilt B and the
+  save and load screens under the menu's `verify`.
   Step 7 done 2026-10-16: the profiler's retained sections and `CrossProbe`,
   `TexProbe`, `PacketMatch` (`FrameCapture` not ported). **To look at**: area 2's
   arrival after a warp, where `CrossProbe`'s luminance swings 39-177 on a period

@@ -106,6 +106,8 @@ switch is added.
 | `KF1_ANALOG_PROBE` | off | `1`: a line every 10 s of what the sticks asked and stage A did; `trace`: a line a tick as well |
 | `KF1_WIDESCREEN` | off | `16:9`, `16:10`, `21:9`, a ratio, or `off` (`docs/WIDESCREEN.md`) |
 | `KF1_WIDESCREEN_PROBE` | off | `1`: the margin census; `2` also lists screen-wide primitives |
+| `KF1_WIDESCREEN_HUD` | off | `1`: the HUD's gauges and compass at the edges of a wide picture (`docs/WIDESCREEN.md`) |
+| `KF1_WIDESCREEN_MENU` | on | `0`: leave the menu's background 320 wide |
 | `KF1_WIDESCREEN_EFFECTS` | on | `0`: leave full-screen tints 320 wide |
 | `KF1_CULLCONE` | on | `0`: the game's stencils at any aspect |
 | `KF1_CULLCONE_PROBE` | off | `1`: cells drawn a frame, cells added |

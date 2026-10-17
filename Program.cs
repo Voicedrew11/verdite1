@@ -185,7 +185,9 @@ Kf1.MouseLook.Install();
 // docs/WIDESCREEN.md.
 Kf1.Widescreen.Configure(Environment.GetEnvironmentVariable("KF1_WIDESCREEN"),
                          Environment.GetEnvironmentVariable("KF1_WIDESCREEN_PROBE"),
-                         Environment.GetEnvironmentVariable("KF1_WIDESCREEN_EFFECTS"));
+                         Environment.GetEnvironmentVariable("KF1_WIDESCREEN_EFFECTS"),
+                         Environment.GetEnvironmentVariable("KF1_WIDESCREEN_HUD"),
+                         Environment.GetEnvironmentVariable("KF1_WIDESCREEN_MENU"));
 Kf1.Widescreen.Install();
 Kf1.CullCone.Configure(Environment.GetEnvironmentVariable("KF1_CULLCONE"),
                        Environment.GetEnvironmentVariable("KF1_CULLCONE_PROBE"));

@@ -60,6 +60,7 @@ public sealed class TestingSection : ISettingsSection
         new("kf1.vblank_hold", "KF1_VBLANKPACING", () => VBlankPacing.Enabled, v => VBlankPacing.Enabled = v),
         new("kf1.smooth", "KF1_SMOOTH", () => ViewSmoothing.Enabled, v => ViewSmoothing.Enabled = v),
         new("kf1.smooth_models", "KF1_SMOOTH_MODELS", () => ModelSmoothing.Enabled, v => ModelSmoothing.Enabled = v),
+        new("kf1.widescreen.hud", "KF1_WIDESCREEN_HUD", () => Widescreen.AnchorHud, Widescreen.SetAnchorHud),
         new("kf1.perspective", "KF1_PERSPECTIVE", () => Perspective.Enabled, v => Perspective.Enabled = v),
         new("kf1.subpixel", "KF1_SUBPIXEL", () => Subpixel.Enabled, v => Subpixel.Enabled = v),
         new("kf1.zbuffer", "KF1_ZBUFFER", () => ZBuffer.Enabled, v => ZBuffer.Enabled = v),
@@ -333,6 +334,8 @@ public sealed class TestingSection : ISettingsSection
             Rt.SaveView();
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(Localization.T("kf1testing.widescreen.tip"));
+        Toggle("HUD at the screen edges", K("kf1.widescreen.hud"),
+            "Moves the gauges and the compass out to the edges of a wide picture instead of the 4:3 box.");
         Toggle("Perspective-correct textures", K("kf1.perspective"),
             "Textures follow each corner's depth instead of warping across a polygon.");
         Toggle("Sub-pixel vertices", K("kf1.subpixel"),

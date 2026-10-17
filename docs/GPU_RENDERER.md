@@ -1067,7 +1067,9 @@ same routine. The card message and the event picture turn `isbg` off for their
 own presents (lines 9549 and 31973) and back on after, so they draw over the
 last world frame left in the buffers; that is frozen on the console too. Whether
 the margin behind them reads right at a wide aspect is for a person to look at.
-`MenuDraw` is not needed: the menus' quads are 2D and inside the 4:3 columns.
+The menus' quads are 2D and inside the 4:3 columns; the background is tiled into
+the margin later ("The menu's background, tiled" in `WIDESCREEN.md`). `MenuDraw` came over later
+for features that draw on a page, not for the margin ("The menu path in C#").
 
 **`PrimBuffer` is not needed.** Measured at `KF1_FPS=144`, `KF1_GPU_WORLD=0`
 (`KF1_PRIMBUF_PROBE=1`), standing in area 1, standing in area 4 at (79000,

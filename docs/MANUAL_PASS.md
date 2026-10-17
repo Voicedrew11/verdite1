@@ -77,7 +77,10 @@ first: the GPU path is judged against it.
    whether walls cut the arm with the Z-buffer on. *Decide*: each default.
 8. **Widescreen**: 16:9 and 21:9 at `area4-busy`, turning. Look at: cells and
    models appearing at the sides, the HUD's place, the margin behind the card
-   message and the sign. *Decide*: the default aspect.
+   message and the sign. Then Testing ▸ HUD at the screen edges: the gauges, the
+   numbers and the compass against the edges, and nothing left behind in the 4:3
+   box. Then open the menu: its background tiled across the margin, and the seam at
+the 4:3 edges. *Decide*: the default aspect, and whether the HUD goes to the edges.
 9. **Mouse look** (Escape captures): the pitch direction, the sensitivity, and
    "Instant mouse look". *Decide*: the defaults.
 10. **The translation**, if used: the save point's Yes/No.
