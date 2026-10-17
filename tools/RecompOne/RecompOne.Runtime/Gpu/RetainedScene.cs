@@ -575,6 +575,9 @@ public static class RetainedScene
         public int ArmOrderCount;
         public int[] ArmRunKey = new int[64], ArmRunAt = new int[64];
         public int ArmRuns, ArmNext;
+        /// <summary>The projection the arm was drawn under, when it is not the frame's
+        /// (<see cref="SetArm"/>'s <c>h</c>); 0 for the frame's.</summary>
+        public float ArmH;
         /// <summary>0085. The sky: the objects of kind 0xF0, drawn from their meshes
         /// before the map, in painter's order (<see cref="AddSky"/>).</summary>
         public readonly List<ModelInstance> Sky = new();
@@ -1024,9 +1027,11 @@ public static class RetainedScene
     /// <paramref name="runAt"/>); the backend draws each run when the walk reaches the
     /// key's slot (0x1FFF less it, counted from the far end as <c>GteDepth.OtSlot</c>
     /// is), with no depth test, and leaves the far plane where it drew. <paramref name="box"/>
-    /// is the screen box it covers, in the GTE's pixels, as the packets' are.</summary>
+    /// is the screen box it covers, in the GTE's pixels, as the packets' are.
+    /// <paramref name="h"/> is the projection it was drawn under when the game sets its
+    /// own for it (King's Field's arm, H 2000 against the world's 200); 0 is the frame's.</summary>
     public static void SetArm(in ModelInstance m, ReadOnlySpan<int> order, ReadOnlySpan<int> runKey, ReadOnlySpan<int> runAt,
-                              ReadOnlySpan<float> box)
+                              ReadOnlySpan<float> box, float h = 0f)
     {
         ArmX0 = box[0]; ArmY0 = box[1]; ArmX1 = box[2]; ArmY1 = box[3];
         var f = Current;
@@ -1041,6 +1046,7 @@ public static class RetainedScene
         f.ArmNext = 0;
         f.Arm = m;
         f.Arm.MeshGen = MeshGeneration;
+        f.ArmH = h;
         f.HasArm = true;
         ArmSerial = _serial;
         ArmSlot = 0x1FFF - runKey[0];

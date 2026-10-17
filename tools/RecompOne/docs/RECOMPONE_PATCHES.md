@@ -1642,6 +1642,15 @@ Four files in the directory have no entry below:
   `UploadStatic` and draws through `WorldVs`) had drawn it; `UploadStatic` now gives
   them zeros as long as the map until then. Static reasoning from the trace; not
   reproduced on NVIDIA here. Not in the patch file.
+  Since amended (2026-10-16): the arm can be drawn under its own projection.
+  `RetainedScene.SetArm` takes an optional `h`, kept as `Frame.ArmH`, for a game that
+  sets one for the arm (King's Field's arm projects at H 2000 against the world's
+  200). `GlModelMeshes.DrawWorldArm` sets the world program's H, the depth cue's H
+  and the fog-from-depth H to it around the arm's draw (`ArmProjection`) and puts the
+  frame's back after; `DrawArmNormals` does the same for the normal pass's H and its
+  unprojection's. With `h` 0, which every existing caller passes, nothing changes, so
+  Verdite2 and Verdite3 draw as before. The seventeenth diff in the patch file. See
+  "The arm on the retained scene" in King's Field's `docs/GPU_RENDERER.md`.
 
 - `0086-retained-model-mask.patch` — the retained models (`0085`) are drawn at slot 1,
   ahead of every packet the walk sends after them, and `0051`'s tolerance (1 unit

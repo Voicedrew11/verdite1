@@ -594,7 +594,9 @@ public sealed partial class GlCore
         _gl.DepthMask(true);
         _gl.DepthFunc(DepthFunction.Always);
         _gl.Uniform1(_uwFarPlane, 1);
+        if (f.ArmH > 0f) ArmProjection(f.ArmH, f);
         _gl.DrawElements(PrimitiveType.Triangles, (uint)(to - from), DrawElementsType.UnsignedInt, (void*)(from * 4L));
+        if (f.ArmH > 0f) ArmProjection(f.View.H, f);
         _gl.Uniform1(_uwFarPlane, 0);
         _gl.DepthFunc(DepthFunction.Lequal);
         _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, 0);
@@ -616,6 +618,15 @@ public sealed partial class GlCore
         return last < f.ArmRuns;
     }
 
+    /// <summary>The world program's projection for the arm's own H, and back to the
+    /// frame's: the screen placement, the depth cue's H and the fog from depth.</summary>
+    void ArmProjection(float h, RetainedScene.Frame f)
+    {
+        if (_uwH >= 0) _gl.Uniform1(_uwH, h);
+        if (_uwCueH >= 0) _gl.Uniform1(_uwCueH, Math.Max(1f, h));
+        if (_uwCueFromZ >= 0) _gl.Uniform1(_uwCueFromZ, RetainedScene.MainFogFromZ ? Math.Max(1f, h) : 0f);
+    }
+
     /// <summary>The arm into the normal and surface buffers as an overlay, at its place
     /// in the list: the surface under it is then no surface for the passes, as its
     /// packets made it, and nothing is murked or reflected over it.</summary>
@@ -631,7 +642,17 @@ public sealed partial class GlCore
         var m = f.Arm;
         m.Material = SurfaceMaterial.Overlay;
         SendInstance(m, false);
+        if (f.ArmH > 0f)
+        {
+            if (_uwnH >= 0) _gl.Uniform1(_uwnH, f.ArmH);
+            if (_uwnProjH >= 0) _gl.Uniform1(_uwnProjH, f.ArmH);
+        }
         _gl.DrawArrays(PrimitiveType.Triangles, m.MeshStart, (uint)m.MeshCount);
+        if (f.ArmH > 0f)
+        {
+            if (_uwnH >= 0) _gl.Uniform1(_uwnH, f.View.H);
+            if (_uwnProjH >= 0) _gl.Uniform1(_uwnProjH, Math.Max(1f, f.View.H));
+        }
         EndInstances(false);
         if (_uwnDepthCull >= 0) _gl.Uniform1(_uwnDepthCull, 1);
     }
