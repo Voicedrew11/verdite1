@@ -563,9 +563,22 @@ writes. No runtime change was needed. `KF1_GPU_WORLD` selects the mode
   - The depth cue: the writer passes DPCS twice RTPS's IR0 (the cache's `+6`),
     which is exactly the runtime's offset curve with DQB raised by 800 × 4096.
   - The mesh rebuilds only when the grids, the matrices or the GTE's light and
-    fog change, and only once the change has held for ten walks. The fog's fade
-    at an area's exit steps every tick, and those walks draw from packets
-    (`map-source-changing`).
+    fog change, and only once the change has held for ten walks and, under
+    pacing, two ticks. The fog's fade at an area's exit and the death's dimming
+    step every tick, and those walks draw from packets (`map-source-changing`).
+    **Ten walks alone held nothing back uncapped** (2026-10-17): at 800 fps ten
+    walks are 12 ms, under a 15 Hz tick, so the death (`func_80018540` lerps the
+    light matrix and DQA once a tick for about 40 ticks) rebuilt the whole map,
+    1,003,374 corners in 35.7 ms, on every tick, and drew the walks between from
+    packets: a stall and a change of renderer 15 times a second, 255 fps drawn
+    in the death's second against 858 standing. With the two ticks, the same death
+    on the area-1 trap made no build from the hit to the respawn, at 513-620 fps
+    on packets. **Left**: a hit's damage flash (the light matrix to `3000/70/400`
+    for a few ticks and back) still holds past two ticks and makes two builds a
+    hit; and the map is drawn from packets for the whole death, so the retained
+    picture's own touches leave it then. Drawing the dimming without a build
+    needs the light and the fog as per-frame inputs to the shader, a fork change.
+    **Not judged by eye**: the death.
 - **`RetainedModels`** takes the polygon writer `func_8001C7F8` at its entry.
   - The mesh is the TMD object's faces, kept by header and content hash.
   - The instance is placed in view space from the GTE's rotation and

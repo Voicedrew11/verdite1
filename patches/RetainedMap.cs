@@ -51,6 +51,7 @@ public static class RetainedMap
         !Ready || (uint)cell >= Grid * Grid ? -1 : (high ? SlotHigh : SlotLow)[cell];
     static ulong _built, _seen;
     static int _held;
+    static long _seenTick;
     static bool _remap;
 
     struct Face
@@ -135,10 +136,12 @@ public static class RetainedMap
         var srcBytes = MemoryMarshal.AsBytes(new ReadOnlySpan<Source>(in src));
         foreach (byte b in srcBytes) h = (h ^ b) * 0x100000001B3UL;
         if (Ready && h == _built) return;
-        // A changing source (the fog fading at an area's exit, a step a tick) is left
-        // to the packets until it holds for ten walks: one build, not one a step.
-        if (h != _seen) { _seen = h; _held = 0; }
-        if (++_held < 10) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-source-changing"); return; }
+        // A changing source (the fog fading at an area's exit, the death's dimming, a
+        // step a tick) is left to the packets until it holds for ten walks and, under
+        // pacing, two ticks: one build, not one a step.
+        if (h != _seen) { _seen = h; _held = 0; _seenTick = FramePacing.Ticks; }
+        if (++_held < 10 || FramePacing.Enabled && FramePacing.Ticks - _seenTick < 2)
+        { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-source-changing"); return; }
         if (!FarBlack) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-far-colour"); return; }
         int bp = Profiler.Begin(ProfBuild);
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();

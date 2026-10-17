@@ -71,8 +71,12 @@ first: the GPU path is judged against it.
    which shows the last world frame.
 5. **The area change**: walk onto `area1-exit`. Look at: the fade out and in.
 6. **Death**: `area5` without the HP poke, and wait (4-11 s in the tours). The
-   dimming steps 15-20 times a second while the fall is carried. Look at:
-   whether the steps show.
+   dimming steps 15-20 times a second while the fall is carried. Before
+   2026-10-17 the fall itself jumped back on every tick (the mouse lead's
+   clamp, "The mouse leads the tick" in `INPUT.md`), and on the retained
+   world the map was rebuilt every tick, a 36 ms stall each
+   (`GPU_RENDERER.md`). Look at: the fall, the switch to the packet map
+   for the death, and whether the dimming's steps show.
 7. **The picture switches**: Shading (Dither / None / Smooth), perspective,
    sub-pixel, the Z-buffer. Measured on the packet path: 94.7% of triangles
    depth-tested at 16:9, the arm and the HUD in painter's order. Look at:
