@@ -56,7 +56,7 @@ public static class AgentServer
         "poke <addr> <hex bytes> - write guest memory (a diagnostic: it moves the game's own state)",
         "aspect [4:3|16:9|16:10|21:9|<ratio>] - the widescreen aspect, or the current one",
         "view [<x> <y> <z> <pitch> <yaw> <roll> | off] - draw from a fixed camera (the renderer in C#), or read the camera",
-        "warp <area 1-5> <x> <z> [yaw] - queue an area transition to a cell (x/2000, z/2000); state's warp shows the result",
+        "warp <area 1-5> <x> <z> [yaw|-] [entry] - queue an area transition to a cell (x/2000, z/2000); state's warp shows the result",
     ];
 
     public static void Configure(string? spec)

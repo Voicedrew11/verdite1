@@ -62,7 +62,7 @@ recompiled and running, following Verdite3's method but applied to this disc.
   update needed (a door changes no cell). **Open**: a lift or a gate that changes
   a cell, if one is found; the blend mode of mesh `800EED50` and area 5's semi
   meshes; area 5's fault after a tour of warps, which the plain recompiled game shares
-  ("`warp`" in `DEVELOPMENT.md`).
+  ("`warp`" in `DEVELOPMENT.md`), not re-run since the warp writes the floor.
   Step 4 built 2026-10-16 ("The picture on the retained scene" in
   `docs/GPU_RENDERER.md`), every switch off. **To judge**, at `KF1_GPU_WORLD=1`:
   per-pixel lighting, the fog modes (corners, depth, distance), AO and its
@@ -71,6 +71,12 @@ recompiled and running, following Verdite3's method but applied to this disc.
   miss). **Open**: `AoWorld` (a game-neutral fork patch for the grid's sizes, a KF1
   adapter, and which cells stop sight); `ProjectileLights` (identify the glowing
   effects first).
+  Step 5 (water) not applicable, 2026-10-16: nothing scrolls, nothing textured
+  is blended, and no blended mesh is a surface. **To say, if known**: any place
+  that shows water or lava. Step 0's open items worked through the same day
+  (`RENDERER_PLAN.md`). **Open**: the title's quiet 10 s a cycle; whether the
+  ending waits on a button; what sets the ending's flag `0x8009F847` in play.
+  **To look at**: the ending's last screen and the title's quiet stretch.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

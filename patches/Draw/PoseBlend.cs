@@ -7,8 +7,8 @@ namespace Kf1;
 
 /// <summary>
 /// <c>func_800205D4</c>, the pose blender. <c>a0</c> points at a pose slot,
-/// <c>a1</c> is the frame index (masked to 16 bits), <c>a2</c> a 16-bit key and
-/// <c>a3</c> a 16-bit limit. The clip comes from the table at
+/// <c>a1</c> is the bank slot (masked to 16 bits), <c>a2</c> the clip and
+/// <c>a3</c> the clip time, 0-4095. The record comes from the table at
 /// <c>0x80090FCC</c>, indexed by <c>a1</c>. Returns the pose record in V0, 1,
 /// or 0. <c>KF1_POSEBLEND</c>.
 /// </summary>

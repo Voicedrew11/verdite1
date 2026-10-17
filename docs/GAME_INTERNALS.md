@@ -36,6 +36,9 @@ walk and a turn, and by reading the code that uses each word:
 | `0x800A0796` | u16 | MP |
 | `0x800A078A` | u8 | the area, n for `KF/Bn`: the sequence loader `func_80032A4C` writes it plus `'0'` into `B?\SND?.SEQ` |
 | `0x800A0824` | VECTOR | position x, y, z (s32); y is height, negative up (-11500 standing at the start) |
+| `0x800A0834` | s32 | the floor under the eye, -100 · the cell's height (-10000 at the start); y follows it, 1500 above, each tick, so a poke of y alone does not hold (2026-10-16) |
+| `0x800A0822` | u8 | 0 standing; 1 to 8 for a hit's flinch, then 0; `0xFF` dying, `0xFE` on the respawn |
+| `0x8009F847` | u8 | the ending's gate: area 1's start cell exits to the ending only while it is non-zero (written by `func_8002EDD4`, `func_8002F8CC`; "Drawing contexts" in `GPU_RENDERER.md`) |
 | `0x800A0838` | SVECTOR | rotation: pitch at `+0`, yaw at `+2` (`0x800A083A`), 0x1000 a turn |
 
 A New Game starts at (31000, -11500, 4000), yaw 0, in area 1. Holding Up for a
@@ -77,9 +80,11 @@ cell x/z at `+2`/`+4`, position at `+8`/`+0xC`/`+0x10`); a type indexes 8-byte
 records at `0x8006E8E0` whose first byte is the kind. **Kind `0xE` is a save
 point** (type `0x74` in area 1, three of them, one at (52850, -12000, 75000)):
 its case calls `func_800222B4`, the save screen `func_800250C4`, and through
-`func_8002B648` the writer `func_8002B73C`. Circle, then Circle again, writes the
-save to card A slot 1 through BIOS `open`/`lseek`/`write`/`close` (B(32h), B(33h),
-B(35h), B(36h)).
+`func_8002B648` the writer `func_8002B73C`. Circle opens the screen, Circle on
+slot 1 asks Yes/No (`func_800286D4`), and Circle on Yes writes the save to card A
+slot 1 through BIOS `open`/`lseek`/`write`/`close` (B(32h), B(33h), B(35h),
+B(36h)) and closes it (measured 2026-10-16; this said two Circles before). Cross
+leaves; Triangle is not read.
 
 The save is `BISLPS-00017KF`, **5 blocks** (40960 bytes), its title block
 `SC`, icon flag `0x13` (three frames), title `<<  KING'S FIELD  >>` in full-width
@@ -91,9 +96,10 @@ can write, and shows a card message (`func_8001B7B0(2)`) when it cannot.
 **Loading is from the in-game menu.** Cross (`0x40`) opens it
 (`func_80036E38` from stage A, then `func_80022348`), seven items dispatched
 through the table at `0x800122C8`; **item 5 is Load** (`func_80024E64`, the load
-screen `func_8002552C`, the reader `func_8002BDE4`). Measured: from a New Game,
-Cross, Down five times, Circle, Circle, Right, Circle loads card A slot 1, and
-the player stands where the save was made.
+screen `func_8002552C`, the reader `func_8002BDE4`). Measured 2026-10-05: from a
+New Game, Cross, Down five times, Circle, Circle, Right, Circle loaded card A
+slot 1. On 2026-10-16 that did not load, and Cross, Down five times and four
+Circles did, the player standing where the save was made.
 
 **OPEN.EXE's title has one way into GAME**: a Down before the Starts reads the
 same files and starts the same New Game, and OPEN.EXE has no card code at all.
@@ -229,7 +235,8 @@ after `off`, and the player does not move.
   light matrix at `0x800957E0 + 32k`.
 - `0x80095744`/`48`/`4C`: the camera as the map cell subtracts it (s16 x, y,
   z); the view matrix is at `0x800956A0`.
-- `*0x80090FA8`: TMD 0, the map's; `*0x80090FC8`: the current TMD. Object
+- `*0x80090FA8`: TMD 0, the map's (MIXB chunk 1); `*0x80090FAC`: TMD 1, the
+  models' (chunk 0); `*0x80090FC8`: the current TMD. Object
   headers at `tmd + 0xC + 28·obj`, offsets relative to `tmd + 0xC`.
 - `0x800910BC`: the vertex list the writers read: the rigid object's own
   vertices, or the pose blender's scratch `0x800930F8`.

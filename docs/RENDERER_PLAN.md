@@ -97,6 +97,17 @@ the verb's entry 0 is suspected), the ending and title (read, not run), OPEN.EXE
 `func_8001A82C` (caller not found), the map TMD's F3/G3/G4 primitives (who reads
 them), the bank records' meaning, and the save and load screens (not entered).
 
+**Status 2026-10-16**, the items left open, worked through (`GPU_RENDERER.md`):
+area 5's warp stands, now that the warp writes the floor word, and its deaths are
+a creature's 155-HP hits on a 30-HP player; the ending ran (from its flag at
+`0x8009F847`) and the title cycled; the save and load screens were entered and
+left by program; `func_8001A82C` has no caller anywhere on the disc (a debug
+display adjuster, read); the "map's" F3/G3/G4 were the models', the doc having
+swapped chunks 0 and 1; the bank records are decoded (clip and key tables). **Still
+open**: the title's quiet 10 s in each 30 s cycle; whether the ending waits on
+a button at its end; what sets `0x8009F847` in play; the bank records' repeated
+keys.
+
 **Gate**: every emitter and context has an owner and a way to verify it; anything
 not reached is listed as open. Counters are taken with the GPU path off, so a zero
 later cannot mean the probe never attached.
@@ -253,7 +264,11 @@ the user has looked at it, and live in Settings ▸ Testing:
 counters showing every eligible family contributes to depth, normal and surface.
 Then the user judges seams, fog, lighting, AO and transparency.
 
-## Step 5: water
+## ~~Step 5: water~~
+
+**Not applicable, 2026-10-16** ("Water: none to classify" in `GPU_RENDERER.md`):
+nothing scrolls in VRAM or in the meshes' RAM, no textured face is blended, and
+no blended object has a level surface wider than 250 units. Nothing is built.
 
 Only if this game has water to classify. The classification must come from this
 disc's own data (Verdite3's `WaterRects`, from its scrolling slots; Verdite2's

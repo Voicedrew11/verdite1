@@ -233,5 +233,6 @@ two display buffers. Measured 2026-10-15 at `KF1_FPS=144`, `KF1_TICKRATE=20`,
 200 tick pairs standing in each of areas 1-5 after the warp: **no block changed in
 any area**. The control, a window that spans the warp into area 4, catches the
 load: one tick, blocks of 1,024 changed pixels from (320,0). A scroll written into
-a model's UVs in RAM would not show here, and none was looked for. Without a place
-in the game known to have flowing water or lava, none was visited.
+a mesh's UVs in RAM would not show here, so it was looked for on 2026-10-16: no byte
+of the map, the models or the bank records changes over 6 s standing in any area
+("Water: none to classify" in `GPU_RENDERER.md`).

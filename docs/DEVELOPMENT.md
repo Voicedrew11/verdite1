@@ -77,13 +77,16 @@ program; **nothing has been looked at by eye**.
    the position to (51000, -11500, 23000) and a step) loads `KF/B3`; the beacon
    reads `area` 3 and `loop` true again.
 6. Save: standing before a save point (a `poke` to (52850, -11500, 73500), yaw 0),
-   Circle, Circle: `carda.sav` gains `BISLPS-00017KF`, 5 blocks. A check:
+   Circle (the save screen), Circle (slot 1: a Yes/No), Circle (Yes), 150 ms each
+   and 1.5-2 s apart: `carda.sav` gains `BISLPS-00017KF`, 5 blocks, and `loop` is
+   true again. Cross leaves the save screen without writing. A check:
 
    ```bash
    python3 -c "d=open('carda.sav','rb').read();print([d[i*128+10:i*128+30].split(b'\0')[0] for i in range(1,16) if d[i*128]==0x51])"
    ```
-7. Load it from the in-game menu: Cross, Down x5, Circle, Circle, Right,
-   Circle; the position becomes the save's.
+7. Load it from the in-game menu: Cross, Down x5 (0.6 s apart), then Circle four
+   times, 1.5 s apart (the load screen, its row, the reader's row, Yes); the
+   position becomes the save's and `loop` is true.
 8. No `unmapped call` anywhere in the log.
 
 Re-run 2026-10-14 against fork `c79d32f` and Verdite Core `674e51c`: steps 1-6
@@ -91,8 +94,12 @@ and 8 pass (the walk moved 4003, the exit loaded area 3, the save rewrote
 `carda.sav`). **Step 7 did not reproduce as written, on this build and on the one
 before the pull alike**: after the save's second Circle the loop stays stopped
 (the save screen is still up, and Triangle does not close it), so the menu
-presses that follow do not reach the load screen. The recipe for leaving the save
-screen is to be found; the pull changed nothing here.
+presses that follow do not reach the load screen. The pull changed nothing here.
+**Found 2026-10-16**: the save's second Circle opens a Yes/No, and a third writes
+and closes it; the screens never test Triangle. With the recipes above, steps 6
+and 7 both pass (the save written, then loaded from (31000, -11500, 4000) back to
+(52850, -11500, 73564)). That the card changed after two Circles on 2026-10-14
+may be GAME's set-up writing and erasing `KFTMP`; not checked.
 
 Since `0106` the runtime keeps `carda.sav.bak` beside the card each session
 (gitignored).
@@ -119,16 +126,20 @@ on this game's addresses:
   [bytes]`, `dump <file>` (the 2 MB of RAM, for diffing), `poke <hex addr> <hex
   bytes>` (a diagnostic: it writes the game's own state), `view [x y z pitch yaw
   roll | off]` (draw from a fixed camera; needs the renderer in C#), `warp <area 1-5>
-  <x> <z> [yaw]` (queues an area transition, run on stage A: `func_80036850` with
-  entry 0, then x, z, yaw and the cell bytes written at the requested values; the
-  reply is `queued`, and `state` carries `"warp"` with `done` once it has run),
-  `help`. Two warps are known bad (2026-10-15). Area 2 at (61000,113000) drops
-  the player through the floor. A tour of warps through areas 1-4 that ends in area
+  <x> <z> [yaw|-] [entry]` (queues an area transition, run on stage A:
+  `func_80036850` with the entry, 0 unless given, then x, z, yaw and the cell
+  bytes written at the requested values, and the floor word `0x800A0834` and y
+  from the cell's height; the reply is `queued`, and `state` carries `"warp"` with
+  `done` once it has run), `help`. Before 2026-10-16 the warp left the floor as it
+  was, and every cell higher than the one left (area 2 at (61000,113000), area 5's
+  arrival room) dropped the player through the floor ("A warp" in
+  `GPU_RENDERER.md`). Area 5's creatures kill a New Game's 30 HP in one hit:
+  `poke 800A0790 e703e703` after arriving gives 999. A tour of warps through areas 1-4 that ends in area
   5 at (79000,139000) faults 7 of 7 times: the object walk `func_8001E9A4` reads
   `0x81175F49` from a TMD pointer at `0x80090FC8`. It does so in the plain recompiled
   game too (renderer, camera block and all 24 literal routines off), so it is the
   warp's state, not the port's code. A single warp straight to that cell
-  survived 7 of 7. Everything runs on the game thread, from the vblank. A poke of the position
+  survived 7 of 7. That tour was not re-run with the floor written. Everything runs on the game thread, from the vblank. A poke of the position
   (`0x800A0824`) can be lost to a stage that already holds the old one; check
   `state` after it.
 - **`KF1_AUTOSTART=new`** (`patches/AutoStart.cs`): Start is pulsed through

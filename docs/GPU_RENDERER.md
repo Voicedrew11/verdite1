@@ -97,14 +97,50 @@ player stands in area 1 at (31000, 5000) with HP 30; the renderer ran at 60-145
 calls a second throughout. Poking `0x800A0822` to `0xFF` does not kill the player:
 the eye jolts for a second and play goes on.
 
-**The ending** (read, not run): `func_80036AF0` returning non-zero makes the main
-loop store `0xFE` in its exit flag `0x800958F8`; GAME.EXE then hands `0xFE` to
+**The ending**: `func_80036AF0` returning non-zero makes the main loop store
+`0xFE` in its exit flag `0x800958F8` (line 506); GAME.EXE then hands `0xFE` to
 OPEN.EXE, which loads `B0\END.` and `B0\ENDG.` and presents through its own
-`func_80016DD0`.
+`func_80016DD0`. The only exit that returns non-zero is area 1's handler on the
+New Game's start cell (z 2, x 15, lines 52976-52986), and only while the byte
+`0x8009F847` is non-zero; `func_8002EDD4` and `func_8002F8CC` write it, and what
+sets it in play is not traced. Poking `0x800958F8` does nothing: the loop only
+writes it. **Run 2026-10-16**: with `0x8009F847` left at 0, walking onto the
+cell does nothing; poked to 1, walking onto it fires the exit, GAME.EXE gives way
+to OPEN.EXE, and `END.`, `ENDG.`, `MIX9.`, `MIXAE.`, `MIXAF.`, `MIXAG.`,
+`MIXBE.` and `RTBL.` are read from `KF/B0`. After the last read OPEN.EXE presented
+about 60 `PutDispEnv` a second for 4 to 6 minutes with no further read and no
+return to the title. Whether the ending is over and waiting for a button there is
+for a person to see.
 
-OPEN.EXE's `func_8001A82C` presents through its own `PutDrawEnv`/`PutDispEnv`
-and has no 3D; no word in OPEN.EXE or `KF/B0` holds its address, so its caller,
-an indirect call, is still not found.
+**The title and attract, run 2026-10-16** with no input for 3 minutes: OPEN.EXE
+stays up throughout and repeats a 30 s cycle, reading `KF/B0`'s `MIXA0.`,
+`MIXA1.`, `MIXB0.`, `OPEN0.` and `OPEN1.` each time: about 20 s at 20 to 45
+`PutDispEnv` a second, then about 10 s with no SDK call and no present at all,
+then the reads again. What the quiet 10 s is (a pause by design, or a wait the
+port does not satisfy) is open; it recovers every cycle. Three Starts then reach
+area 1 as usual. The pacing and stage probes count only in GAME.EXE, so these
+rates are `KF1_LOG=sdk`'s `PutDispEnv` lines.
+
+**The save and load screens, run 2026-10-16** (recipes in "The acceptance test",
+`DEVELOPMENT.md`): both open, write or read card A, and return to the loop. They
+test only Up `0x1000`, Down `0x4000`, Circle `0x20` and Cross `0x40`, so
+Triangle does nothing in them; Cross leaves. The save's second Circle opens a
+Yes/No (`func_800286D4`, from `func_800250C4` at line 22474), and the third
+(Yes) writes the card and closes the screen, which is the "stays up" of the
+earlier acceptance run. The load screen `func_80024E64` hands row 0 to the reader
+`func_8002552C`, whose Circle opens the same kind of confirmation; the fourth
+Circle after the menu's loads.
+
+**OPEN.EXE's `func_8001A82C` has no caller on the disc** (searched 2026-10-16):
+no word, `j`/`jal`, `lui`/`addiu` or `lui`/`ori` pair, halfword table entry or
+branch in OPEN.EXE, GAME.EXE, PSX.EXE or anywhere in the disc image yields
+`0x8001A82C`, and the word before it is a `jr ra` and its delay slot, so nothing
+falls into it. OPEN.EXE's 57 `jalr` sites load from slots that are filled at run
+time from arguments or return values. Read from the code, it is a
+display-position adjuster: it loops while R1 is held, and the four face buttons
+step an x/y pair by 4 (x masked `0x3FF`, y `0x1FF`), presenting through its own
+`PutDispEnv`/`PutDrawEnv`. Most likely a debug screen nothing reaches; only a
+watch on those slots at run time would rule a call in.
 
 ## What is on the disc for each area
 
@@ -124,8 +160,12 @@ The area loader is `func_8001B558`, from `func_80036554`. Paths are
 - `MIXB.DAT`: five chunks (four in `B5`). **0 and 1 are TMDs** of 135 and 200
   objects in every area, read by `func_8001C5B0`; 2-4 go to `func_800204C0`.
 
-**Chunk 0 is the map and chunk 1 the models**: `func_8001E83C` selects TMD 0
-(`func_8001C0E8(0)`) and `func_8001F218` TMD 1. `func_8001C5B0` stores the
+**Chunk 0 is the models and chunk 1 the map** (corrected 2026-10-16; this said
+the reverse before). The loader hands chunk 0 to slot 1 and chunk 1 to slot 0: in
+RAM, area 1's TMD 1 (`*0x80090FAC` = `0x800E7BF0`) is chunk 0's 274,592 bytes,
+and TMD 0 (`*0x80090FA8`) starts 4 bytes after it, at `0x8012AC94`, the next
+chunk's length word skipped. `func_8001E83C` selects TMD 0, the map
+(`func_8001C0E8(0)`), and `func_8001F218` TMD 1. `func_8001C5B0` stores the
 pointer at `0x80090FA8 + 4 * n` and calls the TMD walker `func_8001C2B0`, which
 turns the primitives' vertex and normal indices into byte offsets (`<< 3`) in
 place; the writers then read the primitives as they lie. The map walk takes the
@@ -139,7 +179,7 @@ not found.
 Census, every TMD parsed with no gaps or overlaps (a scratch reader over the
 disc; light-source calculation is on in every primitive):
 
-| area | map verts | map prims | F3 | F3 semi | FT3 | FT4 | G3 | G3 semi | GT3 | G4 | model verts | model prims (FT4) | bank records (2/3/4) | cell values |
+| area | model verts | model prims | F3 | F3 semi | FT3 | FT4 | G3 | G3 semi | GT3 | G4 | map verts | map prims (FT4) | bank records (2/3/4) | cell values |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | 5552 | 8451 | 4019 | 64 | 1025 | 494 | 2548 | 0 | 20 | 281 | 5741 | 3788 (3501) | 6/18/7 | 71 |
 | 2 | 4398 | 6435 | 2259 | 64 | 1497 | 472 | 1282 | 320 | 260 | 281 | 6695 | 4397 (4160) | 4/18/8 | 86 |
@@ -147,11 +187,39 @@ disc; light-source calculation is on in every primitive):
 | 4 | 4946 | 7712 | 2741 | 64 | 1229 | 304 | 1951 | 832 | 310 | 281 | 5009 | 3280 (2952) | 2/18/7 | 61 |
 | 5 | 3769 | 5583 | 1384 | 216 | 1184 | 222 | 1436 | 860 | 0 | 281 | 5670 | 3715 (3420) | 2/18/- | 70 |
 
-The models' other primitives are F3, FT3 and a few F4. **The map writer takes only
-FT3 and FT4**, so most of chunk 0's primitives (F3, G3, G4) never reach a
-packet through it: who reads them, if anything, is open. Area 5's MIXB has no
-chunk 4; whether the loader's fourth call reads past the table there is not
-checked.
+(The first column group is chunk 0, the models, and the second chunk 1, the map;
+the headings said the reverse before 2026-10-16.) The map's other primitives are
+F3 (55-155 an area), FT3 and a few F4. **The map writer takes only FT3 and FT4**,
+and the objects the cell grid names hold 2,494 FT4 and 84 FT3 in area 1 against 3
+F3 or F4 at most (11 F3/F4 and 3-11 F3 in areas 2-5): those few are skipped, and
+nothing else reads the map's TMD (2026-10-16: the slots' only reader is the
+accessor `func_8001C114`, whose callers each select their own TMD first, and the
+map is selected only between `func_8001E83C` and `func_8001F218`). The models'
+F3, G3 and G4 are drawn by the general writer `func_8001C7F8`, which takes every
+code. Area 5's MIXB has no chunk 4; whether the loader's fourth call reads past
+the table there is not checked.
+
+**The bank records** (chunks 2-4; read 2026-10-16 from `func_800204C0`,
+`func_8002059C` and the pose blender `func_800205D4`, and parsed over all five
+areas). A chunk is `u16` count, `u16` (0 in `B1`), then the records, each from
+the next slot (chunk 2 from `0x0A`, 3 from `0x1E`, 4 from 0; `0x14` is the arm's
+and `0x15` the compass's, set by `func_8002055C`). Offsets are from the record:
+
+| field | what |
+|---|---|
+| `+0` | the record's size |
+| `+4` | **the clip count**; 0 is a rigid model, and the blender returns before its tables |
+| `+8` | the offset of a one-object TMD; `func_8002059C` makes it the current TMD (`0x80090FC8`) |
+| `+0xC` | the offset of the key table: record offsets of keys, as many as fit before the first key |
+| `+0x10` | the offset of the clip table (20 in all 134 records): one record offset a clip |
+| clip | `u16` segment count, `u16` (20 in all 155 clips), then a record offset a segment |
+| segment | `u16` flag (0 in all 492), `u16` duration, `u16` the key it starts from, `u16` K and K key indices; a clip's durations sum to 4096 |
+| key | `+0` (0 seen), `+4` first vertex, `+8` count, then count 8-byte entries, which `gteMIMefunc` adds to those vertices at the segment's weight |
+
+88 records are rigid and 46 posed; chunk 3, the shared effects (the same domes,
+spheres and column in every area), has one posed record an area but none in
+`B5`. Not explained: some records repeat a key, and in 19 of the 46 the key
+table is one longer than the segments name.
 
 ## A warp
 
@@ -180,6 +248,33 @@ no good cell yet**: of six cells round its exit, two fell and four stood, at
 y -12700, and the player died within 1-13 s each time and woke in area 1. Area 5
 is entered with entry 1 and the verb sends 0, which is the first suspect. The
 music is not checked.
+
+**Why warps fell, found 2026-10-16: the floor word.** The eye's y follows the
+floor under it, `s32[0x800A0834]` (-10000 on the New Game's cell), 1500 above,
+and the transition leaves both as they were. A warp from a `0x64` cell (floor
+-10000) into a `0x70` cell (floor -11200) put the feet 1,200 under the floor, and
+nothing stops a fall from under it. The cells that fell are all `0x70`: area 5's
+arrival room, area 4's (13000, 45000) and (15000, 45000), and area 2's (61000,
+113000) and (59000, 113000); the ones that stood are `0x64`, or lower (area 2's
+(57000, 37000) is `0x58`: arriving above a floor drops onto it). Writing y alone does not hold, because the next tick takes it
+from the floor word again. The verb now writes the floor, `-100·h` from the
+height grid, and y 1500 above it. Measured: the arrival cell (79000, 139000) with
+entry 0 and 1, (77000, 137000), area 4 (13000, 45000) and area 2 (61000, 113000)
+each stand at -12700. The 2026-10-15 fault after a tour of warps was not
+re-run with the floor written.
+
+**Why area 5 killed the player: a creature.** With HP raised to 999 after
+arriving at (79000, 139000), entry 1, two runs of four took hits within 10-16 s:
+155 HP a hit, and once 39, every 1-7 s, each followed by `0x800A0822` counting 1
+to 8 and back to 0 (the flinch; `0xFF` is death). At a New Game's 30 HP one hit
+kills, which is what happened in the earlier runs: the deepest area at level 1,
+not a port fault. The other two runs were not attacked in 60 s. For a repeatable
+corpus in area 5, raise HP (`poke 800A0790 e703e703`, 999/999) after arriving.
+Entry 1 (the real one, `func_80036AF0`'s area-4 handler, lines 53061-53062) is
+kept in `0x800A078C`, and `func_8001B558` loads a different object set for it
+(line 9353 on); the warp does not depend on it. Area 5's own handler sends the
+arrival cell back to area 4, so `warp 5 79000 139000 - 1` arrives on an exit, and
+the last-cell bytes keep it from firing.
 
 ## Measured: who submits, and how full the buffer gets
 
@@ -694,3 +789,33 @@ at the game's edge when the distance is off.
 
 Since the fog is black by 9.17 cells, a distance past that adds only black at
 4:3. What it buys is the wide aspect's side cells, and the fade's softer edge.
+
+## Water: none to classify (Step 5, 2026-10-16)
+
+**This game has no surface the siblings' rule would call water**, so `Murk`,
+`Waves`, `WaterSwell` and the reflections have nothing to draw on and are not
+built. Both siblings call a face water when it is **blended and samples a
+scrolling texture** (Verdite3's `WaterRects`, Verdite2's fluid slots); this disc
+has neither half:
+
+- **Nothing scrolls.** `KF1_VRAMCENSUS` saw no VRAM block change in 200 ticks
+  standing in each of areas 1-5 ("Textures" in `SMOOTHING.md`). A scroll written
+  into a mesh's UVs in RAM would not show there, so RAM was compared: two dumps 6
+  s apart, standing in each area, change **no byte** of the map TMD, the model TMD
+  or any bank record (areas 1-4 after a warp; area 5 at its arrival with HP
+  raised; the controls changed 395 and 53,497 bytes elsewhere in RAM).
+- **No textured face is blended.** No map or model primitive on the disc has the
+  textured semi codes (`0x26`, `0x2E`, `0x36`, `0x3E`); the map writer
+  takes only `0x24` and `0x2C`. Every blended face is untextured.
+- **No blended object is a surface.** Every TMD object with a blended face, in
+  the two TMDs and the banks of all five areas, parsed from the disc: the model
+  TMD's objects 40, 41, 47 (and area 5's 11 and 42) are 100-540 units across, under
+  a cell's 2000; the banks' are domes, spheres and a 2000-tall column (chunk 3, the
+  same in every area, pale yellow: spell effects by their shape, not confirmed),
+  and four meshes in chunks 2 and 4 of 128-617 faces, standing 1,375-1,900 tall. Counted by corners at one height, **none has a level face** except area
+  5's object 42 (24 of 152, 250 units across). The control, the map's opaque
+  untextured faces, finds 515 level ones.
+
+What the user may still know: if a place in the game shows water or lava, its
+cell and area would say which mesh draws it, and these checks would be re-run on
+that mesh.
