@@ -198,6 +198,10 @@ Kf1.VBlankPacing.Configure(Environment.GetEnvironmentVariable("KF1_VBLANKPACING"
                            Environment.GetEnvironmentVariable("KF1_VBLANKPACING_PROBE"));
 Kf1.VBlankPacing.Install();
 
+// The sign's picture and the card message wait on the pad with no frames: the
+// hang watchdog is paused while they run.
+Kf1.FramelessWaits.Install();
+
 // Scripted pad input, seconds:button:holdMs, timed from GAME.EXE's load, or from
 // OPEN.EXE's with KF1_AUTOPAD_FROM=open (the title needs input to reach the game):
 //     KF1_AUTOPAD=5:Start:1000,8:Circle:200

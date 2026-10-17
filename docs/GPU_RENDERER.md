@@ -82,7 +82,7 @@ by the menu after the last present, are ever drawn.
 pacing as on the console: the area load, the area change, the fade, and the
 interactions `80033820`, `80033D80` and `80034438`. The menu, save and load
 screens and the exit picture wait a `VSync(0)` a frame. The card message presents
-once, then spins on the pad. **Death has no loop**: stage A steps it once a tick
+once, then spins on the pad. The event picture also presents nothing once its fade is done, so both loops pause the runtime's hang watchdog while they run (`patches/FramelessWaits.cs`): before 2026-10-16, a sign read for 15 s wrote a hang report to `crashes/`, in the Step 8 tours under pacing. **Death has no loop**: stage A steps it once a tick
 and calls the renderer twice on the tick the roll ends. **The area-5 scene
 `800346A8` and the event picture had no wait under pacing**. They are held now
 ("Menus wait for a vblank" in `docs/DEVELOPMENT.md`).
