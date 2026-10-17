@@ -148,9 +148,9 @@ routine standing in for a submitter. Measured at `KF1_FPS=144`: one swing draws
 
 `func_8001F8B0`, called by the renderer earlier, poses model `0x15` (record at
 `0x80055D74`: on at `+0`, clip `+1`, time `+2`, pose buffer `+0x18`) turned by
-the negated yaw of the renderer's own camera copy (`0x80095756`) every frame: a
-view-fixed model, likely the compass. It follows the carried camera with nothing
-more; its own clip is not carried.
+the negated yaw of the renderer's own camera copy (`0x80095756`) every frame: the
+compass needle. It follows the carried camera with nothing more ("The HUD", below);
+its own clip is not carried.
 
 ## Sprites and the eye
 
@@ -214,6 +214,39 @@ Measured 2026-10-17, `KF1_FPS=144`, a New Game in area 1, item 5 poked into
 the ring's slot (`poke 8009506E 05`), the world at 15 Hz: the countdown ran
 `0F` to 0, then **39 frames carried with 39 distinct angles** over the four steps of
 the turn. Without the carry, those frames draw 4. **Not judged by eye.**
+
+## The HUD
+
+Verdite3's `Stage15.CarryNeedle` and `CarryFollowers` were the models
+(`docs/SMOOTHING.md` there, "3e"); only the second is needed here.
+
+**The bars** (`patches/HudSmoothing.cs`, `KF1_SMOOTH_GAUGES=0` compares). The
+renderer's gauge block builds the four bars' lengths every frame from HP
+`0x800A0792`, MP `0x800A0796` and the two charge gauges `0x800A0798`/`079C`
+("The renderer in C#" in `GAME_INTERNALS.md`), which the stages step once a tick,
+so under pacing the bars moved 15 times a second. While the view is carried the four
+are written between their last two tick samples for the block and put back right
+after it; the maxima are not touched. A value that changes off the tick (a poke)
+restarts its samples. It needs the renderer in C# (`KF1_RENDERER`), and stays off
+under the renderer's `verify` replay.
+
+**The needle is not a spring here**, unlike Verdite2's and Verdite3's: the block
+next to the gauges writes it straight from the drawn camera's yaw
+(`0x80055D86 = -yaw`), so it turns exactly as the carried view does, on every
+frame, and has no position of its own to swing into. Nothing was held or carried
+for it.
+
+Measured 2026-10-17, `KF1_FPS=144`, the world at 15 Hz, a New Game in area 1,
+`KF1_HUD_PROBE=1` (a line every 2 s), holding Left for 4.5 s then swinging:
+
+- **the needle** moved on 287 of 288 frames while turning, a mean of 2.8-2.9
+  angle units a frame (about 420 a second, the turn's 28 a tick), at most 6 in a
+  frame; under the compass routines' `verify` a stalled window (281 frames) drew
+  one step of 18. Standing, 0 of 288;
+- **the bars**, refilling the charge after a swing: carried on 88-202 of 288
+  frames, 0 at full charge.
+
+**Not judged by eye**: the bars filling, and the needle turning.
 
 ## Loops that draw their own frames
 

@@ -59,7 +59,9 @@ first: the GPU path is judged against it.
    Then the tick rate at 20 (the console's) against 15. *Decide*: pacing's
    default, and 15 or 20.
 2. **Creatures, objects and the arm carried.** `area4-creature`, then swing
-   (Triangle). Look at: the creature's walk and the arm's swing between ticks.
+   (Triangle). Look at: the creature's walk and the arm's swing between ticks,
+   and the charge bar refilling after the swing. Turning, the compass needle
+   (sub-pixel on and off).
 3. **The menus and screens** at pacing on: Cross (the menu, 60 presents a
    second), the save screen at `area1-save`, the load screen (menu, Down x5,
    Circle). Look at: the cursor, the windows, the Yes/No.

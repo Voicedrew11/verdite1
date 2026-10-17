@@ -140,6 +140,11 @@ Kf1.ModelSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH_MODE
                              Environment.GetEnvironmentVariable("KF1_SMOOTH_MODELS_PROBE"));
 Kf1.ModelSmoothing.Install();
 
+// The HUD's bars carried between ticks with the view (KF1_SMOOTH_GAUGES=0 compares).
+// See "The HUD" in docs/SMOOTHING.md.
+Kf1.HudSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH_GAUGES"),
+                           Environment.GetEnvironmentVariable("KF1_HUD_PROBE"));
+
 // The picture: 24-bit shading, no dither, perspective, sub-pixel and the Z-buffer,
 // each off until judged. See docs/PICTURE.md.
 Kf1.TrueColor.Configure(Environment.GetEnvironmentVariable("KF1_TRUECOLOR"));

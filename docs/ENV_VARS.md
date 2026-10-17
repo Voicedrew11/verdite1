@@ -51,6 +51,8 @@ switch is added.
 | `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |
 | `KF1_SMOOTH_PROBE` | off | `1`: a view-smoothing line a second |
 | `KF1_SMOOTH_MODELS` | on | `0`: the model walk's records and clips not carried under pacing |
+| `KF1_SMOOTH_GAUGES` | on | `0`: the HUD's bars on the tick, not carried with the view |
+| `KF1_HUD_PROBE` | off | `1`: a line every 2 s: bars carried, the needle's step a frame, the compass's vertices mapped and with a fraction |
 | `KF1_SMOOTH_MODELS_PROBE` | off | `1`: a model-smoothing line a second: drawn and carried by table, poses, held cels, snaps |
 | `KF1_NODITHER` | off | `1`: no ordered dither (`docs/PICTURE.md`) |
 | `KF1_NODITHER_PROBE` | off | `1`: a dither line every 2 s |

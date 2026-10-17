@@ -217,9 +217,14 @@ public static class Renderer
         c.A0 = 0x80055FE8u;
         Call(c, mem, Site.LightMap);
 
+        bool hud = !Verifier.Replaying;
+        if (hud) HudSmoothing.BeforeGauges(mem);
         Gauges(c, mem);
+        if (hud) HudSmoothing.AfterGauges(mem);
         Compass(c, mem);
+        uint compassFrom = hud ? HudSmoothing.BeforeCompass(mem) : 0u;
         Call(c, mem, Site.Compass);
+        if (hud) HudSmoothing.AfterCompass(mem, compassFrom);
 
         // The HUD's light colours, then its sprite records.
         c.V1 = mem.ReadU16(0x80095062u);
