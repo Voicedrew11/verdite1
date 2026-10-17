@@ -21,6 +21,10 @@ namespace Kf1;
 /// read the clock); the countdown is put back less the polls taken, and a handler due
 /// runs at the next poll after the call. **The recompiled result stands.** Step 1 of docs/RENDERER_PLAN.md; see "The draw path
 /// in C#" in docs/GPU_RENDERER.md.
+///
+/// A routine may also have a <c>twin</c>: the same drawing written plainly over memory,
+/// as <see cref="MenuDraw"/> is. Verify runs it a third time from the same entry and
+/// compares RAM and the scratchpad only, since it keeps no registers.
 /// </summary>
 public sealed class Literal
 {
@@ -34,6 +38,7 @@ public sealed class Literal
 
     readonly Type _owner;
     readonly Action<CpuContext, PSMemory> _body;
+    readonly Action<CpuContext, PSMemory>? _twin;
     readonly string _tip;
     Mode _mode = Mode.On;
     bool _queued, _hooked;
@@ -47,13 +52,16 @@ public sealed class Literal
     readonly ModInfo _self;
 
     /// <param name="owner">The class holding a static <c>Replace(orig, c, m)</c> that forwards here.</param>
-    public Literal(Type owner, string name, string env, uint address, Action<CpuContext, PSMemory> body, string tip)
+    /// <param name="twin">The plain version, read from the entry registers; checked under verify.</param>
+    public Literal(Type owner, string name, string env, uint address, Action<CpuContext, PSMemory> body, string tip,
+                   Action<CpuContext, PSMemory>? twin = null)
     {
         _owner = owner;
         Name = name;
         Env = env;
         Address = address;
         _body = body;
+        _twin = twin;
         _tip = tip;
         _self = new ModInfo
         {
@@ -174,7 +182,7 @@ public sealed class Literal
     readonly uint[] _padBefore = new uint[Differential.PadWords], _padTheirs = new uint[Differential.PadWords],
                     _padOurs = new uint[Differential.PadWords];
     readonly Gte.State _gteEntry = new(), _gteTheirs = new(), _gteOurs = new();
-    long _calls, _bad, _interrupted;
+    long _calls, _bad, _interrupted, _twinBad;
     readonly List<string> _samples = [];
     double _reportAt;
 
@@ -237,6 +245,24 @@ public sealed class Literal
             }
         }
 
+        if (_twin != null && slowTheirs == slow)
+        {
+            _before.CopyTo(ram);
+            Differential.LoadPad(mem, _padBefore);
+            c.Restore(entry);
+            _twin(c, mem);
+            Differential.SavePad(mem, _padOurs);
+            int hi = (int)(entry.SP & (uint)(ram.Length - 1));
+            int lo = Math.Max(0, hi - (int)StackWindow);
+            string? why = Differential.Describe(ram, _theirs, 0, lo) ?? Differential.Describe(ram, _theirs, hi, ram.Length)
+                       ?? Differential.DescribePad(_padOurs, _padTheirs);
+            if (why != null)
+            {
+                _twinBad++;
+                if (_samples.Count < 8) _samples.Add($"twin {at}: {why}");
+            }
+        }
+
         // The recompiled result stands.
         _theirs.CopyTo(ram);
         Differential.LoadPad(mem, _padTheirs);
@@ -248,10 +274,10 @@ public sealed class Literal
         if (now < _reportAt) return;
         _reportAt = now + 2.0;
         Console.WriteLine($"[KF1] verify {Name} (func_{Address:X8}): {_calls} call(s), {_bad} mismatch(es), " +
-                          $"{_interrupted} interrupted");
+                          $"{_interrupted} interrupted" + (_twin != null ? $", twin {_twinBad} mismatch(es)" : ""));
         foreach (var s in _samples) Console.WriteLine($"[KF1]   {s}");
         _samples.Clear();
-        _calls = _bad = _interrupted = 0;
+        _calls = _bad = _interrupted = _twinBad = 0;
     }
 
     /// <summary>KF1_LITERAL_DUMP=dir: the first mismatch of each routine writes the

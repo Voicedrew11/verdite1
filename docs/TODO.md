@@ -149,6 +149,6 @@ re-found on this disc's addresses; nothing here is known to apply yet.
 
 Left out by decision, with the reasons in `RENDERER_PLAN.md` and
 `GPU_RENDERER.md`: `EvenFog`, `Pgxp`, the water family, `ViewClip`,
-`NearScreen`, `MenuWorld`, `MenuDraw`, `PrimBuffer`, the sky, `FrameCapture` and
+`NearScreen`, `MenuWorld`, `PrimBuffer`, the sky, `FrameCapture` and
 `FrameViewerPanel`. V2's `FrameSmoothing`, `ObjectSmoothing` and `AnimSmoothing`
 are superseded by V3's `ViewSmoothing` and `ModelSmoothing`.

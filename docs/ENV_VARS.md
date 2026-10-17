@@ -39,8 +39,9 @@ switch is added.
 | `KF1_PROFILE_FUNCS` | off | `stages`, or `game:hex+hex` to time more functions: an empty pre-hook makes each one a section |
 | `KF1_RENDERER` | on | `0`: the recompiled renderer (stage I); `verify`: both, compared (`docs/GAME_INTERNALS.md`) |
 | `KF1_CAMERABLOCK` | on | `0`: the recompiled camera block; `verify`: both, compared |
-| `KF1_LITERAL` | on | `0`/`1`/`verify` for all 24 draw routines at once; each `KF1_<NAME>` below overrides it ("The draw path in C#", `docs/GPU_RENDERER.md`) |
+| `KF1_LITERAL` | on | `0`/`1`/`verify` for all 35 routines (the 24 draw routines and the 11 menu writers) at once; each `KF1_<NAME>` below overrides it ("The draw path in C#", `docs/GPU_RENDERER.md`) |
 | `KF1_<NAME>` | on | one draw routine: `0` recompiled, `verify` both, compared. Names: `VERTEXCACHE`, `VERTEXCACHE_ARM`, `VERTEXCACHE_COMPASS`, `POLYASSEMBLER`, `POLYASSEMBLER_CACHED`, `MAPASSEMBLER`, `SPRITEASSEMBLER`, `HUDSPRITEASSEMBLER`, `MAPCELL`, `MAPWALK`, `SUBMIT_OBJECT`, `SUBMIT_INTERACTION`, `BANKMODEL`, `SUBMIT_SPRITE`, `SUBMIT_CREATURE`, `SUBMIT_PERSON`, `MODELWALK`, `ARM`, `COMPASS`, `HUDSPRITES`, `ITEMDISPLAY`, `POSEBLEND`, `POSEMARK`, `POSESWEEP` |
+| `KF1_MENU_<NAME>` | on | one menu writer, as above; `verify` also runs its `MenuDraw` twin. Names: `FRAMEHEAD`, `QUAD`, `LINK`, `TEXT`, `DIGITS`, `NUMBER`, `PANEL`, `PANELINSET`, `WINDOW`, `PREBUILTA`, `PREBUILTB` ("The menu path in C#", `docs/GPU_RENDERER.md`) |
 | `KF1_LITERAL_DUMP` | off | a directory: the entry, recompiled and C# RAM images at each routine's first verify mismatch |
 | `KF1_LITERAL_PROBE` | off | `1`: each draw routine's C# runs every 5 s |
 | `KF1_ITEMDISPLAY_HOLD` | on | `0`: the selected item's display steps on every frame under pacing, not once a tick |

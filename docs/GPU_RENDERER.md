@@ -483,6 +483,60 @@ With pacing at 144 fps and every routine on, the corpus plays. The walk runs
   24 routines clips or subdivides: the writers cull by NCLIP and drop a packet
   whose table slot is below 5 (the map writer also drops one at 0x4000 and above).
 
+## The menu path in C# (2026-10-17)
+
+Verdite2's `MenuDraw`, on this disc's routines. The menu's writers are transcribed
+literally in `patches/Menu/`, one `Literal` class each as in `patches/Draw/`, on
+by default, each with its own `KF1_MENU_<NAME>` (`KF1_LITERAL` covers them too):
+
+| routine | address | `KF1_MENU_` | what |
+|---|---|---|---|
+| frame head | `8002ABB4` | `FRAMEHEAD` | flips `u8[0x80070E98]`, points the record `0x80070EB8` at `0x80070EA0 + 12 × idx` and the table `0x80090EBC` at `0x80070EBC + (idx << 16)`, `ClearOTagR` of 0x4000 |
+| quad | `8002ACCC` | `QUAD` | `SetPolyFT4` at the packet pointer `0x80057E88`, colour 0x60 |
+| link | `8002AD1C` | `LINK` | `AddPrim` at slot a0, the pointer moved 0x28 and mirrored into the record's +8 |
+| text | `80029DE0` | `TEXT` | glyph codes, 14 px a step, slot 1000; bits 0x1000/0x2000 add the dakuten/handakuten quad |
+| digits | `8002A310` | `DIGITS` | digit d from v = 11 × d, 7 px a step, slot 1000 |
+| number | `8002ADF8` | `NUMBER` | `(value, width, zeroPad, out)`: right-aligned, padded with 10 (blank) or 0, then 0xFFFF |
+| panel | `80029AB0` | `PANEL` | a template quad at (x − 4, y − 3), semi-transparent, slot 2000 |
+| panel inset | `80029C50` | `PANELINSET` | the same at (x − 18, y − 2), opaque |
+| window | `8002A510` | `WINDOW` | template `0x80058400` mirrored into four quads from (166, 16), slot 2900, then the buffer's four prebuilt packets from `0x800580E8` (0xA0 a buffer) at slot 3000 |
+| prebuilt A, B | `80027E58`, `80027EA0` | `PREBUILTA`, `PREBUILTB` | one prebuilt packet (`0x80058228`, `0x80058278`, + 0x28 × idx) at slot 2000 |
+
+A template is 12 bytes: tpage, CLUT, u8 u at +4, u8 v at +6, u16 w at +8 and h at
++0xA (the far UVs add the low bytes of w and h). The presenter `func_8002AC34` is
+not transcribed: under `verify` it would `VSync` and `DrawOTag` twice. Nor are the
+page painters (`80025F38`, `800264D8`, `8002718C`, `800279C4`, `80027B7C`,
+`80027EE4`, `80028914`, `80028A70`, `800291EC`, `800292F8`, `80025DA0`) or the
+modal loops that head and present (`80022348`, `80022608`, `80028380`,
+`800250C4`): they call the writers above, whose hooks fire.
+
+**`MenuDraw`** (`patches/Menu/MenuDraw.cs`) is the same drawing written plainly over
+`IMemory`, for features that add to a page (PORT SETTINGS, `GearCompare`,
+`MenuMouse`): `NewQuad`, `Link`, `AddPrim`, `Text`, `Digits`, `FormatNumber`,
+`Number`, `Panel` and `Window`, with no CpuContext and no stack. Each writer's
+`Literal` carries it as a *twin*: under `verify` it runs a third time from the same
+entry and is compared on RAM and the scratchpad only (it keeps no registers),
+reported as `twin N mismatch(es)`. The frame head and the prebuilt links have no
+twin.
+
+Measured with every writer at `verify`, touring the seven pages of the menu
+(`scratch/menutour.py`):
+
+| | translation on | translation off, 16:9 |
+|---|---|---|
+| quad, link | 142,091 | 92,095 |
+| text | 9,191 | 7,242 |
+| panel, inset | 4,695, 496 | 3,701, 397 |
+| digits, number | 3,910, 3,069 | 2,993, 2,352 |
+| frame head, window | 785, 720 | 663, 611 |
+| prebuilt A | 1 | 1 |
+
+0 mismatches and 0 interrupted in every routine, and the twins 0 in the second
+run (they did not exist in the first). With the translation off the open menu
+drew 6 dakuten and 2 handakuten quads (a RAM dump's FT4s at u 196/210, v 24), so
+both branches were compared. **Prebuilt B was never called**; nor were the save
+and load screens toured.
+
 ## The retained scene
 
 Step 3 of `docs/RENDERER_PLAN.md`, 2026-10-15. The map and the model walk's
