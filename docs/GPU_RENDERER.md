@@ -819,3 +819,46 @@ has neither half:
 What the user may still know: if a place in the game shows water or lava, its
 cell and area would say which mesh draws it, and these checks would be re-run on
 that mesh.
+
+## Widescreen and menus: nothing to open (Step 6, 2026-10-16)
+
+**No clip in this game's draw path is bound to the screen**, so `ViewClip` and
+`NearScreen` have nothing to widen. Every skip in the writers and their C# ports
+(`func_8001C7F8`, `8001D730`, `8001DE18`, `8001E230`, `8001E5EC`, `8001E9A4`;
+`patches/Draw/`, `RetainedMap`, `RetainedModels`) is NCLIP, an ordering-table
+slot (under 5, or `0x4000` and over), a primitive code, the buffer's end, or a
+cell, stencil or cone test in world space; none compares a screen coordinate
+with 320, 240, a multiple of them or the GPU's `|dx|`/`|dy|` limits, and no
+clip-volume table like Verdite2's is stored. The only 320 is the draw
+environment's clip from `func_8001BB94`, which the runtime's margin already
+widens. The `-64..384` screen bounds in `RetainedMap`/`RetainedModels` belong to
+`KF1_GPU_CHECK` and drop nothing.
+
+**The menus show no world, so `MenuWorld` would change the game, not fix it.**
+`func_8001BB94` sets the draw environments' `isbg` to 1 (black), and the menu's
+presenter `func_8002AC34` puts the same environment each frame. Measured with
+the in-game menu open at 16:9 (`KF1_LOG=sdk`): `PutDrawEnv env=0x80090EC0
+clip=(0,0)-320x240 isbg=1`, then `PutDispEnv` and `DrawOTag`, and no
+`MoveImage`, `StoreImage`, `LoadImage` or `ClearImage` anywhere in the run. There
+is no stored frame to paste: each menu frame is cleared to black, across the
+margin too (the runtime widens the background clear, `LibGpu.PutDrawEnv`), and
+the menu's FT4s are drawn over it. The save and load screens present through the
+same routine. The card message and the event picture turn `isbg` off for their
+own presents (lines 9549 and 31973) and back on after, so they draw over the
+last world frame left in the buffers; that is frozen on the console too. Whether
+the margin behind them reads right at a wide aspect is for a person to look at.
+`MenuDraw` is not needed: the menus' quads are 2D and inside the 4:3 columns.
+
+**`PrimBuffer` is not needed.** Measured at `KF1_FPS=144`, `KF1_GPU_WORLD=0`
+(`KF1_PRIMBUF_PROBE=1`), standing in area 1, standing in area 4 at (79000,
+71000), and turning there; peak of the 104,000-byte half:
+
+| aspect | area 1 | area 4 | area 4, turning |
+|---|---|---|---|
+| 4:3 | 22,124 (21.3%) | 45,136 (43.4%) | 43,784 (42.1%) |
+| 16:9 | 22,332 (21.5%) | 45,788 (44.0%) | 47,160 (45.3%) |
+| 21:9 | 22,504 (21.6%, the mean) | 45,056 (43.3%) | 48,004 (46.2%) |
+
+No frame ran out at any aspect. The first window after an area loads reaches
+about 28,800 at every aspect. The render distance draws only through the
+retained scene, so it adds no packets.

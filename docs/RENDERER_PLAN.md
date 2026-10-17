@@ -281,7 +281,12 @@ disc's own data (Verdite3's `WaterRects`, from its scrolling slots; Verdite2's
    Step 3. A second camera must not touch the simulation, the cels or the guest
    matrices.
 
-## Step 6: widescreen and menus on the new path
+## ~~Step 6: widescreen and menus on the new path~~
+
+**Not applicable, 2026-10-16** ("Widescreen and menus: nothing to open" in
+`GPU_RENDERER.md`): no clip in the draw path is bound to the screen, the menus
+clear to black and store no frame, and the packet buffer peaks at 46.2% at 21:9.
+Nothing is built.
 
 - **`ViewClip`** (Verdite2) and **`NearScreen`** (Verdite3): open the game's
   view-space clip and near-screen bounds to the aspect, where the C# assemblers

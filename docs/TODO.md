@@ -77,6 +77,9 @@ recompiled and running, following Verdite3's method but applied to this disc.
   (`RENDERER_PLAN.md`). **Open**: the title's quiet 10 s a cycle; whether the
   ending waits on a button; what sets the ending's flag `0x8009F847` in play.
   **To look at**: the ending's last screen and the title's quiet stretch.
+  Step 6 not applicable, 2026-10-16: nothing clips at the screen's edge, the
+  menus clear to black, and the packet buffer peaks at 46.2% at 21:9. **To look
+  at**: the margin behind the card message and the event picture at 16:9.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
