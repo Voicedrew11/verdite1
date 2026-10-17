@@ -58,7 +58,7 @@ public static class RetainedModels
     static readonly Dictionary<(uint Header, ulong Hash), Mesh> Meshes = new();
 
     /// <summary>Semi meshes whose blend mode was measured on a walk (KF1_SEMI_ABR, areas 1-4,
-    /// 2026-10-15): every face draws with ABR 0. Any other semi mesh stays on the packets.</summary>
+    /// 2026-10-15 and 2026-10-16): every face draws with ABR 0. Any other semi mesh stays on the packets.</summary>
     static readonly Dictionary<(uint Header, ulong Hash), int> SemiAbrTable = new()
     {
         [(0x80182240u, 0xACAAA2D522E4E149UL)] = 0,
@@ -68,6 +68,9 @@ public static class RetainedModels
         [(0x8016DA24u, 0xACAAA2D522CD262DUL)] = 0,
         [(0x800E9320u, 0x908D51EA6CBAFB69UL)] = 0,
         [(0x80163F4Cu, 0xACAAA2D522BE66F5UL)] = 0,
+        // Area 4's person-submitter mesh past the stencil, met only under the render
+        // distance (Step 8, 2026-10-16).
+        [(0x80156B70u, 0xCE0E2BF9261B866AUL)] = 0,
     };
 
     /// <summary>TileBias (GlMainView): a blended face's key is its table slot plus this.</summary>
