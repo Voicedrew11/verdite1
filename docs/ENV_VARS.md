@@ -18,6 +18,7 @@ switch is added.
 | `KF1_PACING_NOBOUNDARY` | off | `1`: leave `DrawOTag` unhooked, to test the watchdog |
 | `KF1_VBLANKPACING` | on | `0`: `VSync` calls outside the main loop's renderer call, and `DrawOTag`s with no `VSync` before them (the event picture), on the runtime's clock, a comparison |
 | `KF1_VBLANKPACING_PROBE` | off | `1`: a line a second of held `VSync` and `DrawOTag` calls |
+| `KF1_OPENPACING` | `3` | vblanks a frame for OPEN.EXE's 3D present (the attract, its fades, the ending); `1` is the runtime's 60 (`docs/GAME_INTERNALS.md`) |
 | `KF1_RATECENSUS` | off | seconds: the words that change on frames no stage ran |
 | `KF1_TINTPROBE` | off | `1`: full-screen tints, and the largest flat semi-transparent primitive, on tick and idle frames, every 2 s (`docs/SMOOTHING.md`) |
 | `KF1_VRAMCENSUS` | off | seconds: the VRAM blocks outside the display buffers that change between ticks |

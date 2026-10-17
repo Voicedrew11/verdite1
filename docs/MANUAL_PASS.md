@@ -129,8 +129,9 @@ backends without the retained path.
 
 ## 3. Outside the game proper
 
-1. **The title**: about 20 s of attract, then about 10 s with nothing presented,
-   every 30 s. Look at: whether the quiet stretch is a black screen by design.
+1. **The attract**: about 25 s at 20 fps, then the title, held 17 s by a timed
+   wait, every 50 s. Look at: the attract's speed. *Decide*: 3 vblanks a frame
+   (the default) or 2 (`KF1_OPENPACING=2`, 30 fps).
 2. **The ending** (`scripts/kf1sh.py poke 8009F847 01`, `scripts/kf1sh.py warp
    1 31000 5000`, then step off that cell and back onto it): OPEN.EXE presents for 4-6 minutes and does not return to the
    title. Look at: whether its last screen waits for a button.

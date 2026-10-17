@@ -104,7 +104,7 @@ a creature's 155-HP hits on a 30-HP player; the ending ran (from its flag at
 left by program; `func_8001A82C` has no caller anywhere on the disc (a debug
 display adjuster, read); the "map's" F3/G3/G4 were the models', the doc having
 swapped chunks 0 and 1; the bank records are decoded (clip and key tables). **Still
-open**: the title's quiet 10 s in each 30 s cycle; whether the ending waits on
+open**: whether the ending waits on
 a button at its end; what sets `0x8009F847` in play; the bank records' repeated
 keys.
 

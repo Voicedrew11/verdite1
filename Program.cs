@@ -198,6 +198,11 @@ Kf1.VBlankPacing.Configure(Environment.GetEnvironmentVariable("KF1_VBLANKPACING"
                            Environment.GetEnvironmentVariable("KF1_VBLANKPACING_PROBE"));
 Kf1.VBlankPacing.Install();
 
+// OPEN.EXE's 3D present (the attract, the ending) at 3 vblanks a frame, not the
+// runtime's 60. See "OPEN.EXE's frame rate" in docs/GAME_INTERNALS.md.
+Kf1.OpenPacing.Configure(Environment.GetEnvironmentVariable("KF1_OPENPACING"));
+Kf1.OpenPacing.Install();
+
 // The sign's picture and the card message wait on the pad with no frames: the
 // hang watchdog is paused while they run.
 Kf1.FramelessWaits.Install();

@@ -331,6 +331,27 @@ under `func_80036618` under `func_80014674`). `Program.cs` sets
 `LibEtc.VBlankFromPoll` (fork `0091`), and the interrupt poll the spin makes
 delivers the vblanks that are due: about 20 frames a second in the first area.
 
+## OPEN.EXE's frame rate
+
+The attract's loop (`0x80014984` in `func_80014804`) steps everything once a
+frame: the sway phase by `0x64` (a 41-frame period), the script `func_80014100`,
+two sprites a pixel each. Its present `func_80016DD0` (`DrawSync`, `VSync(0)`,
+`PutDrawEnv`, `PutDispEnv`, `DrawOTag`) is the only wait, so on the console the
+rate was the frame's cost. Recompiled it presented 60 a second and the attract
+ran too fast. `func_80016DD0` is also the present for the fades (`func_800137C4`)
+and the ending. No console measurement was found. **`patches/OpenPacing.cs` holds
+that one `VSync` call (return `0x80016DEC`) to 3 vblanks**, which is GAME.EXE's
+gate (`KF1_OPENPACING`, `1` for the old rate). Whether 2 (30 fps) is closer is for
+a person to judge.
+
+**The title's quiet stretch is a timed wait**: `func_8001455C` calls `VSync(0)`
+up to 1000 times (16.7 s), stops the music at 600, and leaves early on
+`*0x80043178` (a button). It draws nothing new, so the screen keeps the title. It
+calls `VSync` itself and is not held. Measured 2026-10-16 with `KF1_LOG=sdk`, no
+input: before the hold, 8 s of attract at 60 presents a second, a load, about 1 s,
+then the 17 s wait. With it, 25 s at 20, the same load and the same 17 s wait. The
+cycle is 50 s, not 30.
+
 ## The HUD and the menus
 
 The HUD and the menus are 2D: flat textured quads (`POLY_FT4`, op `0x2C`, `0x2E`

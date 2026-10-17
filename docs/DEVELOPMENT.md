@@ -191,7 +191,8 @@ has not been judged. Verdite3's mechanism on this game's loop:
 - **A watchdog**: no boundary for 500 ms and stage A ticks the world off the wall
   clock and paces the loop itself. `KF1_PACING_NOBOUNDARY=1` removes the
   boundary to test it.
-- OPEN.EXE keeps the runtime's 60 Hz throttle and its own waits.
+- OPEN.EXE keeps its own waits; its 3D present is held to 3 vblanks a frame
+  (`patches/OpenPacing.cs`, "OPEN.EXE's frame rate" in `docs/GAME_INTERNALS.md`).
 
 Measured 2026-10-05, a New Game in area 1, `KF1_FPS_PROBE=1`, and turning and
 walking by holding Left and then Up for a second on the command channel:

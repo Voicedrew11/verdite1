@@ -82,9 +82,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
   Step 5 (water) not applicable, 2026-10-16: nothing scrolls, nothing textured
   is blended, and no blended mesh is a surface. **To say, if known**: any place
   that shows water or lava. Step 0's open items worked through the same day
-  (`RENDERER_PLAN.md`). **Open**: the title's quiet 10 s a cycle; whether the
+  (`RENDERER_PLAN.md`). **Open**: whether the
   ending waits on a button; what sets the ending's flag `0x8009F847` in play.
-  **To look at**: the ending's last screen and the title's quiet stretch.
+  **To look at**: the ending's last screen, and the attract's rate (3 vblanks a frame
+  since 2026-10-16, `KF1_OPENPACING`; "OPEN.EXE's frame rate" in `GAME_INTERNALS.md`).
   Step 6 not applicable, 2026-10-16: nothing clips at the screen's edge, the
   menus clear to black, and the packet buffer peaks at 46.2% at 21:9. **To look
   at**: the margin behind the card message and the event picture at 16:9.

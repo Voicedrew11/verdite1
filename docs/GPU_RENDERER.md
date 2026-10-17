@@ -116,8 +116,8 @@ for a person to see.
 stays up throughout and repeats a 30 s cycle, reading `KF/B0`'s `MIXA0.`,
 `MIXA1.`, `MIXB0.`, `OPEN0.` and `OPEN1.` each time: about 20 s at 20 to 45
 `PutDispEnv` a second, then about 10 s with no SDK call and no present at all,
-then the reads again. What the quiet 10 s is (a pause by design, or a wait the
-port does not satisfy) is open; it recovers every cycle. Three Starts then reach
+then the reads again. The quiet stretch is the title's timed wait, and the attract
+ran at 60. Both are explained in "OPEN.EXE's frame rate" in `GAME_INTERNALS.md`. Three Starts then reach
 area 1 as usual. The pacing and stage probes count only in GAME.EXE, so these
 rates are `KF1_LOG=sdk`'s `PutDispEnv` lines.
 
