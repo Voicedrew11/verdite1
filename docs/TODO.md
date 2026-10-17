@@ -141,8 +141,9 @@ re-found on this disc's addresses; nothing here is known to apply yet.
   as text). Whether it fits beside the translation layer (fork `0093`) is open.
 - **Renderer.** `ProjectileLights`, once the glowing effects are identified (see
   Step 4 above).
-- **Mods.** `mods/` is empty: no debug mod (V3's `kf3debug`, V2's `kf2debug`) and
-  no map mod (V2's `map`). No `docs/MODS.md`.
+- **Mods.** ~~The debug mod~~ (V3's `kf3debug`, ported 2026-10-17 as
+  `mods/kf1debug`, `docs/MODS.md`; what is left to judge is listed there). No map
+  mod (V2's `map`).
 - **Shipping.** No launcher (`Verdite3.Launcher`), no `packaging/`, no
   `scripts/release.sh` or `prerelease.sh`, no `docs/PACKAGING.md`.
 

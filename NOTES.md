@@ -49,6 +49,7 @@ measured through Step 8 (2026-10-16); what is left is the user's manual pass,
 - [docs/RENDERER_PLAN.md](docs/RENDERER_PLAN.md) — the plan for porting Verdite2's and Verdite3's renderer work.
 - [docs/GPU_RENDERER.md](docs/GPU_RENDERER.md) — the plan's working log: who draws what, and where.
 - [docs/ENV_VARS.md](docs/ENV_VARS.md) — every `KF1_*` switch.
+- [docs/MODS.md](docs/MODS.md) — the runtime mods: the debug tools, their hooks, what is measured.
 - [docs/MANUAL_PASS.md](docs/MANUAL_PASS.md) — what is left to look at, where, and what to decide.
 - [docs/TODO.md](docs/TODO.md) — next steps: the Phase 2 bring-up.
 

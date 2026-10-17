@@ -165,7 +165,11 @@ public static class ViewSmoothing
     // is replaced by all of it, and the motion not yet spent is added on top.
     // Verdite3's ViewSmoothing lead; see "The mouse leads the tick" in docs/INPUT.md.
 
-    static bool Leading => Mouse.Lead && FramePacing.Enabled;
+    // Set by a mod whose own camera filter fights the lead: the debug mod's
+    // cinematic camera. The setting itself is left alone.
+    public static bool LeadSuppressed;
+
+    static bool Leading => Mouse.Lead && FramePacing.Enabled && !LeadSuppressed;
     static int _tickYaw, _tickPitch;
 
     static void TakeSpent(IMemory m)

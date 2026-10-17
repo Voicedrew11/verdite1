@@ -107,3 +107,8 @@ switch is added.
 | `KF1_CULLCONE_PROBE` | off | `1`: cells drawn a frame, cells added |
 | `KF1_TRANSLATION` | saved, off | `1`/`0`: the English fan translation this run, over the setting (`docs/GAME_INTERNALS.md`) |
 | `KF1_TRANSLATION_PPF` | a `*.ppf` beside the disc | the translation's patch file |
+| `KF1_DEBUG_NOCLIP`, `KF1_DEBUG_GODMODE`, `KF1_DEBUG_INFINITEMP`, `KF1_DEBUG_PEACEFUL` | off | `1`: the debug mod's switch on at boot, when the mod is enabled (`docs/MODS.md`) |
+| `KF1_DEBUG_HOTKEYS` | saved, on | `0`: the debug mod's hotkeys off |
+| `KF1_DEBUG_NOCLIP_SPEED` | saved, `6000` | noclip units a second |
+| `KF1_DEBUG_SPEED` | off | a multiplier: the walk/turn speed multiplier on at that value |
+| `KF1_DEBUG_ITEMS_PROBE`, `KF1_DEBUG_MAGIC_PROBE` | off | `1`: print the inventory or the spell book once in an area; `2` also gives one of each / learns all |

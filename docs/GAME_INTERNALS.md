@@ -51,8 +51,70 @@ A New Game starts at (31000, -11500, 4000), yaw 0, in area 1. Holding Up for a
 second walks about 4000 units along the facing; holding Left for half a second
 raised yaw by 280. The New Game set-up at `0x80015280` writes both halves of each
 HP and MP pair, and copies `0x800650B4`, `0x800650B6` and `0x800650B8` into
-`0x800A07A2`, `0x800A07A4` and `0x800A0784` (unidentified; `0x800A0784` reads
-50).
+`0x800A07A2`, `0x800A07A4` and `0x800A0784`: base STR, base MAG and the EXP for
+level 2 (20, 20, 50; the table below).
+
+### The rest of the block, and the routines that write it
+
+Read off the code 2026-10-17 for the debug mod (`docs/MODS.md`), and measured
+there where it says so.
+
+| address | type | what |
+|---|---|---|
+| `0x800A0780` | u32 | EXP, capped at 99999 by the level-up |
+| `0x800A0784` | u32 | EXP for the next level |
+| `0x800A0788` | u8 | level |
+| `0x800A0798`, `0x800A079C` | u16 | weapon and magic charge gauges, 5000 full; a cast needs 5000 |
+| `0x800A079E`, `0x800A07A0` | u16 | STR and MAG practice: +1 at 100 (`func_80015F28`, `func_80015FC0`) |
+| `0x800A07A2`, `0x800A07A4` | u16 | base STR and MAG (20 and 20 at a New Game) |
+| `0x800A07A6`, `0x800A07A8` | u16 | adjusted STR and MAG (STR -20 while poisoned), derived |
+| `0x800A07AA` | u16 | condition bits: 0 poison, 3 slows the walk and turn |
+| `0x800A07AC` | u32 | gold, 150 at a New Game |
+| `0x800A07B0`–`0x800A07B8`, `0x800A07BC`–`0x800A07C6` | 5, 6 × u16 | ratings the recompute sums from the equipment; meanings unresolved |
+| `0x800A07C8`–`0x800A07D2` | 6 × s16 | condition and effect timers, -1 off; `0x7C8` poison (600 on a poisoning hit), `0x7CA` set by a hit's flag bit 2 |
+| `0x800A07DC` | u8 | held spell, 0xFF none; `0x800A07E0` points at its record |
+| `0x800A07E4` | u8 | weapon; `0x800A07E8` points at `0x8009FF10 + 44·id` |
+| `0x800A0810`–`0x800A0815` | 6 × u8 | armour, 0xFF empty; record pointers at `0x7FC + 4·n` = `0x800A00DC + 28·id` |
+| `0x800A084A`–`0x800A084D` | 4 × u8 | cell z, x and the last cell z, x ("Changing areas") |
+
+- `func_80016058(s16 gain)`, the level-up: EXP += gain (cap 99999); if EXP ≥
+  next, **one** level (level < 255): max HP, max MP, the STR and MAG gains and
+  the next threshold from the 12-byte table at `0x800650B0` for levels below 40,
+  and the last two entries' difference above; caps 9999 and 999. Then the
+  recompute and a sound. HP and MP are not refilled.
+- `func_80015714`, the recompute: the ratings reset, adjusted STR and MAG from
+  base, and the weapon and armour records summed.
+- `func_80016A30(id)` sets the weapon, `func_80016848(id, slot 0-5)` an armour
+  slot (jump table `0x80012030`: slots 0-5 store `0x810`, `0x811`, `0x813`,
+  `0x814`, `0x812`, `0x815`); both end in the recompute. The equip menu
+  `func_800236AC` lists, per row, weapons 0-12, spells 4-8, then armour ids
+  26-31 (slot 4), 13-18 (0), 19-25 (1), 32-34 (2), 35-38 (3), 48-51 (5), and
+  refuses rows 5 and 6 while slot 1 holds id 21.
+- `func_80016324(a0..a3 + 4 on the stack)`, the player hit: conditions (ring
+  0x31 protects), HP down clamped at 0 with no death call, and the flinch
+  `0x822 = 1`. Eight callers; none reads the return.
+- `func_80015164`, death: `0x822 = 0xFF`, a sound. Called by `func_8001564C`, by
+  the 0x52 hazard cell in `func_80017A80`, and by stage A on HP == 0.
+  `func_800156BC` is `func_8001564C` for MP. `func_80033E10` is a full heal (HP,
+  MP, condition bits 0-3 cleared).
+- `func_800171FC(angle, distance)`, the player's collision move: stage A calls
+  it for the walk and the strafe, and nothing else does. The rate words
+  `0x80057E68`/`70` are written and spent inline in stage A, with no call between.
+- **Inventory**: one count byte per id at `0x800652A8`, ids 0-79; the shop
+  (`func_80021538`) sells up to 99, and the next 80 bytes per shop are its stock.
+  Names at `0x80058E60 + 20·id` are ten u16 glyph codes; an unused id's record
+  opens `FFFF FFFF` (4, 10, 17, 23, 57, 58, 63, 64, 69, 70, 71). A New Game holds
+  ids 0 and 43. No give routine has been found.
+- **Spells**: records of 20 bytes at `0x8009CE60`, +0 known, u16 +0x10 the MP
+  cost. Records 0-3 (4, 5, 8, 12 MP) are cast from the magic menu
+  (`func_8002317C`); 4-8 (24, 4, 15, 5, 2 MP) are held for the cast button and set
+  by `func_800167E4(id)`, which also empties the magic charge. Records 9 on have
+  no cost and are not the player's. A New Game knows and holds record 8.
+- **Creatures**: 128 records of 0x48 at `0x8006C4B8` (`+0 == 0xFF` empty), walked
+  by stage E `func_80030818`: `func_8002E6A8` wakes and sleeps them (`+6`), and
+  `func_8002FA88` thinks for an awake one through the jump table at `0x80012524`
+  on `+8`. `func_8002E2E8(distance)` picks a behaviour by testing the type
+  record's u16 ranges against the distance to the player.
 
 ## GAME.EXE's set-up and main loop
 
