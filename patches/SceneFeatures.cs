@@ -33,6 +33,7 @@ public static class SceneFeatures
     const float Cell = 2000f;
 
     const string FogKey = "kf1.fog", AoQualityKey = "kf1.ao.quality", AnisoKey = "kf1.aniso";
+    const string GpuWorldKey = "kf1.gpuworld";
     const string EnhanceKey = "kf1.enhancedistance", RenderKey = "kf1.renderdistance", FadeKey = "kf1.renderdistance.fade";
 
     static int _quality = 1;
@@ -88,6 +89,7 @@ public static class SceneFeatures
     /// TestingSection.Ready, once the config is loaded.</summary>
     public static void Ready()
     {
+        if (Unset("KF1_GPU_WORLD") && Rt.View.GetInt(GpuWorldKey, -1) is >= 0 and var gw) GpuWorld.Setting = gw;
         foreach (var k in Switches)
             if (Unset(k.Env) && Rt.View.GetInt(k.Key, -1) is >= 0 and var v) k.Set(v != 0);
         if (Unset("KF1_FOG") && Rt.View.GetInt(FogKey, -1) is >= 0 and var fog) SetFog(fog);
@@ -157,7 +159,11 @@ public static class SceneFeatures
 
         int mode = GpuWorld.Setting;
         ImGui.SetNextItemWidth(240);
-        if (ImGui.Combo("Renderer", ref mode, RendererItems, RendererItems.Length)) GpuWorld.Setting = mode;
+        if (ImGui.Combo("Renderer", ref mode, RendererItems, RendererItems.Length))
+        {
+            GpuWorld.Setting = mode;
+            Keep(GpuWorldKey, mode);
+        }
 
         Toggle("Per-pixel lighting", K("kf1.perpixel"), "Lights each pixel rather than each corner, so the shading follows the surface.");
 
