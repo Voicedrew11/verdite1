@@ -40,6 +40,12 @@ walk and a turn, and by reading the code that uses each word:
 | `0x800A0822` | u8 | 0 standing; 1 to 8 for a hit's flinch, then 0; `0xFF` dying, `0xFE` on the respawn |
 | `0x8009F847` | u8 | the ending's gate: area 1's start cell exits to the ending only while it is non-zero (written by `func_8002EDD4`, `func_8002F8CC`; "Drawing contexts" in `GPU_RENDERER.md`) |
 | `0x800A0838` | SVECTOR | rotation: pitch at `+0`, yaw at `+2` (`0x800A083A`), 0x1000 a turn |
+| `0x800A0840` | s16 | strafe velocity: R1 adds `speed >> 2`, L1 subtracts, clamped at ±speed; neither decays it by `speed >> 2` (2026-10-17) |
+| `0x800A0842` | s16 | walk velocity: Up adds `speed >> 2`, Down subtracts, clamped at ±speed; neither decays it by `speed >> 3` |
+| `0x800A0844` | u16 | this tick's walk speed, from the two velocities through `SquareRoot0` |
+| `0x800A0846` | s16 | turn velocity: Left adds `rate >> 2`, Right subtracts, clamped at ±rate; neither decays it by `rate >> 2` |
+| `0x800A0848` | s16 | pitch velocity: R2 adds 3, L2 subtracts, clamped at ±10; neither decays it by 2 |
+| `0x80057E68`, `0x80057E70` | s32 | the walk speed and turn rate, written by stage A after its pad read: 180 and 28, or 36 and 5 while bit 3 of the condition word `0x800A07AA` is set |
 
 A New Game starts at (31000, -11500, 4000), yaw 0, in area 1. Holding Up for a
 second walks about 4000 units along the facing; holding Left for half a second

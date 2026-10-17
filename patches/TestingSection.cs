@@ -98,6 +98,7 @@ public sealed class TestingSection : ISettingsSection
         if (Unset("KF1_TRUECOLOR") && Unset("KF1_NODITHER") && Rt.View.GetInt(ShadingKey, -1) is >= 0 and var sh)
             SetShading(sh);
         SceneFeatures.Ready();
+        Analog.Ready();
     }
 
     static bool Unset(string env) => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(env));
@@ -106,6 +107,74 @@ public sealed class TestingSection : ISettingsSection
     {
         Rt.View.SetInt(key, value);
         Rt.SaveView();
+    }
+
+    static void KeepFloat(string key, float value)
+    {
+        Rt.View.SetFloat(key, value);
+        Rt.SaveView();
+    }
+
+    static void Check(string label, ref bool v, string key, string tip)
+    {
+        if (ImGui.Checkbox(label, ref v)) Keep(key, v ? 1 : 0);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(tip);
+    }
+
+    static void Slider(string label, ref float v, float min, float max, string format, string key, string tip)
+    {
+        ImGui.SetNextItemWidth(240);
+        ImGui.SliderFloat(label, ref v, min, max, format, ImGuiSliderFlags.AlwaysClamp);
+        if (ImGui.IsItemDeactivatedAfterEdit()) KeepFloat(key, v);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(tip);
+    }
+
+    static void AnalogSticks()
+    {
+        ImGui.SeparatorText("Analog sticks");
+        Check("Twin-stick control", ref Analog.Enabled, Analog.OnKey,
+            "Off hands the sticks back to the pad bindings, where the left stick is the D-pad.");
+        ImGui.BeginDisabled(!Analog.Enabled);
+        string[] controls = ["2D (twin sticks)", "3D (one stick)"];
+        int c = Analog.Tank ? 1 : 0;
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.Combo("Controls", ref c, controls, controls.Length)) { Analog.Tank = c == 1; Keep(Analog.ControlsKey, c); }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("2D: the left stick walks and strafes, the right stick turns and looks.\n" +
+                             "3D: the left stick walks and turns, as the D-pad does; L1/R1 strafe, L2/R2 look.");
+        Check("Right stick turns and looks", ref Analog.AnalogLook, Analog.LookKey, "2D only.");
+        Check("Left stick walks", ref Analog.AnalogMove, Analog.MoveKey, "Off, the left stick is the D-pad again.");
+        Slider("Turn sensitivity", ref Analog.TurnSens, 0.1f, 3f, "x%.2f", Analog.TurnSensKey,
+            "x1 is the D-pad's turning speed at full deflection.");
+        Slider("Look sensitivity", ref Analog.PitchSens, 0.1f, 3f, "x%.2f", Analog.PitchSensKey,
+            "x1 is L2/R2's looking speed at full deflection.");
+        Slider("Move sensitivity", ref Analog.MoveSens, 0.1f, 1.5f, "x%.2f", Analog.MoveSensKey,
+            "x1 is the game's walking speed at full deflection.");
+        if (ImGui.TreeNode("Fine tuning"))
+        {
+            Slider("Look deadzone", ref Analog.LookDeadzone, 0f, 0.5f, "%.2f", Analog.LookDeadKey, "The right stick's centre that does nothing.");
+            Slider("Move deadzone", ref Analog.MoveDeadzone, 0f, 0.5f, "%.2f", Analog.MoveDeadKey, "The left stick's centre that does nothing.");
+            Slider("Look curve", ref Analog.LookCurve, 1f, 3f, "%.2f", Analog.LookCurveKey, "Higher is finer near the centre.");
+            Slider("Move curve", ref Analog.MoveCurve, 1f, 3f, "%.2f", Analog.MoveCurveKey, "Higher is finer near the centre.");
+            Check("Stick eases in and out", ref Analog.StickEase, Analog.EaseKey,
+                "The turn and look build up and wind down by the game's own step, as a held D-pad does. Off is direct, at the same top speed.");
+            Check("Camera stops on release", ref Analog.CameraInstantStop, Analog.StopKey,
+                "Stops the turn and look dead when the stick is let go, instead of the game's wind-down.");
+            Check("Look acceleration", ref Analog.LookAccel, Analog.AccelKey,
+                "Held far out, the right stick speeds up past the D-pad's rate, up to the most below.");
+            ImGui.BeginDisabled(!Analog.LookAccel);
+            Slider("Acceleration, most", ref Analog.LookAccelMax, 1f, 4f, "x%.1f", Analog.AccelMaxKey, "The fastest the ramp turns, as a multiple of the D-pad's rate.");
+            Slider("Acceleration, time", ref Analog.LookAccelTime, 0.1f, 2f, "%.1f s", Analog.AccelTimeKey, "How long the ramp takes to reach it.");
+            ImGui.EndDisabled();
+            Check("Invert look Y", ref Analog.InvertPitch, Analog.InvertPitchKey, "Push up to look down.");
+            Check("Invert turn", ref Analog.InvertTurn, Analog.InvertTurnKey, "Push right to turn left.");
+            Check("Invert strafe", ref Analog.InvertStrafe, Analog.InvertStrafeKey, "Push right to strafe left.");
+            Check("Invert forward", ref Analog.InvertForward, Analog.InvertFwdKey, "Push up to walk back.");
+            ImGui.TreePop();
+        }
+        ImGui.EndDisabled();
+        var (lx, ly, rx, ry) = Analog.Sticks;
+        Note($"Sticks: L ({lx:+0.00;-0.00}, {ly:+0.00;-0.00})  R ({rx:+0.00;-0.00}, {ry:+0.00;-0.00})");
     }
 
     static void KeepTickRate(double hz)
@@ -266,6 +335,8 @@ public sealed class TestingSection : ISettingsSection
         Toggle("Instant mouse look", K(Mouse.LeadKey),
             "Turns the view the frame you move the mouse, instead of on the game's next tick.");
 
+        AnalogSticks();
+
         ImGui.SeparatorText("Routines in C#");
         Note("Verify runs both versions every call and prints mismatches to the console; it is slow.");
         RoutineCombo("Renderer", () => Renderer.Setting, v => Renderer.Setting = v,
@@ -286,6 +357,7 @@ public sealed class TestingSection : ISettingsSection
         if (ImGui.Checkbox("Address map (KF1_PERSPECTIVE_PROBE)", ref pp)) Perspective.ProbeOn = pp;
         bool sp = Subpixel.ProbeOn;
         if (ImGui.Checkbox("Sub-pixel (KF1_SUBPIXEL_PROBE)", ref sp)) Subpixel.ProbeOn = sp;
+        ImGui.Checkbox("Analog (KF1_ANALOG_PROBE)", ref Analog.ProbeOn);
         bool zp = ZBuffer.ProbeOn;
         if (ImGui.Checkbox("Z-buffer (KF1_ZBUFFER_PROBE)", ref zp)) ZBuffer.ProbeOn = zp;
     }

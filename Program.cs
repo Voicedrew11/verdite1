@@ -167,6 +167,9 @@ Kf1.SceneFeatures.Configure();
 // Mouse look and the mouse buttons: Verdite Core's Mouse with this game's values,
 // spent through stage A's own turn and look. Escape captures the pointer. See
 // "Mouse look" in docs/INPUT.md.
+// The sticks: Verdite2's twin sticks at the D-pad's rate, spent in the same hook
+// (KF1_ANALOG=0 hands them back). See "Analog sticks" in docs/INPUT.md.
+Kf1.Analog.Configure();
 Mouse.Configure(Kf1.MouseLook.Game);
 Mouse.Install();
 Kf1.MouseLook.Install();

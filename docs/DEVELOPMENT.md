@@ -130,7 +130,10 @@ on this game's addresses:
   `func_80036850` with the entry, 0 unless given, then x, z, yaw and the cell
   bytes written at the requested values, and the floor word `0x800A0834` and y
   from the cell's height; the reply is `queued`, and `state` carries `"warp"` with
-  `done` once it has run), `help`. Before 2026-10-16 the warp left the floor as it
+  `done` once it has run), `stick <lx> <ly> <rx> <ry> [ms] | off` (the sticks held
+  at -1..1, y down positive, then centred; only with no pad connected, since SDL
+  overwrites them: hide a DualSense with
+  `SDL_GAMECONTROLLER_IGNORE_DEVICES=0x054C/0x0CE6`), `help`. Before 2026-10-16 the warp left the floor as it
   was, and every cell higher than the one left (area 2 at (61000,113000), area 5's
   arrival room) dropped the player through the floor ("A warp" in
   `GPU_RENDERER.md`). Area 5's creatures kill a New Game's 30 HP in one hit:

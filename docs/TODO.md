@@ -37,7 +37,9 @@ recompiled and running, following Verdite3's method but applied to this disc.
   all off until judged.
 - **Keyboard and mouse** (2026-10-05, `docs/INPUT.md`): the WASD layout and mouse
   look through stage A's own velocities, measured with a synthetic hand. To judge:
-  the pitch direction, sensitivity, the lead. Twin-stick is not ported yet.
+  the pitch direction, sensitivity, the lead. Twin-stick ported 2026-10-17
+  ("Analog sticks" in `docs/INPUT.md`), measured; to judge with a pad: the feel,
+  the pitch direction, and the mouse still looking through the merged path.
 - **Widescreen** (2026-10-05, `docs/WIDESCREEN.md`): the margin, the tints and
   the cull stencils widened with the aspect, measured, off until judged.
 
@@ -105,3 +107,47 @@ Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between
 ticks, the picture (24-bit, perspective, sub-pixel, Z-buffer), widescreen,
 keyboard and mouse, the debug mod, and the shipped launcher.
+
+## Not yet ported
+
+What Verdite2 (`../KFII-PC`) and Verdite3 (`../verdite3`) have and this port does
+not, taken from their `patches/` 2026-10-17. Each is the sibling's mechanism, to be
+re-found on this disc's addresses; nothing here is known to apply yet.
+
+- **Settings and setup.** `PortSettings` (every port setting, declared once for
+  the Settings window and the game's menu), `SettingsPage` (PORT SETTINGS in the
+  game's own menu), `Setup` (the first-run onboarding run again from the game),
+  the `GameplaySection`, `InputSection`, `KeyLayoutPage`, `MousePage` and
+  `AnalogPage` tabs (V3), `UiScale` (V2). Only the Testing tab exists here.
+  Verdite3's `docs/SETTINGS.md` is the model. **Low priority** (the user,
+  2026-10-17): the page waits on features not yet ported.
+- **Input.** ~~`Analog` (twin-stick) with `AnalogProbe`~~ (ported 2026-10-17); `MenuMouse`; `MapKey`
+  (M or the touchpad opens the area's map); `Bow` (rumble and gyro aim through
+  core's `BowReads`); `ItemEye` and `ItemTurn` (a picked-up item held at the
+  view's centre and turned by hand); `MouseAim` and `MouseAimOverlay` (V2).
+- **Rules of play.** `AutoReload` (reload on death), `EnemyTurn` (faster enemy
+  turning), `GearCompare` (stat changes beside the equipment and shop lists),
+  `FullCard` (a full card read and saved over), `MessageBoxHold` (the message
+  box's state machine once a tick), `EndingHold` (keep presenting after the
+  ending), `BootExe` (boot into the ending), `CardIconSource` (the card icon for
+  core's `CardIcon`). **To decide** before porting: which of `AutoReload`,
+  `EnemyTurn` and `GearCompare` belong in this port at all.
+- **Audio** (V2). `AudioQuality` (the switch for fork `0043`'s interpolation and
+  reverb), `PositionalAudio`, `AudioProbe`. No `docs/AUDIO.md` here yet.
+- **Diagnostics** (V2). `CrashDump` (the game's state after an unhandled
+  exception), `HitGuard`, `AppExit`, `FullRateLogic` (every stage every frame,
+  for comparison).
+- **Text** (V2). `MessageText` and `MessageGlyphs` (sign and dialogue text drawn
+  as text). Whether it fits beside the translation layer (fork `0093`) is open.
+- **Renderer.** `ProjectileLights`, once the glowing effects are identified (see
+  Step 4 above).
+- **Mods.** `mods/` is empty: no debug mod (V3's `kf3debug`, V2's `kf2debug`) and
+  no map mod (V2's `map`). No `docs/MODS.md`.
+- **Shipping.** No launcher (`Verdite3.Launcher`), no `packaging/`, no
+  `scripts/release.sh` or `prerelease.sh`, no `docs/PACKAGING.md`.
+
+Left out by decision, with the reasons in `RENDERER_PLAN.md` and
+`GPU_RENDERER.md`: `EvenFog`, `Pgxp`, the water family, `ViewClip`,
+`NearScreen`, `MenuWorld`, `MenuDraw`, `PrimBuffer`, the sky, `FrameCapture` and
+`FrameViewerPanel`. V2's `FrameSmoothing`, `ObjectSmoothing` and `AnimSmoothing`
+are superseded by V3's `ViewSmoothing` and `ModelSmoothing`.

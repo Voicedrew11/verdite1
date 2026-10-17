@@ -89,6 +89,17 @@ switch is added.
 | `KF1_MOUSE_LEAD` | on | `0`: the view shows the mouse when the tick spends it |
 | `KF1_MOUSE_BUTTONS` | `Triangle,Square,Circle` | left, right, middle, as pad buttons |
 | `KF1_MOUSE_KEY` | `Escape` | the key that captures and releases the pointer |
+| `KF1_ANALOG` | on | `0`: the sticks handed back to the pad bindings (`docs/INPUT.md`, "Analog sticks") |
+| `KF1_ANALOG_LOOK`, `KF1_ANALOG_MOVE_ENABLE` | on | `0`: the right stick does not turn and look; the left does not walk |
+| `KF1_TANK` | off | `1`: 3D controls, the left stick walking and turning, the right not read |
+| `KF1_ANALOG_TURN`, `KF1_ANALOG_PITCH`, `KF1_ANALOG_MOVE` | `1.0` | the sticks' sensitivities; 1 is the D-pad's and L2/R2's rate |
+| `KF1_ANALOG_DEADZONE`, `KF1_ANALOG_MOVEDEADZONE` | `0.15` | the deadzones; the first sets both unless the second is set |
+| `KF1_ANALOG_CURVE`, `KF1_ANALOG_MOVECURVE` | `1.35`, `1.0` | the response curves |
+| `KF1_ANALOG_EASE` | on | `0`: the right stick direct, without the game's ease in and out |
+| `KF1_ANALOG_INSTANTSTOP` | off | `1`: the camera stops dead when the stick is let go |
+| `KF1_ANALOG_ACCEL`, `_ACCELMAX`, `_ACCELTIME` | off, `2.2`, `0.5` | the look ramp past the D-pad's rate |
+| `KF1_ANALOG_INVERTY`, `_INVERTTURN`, `_INVERTSTRAFE`, `_INVERTFWD` | off | `1`: invert that axis |
+| `KF1_ANALOG_PROBE` | off | `1`: a line every 10 s of what the sticks asked and stage A did; `trace`: a line a tick as well |
 | `KF1_WIDESCREEN` | off | `16:9`, `16:10`, `21:9`, a ratio, or `off` (`docs/WIDESCREEN.md`) |
 | `KF1_WIDESCREEN_PROBE` | off | `1`: the margin census; `2` also lists screen-wide primitives |
 | `KF1_WIDESCREEN_EFFECTS` | on | `0`: leave full-screen tints 320 wide |

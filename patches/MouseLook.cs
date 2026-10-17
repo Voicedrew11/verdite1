@@ -20,7 +20,8 @@ namespace Kf1;
 ///
 /// The pad word is stage A's: func_8005012C's return at 0x80018900, before any
 /// test. A tick the mouse drove is followed by a zero velocity, so the view does
-/// not coast on the decay when the hand stops. See "Mouse look" in docs/INPUT.md.
+/// not coast on the decay when the hand stops. The spending is <see cref="Analog"/>'s,
+/// which decides the mouse and the sticks together. See "Mouse look" in docs/INPUT.md.
 /// </summary>
 public static class MouseLook
 {
@@ -41,14 +42,8 @@ public static class MouseLook
 
     const uint PadRead = 0x8005012C;
     const uint StageASite = 0x800188F8 + 8;   // stage A's call of it
-    const uint YawVel = 0x800A0846, PitchVel = 0x800A0848, Rate = 0x80057E70;
-    const ushort TurnBits = 0x8000 | 0x2000;  // Left, Right
-    const ushort LookBits = 0x0001 | 0x0002;  // L2, R2
-    const int PitchDecay = 2;
 
     static readonly ModInfo _self = new() { Id = "kf1.mouselook", Name = "Mouse look", Version = "1.0" };
-    static float _fracTurn, _fracPitch;
-    static bool _droveYaw, _drovePitch;
 
     /// <summary>The guest memory, for readers outside a hook (the view's lead).</summary>
     internal static IMemory? Memory { get; private set; }
@@ -64,43 +59,11 @@ public static class MouseLook
         return ok;
     });
 
+    /// <summary>Stage A's pad word: the mouse and the sticks spent into it (Analog).</summary>
     public static void AfterPadRead(CpuContext c, IMemory m)
     {
         if (c.RA != StageASite) return;
         Memory = m;
-        var (turn, pitch) = Mouse.TakeLook();
-        bool mouse = Mouse.Enabled && Mouse.Captured;
-        if (!mouse) { _fracTurn = _fracPitch = 0f; _droveYaw = _drovePitch = false; return; }
-
-        int yaw = Whole(turn, ref _fracTurn);
-        int look = Whole(pitch, ref _fracPitch);
-        ushort pad = (ushort)c.V0;
-        Mouse.NoteSpent(m, yaw, 0f, look, 0f);
-
-        int decay = (int)m.ReadU32(Rate) >> 2;
-        if (yaw != 0 || (_droveYaw && (pad & TurnBits) == 0))
-        {
-            pad &= unchecked((ushort)~TurnBits);
-            m.WriteU16(YawVel, (ushort)(yaw == 0 ? 0 : yaw + Math.Sign(yaw) * decay));
-        }
-        if (look != 0 || (_drovePitch && (pad & LookBits) == 0))
-        {
-            pad &= unchecked((ushort)~LookBits);
-            m.WriteU16(PitchVel, (ushort)(look == 0 ? 0 : look + Math.Sign(look) * PitchDecay));
-        }
-        _droveYaw = yaw != 0;
-        _drovePitch = look != 0;
-        c.V0 = pad;
-    }
-
-    /// <summary>The whole units of a step, carrying the fraction to the next tick,
-    /// so a slow hand still turns.</summary>
-    static int Whole(float step, ref float carry)
-    {
-        float v = step + carry;
-        int whole = (int)MathF.Truncate(v);
-        whole = Math.Clamp(whole, -Mouse.StepCap, Mouse.StepCap);
-        carry = whole == (int)MathF.Truncate(v) ? v - whole : 0f;
-        return whole;
+        c.V0 = Analog.Tick(m, (ushort)c.V0);
     }
 }

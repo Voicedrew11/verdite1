@@ -59,6 +59,7 @@ public static class AgentServer
         "aspect [4:3|16:9|16:10|21:9|<ratio>] - the widescreen aspect, or the current one",
         "view [<x> <y> <z> <pitch> <yaw> <roll> | off] - draw from a fixed camera (the renderer in C#), or read the camera",
         "warp <area 1-5> <x> <z> [yaw|-] [entry] - queue an area transition to a cell (x/2000, z/2000); state's warp shows the result",
+        "stick <lx> <ly> <rx> <ry> [holdMs=1000] | off - hold the sticks at -1..1 (y down positive); needs no pad connected, which would overwrite them",
     ];
 
     public static void Configure(string? spec)
@@ -77,7 +78,12 @@ public static class AgentServer
     {
         if (Port == 0) return;
 
-        Event.AddListener<VSyncEvent>(_ => { _vsyncMs = Environment.TickCount64; Drain(_fast); });
+        Event.AddListener<VSyncEvent>(_ =>
+        {
+            _vsyncMs = Environment.TickCount64;
+            Drain(_fast);
+            if (_stickUntil != 0 && _vsyncMs >= _stickUntil) CentreSticks();
+        });
         Warp.Install();
 
         // PAD_dr's buffer is active-low with its two button bytes swapped against
@@ -181,7 +187,7 @@ public static class AgentServer
 
         switch (cmd.Name)
         {
-            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect" or "view" or "warp":
+            case "state" or "press" or "help" or "peek" or "dump" or "poke" or "aspect" or "view" or "warp" or "stick":
                 Enqueue(_fast, cmd);
                 break;
             default:
@@ -225,6 +231,7 @@ public static class AgentServer
         "aspect" => Widescreen.Shell(cmd.Arg1),
         "view" => DoView(cmd.Args),
         "warp" => Warp.Request(cmd.Args),
+        "stick" => DoStick(cmd.Args),
         _ => Err($"unknown command '{cmd.Name}'; try help"),
     };
 
@@ -238,6 +245,40 @@ public static class AgentServer
         _pressBits = bits;
         _pressUntil = Environment.TickCount64 + hold;
         return "{\"ok\":true,\"cmd\":\"press\",\"button\":" + Q(name) + ",\"holdMs\":" + hold + "}";
+    }
+
+    static long _stickUntil;
+
+    static void CentreSticks()
+    {
+        Controller.LeftX = Controller.LeftY = Controller.RightX = Controller.RightY = 0x80;
+        _stickUntil = 0;
+    }
+
+    /// <summary>The sticks held at a deflection, as InputManager's bytes (0x80 centre),
+    /// for Analog to read; centred again when the hold runs out.</summary>
+    static string DoStick(string[] args)
+    {
+        if (args.Length == 1 && args[0].Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+            CentreSticks();
+            return "{\"ok\":true,\"cmd\":\"stick\",\"held\":false}";
+        }
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var v = new float[4];
+        if (args.Length < 4) return Err("stick <lx> <ly> <rx> <ry> [holdMs] | off");
+        for (int i = 0; i < 4; i++)
+            if (!float.TryParse(args[i], System.Globalization.NumberStyles.Float, inv, out v[i]) || v[i] < -1 || v[i] > 1)
+                return Err($"stick: '{args[i]}' is not in -1..1");
+        long hold = 1000;
+        if (args.Length > 4 && (!long.TryParse(args[4], out hold) || hold < 1 || hold > 600000))
+            return Err("holdMs must be 1..600000");
+        static byte B(float f) => (byte)Math.Clamp((int)MathF.Round(128 + f * 127), 0, 255);
+        Controller.LeftX = B(v[0]); Controller.LeftY = B(v[1]);
+        Controller.RightX = B(v[2]); Controller.RightY = B(v[3]);
+        _stickUntil = Environment.TickCount64 + hold;
+        return "{\"ok\":true,\"cmd\":\"stick\",\"bytes\":[" + Controller.LeftX + "," + Controller.LeftY + "," +
+               Controller.RightX + "," + Controller.RightY + "],\"holdMs\":" + hold + "}";
     }
 
     static string DoPeek(string addrArg, string lenArg)
