@@ -147,3 +147,8 @@ backends without the retained path.
 2. **The ending** (`scripts/kf1sh.py poke 8009F847 01`, `scripts/kf1sh.py warp
    1 31000 5000`, then step off that cell and back onto it): OPEN.EXE presents for 4-6 minutes and does not return to the
    title. Look at: whether its last screen waits for a button.
+3. **Dialogue as text** (Settings ▸ Testing ▸ *Dialogue as text*, or
+   `KF1_MESSAGETEXT=1`), with the translation on and off. Talk to anyone; the
+   counters say 27 of 30 test pictures redraw pixel-exact. Look at: whether the
+   text and its fade look the same as with the switch off. *Decide*: whether it
+   becomes the default.

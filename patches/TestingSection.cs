@@ -64,6 +64,7 @@ public sealed class TestingSection : ISettingsSection
         new("kf1.perspective", "KF1_PERSPECTIVE", () => Perspective.Enabled, v => Perspective.Enabled = v),
         new("kf1.subpixel", "KF1_SUBPIXEL", () => Subpixel.Enabled, v => Subpixel.Enabled = v),
         new("kf1.zbuffer", "KF1_ZBUFFER", () => ZBuffer.Enabled, v => ZBuffer.Enabled = v),
+        new("kf1.messagetext", "KF1_MESSAGETEXT", () => MessageText.Enabled, v => MessageText.Enabled = v),
         new(Mouse.OnKey, "KF1_MOUSE", () => Mouse.Enabled, v => Mouse.Enabled = v),
         new(Mouse.LeadKey, "KF1_MOUSE_LEAD", () => Mouse.Lead, v => Mouse.Lead = v),
     ];
@@ -342,6 +343,8 @@ public sealed class TestingSection : ISettingsSection
             "Corners keep the fraction of a pixel the GTE dropped, so edges stop jittering as the view moves.");
         Toggle("Z-buffer", K("kf1.zbuffer"),
             "Per-pixel occlusion from the depths the address map recovers; a triangle it missed keeps painter's order.");
+        Toggle("Dialogue as text", K("kf1.messagetext"),
+            "Reads each dialogue picture back into characters and draws them in the game's own glyphs; a picture it cannot read is left as it was.");
 
         SceneFeatures.Draw();
 

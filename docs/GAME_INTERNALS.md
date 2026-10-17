@@ -474,6 +474,60 @@ store. Whether that reads right is for a person to look at. The save point's
 prompt hits it (`[KF1] translation: func_800286D4 at 0x800288D4: English`), and
 the same scripted run with the translation on and off reaches the same states.
 
+## Message text
+
+Dialogue is a picture: `func_8002C9D4` builds `TALK\Cxx\Txxxxx.TIM` in the buffer
+at `0x8005606C` and calls the event picture `func_8002C794` (a0 = the name), which
+loads the file, uploads it through `func_8001B100` (return address `0x8002C87C`),
+and draws one `POLY_FT4` at screen (32,112)-(288,240), UV (0,0)-(255,128), 4-bit at
+(960,256), CLUT (0,501), opaque, no backing. The fade's brightness rises from 0x20
+to 127 and is stored each pass at SP+0x14..0x16 before the `DrawOTag` call
+(`func_80050CF0`, return address `0x8002C938`); then it waits on the pad, presenting
+(about 290 presents a message at 144 fps). Signs (`KAN\Bx\Kxxx.TIM`), `PRSN` and
+`ENEx` go through the same routine. All 149 TALK files are 256x256 4-bit with two
+colours used (147 of the English ones; two use three); rows below 128 are not shown.
+
+**The fonts.** Measured 2026-10-17 from the disc, as shipped and with the
+translation's PPF:
+
+- *Japanese*: a bold proportional font of the game's own (Shinonome 12 matches 1
+  glyph of 559). Lines are 12-row bands at y = 9 + 15j. Cut at empty columns, the
+  pictures hold 559 distinct runs; い, ル, 化, 心 and one 八 are two runs each, and
+  some glyph pairs with one bitmap (ー/一, カ/力, ニ/二, エ/工, タ/夕, ヘ/へ, ベ/べ)
+  are settled by their neighbours (katakana beside katakana).
+- *English*: an Arial-like proportional font. Lines are found by their ink
+  (bands one empty row apart that fit 16 rows are one line) and placed by their
+  baseline, the bottom row most runs end on; a glyph is keyed over baseline-11 to
+  baseline+4. 120 distinct runs; letter gaps are 1-3 columns, word gaps 4 or
+  more. `l` and `I` are one bitmap, settled by the word.
+
+**The tables.** `scripts/msg_glyphs_jp.tsv` and `msg_glyphs_en.tsv` hold only run
+hashes (FNV-1a 64 over the width and the rows) and the character each spells:
+font data, no text. `scripts/msg_glyphs.py` checks them against the player's disc
+(every hash is found, widths agree, no collision) and writes
+`patches/Text/MessageGlyphs.cs`. Coverage, 2026-10-17: Japanese 120 of 149
+pictures (522 runs labelled, 6 pairs; 27 runs not labelled, 38 uses), English
+144 of 149 (114 runs; 6 not labelled, 15 uses). The English table read on the
+Japanese bytes reads nothing, and the Japanese one on the English bytes reads
+one picture, the one TALK file the PPF leaves Japanese.
+
+**`patches/Text/MessageText.cs`** (`KF1_MESSAGETEXT`, off). Before the upload, the
+picture is read through `PictureText` with the translation's font first when the
+translation is on. The glyphs it read are kept by character and width, pixels and
+CLUT colours as the disc has them: this is the game's font, gathered from the
+player's own disc as pictures are shown. The text is then set again in that
+font, at the game's positions, and only if that gives back every pixel of the
+picture is the picture hidden (its CLUT row zeroed in RAM) and the text drawn
+over the game's picture rectangle, each texel times the fade's brightness /128,
+as the GPU blends it. Anything else (an unknown run, a coloured pixel that is not
+ink) leaves the game's picture. Measured with `KF1_MESSAGETEXT_TEST` over 15 TALK
+files: Japanese 13 read, 13 exact, 2 left; English 14 read, 14 exact, 1 left. No
+text is logged; the probe gives counts and the refusal's reason.
+
+Open: signs (KAN) are not read; the glyphs are gathered only from pictures shown,
+so drawing text that no picture held (another language's) needs a pass over every
+TALK file at start; what spacing rule the game's layout follows is not measured.
+
 ## What runs at the render rate
 
 With pacing on, stage I runs on every frame and stages A-H only on a tick, so

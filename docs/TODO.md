@@ -142,8 +142,11 @@ re-found on this disc's addresses; nothing here is known to apply yet.
 - **Diagnostics** (V2). `CrashDump` (the game's state after an unhandled
   exception), `HitGuard`, `AppExit`, `FullRateLogic` (every stage every frame,
   for comparison).
-- **Text** (V2). `MessageText` and `MessageGlyphs` (sign and dialogue text drawn
-  as text). Whether it fits beside the translation layer (fork `0093`) is open.
+- ~~**Text** (V2).~~ Dialogue ported 2026-10-17 as `patches/Text/` ("Message
+  text" in `docs/GAME_INTERNALS.md`): read from the picture through glyph tables,
+  drawn in the game's own glyphs, with the translation's pictures as well. Left:
+  label the remaining runs (29 Japanese and 5 English pictures stay pictures),
+  signs (KAN), and gathering the whole font at start for text from another source.
 - **Renderer.** `ProjectileLights`, once the glowing effects are identified (see
   Step 4 above).
 - **Mods.** ~~The debug mod~~ (V3's `kf3debug`, ported 2026-10-17 as

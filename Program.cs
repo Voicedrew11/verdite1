@@ -205,6 +205,13 @@ Kf1.Translation.Configure(Environment.GetEnvironmentVariable("KF1_TRANSLATION"),
                           Environment.GetEnvironmentVariable("KF1_TRANSLATION_PPF"));
 Kf1.Translation.Install();
 
+// Dialogue pictures read back into text and drawn in the game's own glyphs; off by
+// default. See "Message text" in docs/GAME_INTERNALS.md.
+Kf1.MessageText.Configure(Environment.GetEnvironmentVariable("KF1_MESSAGETEXT"),
+                          Environment.GetEnvironmentVariable("KF1_MESSAGETEXT_PROBE"),
+                          Environment.GetEnvironmentVariable("KF1_MESSAGETEXT_TEST"));
+Kf1.MessageText.Install();
+
 // The Testing tab in Settings: every switch above, live.
 Kf1.TestingSection.Install();
 
