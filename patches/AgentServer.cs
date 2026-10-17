@@ -34,6 +34,8 @@ public static class AgentServer
 
     static volatile ushort _pressBits;
     static long _pressUntil;
+    static long _vsyncMs;
+    const long FramelessDrainMs = 100;
 
     public static readonly Dictionary<string, ushort> Buttons = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -75,7 +77,7 @@ public static class AgentServer
     {
         if (Port == 0) return;
 
-        Event.AddListener<VSyncEvent>(_ => Drain(_fast));
+        Event.AddListener<VSyncEvent>(_ => { _vsyncMs = Environment.TickCount64; Drain(_fast); });
         Warp.Install();
 
         // PAD_dr's buffer is active-low with its two button bytes swapped against
@@ -83,6 +85,8 @@ public static class AgentServer
         Event.AddListener<PadReadEvent>(e =>
         {
             if (e.Port != 0) return;
+            // A loop that spins on the pad with no VSync (the event picture) still takes commands.
+            if (Environment.TickCount64 - _vsyncMs > FramelessDrainMs) Drain(_fast);
             ushort bits = _pressBits;
             if (bits != 0 && Environment.TickCount64 < _pressUntil)
                 e.Buttons &= (ushort)~(ushort)((bits >> 8) | (bits << 8));

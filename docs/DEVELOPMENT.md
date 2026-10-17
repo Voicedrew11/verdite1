@@ -139,7 +139,7 @@ on this game's addresses:
   `0x81175F49` from a TMD pointer at `0x80090FC8`. It does so in the plain recompiled
   game too (renderer, camera block and all 24 literal routines off), so it is the
   warp's state, not the port's code. A single warp straight to that cell
-  survived 7 of 7. That tour was not re-run with the floor written. Everything runs on the game thread, from the vblank. A poke of the position
+  survived 7 of 7. That tour was not re-run with the floor written. Everything runs on the game thread, from the vblank, or, in a loop that presents with no `VSync` for 100 ms (the event picture), from its pad reads: before 2026-10-16 a `press` sent while a sign's picture was up waited, unrun, until the loop gave way. A poke of the position
   (`0x800A0824`) can be lost to a stage that already holds the old one; check
   `state` after it.
 - **`KF1_AUTOSTART=new`** (`patches/AutoStart.cs`): Start is pulsed through
