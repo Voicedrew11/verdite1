@@ -11,19 +11,20 @@ namespace Kf1;
 /// records one at a time. The top byte of a record is its kind: 0x34 GT3, 0x3C GT4, 0x24 FT3, 0x2C FT4.
 /// Each of these is built from the vertex cache at 0x800911B0, its depth is the average of the vertex
 /// depths plus the signed low half of a1, and it is linked into the ordering table at 0x80090EBC
-/// (<c>AddPrim_game</c>). Other kinds are skipped. Vertices are <c>func_8004DE4C</c> (back-face test)
+/// (<c>AddPrim_game</c>). Its CLUT and tpage are the halfwords at <c>0x80095058</c>/<c>5A</c> and its
+/// RGBC the word at <c>0x80057B5C</c>. Other kinds are skipped. Vertices are <c>func_8004DE4C</c> (back-face test)
 /// first; a back-facing primitive is dropped.
 /// </summary>
 public static class PolyAssemblerCached
 {
     public static readonly Literal R = new(typeof(PolyAssemblerCached), "polygon writer (objects)", "POLYASSEMBLER_CACHED", 0x8001D730, Run,
-        "Writes an object's primitives from the vertex cache, unlit.");
+        "Writes an object's primitives from the vertex cache, lit, with the CLUT and tpage at 0x80095058/5A.");
 
     static void Replace(Action<CpuContext, IMemory> orig, CpuContext c, IMemory m) => R.Replace(orig, c, m);
 
     static void Run(CpuContext c, PSMemory mem)
     {
-        RetainedModels.Packet(c, R.Address, "model-cached-writer");
+        if (RetainedModels.SubmitCached(c, mem)) return;
         c.SP = c.SP - 0x60u;
         mem.WriteU32(c.SP + 0x5Cu, c.RA);
         mem.WriteU32(c.SP + 0x58u, c.FP);

@@ -63,6 +63,14 @@ recompiled and running, following Verdite3's method but applied to this disc.
   a cell, if one is found; the blend mode of mesh `800EED50` and area 5's semi
   meshes; area 5's fault after a tour of warps, which the plain recompiled game shares
   ("`warp`" in `DEVELOPMENT.md`), not re-run since the warp writes the floor.
+  Step 3 completed 2026-10-16: the arm (drawn in painter's order at its own
+  H), the creatures' sprites and area 5's cached writer are retained and
+  checked. The HUD stays packets by decision. There is no sky and no front
+  table, and one area is held at a time (`GPU_RENDERER.md`, "The arm on the
+  retained scene" through "One area resident"). **To judge**: the arm against
+  the world while swinging, area 5's objects' textures, the creature sprites.
+  **Open**: keep each area's built map by its hash, so that a return does not
+  rebuild (35 ms on the game thread).
   Step 4 built 2026-10-16 ("The picture on the retained scene" in
   `docs/GPU_RENDERER.md`), every switch off. **To judge**, at `KF1_GPU_WORLD=1`:
   per-pixel lighting, the fog modes (corners, depth, distance), AO and its

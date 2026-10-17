@@ -93,9 +93,14 @@ say:
 1. **The whole picture against the reference**, at every spot above, flipping
    `Renderer` standing still. Look at: seams, texture warping (the GPU path is
    perspective-correct), colours, the fog's edge.
-2. **What stays packets**, against the retained world: the arm (swing at
-   `area1-start`), the HUD and compass, area 5's objects (the cached writer),
-   the creature sprites. Look at: draw order, and whether any of them shows
+2. **Retained since 2026-10-16**: the arm, area 5's objects (the cached
+   writer) and the creatures drawn as sprites. Look at:
+   - the arm while swinging at `area1-start` and against a wall: whether it is
+     cut, and whether its shading matches `KF1_GPU_ARM=0`;
+   - area 5's objects: their textures against the reference;
+   - the creature sprites at `area4-creature`: whether they sit right.
+
+   The HUD and compass stay packets by decision. Look at whether anything shows
    through or behind a wall it should not.
 3. **Blended faces**: the semi-transparent models (area 2-5's domes and
    spheres, spell effects by their shape) drawn as blended faces at ABR 0. One

@@ -22,7 +22,7 @@ points two words at its half:
 | writer | packets | GTE | slot | reached from |
 |---|---|---|---|---|
 | `func_8001C7F8` | F3, FT3, F4, FT4, G3, GT3, G4, GT4, some semi-transparent | per face `NCLIP`, and `NCDS`/`NCDT`/`NCCT` (`func_8004DD14`/`DD40`/`DDB0`) | `depth & 0x3FFF`; skipped under 5 | submitters `EBB8`, `E9A4`, `ED38`, `EEDC`, `F0C4`; arm `F798`; compass `F8B0` |
-| `func_8001D730` | FT3, FT4, GT3, GT4 | none in its body | by depth | objects `E9A4` |
+| `func_8001D730` | FT3, FT4, GT3, GT4 | per face `NCLIP`, and `NCDS`/`NCDT` (`func_8004DD14`/`DD40`) | `depth & 0x3FFF`; skipped under 5 | objects `E9A4` |
 | `func_8001DE18` | GT3, GT4 | none in its body | by depth | **the map**: `E83C` → `E5EC` → `DE18` |
 | `func_8001E230` | FT4 | none | `A0 & 0x3FFF` | sprites `ED90`, creatures `EEDC`, the HUD models (renderer) |
 | `func_8001E480` | FT4 | none | slot 1 | HUD sprites `F9D4` |
@@ -385,7 +385,7 @@ called through `KingsField1_game`, so their hooks still fire.
 | vertex cache (arm) | `8001C6A8` | `VERTEXCACHE_ARM` | the same, for the arm |
 | vertex cache (compass) | `8001C754` | `VERTEXCACHE_COMPASS` | RTPT; stores SZ at both +4 and +6 (the game's own quirk, kept) |
 | polygon writer | `8001C7F8` | `POLYASSEMBLER` | a TMD object's 12 face kinds through the table at `0x8001222C` |
-| polygon writer (objects) | `8001D730` | `POLYASSEMBLER_CACHED` | GT3/GT4/FT3/FT4 with the colours at `0x80095058`/`5A` |
+| polygon writer (objects) | `8001D730` | `POLYASSEMBLER_CACHED` | GT3/GT4/FT3/FT4 with the CLUT and tpage at `0x80095058`/`5A` |
 | map writer | `8001DE18` | `MAPASSEMBLER` | a map object's GT3/GT4 |
 | sprite writer | `8001E230` | `SPRITEASSEMBLER` | the flipbook sprites |
 | HUD sprite writer | `8001E480` | `HUDSPRITEASSEMBLER` | the HUD's FT4s |
@@ -526,11 +526,11 @@ Each of these is counted with its reason.
 
 | domain | routine, caller | reason |
 |---|---|---|
-| arm | `8001C7F8`, `8001F89C` | `packet-owned-arm`: view space, no depth record, painter's order over the world |
-| hud | `8001C7F8`, `8001F9A0` | `packet-owned-hud`: the compass and the menu's model |
-| models | `8001E230` from `8001EE9C` (the flipbook sprites) | none while drawing: retained as textured quads; `sprite-semi` for a semi-transparent one (none met) |
-| models | `8001E230` from the creature submitter `8001EEDC` and the HUD | `sprite-writer`: the same writer, still packets |
-| models | `8001D730` | `model-cached-writer`: area 5's objects |
+| arm | `8001C7F8`, `8001F89C` | none since 2026-10-16: retained and drawn in painter's order ("The arm on the retained scene"); `KF1_GPU_ARM=0` gives it back to its packets |
+| hud | `8001C7F8`, `8001F9A0` | `packet-owned-hud`: the compass and the menu's model, kept as packets by decision ("The HUD stays packets") |
+| models | `8001E230` from `8001EE9C` (the flipbook sprites) and `8001F004` (the creatures drawn as sprites) | none while drawing: retained as textured quads; `sprite-semi` for a semi-transparent one (none met). The creatures' since 2026-10-16 |
+| models | `8001E230` from the HUD models (the renderer) | the sprite writer's packets, by the HUD's decision |
+| models | `8001D730` | none since 2026-10-16: retained ("The cached writer on the retained scene") |
 | models | `8001C7F8` | `model-semi-abr-unmeasured`: a semi mesh whose blend mode has not been measured (`800EED50` in area 1, and area 5's); `model-semi-quad`: a semi quad (none met). The eight measured meshes are retained, their semi faces as blended faces (below; the eighth since Step 8) |
 | map | `8001DE18`, `8001E5EC` | `map-not-built`, `map-source-changing`: the walks before a build |
 
@@ -544,6 +544,159 @@ a faint shade spread over the picture instead of the creases. `GpuWorld.ArmIn`
 keeps `GteDepth.ProjH`/`ProjCx`/`ProjCy` and `ArmOut` puts them back; measured
 after, swing frames read 0.72 and 8-11% (the arm itself has no surface), at
 H 200 on every one of 250 sampled.
+
+### The arm on the retained scene (2026-10-16)
+
+`RetainedModels.SubmitArm` takes the polygon writer's calls from the arm
+(`func_8001F798`) and publishes the arm as one view-space instance
+(`RetainedScene.SetArm`, fork `0085`). The backend draws it in the table's own order,
+as its packets were drawn:
+
+- **Faces and keys**: each face's NCLIP and key are worked out from the vertex cache
+  as the writer works them out (a triangle `(SZ0+SZ1+SZ2)/3 >> 2`, a quad
+  `(SZ0+..+SZ3) >> 4`, plus the bias, dropped under 5, `& 0x3FFF`). The faces are
+  sorted far key first, and the last linked first within a key, into runs of one key.
+  KF1's table is 0x4000 words and the runtime counts slots from a 0x2000 one, so a
+  run's key is passed less 0x2000.
+- **Order**: the walk draws a run before the first packet past its slot that meets
+  the arm's screen box. That is where the arm's packets would have been. No depth
+  test, and the far plane written, as zMode 3 does: the arm has no surface for the
+  passes, as before.
+- **Projection**: the arm is drawn at H 2000 (`SetGeomScreen` from its pose
+  record's `+0x10`), against the world's 200. The instance carries it (`h`), and the
+  backend sets it around the arm's draw only. Corners nearer than H/2 take the GTE's
+  saturated position (`modelPlace`).
+- **Falls back** (counted) on an object or vertex out of range, a semi face, a pose
+  from neither the object nor the blender, a GTE centre other than the frame's, or
+  an H the frame cannot carry.
+
+Measured 2026-10-16, the tour under `KF1_GPU_WORLD=capture KF1_GPU_CHECK=1`:
+
+- arm vertices 5,772, worst 1.01 px against the cache, none over 1.5, posed off 0;
+- an earlier run of swings checked 549,228 vertices (worst 1.01 px) and 715,622
+  keys, with 0 mismatched, 0 extra and 0 missing.
+
+Retained (`KF1_GPU_WORLD=1`):
+
+- arm packet bytes 0, no run missed;
+- about 2.2 draw calls an arm.
+
+Uncapped while swinging (`scratch/swing/swing2.py`, every Step 4 switch on), against
+`KF1_GPU_ARM=0`:
+
+- area 1: 623 against 564 fps;
+- area 4's creature: 918 against 863 fps;
+- the packets a frame: 16 (the HUD) against about 170.
+
+**To look at**: the arm on the retained world while swinging, near a wall
+especially, where its runs fall between the world's packets.
+
+### The cached writer on the retained scene (2026-10-16)
+
+`func_8001D730` is the polygon writer with three differences, read from its body:
+
+- it takes only the four lit textured kinds, `0x24` FT3, `0x2C` FT4, `0x34` GT3 and
+  `0x3C` GT4, and skips the rest;
+- every face's CLUT and tpage are the halfwords at `0x80095058`/`5A`, which the object
+  submitter `func_8001E9A4` copies from the table at `0x80095038` just before the call;
+- the RGBC is the word at `0x80057B5C`, not `0x80057B58`.
+
+The record layout, the vertex cache, NCLIP, the colour calls (`func_8004DD40`,
+`DD14`), the depth cue and the key are the main writer's. `RetainedModels.SubmitCached`
+publishes the same instance as `Submit`, from a mesh keyed by the object's bytes and
+the CLUT and tpage pair. It is used for types 0, 2 and 4 in area 5, and for 13, 16,
+22, 25, 31, 34 and 43 everywhere.
+
+Measured 2026-10-16, both tours (capture with the check, then retained):
+
+- 254 objects retained through it;
+- no `model-cached-writer` fallback;
+- the check's model figures, which include them: 3,012,457 vertices, worst 1.12 px,
+  none over 1.5, posed off 0.
+
+The CLUT and tpage are taken by reading the code; no check compares them with the
+packets'.
+
+**To look at**: area 5's objects under `KF1_GPU_WORLD=1`, their textures
+especially.
+
+### The creatures drawn as sprites (2026-10-16)
+
+The creature submitter's sprite writer calls (from `8001F004`) take the flipbook
+sprites' path ("Sprites on the retained scene"). Measured 2026-10-16, the tour with
+the check:
+
+- 4,449 sprites (2,399 when only the flipbook's were checked), 17,788 corners;
+- worst corner 1.07 px, none over 1.5;
+- OT index off 0;
+- colour worst 1.0 of 255.
+
+The retained tour shows no `sprite-writer` fallback.
+
+### The HUD stays packets, by decision (2026-10-16)
+
+The compass (`func_8001F8B0`, model `0x15` through the polygon writer), the HUD
+models (`func_8001E230` from the renderer) and the HUD sprites (`func_8001E480`) stay
+packets. Measured with `KF1_MAPCOVERAGE` over the tour:
+
+- the HUD sprites sit at slot 1, and the compass at slots 37-45;
+- the world's nearest packet is at slot 45; the arm reaches as near as slot 11;
+- a tick carries about 6 compass triangles and 9 HUD quads.
+
+Retaining them would save next to nothing, and they must not take the world's
+picture: they sit at a fixed depth near the eye, under their own light matrix
+(`0x80056008`), so fog, the occlusion and the render distance would act on them
+wrongly. Drawn as packets after the world, with no depth record, they stay on top,
+untouched by the passes, as on the console. The census counts them
+(`packet-owned-hud`).
+
+### No sky, and no front table (2026-10-16)
+
+`KF1_MAPCOVERAGE` now reports the table slots each writer used, and every packet in
+the table that is not a polygon. Over the tour (areas 1-5, the menus, the event
+picture, a death):
+
+- the map's packets lie at slots 210-6,561 of 16,383, the models' at 45-5,176, the
+  objects' at 1,170-5,043 and the sprites' at 94-5,450;
+- nothing lies further out: no packet is linked behind the map;
+- the only packets that are not polygons are one `0x80` (a VRAM copy) and one `0xFF`,
+  both at slot 0, both while the event picture is up;
+- packets no known writer wrote appear only on the menu, save and load screens (slots
+  1,000-3,000), which draw no world.
+
+The background is the draw environment's clear. The front of the table is the HUD
+(slots 1-45), in the same table as the world, which keeps the HUD domain. There is no
+sky to give a domain, and no separate front table.
+
+### One area resident (2026-10-16)
+
+The game holds one area: one cell grid (`0x8009A748`), one map TMD (`0x80090FA8`),
+and the next area is loaded over both at the exit's fade. The areas share one
+coordinate frame ("Changing areas" in `GAME_INTERNALS.md`), so two areas' meshes would
+overlap in space. Two could be kept on the GPU only as alternatives, never drawn
+together, and the game never shows two at once. What being resident would save is the
+rebuild. A build (`[KF1] map build`, under the census) costs:
+
+- 130 ms the first time (the JIT);
+- then 34-36 ms for areas 1-4's million corners;
+- 18 ms for area 5's 508,290.
+
+Each build line now names its inputs: the TMD, the grids' hashes, the fog and the
+light. Over the tour, every build was an area change, and no source changed
+within an area. Five of the ten builds rebuilt a map the run had already built:
+
+- a warp that passed through another area (area 3's map inside the area 4 warp,
+  area 1's inside the area 5 warp), which play does not do;
+- the death's return to area 1, which play does do.
+
+The build runs on the game thread once the new area's walks have held for ten, so
+each is a stall of one frame at the area's start: 35 ms, about five frames' time
+at 144 Hz. Whether it shows has not been looked at.
+
+**Open**: keep each area's built mesh by its hash, so that a return (an exit walked
+back through, a death) uploads instead of building. That is a cache of
+alternatives, not two areas drawn together, and it needs the gate slots and the
+object meshes kept with each one.
 
 ### Semi-transparent models, 2026-10-15
 
@@ -615,7 +768,8 @@ Under `KF1_GPU_WORLD=1`:
 textured quads. `SpriteAssembler` runs the writer's own GTE work (RTPS, RTPT, NCDS)
 and writes the packet at the cursor without advancing it. While drawing, it then
 publishes an instance instead, with no link and no cursor move. The creature
-submitter and the HUD still call the same writer and stay packets (table above).
+submitter's calls are retained too since 2026-10-16 ("The creatures drawn as
+sprites"); the HUD's stay packets (table above).
 
 - **Quad**: a rigid pose of the four corners in the plane, one per (x, y, w, h), and
   a six-corner textured mesh per (cel rectangle, CLUT, tpage), both uploaded once.

@@ -209,8 +209,8 @@ after `off`, and the player does not move.
   `0x8E` (ABR 0), so none is semi-transparent.
 - **Object types' flags.** `u8[0x8006BD99 + 152 × type]`, read by the object
   submitter. The low nibble is the animation model. A non-zero high nibble draws
-  through the cached writer `func_8001D730`, with colours from the halfwords at
-  `0x80095038` written to `0x80095058`/`0x8009505A`. Set for types 0, 2 and 4 in
+  through the cached writer `func_8001D730`, with the CLUT and tpage from the
+  halfwords at `0x80095038` written to `0x80095058`/`0x8009505A`. Set for types 0, 2 and 4 in
   area 5 only, and for 13, 16, 22, 25, 31, 34 and 43 everywhere.
 - **Pose slots.** The blender `func_800205D4` takes a slot through
   `func_8001AAB0` → `func_800502DC`, the BIOS `malloc` (A(0x33)). There are 12

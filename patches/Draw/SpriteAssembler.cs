@@ -92,7 +92,8 @@ public static class SpriteAssembler
         else
         {
             bool capture = GpuWorld.Capture;
-            bool wantRetained = GpuWorld.SpritesOn && GpuWorld.Drawing && caller == 0x8001EE9Cu;
+            // The flipbook submitter's sprites and the creatures drawn as sprites.
+            bool wantRetained = GpuWorld.SpritesOn && GpuWorld.Drawing && caller is 0x8001EE9Cu or 0x8001F004u;
             c.A0 = c.S0;
             c.RA = 0x8001E358u;
             KingsField1_game.SetPolyFT4_game(c, mem);

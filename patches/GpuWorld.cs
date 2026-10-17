@@ -57,7 +57,7 @@ public static class GpuWorld
     static bool _attached, _frame;
     static long _reportAt;
 
-    public static long Frames, MapCells, MapRetained, ModelSubmits, ModelRetained, ArmRetained;
+    public static long Frames, MapCells, MapRetained, ModelSubmits, ModelRetained, CachedRetained, ArmRetained;
 
     /// <summary>Bytes of the packet buffer each domain spent this run, while drawing
     /// retained: what the census means by "world packets".</summary>
@@ -265,9 +265,10 @@ public static class GpuWorld
         _reportAt = Environment.TickCount64 + 5000;
         Console.WriteLine($"[KF1] gpu world: mode={Mode} frames={Frames} drawing={DrawingFrames} blocker={Blocker ?? "none"} " +
             $"map cells={MapCells} retained={MapRetained} builds={RetainedMap.Builds} slots={RetainedMap.Slots} corners={RetainedMap.Corners} " +
-            $"models={ModelSubmits} retained={ModelRetained} arm={ArmRetained} meshes={RetainedModels.MeshBuilds}/{RetainedModels.MeshHits} " +
+            $"models={ModelSubmits} retained={ModelRetained} (cached writer {CachedRetained}) arm={ArmRetained} meshes={RetainedModels.MeshBuilds}/{RetainedModels.MeshHits} " +
             $"poses={RetainedModels.PoseBuilds}/{RetainedModels.PoseHits} pose-uploads={RetainedModels.PoseTexelsUploaded} " +
             $"gpu draws/missed={RetainedScene.MainDraws}/{RetainedScene.MainMissed} instances={RetainedScene.InstancesDrawn} " +
+            $"arm draws/calls/missed/cut={RetainedScene.ArmDraws}/{RetainedScene.ArmCalls}/{RetainedScene.ArmMissed}/{RetainedScene.ArmCut} " +
             $"blended noted/drawn={RetainedScene.BlendNoted}/{RetainedScene.BlendDrawn} " +
             $"packet bytes map/models/arm={MapBytes}/{ModelBytes}/{ArmBytes} fallbacks={Reasons.Values.Sum()}");
         Console.WriteLine($"[KF1] map grid: walks={RetainedMap.GridWalks} changed walks={RetainedMap.GridChangedWalks} " +
@@ -299,7 +300,7 @@ public static class GpuWorld
                 Map = new { Cells = MapCells, Retained = MapRetained, RetainedMap.Builds, RetainedMap.Slots, RetainedMap.Corners, Bytes = MapBytes },
                 Models = new
                 {
-                    Submits = ModelSubmits, Retained = ModelRetained, Arm = ArmRetained, Bytes = ModelBytes, ArmBytes,
+                    Submits = ModelSubmits, Retained = ModelRetained, Cached = CachedRetained, Arm = ArmRetained, Bytes = ModelBytes, ArmBytes,
                     RetainedModels.MeshBuilds, RetainedModels.MeshHits, RetainedModels.PoseBuilds, RetainedModels.PoseHits,
                     RetainedModels.PoseTexelsUploaded, RetainedModels.VertexUploads,
                 },

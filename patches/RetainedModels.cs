@@ -29,14 +29,15 @@ namespace Kf1;
 ///   weight it left in IR0, which is the runtime's morph form: key and delta texels kept
 ///   once, only the weight changing. <see cref="PoseBlend"/>'s post hook records them.
 ///
-/// A model with a semi-transparent face, the cached writer (area 5's objects) and the
-/// sprite writer stay packets, each counted by reason. Step 3 of
+/// The cached writer <c>func_8001D730</c> (area 5's objects and some types everywhere)
+/// is the same walk with its own CLUT, tpage and RGBC (<see cref="SubmitCached"/>).
+/// A model with a semi-transparent face stays packets, counted by reason. Step 3 of
 /// docs/RENDERER_PLAN.md.
 /// </summary>
 public static class RetainedModels
 {
     const uint CurrentTmd = 0x80090FC8, VertexList = 0x800910BC, Cache = 0x800911B0;
-    const uint Scratch = 0x800930F8, TexturedRgbc = 0x80057B58;
+    const uint Scratch = 0x800930F8, TexturedRgbc = 0x80057B58, CachedRgbc = 0x80057B5C, CachedClut = 0x80095058;
 
     public static long MeshBuilds, MeshHits, PoseBuilds, PoseHits, PoseTexelsUploaded, VertexUploads;
 
@@ -53,6 +54,9 @@ public static class RetainedModels
         public bool SemiQuad;
         public bool Semi;
         public string? Reject;
+        /// <summary>Every face in the writer's order: its corner offset from the mesh start,
+        /// its corners in the store (3, or 6 for a quad) and its vertex indices (V3 for a quad).</summary>
+        public readonly List<(int Offset, int Corners, uint V0, uint V1, uint V2, uint V3)> Faces = new();
     }
 
     static readonly Dictionary<(uint Header, ulong Hash), Mesh> Meshes = new();
@@ -152,7 +156,9 @@ public static class RetainedModels
         return (code & 1) == 0 && code is >= 0x20 and <= 0x3C;
     }
 
-    static Mesh GetMesh(PSMemory m, uint tmd, uint obj)
+    /// <summary>The object's mesh. <paramref name="tex"/>, for the cached writer, is the CLUT and
+    /// tpage it writes in place of the prim's (<c>0x80095058</c>/<c>5A</c>), 0 for the main writer.</summary>
+    static Mesh GetMesh(PSMemory m, uint tmd, uint obj, uint tex = 0)
     {
         uint header = tmd + 0xC + obj * 28, baseAt = tmd + 0xC;
         uint prims = baseAt + m.ReadU32(header + 16), nprims = m.ReadU32(header + 20);
@@ -160,10 +166,10 @@ public static class RetainedModels
         // The primitives' extent, then their bytes, key the mesh.
         uint at = prims;
         for (uint i = 0; i < nprims && i < 8192; i++) at += 4 + ((m.ReadU32(at) >> 6) & 0x3FC);
-        ulong hash = Hash(m, prims, (int)(at - prims)) ^ (ulong)normals * 31;
+        ulong hash = Hash(m, prims, (int)(at - prims)) ^ (ulong)normals * 31 ^ (ulong)tex * 0x9E3779B97F4A7C15;
         if (Meshes.TryGetValue((header, hash), out var mesh)) { MeshHits++; return mesh; }
         int b = Profiler.Begin(ProfMesh);
-        try { mesh = Build(m, prims, nprims, normals); }
+        try { mesh = Build(m, prims, nprims, normals, tex); }
         finally { Profiler.End(b); }
         mesh.Header = header; mesh.Hash = hash;
         mesh.SemiAbr = SemiAbrTable.TryGetValue((header, hash), out int abr) ? abr : -1;
@@ -172,7 +178,7 @@ public static class RetainedModels
         return mesh;
     }
 
-    static Mesh Build(PSMemory m, uint prims, uint nprims, uint normals)
+    static Mesh Build(PSMemory m, uint prims, uint nprims, uint normals, uint tex)
     {
         var mesh = new Mesh { MaxVertex = -1, Gen = RetainedScene.MeshGeneration };
         var faces = new List<RetainedScene.Vertex[]>();
@@ -183,6 +189,8 @@ public static class RetainedModels
             uint word = m.ReadU32(at), body = at + 4, code = word >> 24;
             at = body + ((word >> 6) & 0x3FC);
             if (!Layout(code, out int n, out bool textured, out bool gouraud, out int normal, out int vertex)) continue;
+            // The cached writer takes the four lit textured kinds and skips the rest.
+            if (tex != 0 && code is not (0x24 or 0x2C or 0x34 or 0x3C)) continue;
             // Untextured semi-transparent faces too: their blend mode is the GPU's draw mode, not the prim's.
             bool semi = (code & 2) != 0;
             if (semi) mesh.Semi = true;
@@ -200,10 +208,10 @@ public static class RetainedModels
                     v0 = Math.Min(v0, (int)(uv >> 8)); v1 = Math.Max(v1, (int)(uv >> 8));
                 }
             }
-            uint tpage = textured ? m.ReadU16(body + 6) & 0x1FFu : 0x8000u;
+            uint tpage = tex != 0 ? tex >> 16 & 0x1FFu : textured ? m.ReadU16(body + 6) & 0x1FFu : 0x8000u;
             var template = new RetainedScene.Vertex
             {
-                Clut = textured ? m.ReadU16(body + 2) : 0, Texpage = tpage,
+                Clut = tex != 0 ? tex & 0xFFFF : textured ? m.ReadU16(body + 2) : 0, Texpage = tpage,
                 Dqa = vi[0], Dqb = vi[1], Curve = vi[2], Rgbc = n == 4 ? vi[3] : uint.MaxValue,
                 Rect = textured ? (uint)(u0 | v0 << 8 | u1 << 16 | v1 << 24) : 0,
                 Flags = RetainedScene.FlagDots | (textured ? RetainedScene.FlagRect : 0)
@@ -227,15 +235,23 @@ public static class RetainedModels
         }
         // Last face first, as the writer links them: the first is drawn on top.
         var all = new List<RetainedScene.Vertex>();
+        var at0 = new int[faces.Count];
         for (int f = faces.Count - 1; f >= 0; f--)
-            if ((faces[f][0].Flags & RetainedScene.FlagSemi) == 0) all.AddRange(faces[f]);
+            if ((faces[f][0].Flags & RetainedScene.FlagSemi) == 0) { at0[f] = all.Count; all.AddRange(faces[f]); }
         mesh.Opaque = all.Count;
         for (int f = faces.Count - 1; f >= 0; f--)
         {
             if ((faces[f][0].Flags & RetainedScene.FlagSemi) == 0) continue;
             if (faces[f].Length == 6) mesh.SemiQuad = true;
             else mesh.SemiFaces.Add((all.Count, (uint)faces[f][0].X, (uint)faces[f][1].X, (uint)faces[f][2].X));
+            at0[f] = all.Count;
             all.AddRange(faces[f]);
+        }
+        // A quad's corners are kept as 0, 1, 2 then 1, 3, 2: its fourth vertex is the fifth corner.
+        for (int f = 0; f < faces.Count; f++)
+        {
+            var c = faces[f];
+            mesh.Faces.Add((at0[f], c.Length, (uint)c[0].X, (uint)c[1].X, (uint)c[2].X, c.Length == 6 ? (uint)c[4].X : 0u));
         }
         mesh.Total = all.Count;
         if (mesh.Total == 0) { mesh.Reject = "model-no-faces"; return mesh; }
@@ -295,33 +311,45 @@ public static class RetainedModels
     public static bool Submit(CpuContext c, PSMemory m)
     {
         int p = Profiler.Begin(ProfSubmit);
-        try { return SubmitCore(c, m); }
+        try { return SubmitCore(c, m, false); }
         finally { Profiler.End(p); }
     }
 
-    static bool SubmitCore(CpuContext c, PSMemory m)
+    /// <summary>From <see cref="PolyAssemblerCached"/>'s entry: the same object, posed and lit
+    /// the same way, with the CLUT and tpage at <c>0x80095058</c>/<c>5A</c> and the RGBC at
+    /// <c>0x80057B5C</c>.</summary>
+    public static bool SubmitCached(CpuContext c, PSMemory m)
+    {
+        int p = Profiler.Begin(ProfSubmit);
+        try { return SubmitCore(c, m, true); }
+        finally { Profiler.End(p); }
+    }
+
+    static bool SubmitCore(CpuContext c, PSMemory m, bool cached)
     {
         SemiAbr.Begin();
         if (!GpuWorld.Capture) return false;
-        // The arm, the compass and the menu's model keep their packets: drawn over the
-        // world in painter's order, with no depth record (PacketDepth).
-        if (GpuWorld.Domain != "models") { GpuWorld.Fallback(0x8001C7F8, c.RA, $"packet-owned-{GpuWorld.Domain}"); return false; }
+        uint routine = cached ? 0x8001D730u : 0x8001C7F8u;
+        if (!cached && GpuWorld.Domain == "arm" && GpuWorld.ArmOn) return SubmitArm(c, m);
+        // The compass and the menu's model keep their packets: drawn over the world in
+        // painter's order, with no depth record (PacketDepth).
+        if (GpuWorld.Domain != "models") { GpuWorld.Fallback(routine, c.RA, $"packet-owned-{GpuWorld.Domain}"); return false; }
         if (!GpuWorld.ModelsOn) return false;
         GpuWorld.ModelSubmits++;
         uint tmd = m.ReadU32(CurrentTmd), obj = c.A0 & 0xFFFF;
-        if (!InRam(tmd, 16) || obj >= m.ReadU32(tmd + 8)) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-object-range"); return false; }
-        var mesh = GetMesh(m, tmd, obj);
-        if (mesh.Reject != null) { GpuWorld.Fallback(0x8001C7F8, c.RA, mesh.Reject); return false; }
+        if (!InRam(tmd, 16) || obj >= m.ReadU32(tmd + 8)) { GpuWorld.Fallback(routine, c.RA, "model-object-range"); return false; }
+        var mesh = GetMesh(m, tmd, obj, cached ? m.ReadU16(CachedClut) | (uint)m.ReadU16(CachedClut + 2) << 16 | 0x80000000u : 0);
+        if (mesh.Reject != null) { GpuWorld.Fallback(routine, c.RA, mesh.Reject); return false; }
         if (mesh.Semi)
         {
             SemiAbr.Current = (mesh.Header, mesh.Hash);
-            if (mesh.SemiAbr < 0) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-semi-abr-unmeasured"); return false; }
-            if (mesh.SemiQuad) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-semi-quad"); return false; }
+            if (mesh.SemiAbr < 0) { GpuWorld.Fallback(routine, c.RA, "model-semi-abr-unmeasured"); return false; }
+            if (mesh.SemiQuad) { GpuWorld.Fallback(routine, c.RA, "model-semi-quad"); return false; }
         }
         uint header = tmd + 0xC + obj * 28;
         uint own = tmd + 0xC + m.ReadU32(header), count = m.ReadU32(header + 4);
         uint list = m.ReadU32(VertexList);
-        if (mesh.MaxVertex >= count) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-vertex-range"); return false; }
+        if (mesh.MaxVertex >= count) { GpuWorld.Fallback(routine, c.RA, "model-vertex-range"); return false; }
         int pose, weight = 0;
         bool morph = false;
         if (list == own) pose = StoreRigid(m, own, (int)count);
@@ -330,8 +358,8 @@ public static class RetainedModels
             pose = StoreMorph(m, _blendRecord, (int)count);
             weight = _blendWeight; morph = true;
         }
-        else { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-pose-source"); return false; }
-        if (pose == 0) { GpuWorld.Fallback(0x8001C7F8, c.RA, "model-pose-range"); return false; }
+        else { GpuWorld.Fallback(routine, c.RA, "model-pose-source"); return false; }
+        if (pose == 0) { GpuWorld.Fallback(routine, c.RA, "model-pose-range"); return false; }
 
         int bias = (short)c.A1;
         _caller = c.RA; _bias = bias;
@@ -350,13 +378,132 @@ public static class RetainedModels
             Dqa = (short)Gte.ReadControl(27), Dqb = (int)Gte.ReadControl(28) + 800f * 4096f, Curve = 1,
             // The writer drops a face whose mean SZ / 4 plus the bias is under 5; nothing far.
             Near = 5 - bias, Far = float.MaxValue,
-            Rgbc = m.ReadU32(TexturedRgbc) & 0xFFFFFF,
+            Rgbc = m.ReadU32(cached ? CachedRgbc : TexturedRgbc) & 0xFFFFFF,
         };
         PlaceWorld(ref ins, view);
         if (GpuWorld.Check) CheckModel(m, ins, list, (int)count, morph);
         RetainedScene.AddInstance(ins);
         if (mesh.Semi) AddSemiFaces(m, mesh, bias);
         GpuWorld.ModelRetained++;
+        if (cached) GpuWorld.CachedRetained++;
+        return GpuWorld.Drawing;
+    }
+
+    static int[] _armOrder = new int[1024], _armRunKey = new int[64], _armRunAt = new int[64];
+    static (int Key, int Face)[] _armFaces = new (int, int)[256];
+    static readonly float[] _armBox = new float[4];
+    static readonly Comparer<(int Key, int Face)> FarFirst =
+        Comparer<(int Key, int Face)>.Create((p, q) => p.Key != q.Key ? q.Key - p.Key : q.Face - p.Face);
+
+    /// <summary>The arm (<c>func_8001F798</c>) from its mesh, in painter's order as its
+    /// packets were (<see cref="RetainedScene.SetArm"/>): placed in view space with the
+    /// GTE's own matrix under its own projection (H 2000), its faces those the writer
+    /// links, culled and keyed from the vertex cache as the writer does, far key first and
+    /// the last linked first within a key.</summary>
+    static bool SubmitArm(CpuContext c, PSMemory m)
+    {
+        const uint routine = 0x8001C7F8;
+        uint tmd = m.ReadU32(CurrentTmd), obj = c.A0 & 0xFFFF;
+        if (!InRam(tmd, 16) || obj >= m.ReadU32(tmd + 8)) { GpuWorld.Fallback(routine, c.RA, "arm-object-range"); return false; }
+        var mesh = GetMesh(m, tmd, obj);
+        if (mesh.Reject != null) { GpuWorld.Fallback(routine, c.RA, mesh.Reject); return false; }
+        if (mesh.Semi) { GpuWorld.Fallback(routine, c.RA, "arm-semi"); return false; }
+        uint header = tmd + 0xC + obj * 28;
+        uint own = tmd + 0xC + m.ReadU32(header), count = m.ReadU32(header + 4);
+        uint list = m.ReadU32(VertexList);
+        if (mesh.MaxVertex >= count) { GpuWorld.Fallback(routine, c.RA, "arm-vertex-range"); return false; }
+        int pose, weight = 0;
+        bool morph = false;
+        if (list == own) pose = StoreRigid(m, own, (int)count);
+        else if (list == Scratch && _blendRecord != 0 && _blendCount == count)
+        {
+            pose = StoreMorph(m, _blendRecord, (int)count);
+            weight = _blendWeight; morph = true;
+        }
+        else { GpuWorld.Fallback(routine, c.RA, "arm-pose-source"); return false; }
+        if (pose == 0) { GpuWorld.Fallback(routine, c.RA, "arm-pose-range"); return false; }
+        // One centre for the whole frame: the arm's must be the world's.
+        if (Ctl(24) / 65536f != GpuWorld.ProjCx || Ctl(25) / 65536f != GpuWorld.ProjCy)
+        { GpuWorld.Fallback(routine, c.RA, "arm-centre"); return false; }
+        float h = (ushort)Gte.ReadControl(26);
+        if (h <= 0) { GpuWorld.Fallback(routine, c.RA, "arm-projection"); return false; }
+
+        // The writer's faces: NCLIP on the first three corners, the key the mean cached SZ
+        // over four plus the bias, under 5 dropped.
+        int bias = (short)c.A1, n = 0;
+        float bx0 = float.MaxValue, by0 = float.MaxValue, bx1 = float.MinValue, by1 = float.MinValue;
+        for (int i = 0; i < mesh.Faces.Count; i++)
+        {
+            var f = mesh.Faces[i];
+            uint a = Cache + f.V0 * 8, b = Cache + f.V1 * 8, cc = Cache + f.V2 * 8, d = Cache + f.V3 * 8;
+            long x0 = (short)m.ReadU16(a), y0 = (short)m.ReadU16(a + 2);
+            long x1 = (short)m.ReadU16(b), y1 = (short)m.ReadU16(b + 2);
+            long x2 = (short)m.ReadU16(cc), y2 = (short)m.ReadU16(cc + 2);
+            if (x0 * y1 + x1 * y2 + x2 * y0 - x0 * y2 - x1 * y0 - x2 * y1 <= 0) continue;
+            bool quad = f.Corners == 6;
+            int z = (short)m.ReadU16(a + 4) + (short)m.ReadU16(b + 4) + (short)m.ReadU16(cc + 4);
+            int key = quad ? (z + (short)m.ReadU16(d + 4)) >> 4 : z / 3 >> 2;
+            key += bias;
+            if (key < 5) continue;
+            if (n == _armFaces.Length) Array.Resize(ref _armFaces, n * 2);
+            _armFaces[n++] = (key & 0x3FFF, i);
+            bx0 = Math.Min(bx0, Math.Min(x0, Math.Min(x1, x2))); bx1 = Math.Max(bx1, Math.Max(x0, Math.Max(x1, x2)));
+            by0 = Math.Min(by0, Math.Min(y0, Math.Min(y1, y2))); by1 = Math.Max(by1, Math.Max(y0, Math.Max(y1, y2)));
+            if (quad)
+            {
+                long x3 = (short)m.ReadU16(d), y3 = (short)m.ReadU16(d + 2);
+                bx0 = Math.Min(bx0, x3); bx1 = Math.Max(bx1, x3); by0 = Math.Min(by0, y3); by1 = Math.Max(by1, y3);
+            }
+        }
+        if (GpuWorld.Check)
+        {
+            var slots = new List<int>(n);
+            for (int i = 0; i < n; i++) slots.Add(_armFaces[i].Key);
+            SemiAbr.Expect(slots, all: true);
+        }
+        // Nothing linked: the packets would have drawn nothing either.
+        if (n == 0) { GpuWorld.ArmRetained++; return GpuWorld.Drawing; }
+        // Far key first; within a key, the face linked last is walked first.
+        Array.Sort(_armFaces, 0, n, FarFirst);
+        int count2 = 0, runs = 0;
+        for (int i = 0; i < n; i++)
+        {
+            var (key, face) = _armFaces[i];
+            var f = mesh.Faces[face];
+            if (i == 0 || key != _armFaces[i - 1].Key)
+            {
+                if (runs == _armRunKey.Length) { Array.Resize(ref _armRunKey, runs * 2); Array.Resize(ref _armRunAt, runs * 2); }
+                // The runtime walks a table of 0x2000 (slot 0x1FFF less the key); this one
+                // is 0x4000 long, so slot 0x3FFF less the key is the key less 0x2000 there.
+                _armRunKey[runs] = key - 0x2000;
+                _armRunAt[runs++] = count2;
+            }
+            if (count2 + f.Corners > _armOrder.Length) Array.Resize(ref _armOrder, _armOrder.Length * 2);
+            for (int j = 0; j < f.Corners; j++) _armOrder[count2++] = mesh.Start + f.Offset + j;
+        }
+        _armBox[0] = bx0 - 1f; _armBox[1] = by0 - 1f; _armBox[2] = bx1 + 1f; _armBox[3] = by1 + 1f;
+
+        var view = GpuWorld.ReadView(m);
+        var ins = new RetainedScene.ModelInstance
+        {
+            MeshStart = mesh.Start, MeshCount = mesh.Opaque, MeshAll = mesh.Total,
+            Pose = pose, PoseWeight = weight, PoseMorph = morph,
+            ViewSpace = true,
+            V00 = Lo(0), V01 = Hi(0), V02 = Lo(1), V10 = Hi(1), V11 = Lo(2), V12 = Hi(2),
+            V20 = Lo(3), V21 = Hi(3), V22 = Lo(4), Vtx = Ctl(5), Vty = Ctl(6), Vtz = Ctl(7),
+            Llm0 = Lo(8) / 4096f, Llm1 = Hi(8) / 4096f, Llm2 = Lo(9) / 4096f, Llm3 = Hi(9) / 4096f, Llm4 = Lo(10) / 4096f,
+            Llm5 = Hi(10) / 4096f, Llm6 = Lo(11) / 4096f, Llm7 = Hi(11) / 4096f, Llm8 = Lo(12) / 4096f,
+            Bk0 = Ctl(13), Bk1 = Ctl(14), Bk2 = Ctl(15),
+            L0 = Lo(16), L1 = Hi(16), L2 = Lo(17), L3 = Hi(17), L4 = Lo(18), L5 = Hi(18), L6 = Lo(19), L7 = Hi(19), L8 = Lo(20),
+            Dqa = (short)Gte.ReadControl(27), Dqb = (int)Gte.ReadControl(28) + 800f * 4096f, Curve = 1,
+            // The faces are chosen above; no depth range.
+            Near = float.MinValue, Far = float.MaxValue,
+            Rgbc = m.ReadU32(TexturedRgbc) & 0xFFFFFF,
+        };
+        PlaceWorld(ref ins, view);
+        if (GpuWorld.Check) CheckArm(m, ins, h, (int)count, morph, list);
+        RetainedScene.SetArm(ins, _armOrder.AsSpan(0, count2), _armRunKey.AsSpan(0, runs), _armRunAt.AsSpan(0, runs), _armBox, h);
+        GpuWorld.ArmRetained++;
         return GpuWorld.Drawing;
     }
 
@@ -387,12 +534,6 @@ public static class RetainedModels
             slots?.Add(slot & 0x3FFF);
         }
         if (slots != null) SemiAbr.Expect(slots);
-    }
-
-    /// <summary>A writer the retained scene does not take: counted, its packets kept.</summary>
-    public static void Packet(CpuContext c, uint routine, string reason)
-    {
-        if (GpuWorld.Capture) GpuWorld.Fallback(routine, c.RA, GpuWorld.Domain == "models" ? reason : $"packet-owned-{GpuWorld.Domain}");
     }
 
     /// <summary>The world placement (what lights and fogs by position read): the view
@@ -484,7 +625,50 @@ public static class RetainedModels
         }
     }
 
+    static long _armChecked, _armBad, _armPoseBad;
+    static float _armMax;
+
+    /// <summary>The arm's vertices as the model shader places them under its own H (the
+    /// corner held at H/2 where the GTE's divide saturates, the screen clamp), against the
+    /// vertex cache.</summary>
+    static void CheckArm(PSMemory m, in RetainedScene.ModelInstance i, float h, int count, bool morph, uint list)
+    {
+        var store = RetainedScene.PoseStore;
+        for (int v = 0; v < count; v++)
+        {
+            int px, py, pz;
+            if (morph)
+            {
+                int t = (i.Pose - 1 + v * 2) * 4;
+                px = (short)(store[t] + (short)((store[t + 4] * i.PoseWeight) >> 12));
+                py = (short)(store[t + 1] + (short)((store[t + 5] * i.PoseWeight) >> 12));
+                pz = (short)(store[t + 2] + (short)((store[t + 6] * i.PoseWeight) >> 12));
+                if (px != (short)m.ReadU16(list + (uint)v * 8) || py != (short)m.ReadU16(list + (uint)v * 8 + 2)
+                    || pz != (short)m.ReadU16(list + (uint)v * 8 + 4)) _armPoseBad++;
+            }
+            else
+            {
+                int t = (i.Pose - 1 + v) * 4;
+                px = store[t]; py = store[t + 1]; pz = store[t + 2];
+            }
+            long ex = (((long)i.V00 * px + (long)i.V01 * py + (long)i.V02 * pz) >> 12) + i.Vtx;
+            long ey = (((long)i.V10 * px + (long)i.V11 * py + (long)i.V12 * pz) >> 12) + i.Vty;
+            long ez = (((long)i.V20 * px + (long)i.V21 * py + (long)i.V22 * pz) >> 12) + i.Vtz;
+            float z = Math.Max(Math.Clamp(ez, 0, 65535), h * 0.5f);
+            float sx = Math.Clamp(GpuWorld.ProjCx + h * Math.Clamp(ex, -32768, 32767) / z, -1024f, 1023f);
+            float sy = Math.Clamp(GpuWorld.ProjCy + h * Math.Clamp(ey, -32768, 32767) / z, -1024f, 1023f);
+            uint e = Cache + (uint)v * 8;
+            float ds = Math.Max(Math.Abs(sx - (short)m.ReadU16(e)), Math.Abs(sy - (short)m.ReadU16(e + 2)));
+            _armChecked++;
+            _armMax = Math.Max(_armMax, ds);
+            if (ds > 1.5f && _armBad++ < 8)
+                Console.WriteLine($"[KF1] arm check: v{v}/{count} eye ({ex},{ey},{ez}) mine ({sx:0.0},{sy:0.0}) " +
+                    $"gte ({(short)m.ReadU16(e)},{(short)m.ReadU16(e + 2)}) sz>>3 {(short)m.ReadU16(e + 4)} h {h}");
+        }
+    }
+
     public static string CheckReport() =>
         $"model vertices {_checked}: screen max {_maxScreen:0.00} px (over 1.5: {_screenBad}), z max {_maxZ:0}, " +
-        $"behind agree/disagree {_behindAgree}/{_behindDisagree}; posed vertices {_poseChecked}, off {_poseBad}";
+        $"behind agree/disagree {_behindAgree}/{_behindDisagree}; posed vertices {_poseChecked}, off {_poseBad}; " +
+        $"arm vertices {_armChecked}: screen max {_armMax:0.00} px (over 1.5: {_armBad}), posed off {_armPoseBad}";
 }

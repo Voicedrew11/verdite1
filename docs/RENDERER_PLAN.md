@@ -193,8 +193,18 @@ advancing at the drawn rate.
 **Done 2026-10-15** ("The retained scene" in `docs/GPU_RENDERER.md`): the gate's
 counters hold. The map, the models, the seven measured semi meshes (as blended
 faces) and the flipbook sprites are retained. No cell changes mid-area, so there
-is no dirty update to write. The arm, the HUD, the creature sprites and area 5's
-cached writer stay packets by recorded decision. Off by default until judged.
+is no dirty update to write. Off by default until judged.
+
+**Completed 2026-10-16**. What the 2026-10-15 close left as packets was not all
+decided; it was skipped:
+
+- the arm is now retained and drawn in painter's order over the world (5);
+- the creatures' sprites are retained;
+- area 5's cached writer is retained.
+
+The HUD stays packets, by a decision recorded with its measurement. This game has no
+sky and no front table (5). It holds one area at a time (2). See "The arm on the
+retained scene" through "One area resident" in `docs/GPU_RENDERER.md`.
 
 From here on the work runs on the shared runtime's `RetainedScene`, `GlRetained`,
 `GlMainView`, `GlModelMeshes` and the world shaders. Read their APIs before

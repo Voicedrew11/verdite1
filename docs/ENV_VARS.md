@@ -26,7 +26,7 @@ switch is added.
 | `KF1_PRIMBUF_PROBE` | off | `1`: the frame's primitive buffer spent, peak and mean, and frames that ran out, every 2 s |
 | `KF1_SEMI_ABR` | off | `1`: the blend mode each untextured semi model face's packet draws with, walked from the table at `DrawOTag` and checked against the GPU's own state; a line every 2 s (`patches/SemiAbr.cs`, "Semi-transparent model faces", `docs/GAME_INTERNALS.md`) |
 | `KF1_GEOPROBE` | off | `1`: what each renderer draw call adds to the ordering table, by packet type, every 5 s (`patches/GeometryProbe.cs`) |
-| `KF1_MAPCOVERAGE` | off | `1`: the address map's coverage by packet writer: packets, vertices and hit % a second, every 2 s (`patches/MapCoverage.cs`) |
+| `KF1_MAPCOVERAGE` | off | `1`: the address map's coverage by packet writer: packets, vertices, hit % a second and the table slots each writer used, and every non-polygon packet by command and slot, every 2 s (`patches/MapCoverage.cs`) |
 | `KF1_DRAWCENSUS` | off | `1`: the primitive buffer bytes a frame spends, exclusive and inclusive, by renderer routine, every 2 s (`patches/DrawCensus.cs`) |
 | `KF1_PACKETMATCH` | off | `1`: whether each primitive is found again in the previous tick's table, by context (models, map cells, other), once a second; `2` also the worst-matched and the moving contexts (`patches/PacketMatch.cs`, "Diagnostics on the GPU path", `docs/GPU_RENDERER.md`) |
 | `KF1_TEXPROBE` | off | `1`: a line a second, on the console and into `texprobe.log`: the packet census (textured, flat, gouraud, semi), the retained scene's draws, triangles and instances, and the distinct words in each of the 32 texture pages (`patches/TexProbe.cs`) |
@@ -62,8 +62,8 @@ switch is added.
 | `KF1_GPU_WORLD` | `0` | `0`/`reference`: the packets only. `capture` (or `shadow`): the scene published to the runtime's `RetainedScene` beside the packets, nothing suppressed. `1`/`on`/`retained`: the map and models drawn by the GPU from meshes kept on it, their packets not written; turns the Z-buffer on; kept as `kf1.gpuworld` ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_MAP` | on | `0`: the map left to its packets ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_MODELS` | on | `0`: the models left to their packets ("The retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_GPU_ARM` | on | `0`: reserved; the arm is always packets for now ("The retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_GPU_SPRITES` | on | `0`: the flipbook sprites left to their packets; a sprite is retained only while the world is drawn ("Sprites on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_ARM` | on | `0`: the arm left to its packets ("The arm on the retained scene", `docs/GPU_RENDERER.md`); its runs otherwise drawn where the walk reaches their slots |
+| `KF1_GPU_SPRITES` | on | `0`: the flipbook sprites and the creatures drawn as sprites left to their packets; a sprite is retained only while the world is drawn ("Sprites on the retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CHECK` | off | `1`: under `capture`, every map and model vertex placed as the GPU places it, checked against the GTE's vertex cache (screen position, depth, behind-the-eye agreement, the depth cue, the map's corner colours, and the blended poses), the map's fog inside its faces against DPCS, and the models' light at every corner against NCDT/NCDS; reported with the census ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CENSUS` | off | `1`: a line every 5 s: builds, cache hits, GPU draws, packet bytes per domain and fallbacks by routine, caller and reason ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CENSUS_FILE` | off | a path: the census as JSON, every 5 s; implies `KF1_GPU_CENSUS` ("The retained scene", `docs/GPU_RENDERER.md`) |

@@ -74,16 +74,20 @@ public static class SemiAbr
         Current = null;
         KeyMissing += _keys.Count;
         _keys.Clear();
-        _keyActive = false;
+        _keyActive = _keyAll = false;
     }
 
     /// <summary>The slots (table index) a semi mesh's writer links, in its prim order.</summary>
-    public static void Expect(List<int> slots)
+    public static void Expect(List<int> slots, bool all = false)
     {
         if (!GpuWorld.Check) return;
         foreach (int s in slots) _keys.Enqueue(s);
         _keyActive = true;
+        _keyAll = all;
     }
+
+    // Every face is expected, not only the semi ones (the arm's).
+    static bool _keyAll;
 
     /// <summary>The polygon writer, at each packet it links: a semi mesh's untextured face is
     /// tagged for the probe, and under the check its linked slot is compared with the expected one.
@@ -91,13 +95,13 @@ public static class SemiAbr
     public static void Emit(uint pkt, uint primWord, uint linked, IMemory m)
     {
         uint code = primWord >> 24;
-        if (code is < 0x20 or > 0x3F || (code & 4) != 0 || (code & 2) == 0) return;
-        if (_on && Current is { } cur)
+        bool semi = code is >= 0x20 and <= 0x3F && (code & 4) == 0 && (code & 2) != 0;
+        if (semi && _on && Current is { } cur)
         {
             Tagged[Norm(pkt)] = (cur.Header, cur.Hash);
             _tagged++;
         }
-        if (!_keyActive) return;
+        if (!_keyActive || !semi && !_keyAll) return;
         uint ot = m.ReadU32(0x80090EBCu);
         int index = (int)(((linked - ot) >> 2) & 0x3FFF);
         KeyChecked++;
