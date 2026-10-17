@@ -33,8 +33,9 @@ Verdite3 pin (2026-10-14). The fork carries four changes made for this disc:
 `0090` (no `SYSTEM.CNF`), `0091` (vblanks from the interrupt poll, off unless a
 port asks), `0092` (image loads that wrap past VRAM's edge, which carry the HUD's
 and menus' palettes) and `0093` (a port's layer over the disc image, which the
-English fan translation uses). The bring-up order is
-in `docs/TODO.md`.
+English fan translation uses). The renderer plan is
+measured through Step 8 (2026-10-16); what is left is the user's manual pass,
+`docs/MANUAL_PASS.md`. The bring-up order is in `docs/TODO.md`.
 
 ## The documents
 
@@ -48,6 +49,7 @@ in `docs/TODO.md`.
 - [docs/RENDERER_PLAN.md](docs/RENDERER_PLAN.md) — the plan for porting Verdite2's and Verdite3's renderer work.
 - [docs/GPU_RENDERER.md](docs/GPU_RENDERER.md) — the plan's working log: who draws what, and where.
 - [docs/ENV_VARS.md](docs/ENV_VARS.md) — every `KF1_*` switch.
+- [docs/MANUAL_PASS.md](docs/MANUAL_PASS.md) — what is left to look at, where, and what to decide.
 - [docs/TODO.md](docs/TODO.md) — next steps: the Phase 2 bring-up.
 
 ## Where to write a new finding

@@ -142,6 +142,10 @@ on this game's addresses:
   survived 7 of 7. That tour was not re-run with the floor written. Everything runs on the game thread, from the vblank, or, in a loop that presents with no `VSync` for 100 ms (the event picture), from its pad reads: before 2026-10-16 a `press` sent while a sign's picture was up waited, unrun, until the loop gave way. A poke of the position
   (`0x800A0824`) can be lost to a stage that already holds the old one; check
   `state` after it.
+- **`scripts/kf1sh.py`** sends one request and prints the reply
+  (`python3 scripts/kf1sh.py warp 4 79000 71000`; `--port` for another port);
+  `spots` lists the places the Step 8 tour measured and `spot <name>` warps to
+  one (`MANUAL_PASS.md`).
 - **`KF1_AUTOSTART=new`** (`patches/AutoStart.cs`): Start is pulsed through
   OPEN.EXE until GAME.EXE loads, then released; a Start that lands in the area
   opens the in-game menu. Measured: area 1 at HP 30/30, the loop turning, about

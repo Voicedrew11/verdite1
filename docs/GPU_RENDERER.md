@@ -531,7 +531,7 @@ Each of these is counted with its reason.
 | models | `8001E230` from `8001EE9C` (the flipbook sprites) | none while drawing: retained as textured quads; `sprite-semi` for a semi-transparent one (none met) |
 | models | `8001E230` from the creature submitter `8001EEDC` and the HUD | `sprite-writer`: the same writer, still packets |
 | models | `8001D730` | `model-cached-writer`: area 5's objects |
-| models | `8001C7F8` | `model-semi-abr-unmeasured`: a semi mesh whose blend mode has not been measured (`800EED50` in area 1, and area 5's); `model-semi-quad`: a semi quad (none met). The seven measured meshes are retained, their semi faces as blended faces (below) |
+| models | `8001C7F8` | `model-semi-abr-unmeasured`: a semi mesh whose blend mode has not been measured (`800EED50` in area 1, and area 5's); `model-semi-quad`: a semi quad (none met). The eight measured meshes are retained, their semi faces as blended faces (below; the eighth since Step 8) |
 | map | `8001DE18`, `8001E5EC` | `map-not-built`, `map-source-changing`: the walks before a build |
 
 ### Semi-transparent models, 2026-10-15
@@ -925,3 +925,104 @@ would read so); not looked into.
 agent worktree the game spun in the BIOS (the worktree's `disc/` held only the
 tracked README until the image was linked in, and stalled after that too, not
 traced).
+
+## Whole-game coverage (Step 8, 2026-10-16)
+
+Every area and context, every supported combination of switches, and the cost
+of each path, all by program; what is left for the eye is `MANUAL_PASS.md`.
+The harness is `scratch/step8/` (`run.py` routes, `summ.py` per-log summary):
+each run boots in its own directory with its own `settings.json`, card copy and
+command port, so runs go side by side and leave the checkout's `interface.ini`
+and card alone. 70 runs.
+
+**The routes.** `matrix` (about 2 min): area 1 walking and swinging, the menu,
+area 4's busiest cell (79000, 71000), area 2's raised cell (61000, 113000).
+`tour` (about 8 min): area 1's start, the menu, Start's message, the double
+door, the save and load screens, the sign's picture, the exit to area 3 walked
+onto from (51000, 25000) going -z, then areas 3, 2 (two cells), 4 (three, one
+beside a walking creature) and 5 (two, HP raised), then area 5's arrival at 30
+HP until a creature kills the player (4-28 s in five of seven tours; two were
+not attacked in 90 s). `ending` and `title` as in "Drawing contexts".
+
+**Coverage, every one of them**: each tour reached areas 1, 3, 2, 4 and 5 in
+order with the beacon's `loop` true in each; death respawned in area 1; the
+ending gave way to OPEN.EXE (3,484 `PutDispEnv` after it); the title cycled
+for 70 s and three Starts reached area 1. No `unmapped call`, exception or
+early exit in any run.
+
+**Combinations** (`matrix`, unless said): `KF1_GPU_WORLD` 0 and 1, each with
+pacing off, at 144 with smoothing on and off, and uncapped with smoothing on
+and off, at 4:3 and at 16:9 (20 runs); 21:9 at 0 and 1; the GPU path with the
+map, the models and the sprites each left to packets; every Step 4 switch on
+its own at 1, 144, 16:9 (per-pixel, fog depth and distance, AO high and low
+with depth normals, anisotropy 16 with mipmaps, enhancement distance 6, render
+distance 16 with and without fade and models, fade alone, 24-bit with no
+dither, perspective with sub-pixel), all of them at once at 21:9, the packet
+path's picture switches with the Z-buffer, and `capture` with `KF1_GPU_CHECK`
+at 4:3, 16:9 and unpaced. Every run:
+
+- 0 missed main-view draws.
+- No fallback outside the known list (`packet-owned-hud`, `packet-owned-arm`,
+  `map-not-built`, `map-source-changing`, `model-semi-abr-unmeasured`,
+  `sprite-writer`, `model-cached-writer`).
+- 144.0 fps drawn at `KF1_FPS=144` while the world is drawn, 14.9-15.0 ticks a
+  second at any rate; the dips in a tour are the area loads, which the game
+  holds to 20.
+- The checks as Step 3 and 4 left them. Over a whole tour at 144: map within
+  1.83 px (45 of 33.7 M over 1.5), depth within 2, cue within 8, corner colours
+  exact, interior fog within 1 of 255; models within 1.12 px, depth exact,
+  3,932,203 posed vertices exact, light within 1; sprites within 1.06 px; semi
+  keys 431,672 with 0 slot mismatches. The matrix route meets no animated model,
+  so its check runs read 0 posed vertices.
+- The packet buffer peaks at 57,720 bytes (55.5%) at 21:9 on this route.
+
+**Found and fixed in these runs:**
+
+- **The sign's picture stalled scripted input.** The command channel ran its
+  queue on `VSync`, and the picture presents with none, so a `press` waited unrun
+  until the loop gave way. A warp queued behind it landed late, and in two tours
+  the player died and woke at the New Game's cell, with 46 map rebuilds from the
+  death's dimming. It now also drains from the pad read after 100 ms with no
+  `VSync` (`DEVELOPMENT.md`). A person's pad was never affected.
+- **A sign read for 15 s wrote a hang report**: the picture presents nothing
+  once faded, and the runtime's watchdog counts presents. `FramelessWaits` pauses
+  it while the picture or the card message runs ("Drawing contexts").
+- **A semi mesh past the stencil fell back to packets every frame.** Under the
+  render distance, area 4's busiest cell reaches mesh `80156B70` from the person
+  submitter (`0x8001F200`), whose blend mode had not been measured: 158 MB of
+  model packets in a 35 s stand. `KF1_SEMI_ABR` read ABR 0 on 1,035,300 packets
+  over 7,291 walks, and it is the eighth mesh in the table. The retained run then
+  noted 1,015,223 blended faces and drew 1,015,078; the 145 not drawn are not
+  traced. `capture` cannot check it: the render distance acts only on the
+  retained path.
+- **The renderer's choice is kept** (`kf1.gpuworld`): every boot used to start on
+  the reference packets, which the kept picture switches do not act on.
+
+**Cost**, uncapped (`KF1_FPS=off`), standing 35 s, `KF1_PROFILE_OUT` and
+`profile_report.py` over the standing window, nothing else running. *Recompiled*
+is the renderer, camera block and the 24 draw routines off (Step 0's
+condition); *all* is every Step 4 switch at 16:9 with render distance 16:
+
+| | recompiled | C#, packets | retained | retained, all |
+|---|---|---|---|---|
+| area 1 start: fps | 984 | 1,090 | 1,299 | 705 |
+| work a frame | 0.820 ms | 0.732 ms | 0.592 ms | 1.138 ms |
+| GPU a present | 0.147 (scene 0.134) | 0.147 | 0.277 (world 0.216, scene 0.048) | 0.804 (world 0.448, AO 0.279) |
+| area 4 busiest: fps | 771 | 854 | 1,305 | 1,152 |
+| work a frame | 1.079 ms | 0.954 ms | 0.576 ms | 0.798 ms |
+| GPU a present | 0.145 (scene 0.132) | 0.163 | 0.266 (world 0.202) | 0.646 (world 0.335, AO 0.243) |
+
+Step 0's baseline was 751-783 fps standing, recompiled; this build reads 984 at
+the same place and condition. On the packet path the costliest CPU work is
+`DrawOTag`'s packet walk (0.20-0.33 ms) and the map's writers (`MapAssembler`
+and `VertexCache`, 0.18-0.30 ms); on the retained path the walk is the HUD's few
+packets (0.16 ms) and the map writers drop out. The area-1 "all" frame is
+dearer than area 4's because the render distance adds about 124 cells a frame
+there and the walk visits them on the CPU (`VertexCache` 0.16 ms).
+
+**Uploads and draws** on the retained path (the census over each stand): the
+map built once in area 1 (twice by area 4, one per area), 5-7 model meshes and
+5-7 poses serving 121,000-273,000 instances, 328-584 pose-key uploads in total
+and no model vertex uploaded a frame; one main-view draw a frame, with 2-5
+instances a frame. Packets left while drawing: the HUD's (about 16 a frame) and
+the 1,053-1,071 map cells walked before each area's build.

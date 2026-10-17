@@ -85,6 +85,12 @@ recompiled and running, following Verdite3's method but applied to this disc.
   arrival after a warp, where `CrossProbe`'s luminance swings 39-177 on a period
   of about 0.4 s (`KF1_CROSSPROBE_OUT` writes the frames). **Open**: the models'
   ordinal displacement in `PacketMatch` standing still.
+  Step 8 measured 2026-10-16: every area, context and switch combination
+  runs clean by program ("Whole-game coverage (Step 8)" in
+  `docs/GPU_RENDERER.md`). **Next: the manual pass**, `docs/MANUAL_PASS.md`,
+  which gathers every item above that is still to judge, with where to go and
+  what to decide. Defaults change only after it. **Open**: 145 of 1,015,223
+  blended faces noted but not drawn under the render distance in area 4.
 
 Port what Verdite2 and Verdite3 have, mechanism by mechanism, in Verdite3's
 order: the agent harness, frame pacing, the camera and models carried between

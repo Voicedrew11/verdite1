@@ -309,7 +309,19 @@ scrubbed a command at a time), `TexProbe`, `CrossProbe`, `BlackProbe` and
 `PacketMatch`. Port them when a bug calls for them, not before. `CrossProbe`
 and `BlackProbe` belong with the first area-change bug.
 
-## Step 8: whole-game coverage and adoption
+## ~~Step 8: whole-game coverage and adoption~~
+
+**Measured 2026-10-16** ("Whole-game coverage (Step 8)" in `GPU_RENDERER.md`):
+every area and context reached by program and every combination below run, 70
+runs, with 0 missed draws, no fallback outside the listed ones and the checks at
+Step 4's figures. Four things were fixed on the way: the sign's picture stalled
+scripted input and wrote a hang report, a far semi mesh fell back to packets
+under the render distance, and the renderer's choice was not kept. Uncapped,
+the retained path draws 1,299 fps at area 1's start and 1,305 at area 4's
+busiest cell, against 1,090 and 854 on the C# packet path and 984 and 771
+recompiled. **Adoption is the user's**: the defaults are unchanged, and
+`MANUAL_PASS.md` lists what to look at and what to decide.
+
 
 - Visit every area, confirming the area actually loaded, with near views, busy
   views, doors and lifts; then every context from Step 0.
