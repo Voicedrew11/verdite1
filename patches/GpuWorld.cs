@@ -184,11 +184,20 @@ public static class GpuWorld
         if (Drawing) ModelBytes += Cursor(m) - _cursorAt;
     }
 
-    public static void ArmIn(CpuContext c, IMemory m) { _arm++; _cursorAt = Cursor(m); }
+    // The projection the world was drawn under, put back after the arm: the arm
+    // projects at H 2000, and the passes that rebuild positions from depth read the
+    // last projection noted.
+    static float _worldH, _worldCx, _worldCy;
+
+    public static void ArmIn(CpuContext c, IMemory m)
+    {
+        if (_arm++ == 0) (_worldH, _worldCx, _worldCy) = (GteDepth.ProjH, GteDepth.ProjCx, GteDepth.ProjCy);
+        _cursorAt = Cursor(m);
+    }
 
     public static void ArmOut(CpuContext c, IMemory m)
     {
-        _arm--;
+        if (--_arm == 0) (GteDepth.ProjH, GteDepth.ProjCx, GteDepth.ProjCy) = (_worldH, _worldCx, _worldCy);
         if (Drawing) ArmBytes += Cursor(m) - _cursorAt;
     }
 

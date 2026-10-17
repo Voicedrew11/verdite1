@@ -534,6 +534,17 @@ Each of these is counted with its reason.
 | models | `8001C7F8` | `model-semi-abr-unmeasured`: a semi mesh whose blend mode has not been measured (`800EED50` in area 1, and area 5's); `model-semi-quad`: a semi quad (none met). The eight measured meshes are retained, their semi faces as blended faces (below; the eighth since Step 8) |
 | map | `8001DE18`, `8001E5EC` | `map-not-built`, `map-source-changing`: the walks before a build |
 
+**The arm's projection is put back after it** (2026-10-16). The arm projects at H
+2000, against the walks' 200, and it is drawn last, so the projection the runtime
+notes for the passes that rebuild positions from depth (occlusion, the normal
+pass, the reflections' and the per-pixel light's unprojection) was the arm's on
+every swing frame. The occlusion read the world ten times deeper than it is: its
+darkest point went from 0.72 to 0.88 and the share it shaded from 11% to 33-52%,
+a faint shade spread over the picture instead of the creases. `GpuWorld.ArmIn`
+keeps `GteDepth.ProjH`/`ProjCx`/`ProjCy` and `ArmOut` puts them back; measured
+after, swing frames read 0.72 and 8-11% (the arm itself has no surface), at
+H 200 on every one of 250 sampled.
+
 ### Semi-transparent models, 2026-10-15
 
 Every face with the semi bit counts, untextured too; before 2026-10-15 the check
