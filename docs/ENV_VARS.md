@@ -44,6 +44,8 @@ switch is added.
 | `KF1_LITERAL_DUMP` | off | a directory: the entry, recompiled and C# RAM images at each routine's first verify mismatch |
 | `KF1_LITERAL_PROBE` | off | `1`: each draw routine's C# runs every 5 s |
 | `KF1_ITEMDISPLAY_HOLD` | on | `0`: the selected item's display steps on every frame under pacing, not once a tick |
+| `KF1_ITEMDISPLAY_CARRY` | on | `0`: the item display's turn-out drawn at the tick's angle, not carried between ticks (`docs/SMOOTHING.md`) |
+| `KF1_ITEMDISPLAY_PROBE` | off | `1`: a line a second while the turn is carried: frames carried, distinct angles drawn |
 | `KF1_SMOOTH` | on | `0`: no camera carried between ticks under pacing (`docs/SMOOTHING.md`) |
 | `KF1_SMOOTH_PROBE` | off | `1`: a view-smoothing line a second |
 | `KF1_SMOOTH_MODELS` | on | `0`: the model walk's records and clips not carried under pacing |

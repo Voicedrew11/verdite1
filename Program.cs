@@ -77,6 +77,8 @@ Kf1.CameraBlock.Install();
 // The draw path under it, routine by routine (KF1_LITERAL, KF1_<NAME>: 0, 1 or
 // verify). See "The draw path in C#" in docs/GPU_RENDERER.md.
 Kf1.Literal.InstallAll();
+// The item display's turn carried between ticks (KF1_ITEMDISPLAY_CARRY=0 compares).
+Kf1.ItemDisplay.Install();
 
 // Probes, measurements only: which stages submit primitives (KF1_STAGEPROBE) and
 // how much of the primitive buffer the frame spends (KF1_PRIMBUF_PROBE). See

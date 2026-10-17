@@ -463,7 +463,8 @@ With pacing at 144 fps and every routine on, the corpus plays. The walk runs
 - **The item display steps once a tick** (`ItemDisplay`). Under pacing, its body
   runs only on a frame on which the tick moved, so its state (`u8[0x80095088]`,
   the countdown `u8[0x80095089]`, the angle `u16[0x8009508A]` stepping 0x80 up to
-  0x200) moves at the console's rate. `KF1_ITEMDISPLAY_HOLD=0` lets it step on
+  0x200) moves at the console's rate. Its turn-out is carried between ticks
+  ("The item display's turn" in `SMOOTHING.md`). `KF1_ITEMDISPLAY_HOLD=0` lets it step on
   every frame again.
 - **Packet depths** (`PacketDepth`, Verdite3's `PolyAssemblerDepth`). Just
   before `AddPrim`, the map writer and both polygon writers seal each packet's

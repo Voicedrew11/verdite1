@@ -1,5 +1,8 @@
+using System.Reflection;
 using RecompOne.Runtime.Context;
+using RecompOne.Runtime.Events;
 using RecompOne.Runtime.Memory;
+using RecompOne.Runtime.Modding;
 using Recompiled;
 using static Kf1.Mips;
 
@@ -20,10 +23,88 @@ public static class ItemDisplay
     public static readonly Literal R = new(typeof(ItemDisplay), "item display", "ITEMDISPLAY", 0x8001FAFC, Run,
         "Draws the selected item, turning.");
 
+    const uint Renderer = 0x8001FDE4;
+    const uint Angle = 0x8009508A;
+
     static void Replace(Action<CpuContext, IMemory> orig, CpuContext c, IMemory m)
     {
-        if (HeldThisFrame()) return;
+        Restore(m);
+        if (HeldThisFrame())
+        {
+            Carry(m);
+            return;
+        }
+        short before = (short)m.ReadU16(Angle);
         R.Replace(orig, c, m);
+        if (!Hold || !FramePacing.Enabled) return;
+        _from = before;
+        _to = (short)m.ReadU16(Angle);
+        // A new item starts at 0: no turn to carry.
+        if (_to < _from || _to - _from > 0x100) _from = _to;
+        Carry(m);
+    }
+
+    // ---- the turn carried ----------------------------------------------------------
+    //
+    // The renderer turns the display's models about X by the angle, so the turn-out
+    // steps 0x80 a tick, four steps to 0x200. The angle the last step went from and
+    // to is drawn at the tick's fraction, and the tick's angle is put back after the
+    // renderer. Only this routine and the renderer read it. Interpolated, never
+    // extrapolated. KF1_ITEMDISPLAY_CARRY=0 to compare. See "The item display's
+    // turn" in docs/SMOOTHING.md.
+
+    static readonly bool Carrying = Environment.GetEnvironmentVariable("KF1_ITEMDISPLAY_CARRY")?.Trim() != "0";
+    static readonly bool Probe = Environment.GetEnvironmentVariable("KF1_ITEMDISPLAY_PROBE")?.Trim() == "1";
+
+    static short _from, _to, _drawn;
+    static bool _restore;
+    static long _carried, _distinct;
+    static short _probed = -1;
+    static double _probeAt = -1.0;
+
+    static void Carry(IMemory m)
+    {
+        if (!Carrying || _from == _to) return;
+        _drawn = (short)(_from + (int)Math.Round((_to - _from) * FramePacing.TickFraction));
+        m.WriteU16(Angle, (ushort)_drawn);
+        _restore = true;
+        if (!Probe) return;
+        _carried++;
+        if (_drawn != _probed) { _probed = _drawn; _distinct++; }
+    }
+
+    static void Restore(IMemory m)
+    {
+        if (!_restore) return;
+        _restore = false;
+        if ((short)m.ReadU16(Angle) == _drawn) m.WriteU16(Angle, (ushort)_to);
+    }
+
+    public static void AfterRenderer(CpuContext c, IMemory m)
+    {
+        Restore(m);
+        if (!Probe) return;
+        double now = Environment.TickCount64 / 1000.0;
+        if (now < _probeAt) return;
+        if (_probeAt >= 0.0 && _carried > 0)
+            Console.WriteLine($"[KF1] item display: {_carried} frames carried, {_distinct} angles drawn, at {_to:X}");
+        _probeAt = now + 1.0;
+        _carried = _distinct = 0;
+    }
+
+    static readonly ModInfo _self = new() { Id = "kf1.itemdisplay", Name = "Item display turn", Version = "1.0" };
+
+    public static void Install()
+    {
+        Event.AddListener<OverlayLoadedEvent>(_ => { _from = _to; _restore = false; });
+        HookAttach.OnOverlayLoad("item display turn", () =>
+        {
+            SymbolRegistry.Build();
+            if (SymbolRegistry.Resolve("game", null, Renderer) is not { } t) return false;
+            HookManager.AddPost(_self, t, typeof(ItemDisplay).GetMethod(nameof(AfterRenderer), BindingFlags.Public | BindingFlags.Static)!);
+            HookManager.Commit();
+            return HookAttach.Installed(t);
+        });
     }
 
     // The tick the display last stepped on.

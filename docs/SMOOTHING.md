@@ -183,6 +183,38 @@ hold puts `+0x14` back after the submitter, so all three modes read the same.
 Measured 2026-10-15 at 144 fps: 129 of 144 draws a second held, so a sprite steps
 on 15 draws, one per tick at that run's 15.1 Hz tick rate.
 
+## The item display's turn
+
+`patches/Draw/ItemDisplay.cs`, **on whenever pacing is** (`KF1_ITEMDISPLAY_CARRY=0`
+compares; `KF1_ITEMDISPLAY_PROBE=1` counts).
+
+The caption a pickup or an interaction shows is the item display, `func_8001FAFC`,
+called by the renderer. It takes items from the 8-entry ring at `0x8009506E`, with
+the index at `u8[0x80095086]` and `0xFF` meaning empty. It shows each one for 15
+steps (state 2), then turns it out (state 3): the angle `u16[0x8009508A]` goes
+0, `0x80`, `0x100`, `0x180`, and at `0x200` the records are cleared. The renderer's
+HUD block reads the angle right after the call (`RotMatrix` of (angle, 0, 0),
+`Renderer.HudModels`) and turns the display's models about X by it. Since
+2026-10-14 the routine steps only on a tick's first frame (`KF1_ITEMDISPLAY_HOLD`,
+"What moved with it" in `GPU_RENDERER.md`). So the turn drew four angles, each
+held for a tick.
+
+**The angle is carried.** On a frame where the routine steps, the patch keeps the
+angle from before and after the step. On every frame it writes the angle
+interpolated between the two at the tick's fraction, and a post hook on the
+renderer writes the tick's angle back. The routine's own entry puts it back as well,
+since the present's vblank can come before the post hook. Only the routine and the
+renderer read the angle (grep of `generated/game.cs`), so the C# renderer and the
+recompiled one both draw the carried angle. A step that goes down (a new item starts
+at 0) or by more than `0x100` is not carried, and an overlay load forgets the pair.
+**Interpolated, never extrapolated.** The last angle drawn is `0x180`, at fraction 1,
+as on the console. The step to `0x200` clears the records.
+
+Measured 2026-10-17, `KF1_FPS=144`, a New Game in area 1, item 5 poked into
+the ring's slot (`poke 8009506E 05`), the world at 15 Hz: the countdown ran
+`0F` to 0, then **39 frames carried with 39 distinct angles** over the four steps of
+the turn. Without the carry, those frames draw 4. **Not judged by eye.**
+
 ## Loops that draw their own frames
 
 Verdite3's `LoopPacing` runs a loop that calls the renderer once per world tick
