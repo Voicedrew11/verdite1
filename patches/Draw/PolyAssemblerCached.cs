@@ -176,7 +176,7 @@ public static class PolyAssemblerCached
                     c.S3 = c.V0 + c.S6;
                     c.A1 = mem.ReadU32(c.S3);
                     c.RA = 0x8001D9A4u;
-                    Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
+                    Facing.Quad(c, mem, R, c.S2, c.S3, c.S4, mem.ReadU16(c.S1 + 0x1Eu) + c.S6);
                     if ((int)c.V0 > 0)
                     {
                         c.V1 = 0x80070000u;
@@ -333,7 +333,7 @@ public static class PolyAssemblerCached
                     c.S3 = c.V0 + c.S6;
                     c.A1 = mem.ReadU32(c.S3);
                     c.RA = 0x8001DC7Cu;
-                    Facing.Nclip(c, mem, R, c.S2, c.S3, c.S4);
+                    Facing.Quad(c, mem, R, c.S2, c.S3, c.S4, mem.ReadU16(c.S1 + 0x18u) + c.S6);
                     if ((int)c.V0 > 0)
                     {
                         c.V1 = 0x80070000u;

@@ -17,6 +17,7 @@ namespace Kf1;
 ///                             the recovered vertices actually moved, in pixels,
 ///                             and the faces the fractional cull decided otherwise
 ///     KF1_SUBPIXEL_CULL=0     the back-face test on whole pixels (<see cref="Facing"/>)
+///     KF1_QUAD_FACING=0       a quad culled on its first triangle, as the game does
 ///
 /// See "Unit 2" in docs/PICTURE.md.
 /// </summary>
@@ -131,8 +132,8 @@ public static class Subpixel
         Console.WriteLine($"[KF1] subpixel: {n / window:F0} vertices/s carrying a fraction, " +
                           $"mean offset {mean:F3} px, max {GteDepth.OffsetMax:F3} px");
 
-        Console.WriteLine($"[KF1] subpixel: the cull at fractional corners kept {Facing.Kept / window:F0}/s whole pixels " +
-                          $"dropped, dropped {Facing.Dropped / window:F0}/s they kept");
+        Console.WriteLine($"[KF1] subpixel: the writers' cull at fractional corners and quad loops kept " +
+                          $"{Facing.Kept / window:F0}/s the game's test dropped, dropped {Facing.Dropped / window:F0}/s it kept");
         Facing.Kept = Facing.Dropped = 0;
 
         Baseline();

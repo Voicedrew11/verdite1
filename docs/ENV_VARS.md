@@ -62,6 +62,7 @@ switch is added.
 | `KF1_SUBPIXEL` | off | `1`: sub-pixel vertices |
 | `KF1_SUBPIXEL_PROBE` | off | `1`: the fractions carried every 2 s, and the faces the fractional cull decided otherwise |
 | `KF1_SUBPIXEL_CULL` | on | `0`: the back-face test on whole pixels even with sub-pixel on (`docs/PICTURE.md`) |
+| `KF1_QUAD_FACING` | on | `0`: a quad culled on its first triangle, as the game does, not on its whole loop |
 | `KF1_ZBUFFER` | off | `1`: per-pixel occlusion from the C# writers' packet depths, or the address map's when a world writer is recompiled |
 | `KF1_ZBUFFER_PACKETS` | on | `0`: the address map's depths even when the packet records are complete |
 | `KF1_ZBUFFER_PROBE` | off | `1`: every 2 s, packet depths recorded and found, triangles tested |

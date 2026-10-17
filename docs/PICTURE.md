@@ -72,20 +72,50 @@ hole between neighbours drawn at their fractional corners. The needle is made of
 such slivers.
 
 `patches/Draw/Facing.cs`: the 18 cull sites in the C# writers (`PolyAssembler`,
-`PolyAssemblerCached`, `MapAssembler`) call `Facing.Nclip`, which runs NCLIP (so the
-GTE is left as the game leaves it) and then, with sub-pixel on and the writer not
-under `verify`, decides on the signed area at the fractional corners read from the
-vertex map at the three cache words, both ways. A corner with no fraction or
-clamped leaves the game's answer. A quad is still decided on its first triangle,
-as the game does; Verdite2 later took a quad's whole loop (`QuadFaces`), not ported.
-`KF1_SUBPIXEL_CULL=0` compares; `KF1_SUBPIXEL_PROBE=1` counts the faces decided
-otherwise.
+`PolyAssemblerCached`, `MapAssembler`) call `Facing.Nclip` or `Facing.Quad`, which
+run NCLIP (so the GTE is left as the game leaves it) and then, with the writer not
+under `verify`, decide on the signed area at the fractional corners read from the
+vertex map at the cache words, both ways. A corner with no fraction or clamped
+leaves whole pixels. `KF1_SUBPIXEL_CULL=0` compares; `KF1_SUBPIXEL_PROBE=1` counts
+the faces decided otherwise.
+
+**A quad is decided on its whole loop**, Verdite2's `QuadFaces`. The game tests a
+quad's first triangle alone (corners 0, 1, 2), so a quad whose first triangle is a
+sliver or a line is dropped while it plainly faces. `Facing.Quad` takes the area of
+the loop 0, 1, 3, 2 the GPU draws, the fourth corner being the face record's next
+index into the cache (`+0xC` F4, `+0x12` G4, `+0x18` FT4 and the map's GT4, `+0x1E`
+GT4). At the fractional corners when all four have one, on whole pixels otherwise,
+so it applies with sub-pixel off too, where the console's own test showed as
+missing quads at a higher render scale. `KF1_QUAD_FACING=0` is the game's first
+triangle.
+
+The retained world (`KF1_GPU_WORLD=1`) draws the map and models from meshes with
+the GPU's own facing cull on their real geometry, so none of this applies to them
+there, and its writers never see a quad. Two retained paths still decided on the
+first three whole-pixel corners and now ask `Facing.Faces`: the arm's faces
+(`SubmitArm`, quads by their loop) and the blended faces (`AddSemiFaces`).
 
 Measured 2026-10-17, 144 fps, area 1, standing and holding Left (`KF1_HUD_PROBE=1`
 counts the compass's G3s): **on the whole-pixel cull the compass drew 7 of its 10
 triangles standing and 6 to 7 while turning; with this, all 10 on every frame**.
-Over everything drawn it kept 432-576 faces a second that whole pixels dropped, and
-dropped 0 they kept. **Not judged by eye**: the needle at a high render scale.
+On the retained world it kept 432-864 faces a second that whole pixels dropped (the
+compass and the arm), and dropped 0.
+
+On the packet path (`KF1_GPU_WORLD=0`), the same day, turning, walking and
+swinging through area 1, faces a second the game's test decided otherwise (kept /
+dropped, the busiest window):
+
+| | quad loop | `KF1_QUAD_FACING=0` |
+|---|---|---|
+| sub-pixel on | 15,490 / 225 | 15,943 / 208 |
+| sub-pixel off | 2,060 / 144 | 0 / 0 |
+
+So with sub-pixel on almost all of it is the fractional test, and with it off the
+loop alone keeps up to about 14 quads a frame. The writers at `verify`: 0
+mismatches. Uncapped, standing at the New Game's start on the packet path: 745-758
+fps against 774-793 with both off, drawing 500 packets a frame against 451.
+**Not judged by eye**: the needle at a high render scale, and the map at grazing
+angles on the packet path.
 
 ## Unit 3: the Z-buffer
 

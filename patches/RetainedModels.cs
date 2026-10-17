@@ -428,8 +428,8 @@ public static class RetainedModels
         float h = (ushort)Gte.ReadControl(26);
         if (h <= 0) { GpuWorld.Fallback(routine, c.RA, "arm-projection"); return false; }
 
-        // The writer's faces: NCLIP on the first three corners, the key the mean cached SZ
-        // over four plus the bias, under 5 dropped.
+        // The writer's faces: facing as the C# writer decides it (Facing), the key the mean
+        // cached SZ over four plus the bias, under 5 dropped.
         int bias = (short)c.A1, n = 0;
         float bx0 = float.MaxValue, by0 = float.MaxValue, bx1 = float.MinValue, by1 = float.MinValue;
         for (int i = 0; i < mesh.Faces.Count; i++)
@@ -439,8 +439,8 @@ public static class RetainedModels
             long x0 = (short)m.ReadU16(a), y0 = (short)m.ReadU16(a + 2);
             long x1 = (short)m.ReadU16(b), y1 = (short)m.ReadU16(b + 2);
             long x2 = (short)m.ReadU16(cc), y2 = (short)m.ReadU16(cc + 2);
-            if (x0 * y1 + x1 * y2 + x2 * y0 - x0 * y2 - x1 * y0 - x2 * y1 <= 0) continue;
             bool quad = f.Corners == 6;
+            if (!Facing.Faces(m, a, b, cc, quad ? d : 0)) continue;
             int z = (short)m.ReadU16(a + 4) + (short)m.ReadU16(b + 4) + (short)m.ReadU16(cc + 4);
             int key = quad ? (z + (short)m.ReadU16(d + 4)) >> 4 : z / 3 >> 2;
             key += bias;
@@ -522,8 +522,8 @@ public static class RetainedModels
             long x0 = (short)m.ReadU16(a), y0 = (short)m.ReadU16(a + 2);
             long x1 = (short)m.ReadU16(b), y1 = (short)m.ReadU16(b + 2);
             long x2 = (short)m.ReadU16(c), y2 = (short)m.ReadU16(c + 2);
-            // The writer's NCLIP: a face is kept when the screen cross product is positive.
-            if (x0 * y1 + x1 * y2 + x2 * y0 - x0 * y2 - x1 * y0 - x2 * y1 <= 0) continue;
+            // The writer's NCLIP, as the C# writer decides it.
+            if (!Facing.Faces(m, a, b, c)) continue;
             // The writer's slot: the mean of the three SZ over four (sum / 3, then >> 2), plus the bias.
             int z = (short)m.ReadU16(a + 4) + (short)m.ReadU16(b + 4) + (short)m.ReadU16(c + 4);
             int slot = (z / 3 >> 2) + bias;

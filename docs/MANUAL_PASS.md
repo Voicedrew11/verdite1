@@ -76,7 +76,10 @@ first: the GPU path is judged against it.
 7. **The picture switches**: Shading (Dither / None / Smooth), perspective,
    sub-pixel, the Z-buffer. Measured on the packet path: 94.7% of triangles
    depth-tested at 16:9, the arm and the HUD in painter's order. Look at:
-   whether walls cut the arm with the Z-buffer on. *Decide*: each default.
+   whether walls cut the arm with the Z-buffer on. On the packet
+   path (`KF1_GPU_WORLD=0`) at a high render scale, the map at grazing angles for
+   missing or extra faces, against `KF1_SUBPIXEL_CULL=0 KF1_QUAD_FACING=0`.
+   *Decide*: each default.
 8. **Widescreen**: 16:9 and 21:9 at `area4-busy`, turning. Look at: cells and
    models appearing at the sides, the HUD's place, the margin behind the card
    message and the sign. Then Testing ▸ HUD at the screen edges: the gauges, the

@@ -88,7 +88,7 @@ public static class MapAssembler
                         c.S2 = c.V0 + c.S6;
                         c.A1 = mem.ReadU32(c.S2);
                         c.RA = 0x8001DEF0u;
-                        Facing.Nclip(c, mem, R, c.S4, c.S2, c.S3);
+                        Facing.Quad(c, mem, R, c.S4, c.S2, c.S3, mem.ReadU16(c.S1 + 0x18u) + c.S6);
                         if ((int)c.V0 > 0)
                         {
                             // the packet's cursor record (0x80070EB8): take 0x34 bytes
