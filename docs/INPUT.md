@@ -115,6 +115,17 @@ lead, with the pitch kept signed and inside ±`0xBF` (the map walk takes a speci
 stencil past ±511, so a 12-bit pitch must never reach it). Instant mouse look
 (`KF1_MOUSE_LEAD`) gates it.
 
+**The clamp holds the mouse, not the game.** The lead runs with no pointer
+captured too, and until 2026-10-17 it clamped the tick's pitch into ±`0xBF` on
+every frame. The death's fall (`func_80018540`) tips the pitch to -800, 10 more a
+tick, so past -191 every frame between ticks was pulled back to -191 and every
+tick dropped it again: the fall drew -191, -143, -191, -124, -191, -104 ... at 144
+fps. Now a pitch the game took past the limit is the limit for that frame: the mouse
+cannot push further out, and nothing pulls it in. Measured the same day, the area-1
+trap, 144 fps, 451 frames from the hit to the respawn: the drawn pitch fell to -800
+with no frame going back up but the flinch's last steps to level and the respawn.
+**Not judged by eye**: the fall.
+
 ### Measured
 
 2026-10-05, with a synthetic hand (a local hack, not committed: a fixed step a

@@ -188,9 +188,10 @@ public static class ViewSmoothing
         double keep = 1.0 - frac;
         double yaw = (carried ? _tickYaw * keep : 0) + turn;
 
-        // Held inside the game's pitch limit, off the angle the next tick adds to.
+        // Held inside the game's pitch limit, off the angle the next tick adds to. An
+        // angle the game took past it (the death's fall, to -800) is not pulled back.
         int basePitch = (short)m.ReadU16(MouseLook.Game.PitchAddress);
-        int ahead = Math.Clamp(basePitch + (int)Math.Round(look), -Mouse.PitchLimit, Mouse.PitchLimit) - basePitch;
+        int ahead = HoldPitch(basePitch, basePitch + (int)Math.Round(look)) - basePitch;
         double pitch = (carried ? _tickPitch * keep : 0) + ahead;
 
         int dy = (int)Math.Round(yaw), dp = (int)Math.Round(pitch);
@@ -199,9 +200,12 @@ public static class ViewSmoothing
         return view with
         {
             Yaw = (uint)view.Yaw < 0x1000u ? (short)((view.Yaw + dy) & 0xFFF) : (short)(view.Yaw + dy),
-            Pitch = (short)Math.Clamp(view.Pitch + dp, -Mouse.PitchLimit, Mouse.PitchLimit),
+            Pitch = (short)HoldPitch(view.Pitch, view.Pitch + dp),
         };
     }
+
+    static int HoldPitch(int from, int to) =>
+        Math.Clamp(to, Math.Min(-Mouse.PitchLimit, from), Math.Max(Mouse.PitchLimit, from));
 
     static bool Jump(in Camera a, in Camera b) =>
         Math.Abs((long)b.X - a.X) > SnapUnits || Math.Abs((long)b.Y - a.Y) > SnapUnits ||
