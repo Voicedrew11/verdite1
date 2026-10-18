@@ -26,7 +26,9 @@ namespace Kf1;
 ///
 /// A cell's variant is a gate slot (<see cref="RetainedScene.HalfFlag"/>), so the GPU
 /// draws exactly the cells the walk visited. What the mesh is built from is hashed
-/// at each walk; a change rebuilds it. Step 3 of docs/RENDERER_PLAN.md.
+/// at each walk; a change rebuilds it, unless a map with the same hash and TMD is
+/// kept (KF1_MAPCACHE, the fork's 0111), which is put back instead. Step 3 of
+/// docs/RENDERER_PLAN.md; "Each area's map kept" in docs/GPU_RENDERER.md.
 /// </summary>
 public static class RetainedMap
 {
@@ -40,7 +42,31 @@ public static class RetainedMap
     static readonly int ProfBuild = Profiler.Register("retained map: mesh build", ProfileGroup.Hook);
 
     public static bool Ready { get; private set; }
-    public static long Builds, Corners;
+    public static long Builds, Restores, Corners;
+
+    /// <summary>Built maps kept to put back (KF1_MAPCACHE); 0 keeps none.</summary>
+    public const int DefaultKeep = 5;
+
+    // About an area's corners, areas 1-4 (area 5 has half).
+    const int Reserve = 1_050_000;
+
+    /// <summary>The cache's size, and the first build's arrays readied off the game
+    /// thread: written for the first time, a million corners fault in 136 MB.</summary>
+    public static void Configure(string? keep)
+    {
+        RetainedScene.StaticKeep = int.TryParse(keep, out int n) ? Math.Clamp(n, 0, 16) : DefaultKeep;
+        if (GpuWorld.Mode == 0) return;
+        RetainedScene.ReserveStatic(Reserve);
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            var a = new RetainedScene.Vertex[Reserve];
+            for (int i = 0; i < a.Length; i += 64) a[i].Flags = 0;
+            Interlocked.CompareExchange(ref _all, a, Array.Empty<RetainedScene.Vertex>());
+        });
+    }
+
+    // What a kept map needs beside the scene's own copy.
+    sealed record Kept(int[] Low, int[] High, int Slots, long Corners, uint Tmd, int Meshes, Source Src, bool Remap);
     public static int Slots;
 
     // Each cell's gate slot for its own object and for object + 100, -1 for none.
@@ -145,7 +171,24 @@ public static class RetainedMap
         if (!FarBlack) { Ready = false; GpuWorld.Fallback(0x8001E83C, 0, "map-far-colour"); return; }
         int bp = Profiler.Begin(ProfBuild);
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        try { Build(m, tmd, src, remapOn); }
+        ulong key = 0;
+        try
+        {
+            key = RetainedScene.StaticKeep > 0 ? (h ^ TmdHash(m, tmd)) * 0x100000001B3UL : 0;
+            if (key != 0 && RetainedScene.RestoreStatic(key, out var tag) && tag is Kept k)
+            {
+                Restore(k);
+                _built = h;
+                if (GpuWorld.CensusOn)
+                    Console.WriteLine($"[KF1] map restore {Restores}: frame {GpuWorld.Frames}, {Corners} corners, " +
+                        $"{System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:F1} ms; tmd {tmd:X8} cells {hCells:X16}");
+                return;
+            }
+            Build(m, tmd, src, remapOn);
+            if (key != 0 && Ready)
+                RetainedScene.KeepStatic(key, new Kept((int[])SlotLow.Clone(), (int[])SlotHigh.Clone(), Slots, Corners,
+                    tmd, _meshes.Length, src, remapOn));
+        }
         finally { Profiler.End(bp); }
         if (GpuWorld.CensusOn)
             Console.WriteLine($"[KF1] map build {Builds}: frame {GpuWorld.Frames}, {Corners} corners, " +
@@ -153,6 +196,41 @@ public static class RetainedMap
                 $"cells {hCells:X16} grid {hGrid:X16} dq {src.Dqa}/{src.Dqb} rgbc {src.Rgbc:X6} bk {src.Bk0}/{src.Bk1}/{src.Bk2} " +
                 $"l {src.L0}/{src.L4}/{src.L8}");
         _built = h;
+    }
+
+    static void Restore(Kept k)
+    {
+        k.Low.CopyTo(SlotLow);
+        k.High.CopyTo(SlotHigh);
+        Slots = k.Slots;
+        Corners = k.Corners;
+        _tmd = k.Tmd;
+        _meshes = new Mesh?[k.Meshes];
+        _src = k.Src;
+        _remap = k.Remap;
+        Restores++;
+        Ready = true;
+    }
+
+    /// <summary>The map TMD's bytes, header to its furthest vertex, normal or primitive:
+    /// the areas load theirs at one address, so the pointer alone names none.</summary>
+    static ulong TmdHash(PSMemory m, uint tmd)
+    {
+        uint baseAt = tmd + 0xC, end = baseAt;
+        int objects = Math.Clamp((int)m.ReadU32(tmd + 8), 0, 1024);
+        for (int o = 0; o < objects; o++)
+        {
+            uint header = baseAt + (uint)o * 28;
+            end = Math.Max(end, header + 28);
+            end = Math.Max(end, baseAt + m.ReadU32(header) + Math.Min(m.ReadU32(header + 4), 4096) * 8);
+            end = Math.Max(end, baseAt + m.ReadU32(header + 8) + Math.Min(m.ReadU32(header + 12), 4096) * 8);
+            uint at = baseAt + m.ReadU32(header + 16);
+            uint n = Math.Min(m.ReadU32(header + 20), 8192);
+            for (uint i = 0; i < n && (at & 0x1FFFFF) < 0x1FFFFC; i++) at += 4 + ((m.ReadU32(at) >> 6) & 0x3FC);
+            end = Math.Max(end, at);
+        }
+        int bytes = (int)Math.Min(end - tmd, 0x200000 - (tmd & 0x1FFFFF));
+        return Hash(m, tmd, Math.Max(bytes, 0), 0xCBF29CE484222325UL);
     }
 
     // ---- the grid's writes, measured: which cells change between walks ----------
@@ -245,7 +323,7 @@ public static class RetainedMap
                 Math.Clamp(((b << 4) * c3 >> 12) >> 4, 0, 255));
     }
 
-    static RetainedScene.Vertex[] _all = [];
+    static RetainedScene.Vertex[] _all = Array.Empty<RetainedScene.Vertex>();
 
     static void Build(PSMemory m, uint tmd, in Source src, bool remapOn)
     {
@@ -302,6 +380,7 @@ public static class RetainedMap
                     n = Place(m, mesh, colours, rot.Slice(turn * 9, 9), col, row, turn, slot, src, n);
                 }
             }
+        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
         RetainedScene.SetStatic(_all.AsSpan(0, n));
         Slots = slots;
         Corners = n;
@@ -309,7 +388,9 @@ public static class RetainedMap
         Ready = n > 0;
         if (GpuWorld.CensusOn)
             Console.WriteLine($"[KF1] retained map: built {slots} slots, {n} corners in " +
-                $"{System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms (dqa {src.Dqa}, dqb {src.Dqb}, rgbc {src.Rgbc:X6})");
+                $"{System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, " +
+                $"{System.Diagnostics.Stopwatch.GetElapsedTime(t1).TotalMilliseconds:0.0} of them sorting " +
+                $"(dqa {src.Dqa}, dqb {src.Dqb}, rgbc {src.Rgbc:X6})");
     }
 
     /// <summary>The object a cell's byte names, as <see cref="MapCell"/> takes it; -1 none.</summary>

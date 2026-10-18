@@ -164,13 +164,15 @@ Kf1.ZBuffer.Install();
 // (KF1_GPU_WORLD). See "The retained scene" in docs/GPU_RENDERER.md.
 Kf1.GpuWorld.Configure();
 Kf1.GpuWorld.Install();
+// Each area's built map kept, so a return puts it back (KF1_MAPCACHE=n, 0 none; fork 0111).
+Kf1.RetainedMap.Configure(Environment.GetEnvironmentVariable("KF1_MAPCACHE"));
 Kf1.RetainedModels.Install();
 // Every presented picture across an area change (KF1_CROSSPROBE; see patches/CrossProbe.cs).
 Kf1.CrossProbe.Configure(Environment.GetEnvironmentVariable("KF1_CROSSPROBE"),
     Environment.GetEnvironmentVariable("KF1_CROSSPROBE_OUT"));
 Kf1.CrossProbe.Install();
-// The picture on it: render distance and the runtime's enhancements, each off until
-// judged. See "The picture on the retained scene" in docs/GPU_RENDERER.md.
+// The picture on it: render distance and the runtime's enhancements, each on by
+// default. See "The picture on the retained scene" in docs/GPU_RENDERER.md.
 Kf1.RenderDistance.Configure();
 Kf1.RenderDistance.Install();
 Kf1.LightCheck.Install();
@@ -283,6 +285,20 @@ if (!string.IsNullOrWhiteSpace(autopad))
         if (held != 0) e.Buttons &= (ushort)~(ushort)((held >> 8) | (held << 8));
     });
 }
+
+// Compile the recompiled code, the patches and the runtime ahead of the game, on
+// background threads from the first overlay load: QuickJit is off, so otherwise
+// each method compiles fully optimised on its first call, on the game thread.
+// Installed last, after every patch's attach listener. See "The JIT" in
+// docs/DEVELOPMENT.md.
+//
+//     KF1_PREJIT=0          leave every method to its first call -- the comparison
+//     KF1_PREJIT_PROBE=1    a line per batch as the pass reaches its end
+//     KF1_PREJIT_THREADS=n  threads for the pass (a quarter of the cores, 1-4)
+Verdite.Core.Prejit.Configure(Verdite.Core.Game.Env("PREJIT"),
+                              Verdite.Core.Game.Env("PREJIT_PROBE"),
+                              Verdite.Core.Game.Env("PREJIT_THREADS"));
+Verdite.Core.Prejit.Install("Kf1");
 
 // The frame gate waits for the vblank handler without calling VSync, so the
 // interrupt poll delivers the vblanks (fork 0091). See "The frame gate" in

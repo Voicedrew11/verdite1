@@ -4,6 +4,12 @@ Every `KF1_*` switch the port reads, in one list, with what each does and its
 default, the way Verdite3's `docs/ENV_VARS.md` does. Add an entry here when a
 switch is added.
 
+An enhancement ships **on**, at the value Verdite3 judged for its own (2026-10-06
+and after), so that it is in play to be found wrong; the variable or the Testing
+tab turns it off to compare. A kept value in `interface.ini` still wins over the
+default, and a set variable over both. The translation and the debug mod's switches
+stay off: they are choices, not enhancements.
+
 | variable | default | what |
 |---|---|---|
 | `KF1_LOG` | off | the runtime's log channels: `bios,cd,gpu,dma,sdk,spu,mdec,irq` or `all` |
@@ -12,7 +18,7 @@ switch is added.
 | `KF1_AUTOSTART` | off | `new`: Start through the title into a New Game |
 | `KF1_AUTOPAD` | off | scripted pad input, `seconds:button:holdMs,…` (`docs/DEVELOPMENT.md`) |
 | `KF1_AUTOPAD_FROM` | `game` | the overlay whose load starts `KF1_AUTOPAD`'s clock: `open` or `game` |
-| `KF1_FPS` | off | `60`, `144`, … or `off` (uncapped): frame pacing, the picture's rate (`docs/DEVELOPMENT.md`) |
+| `KF1_FPS` | `144` | `60`, `144`, …, `off` (uncapped), or `0`: no frame pacing; unset is the kept rate, else 144 (`docs/DEVELOPMENT.md`) |
 | `KF1_TICKRATE` | `15` | the world's rate under pacing; the frame gate's own is 20 |
 | `KF1_FPS_PROBE` | off | `1`: a pacing line a second |
 | `KF1_PACING_NOBOUNDARY` | off | `1`: leave `DrawOTag` unhooked, to test the watchdog |
@@ -33,6 +39,9 @@ switch is added.
 | `KF1_TEXPROBE` | off | `1`: a line a second, on the console and into `texprobe.log`: the packet census (textured, flat, gouraud, semi), the retained scene's draws, triangles and instances, and the distinct words in each of the 32 texture pages (`patches/TexProbe.cs`) |
 | `KF1_CROSSPROBE` | off | `1`: every presented picture from 400 ms before an area transition (`func_80036850`) to 3 s after it, read back and reduced to a row: luminance, repeat, frame time, the retained world's counters, the tick and position (`patches/CrossProbe.cs`) |
 | `KF1_CROSSPROBE_OUT` | off | a directory (`1`: `scratch/crossprobe`): with `KF1_CROSSPROBE`, the same pictures as PNGs, the last 12 before the transition and every one after |
+| `KF1_PREJIT` | on | `0`: every method compiled on its first call, on the game thread, instead of ahead on background threads ("The JIT", `docs/DEVELOPMENT.md`) |
+| `KF1_PREJIT_PROBE` | off | `1`: a line per batch as the pass finishes it |
+| `KF1_PREJIT_THREADS` | a quarter of the cores, 1-4 | threads for the pass |
 | `KF1_PROFILE` | off | `1`: the frame profiler, a section summary every 5 s; `panel` also opens its panel (Shift+P toggles it) |
 | `KF1_PROFILE_OUT` | off | a path: every frame's sections as CSV rows, for `scripts/profile_report.py` |
 | `KF1_PROFILE_SPIKE` | off | milliseconds: a console line for each frame whose work passes it |
@@ -54,21 +63,22 @@ switch is added.
 | `KF1_SMOOTH_GAUGES` | on | `0`: the HUD's bars on the tick, not carried with the view |
 | `KF1_HUD_PROBE` | off | `1`: a line every 2 s: bars carried, the needle's step a frame, the compass's vertices mapped and with a fraction |
 | `KF1_SMOOTH_MODELS_PROBE` | off | `1`: a model-smoothing line a second: drawn and carried by table, poses, held cels, snaps |
-| `KF1_NODITHER` | off | `1`: no ordered dither (`docs/PICTURE.md`) |
+| `KF1_NODITHER` | on | `0`: the console's ordered dither (`docs/PICTURE.md`) |
 | `KF1_NODITHER_PROBE` | off | `1`: a dither line every 2 s |
-| `KF1_TRUECOLOR` | off | `1`: 24-bit output |
-| `KF1_PERSPECTIVE` | off | `1`: perspective-correct textures |
+| `KF1_TRUECOLOR` | on | `0`: the console's 15-bit output |
+| `KF1_PERSPECTIVE` | on | `0`: the console's affine textures |
 | `KF1_PERSPECTIVE_PROBE` | off | `1`: the address map's counters every 2 s |
-| `KF1_SUBPIXEL` | off | `1`: sub-pixel vertices |
+| `KF1_SUBPIXEL` | on | `0`: whole-pixel vertices |
 | `KF1_SUBPIXEL_PROBE` | off | `1`: the fractions carried every 2 s, and the faces the fractional cull decided otherwise |
 | `KF1_SUBPIXEL_CULL` | on | `0`: the back-face test on whole pixels even with sub-pixel on (`docs/PICTURE.md`) |
 | `KF1_QUAD_FACING` | on | `0`: a quad culled on its first triangle, as the game does, not on its whole loop |
-| `KF1_ZBUFFER` | off | `1`: per-pixel occlusion from the C# writers' packet depths, or the address map's when a world writer is recompiled |
+| `KF1_ZBUFFER` | on | `0`: the ordering table alone; on, per-pixel occlusion from the C# writers' packet depths, or the address map's when a world writer is recompiled |
 | `KF1_ZBUFFER_PACKETS` | on | `0`: the address map's depths even when the packet records are complete |
 | `KF1_ZBUFFER_PROBE` | off | `1`: every 2 s, packet depths recorded and found, triangles tested |
 | `KF1_BLENDORDER` | on | `0`: blended surfaces in table order (`0079`) |
 | `KF1_ZBUFFER_THRESHOLD` | `0` | restart the depth buffer on a step this large (`0051`) |
-| `KF1_GPU_WORLD` | `0` | `0`/`reference`: the packets only. `capture` (or `shadow`): the scene published to the runtime's `RetainedScene` beside the packets, nothing suppressed. `1`/`on`/`retained`: the map and models drawn by the GPU from meshes kept on it, their packets not written; turns the Z-buffer on; kept as `kf1.gpuworld` ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_GPU_WORLD` | `1` | `0`/`reference`: the packets only. `capture` (or `shadow`): the scene published to the runtime's `RetainedScene` beside the packets, nothing suppressed. `1`/`on`/`retained`: the map and models drawn by the GPU from meshes kept on it, their packets not written; turns the Z-buffer on; kept as `kf1.gpuworld` ("The retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_MAPCACHE` | `5` | built maps kept by their hash, so a return to an area puts its map back instead of building and uploading it; `0` none; about 68 MB of memory and of GPU memory each ("Each area's map kept", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_MAP` | on | `0`: the map left to its packets ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_MODELS` | on | `0`: the models left to their packets ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_ARM` | on | `0`: the arm left to its packets ("The arm on the retained scene", `docs/GPU_RENDERER.md`); its runs otherwise drawn where the walk reaches their slots |
@@ -77,17 +87,17 @@ switch is added.
 | `KF1_GPU_CENSUS` | off | `1`: a line every 5 s: builds, cache hits, GPU draws, packet bytes per domain and fallbacks by routine, caller and reason ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_CENSUS_FILE` | off | a path: the census as JSON, every 5 s; implies `KF1_GPU_CENSUS` ("The retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_GPU_SURFACE_PROBE` | off | `1`: with the census, the main view's depth against its surface buffer, sampled every 5 s: pixels with a depth but no surface (`missing`), surfaces ahead or behind it, by surface id ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_PERPIXEL` | off | `1`: the retained world lit and fogged per pixel (`GteLightMap.Enabled`); kept as `kf1.perpixel` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_FOG` | `corners` | `corners`/`0`: the game's fog at the corners; `depth`/`1`: per pixel from its view depth; `distance`/`radial`/`2`: per pixel from its distance to the eye. The last two act through `KF1_PERPIXEL`; kept as `kf1.fog` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_AO` | off | `1`: ambient occlusion; kept as `kf1.ao` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_PERPIXEL` | on | `0`: corner lighting; on, the retained world lit and fogged per pixel (`GteLightMap.Enabled`); kept as `kf1.perpixel` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_FOG` | `distance` | `corners`/`0`: the game's fog at the corners; `depth`/`1`: per pixel from its view depth; `distance`/`radial`/`2`: per pixel from its distance to the eye. The last two act through `KF1_PERPIXEL`; kept as `kf1.fog` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_AO` | on | `0`: no ambient occlusion; kept as `kf1.ao` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_AO_NORMALS` | on | `0`: the occlusion's normals from depth differences instead of the geometry; kept as `kf1.ao.normals` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_AO_QUALITY` | `medium` | `low`/`medium`/`high`: the occlusion's resolution and samples; kept as `kf1.ao.quality` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_AO_PROBE` | off | `1`: the runtime's occlusion probe ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_ANISO` | `1` | `1`-`16`: anisotropic taps; `1` is off; kept as `kf1.aniso` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_MIPMAPS` | off | `1`: mipmapped textures on the retained world; kept as `kf1.mipmaps` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_ANISO` | `16` | `1`-`16`: anisotropic taps; `1` is off; kept as `kf1.aniso` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
+| `KF1_MIPMAPS` | on | `0`: no mipmaps; on, mipmapped textures on the retained world; kept as `kf1.mipmaps` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
 | `KF1_ENHANCEDIST` | `0` | cells (2-16): per-pixel shading, filtering and occlusion only nearer than this, the game's look past it; `0` at every distance; kept as `kf1.enhancedistance` ("The picture on the retained scene", `docs/GPU_RENDERER.md`) |
-| `KF1_RENDERDIST` | `0` | cells (1-30): the retained map and models drawn out to this distance; `0` the game's reach. Retained only; kept as `kf1.renderdistance` ("Render distance", `docs/GPU_RENDERER.md`) |
-| `KF1_RENDERDIST_FADE` | `0` | cells (0.25-8): the world faded out over this band at the edge of what is drawn (the render distance, or the game's edge); `0` none. Retained only; kept as `kf1.renderdistance.fade` ("Render distance", `docs/GPU_RENDERER.md`) |
+| `KF1_RENDERDIST` | `16` | cells (1-30): the retained map and models drawn out to this distance; `0` the game's reach. Retained only; kept as `kf1.renderdistance` ("Render distance", `docs/GPU_RENDERER.md`) |
+| `KF1_RENDERDIST_FADE` | `3` | cells (0.25-8): the world faded out over this band at the edge of what is drawn (the render distance, or the game's edge); `0` none. Retained only; kept as `kf1.renderdistance.fade` ("Render distance", `docs/GPU_RENDERER.md`) |
 | `KF1_RENDERDIST_MODELS` | on | `0`: the models kept at the game's reach under `KF1_RENDERDIST` ("Render distance", `docs/GPU_RENDERER.md`) |
 | `KF1_RENDERDIST_PROBE` | off | `1`: the game's edge when worked out, and a line every 5 s: cells and models added past the stencil ("Render distance", `docs/GPU_RENDERER.md`) |
 | `KF1_KEYS` | `fps` | `stock` leaves RecompOne's keyboard bindings (`docs/INPUT.md`) |
@@ -108,17 +118,17 @@ switch is added.
 | `KF1_ANALOG_ACCEL`, `_ACCELMAX`, `_ACCELTIME` | off, `2.2`, `0.5` | the look ramp past the D-pad's rate |
 | `KF1_ANALOG_INVERTY`, `_INVERTTURN`, `_INVERTSTRAFE`, `_INVERTFWD` | off | `1`: invert that axis |
 | `KF1_ANALOG_PROBE` | off | `1`: a line every 10 s of what the sticks asked and stage A did; `trace`: a line a tick as well |
-| `KF1_WIDESCREEN` | off | `16:9`, `16:10`, `21:9`, a ratio, or `off` (`docs/WIDESCREEN.md`) |
+| `KF1_WIDESCREEN` | `16:9` | `16:9`, `16:10`, `21:9`, a ratio, or `off` (4:3) (`docs/WIDESCREEN.md`) |
 | `KF1_PRESENT_PROBE` | off | `1`: what each present picked (the wide target, a plain one, the VRAM fallback), every 2 s; `2` also the verdict and every live target on the frame it changes |
 | `KF1_WIDESCREEN_PROBE` | off | `1`: the margin census; `2` also lists screen-wide primitives |
-| `KF1_WIDESCREEN_HUD` | off | `1`: the HUD's gauges and compass at the edges of a wide picture (`docs/WIDESCREEN.md`) |
+| `KF1_WIDESCREEN_HUD` | on | `0`: the HUD's gauges and compass left in the 4:3 box of a wide picture (`docs/WIDESCREEN.md`) |
 | `KF1_WIDESCREEN_MENU` | on | `0`: leave the menu's background 320 wide |
 | `KF1_WIDESCREEN_EFFECTS` | on | `0`: leave full-screen tints 320 wide |
 | `KF1_CULLCONE` | on | `0`: the game's stencils at any aspect |
 | `KF1_CULLCONE_PROBE` | off | `1`: cells drawn a frame, cells added |
 | `KF1_TRANSLATION` | saved, off | `1`/`0`: the English fan translation this run, over the setting (`docs/GAME_INTERNALS.md`) |
 | `KF1_TRANSLATION_PPF` | a `*.ppf` beside the disc | the translation's patch file |
-| `KF1_MESSAGETEXT` | saved, off | `1`: dialogue pictures read back into text and drawn in the game's own glyphs ("Message text" in `docs/GAME_INTERNALS.md`) |
+| `KF1_MESSAGETEXT` | saved, on | `0`: the game's pictures; on, dialogue pictures read back into text and drawn in the game's own glyphs ("Message text" in `docs/GAME_INTERNALS.md`) |
 | `KF1_MESSAGETEXT_PROBE` | off | `1`: a line per dialogue picture: read or why not, exact or not, presents drawn; never the text |
 | `KF1_MESSAGETEXT_MARK` | saved, on | `0`: a dialogue picture with a glyph the tables lack stays the game's picture, instead of text with that glyph in magenta |
 | `KF1_MESSAGETEXT_TEST` | none | `C01/T11011,...`: each sign opens the next of these TALK pictures instead |

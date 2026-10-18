@@ -25,7 +25,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
 
 ## Phase 3: the enhancements
 
-- **Frame pacing** (2026-10-05): built and measured, off until judged
+Since 2026-10-17 every enhancement below ships **on**, at Verdite3's judged value,
+so the manual pass meets it in play; "off until judged" is retired (`ENV_VARS.md`).
+
+- **Frame pacing** (2026-10-05): built and measured, on at 144 since 2026-10-17
   (`KF1_FPS`); menus wait a vblank under it.
 - **The camera carried between ticks** (2026-10-05): built and measured, on
   under pacing (`docs/SMOOTHING.md`). So is everything the model walk draws,
@@ -34,14 +37,14 @@ recompiled and running, following Verdite3's method but applied to this disc.
   (2026-10-15) a creature walking in area 4. A monster's real drop is still to see.
 - **The picture** (2026-10-05, `docs/PICTURE.md`): no dither, 24-bit,
   perspective, sub-pixel and a Z-buffer from the address map, built and measured,
-  all off until judged.
+  all on since 2026-10-17.
 - **Keyboard and mouse** (2026-10-05, `docs/INPUT.md`): the WASD layout and mouse
   look through stage A's own velocities, measured with a synthetic hand. To judge:
   the pitch direction, sensitivity, the lead. Twin-stick ported 2026-10-17
   ("Analog sticks" in `docs/INPUT.md`), measured; to judge with a pad: the feel,
   the pitch direction, and the mouse still looking through the merged path.
 - **Widescreen** (2026-10-05, `docs/WIDESCREEN.md`): the margin, the tints and
-  the cull stencils widened with the aspect, measured, off until judged.
+  the cull stencils widened with the aspect, measured, 16:9 since 2026-10-17.
 
 - **The renderer and camera block in C#** (2026-10-05, "The renderer in C#" in
   `docs/GAME_INTERNALS.md`): verified, 0 mismatches over 8,588 frames with all
@@ -71,8 +74,10 @@ recompiled and running, following Verdite3's method but applied to this disc.
   table, and one area is held at a time (`GPU_RENDERER.md`, "The arm on the
   retained scene" through "One area resident"). **To judge**: the arm against
   the world while swinging, area 5's objects' textures, the creature sprites.
-  **Open**: keep each area's built map by its hash, so that a return does not
-  rebuild (35 ms on the game thread).
+  ~~**Open**: keep each area's built map by its hash, so that a return does not
+  rebuild.~~ Done 2026-10-17 (fork `0111`, `KF1_MAPCACHE`; "Each area's map kept"
+  in `GPU_RENDERER.md`): a return restores in 0.1 ms with no upload frame.
+  **Open**: a first visit's two stalls (35 ms, then 57 ms).
   Step 4 built 2026-10-16 ("The picture on the retained scene" in
   `docs/GPU_RENDERER.md`), every switch off. **To judge**, at `KF1_GPU_WORLD=1`:
   per-pixel lighting, the fog modes (corners, depth, distance), AO and its

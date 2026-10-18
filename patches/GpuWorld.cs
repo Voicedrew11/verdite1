@@ -264,7 +264,7 @@ public static class GpuWorld
         if (!_frame || !CensusOn || Environment.TickCount64 < _reportAt) return;
         _reportAt = Environment.TickCount64 + 5000;
         Console.WriteLine($"[KF1] gpu world: mode={Mode} frames={Frames} drawing={DrawingFrames} blocker={Blocker ?? "none"} " +
-            $"map cells={MapCells} retained={MapRetained} builds={RetainedMap.Builds} slots={RetainedMap.Slots} corners={RetainedMap.Corners} " +
+            $"map cells={MapCells} retained={MapRetained} builds={RetainedMap.Builds} restores={RetainedMap.Restores} slots={RetainedMap.Slots} corners={RetainedMap.Corners} " +
             $"models={ModelSubmits} retained={ModelRetained} (cached writer {CachedRetained}) arm={ArmRetained} meshes={RetainedModels.MeshBuilds}/{RetainedModels.MeshHits} " +
             $"poses={RetainedModels.PoseBuilds}/{RetainedModels.PoseHits} pose-uploads={RetainedModels.PoseTexelsUploaded} " +
             $"gpu draws/missed={RetainedScene.MainDraws}/{RetainedScene.MainMissed} instances={RetainedScene.InstancesDrawn} " +
@@ -297,7 +297,7 @@ public static class GpuWorld
             File.WriteAllText(_censusFile, JsonSerializer.Serialize(new
             {
                 Mode, Frames, DrawingFrames, Blocker = Blocker ?? "none",
-                Map = new { Cells = MapCells, Retained = MapRetained, RetainedMap.Builds, RetainedMap.Slots, RetainedMap.Corners, Bytes = MapBytes },
+                Map = new { Cells = MapCells, Retained = MapRetained, RetainedMap.Builds, RetainedMap.Restores, RetainedMap.Slots, RetainedMap.Corners, Bytes = MapBytes },
                 Models = new
                 {
                     Submits = ModelSubmits, Retained = ModelRetained, Cached = CachedRetained, Arm = ArmRetained, Bytes = ModelBytes, ArmBytes,

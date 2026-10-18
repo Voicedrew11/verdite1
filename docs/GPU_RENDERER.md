@@ -746,7 +746,8 @@ overlap in space. Two could be kept on the GPU only as alternatives, never drawn
 together, and the game never shows two at once. What being resident would save is the
 rebuild. A build (`[KF1] map build`, under the census) costs:
 
-- 130 ms the first time (the JIT);
+- 130 ms the first time (put down to the JIT; it was new memory, "Each area's map
+  kept" below);
 - then 34-36 ms for areas 1-4's million corners;
 - 18 ms for area 5's 508,290.
 
@@ -762,10 +763,43 @@ The build runs on the game thread once the new area's walks have held for ten, s
 each is a stall of one frame at the area's start: 35 ms, about five frames' time
 at 144 Hz. Whether it shows has not been looked at.
 
-**Open**: keep each area's built mesh by its hash, so that a return (an exit walked
-back through, a death) uploads instead of building. That is a cache of
-alternatives, not two areas drawn together, and it needs the gate slots and the
-object meshes kept with each one.
+~~**Open**: keep each area's built mesh by its hash, so that a return (an exit walked
+back through, a death) uploads instead of building.~~ Done 2026-10-17, below.
+
+### Each area's map kept (2026-10-17)
+
+A build costs more than the 35 ms above. Timed over a warp tour (area 1, 3, 1, 4,
+1, 3 at `KF1_FPS=1000`), an area change was three stalls of a million corners:
+
+- the build on the game thread, 35 ms: placing the corners about 20, the sort in
+  `RetainedScene.SetStatic` 16;
+- on the next frame, inside `DrawOTag`, the vertex buffer's upload, 31-35 ms;
+- and the mip keys' index (one per triangle, then by half), 19-25 ms.
+
+So a frame of 56-65 ms followed every build. The fork's `0111` keeps a built map by
+a key: the sorted corners and chunk tables in `RetainedScene`, and the backend's
+VAO, buffers and mip-key tables, parked while another map is drawn and swapped back
+on a restore. `patches/RetainedMap.cs` keys it by the walk's hash (the grids, the
+remap, the fog and the light) and a hash of the map TMD's bytes, since every area
+loads its TMD at one address; beside the scene's copy it keeps the gate slots and
+the TMD's object count. `KF1_MAPCACHE` (5, one an area; 0 none) is how many are
+kept. Each costs about 68 MB of memory and as much on the GPU.
+
+| | before | kept |
+|---|---|---|
+| a return (area 1 twice, area 3 once) | 35 ms, then a 56-65 ms frame | 0.1 ms, and no upload frame |
+| a first visit | 35 ms, then 56-65 ms | 35-36 ms, then 57-58 ms |
+| the boot's first build | 115-120 ms | 62 ms |
+
+A kept map owns its array, so the next sort would go into new memory, and a first
+sort into new memory took 41 ms against 16: the next array is a dropped map's, or
+written once on a pool thread when a map is kept. The first build's 120 ms was the
+same thing, 136 MB written for the first time (its frame's JIT was 1.8 ms):
+`RetainedMap.Configure` readies both arrays on a pool thread at boot, which halves
+it. The rest of its 62 ms is a first pass through cold tables. **Open**: a first
+visit still stalls twice (35 ms, then 57 ms); Verdite3 builds an arrival in
+parallel ("One build an arrival" in its `DEVELOPMENT.md`), and the mip keys'
+index could be built with the corners.
 
 ### Semi-transparent models, 2026-10-15
 
@@ -923,8 +957,9 @@ Verification, the same run (Step 3 gate, `KF1_GPU_CENSUS=1`):
 Step 4 of `RENDERER_PLAN.md`, built 2026-10-16. Every switch is the runtime's
 existing mechanism, set from `patches/SceneFeatures.cs` (Settings ▸ Testing,
 "World on the GPU", and the `KF1_*` switches in `ENV_VARS.md`). Each acts only
-while the retained renderer draws (`KF1_GPU_WORLD=1`), and each is off until
-judged.
+while the retained renderer draws (`KF1_GPU_WORLD=1`). Since 2026-10-17 the
+retained renderer and each switch are on by default, at Verdite3's judged values
+(per-pixel, distance fog, AO medium, 16x, mipmaps, 16 cells with a 3-cell fade).
 
 | switch | what it sets |
 |---|---|

@@ -175,8 +175,9 @@ The `SDL_` variable hides a DualSense, which stalled Verdite3's scripted boot.
 
 ## Frame pacing
 
-`patches/FramePacing.cs`, **off unless `KF1_FPS` is set**, because the picture
-has not been judged. Verdite3's mechanism on this game's loop:
+`patches/FramePacing.cs`, **on at 144 by default** since 2026-10-17 (off unless
+`KF1_FPS` was set before, while the picture was unjudged); `KF1_FPS=0` turns it
+off, `KF1_FPS=off` is uncapped. Verdite3's mechanism on this game's loop:
 
 - **The main loop's call of the frame gate** `func_800149F4` (return address
   `0x800148D0`) is skipped, and the count it would have stored (`0x80057B10`)
@@ -276,6 +277,27 @@ kept value. Checked 2026-10-05: `kf1.pacing=1`, `kf1.fps=120` and `kf1.zbuffer=1
 with no variables boot to 120.0 fps at 20.0 ticks/s with 97.1% of triangles
 depth-tested.
 
+## The JIT
+
+`TieredCompilationQuickJit` is off (a tier-up loses a MonoMod detour), so every
+method is compiled fully optimised on its first call, on the game thread. Verdite
+Core's `Prejit` (Verdite3's pass, "The stutters" in its `DEVELOPMENT.md`) compiles
+the recompiled functions, the patches, core and the runtime with
+`RuntimeHelpers.PrepareMethod` on background threads from the first overlay load;
+`KF1_PREJIT=0` is the comparison. Wired 2026-10-17: 15,033 methods in 2.1 s on four
+threads, done during the attract. Over a warp tour (area 1, 3, 1, 4, 1, 3 at
+`KF1_FPS=1000`, `KF1_PROFILE_SPIKE=12`), the spikes the JIT was in:
+
+| | `KF1_PREJIT=0` | on |
+|---|---|---|
+| spikes with JIT, past the first 100 frames | 29 | 10 |
+| JIT in them | 2,228 ms | 42 ms |
+| worst | 1,234 ms (GAME.EXE's first frames, 512 methods) | 15.4 ms |
+
+What is left is what no field names (locals, LINQ, the GL wrappers). The retained
+map's first build was put down to the JIT ("One area resident", `GPU_RENDERER.md`);
+it was not: that frame's JIT was 1.8 ms ("Each area's map kept").
+
 ## Profiling a frame
 
 Verdite Core's frame profiler (`FrameProfiler`, `ProfilerPanel`, `GpuFrames`) and
@@ -296,7 +318,7 @@ KF1_AUTOSTART=new KF1_PROFILE=1 KF1_PROFILE_OUT=profile.csv \
 python3 scripts/profile_report.py profile.csv --skip 30
 ```
 
-Baseline, 2026-10-14, uncapped (`KF1_FPS` unset), standing at a New Game in area
+Baseline, 2026-10-14, uncapped (`KF1_FPS` unset, which was then no pacing), standing at a New Game in area
 1, the renderer in C#: **about 766 fps, 1.30 ms a frame, 1.08 ms of it work**, 0.23
 ms swap, 0.20 ms of GPU a present; the costliest routine by self time is the map's
 stencil walk `func_8001E5EC`, 0.46 ms a frame.

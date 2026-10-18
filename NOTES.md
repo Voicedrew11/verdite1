@@ -33,9 +33,11 @@ Verdite3 pin (2026-10-14). The fork carries four changes made for this disc:
 `0090` (no `SYSTEM.CNF`), `0091` (vblanks from the interrupt poll, off unless a
 port asks), `0092` (image loads that wrap past VRAM's edge, which carry the HUD's
 and menus' palettes) and `0093` (a port's layer over the disc image, which the
-English fan translation uses). The renderer plan is
+English fan translation uses); since 2026-10-17 also `0111` (built static maps
+kept by key, off unless a port asks, which this one does). The renderer plan is
 measured through Step 8 (2026-10-16); what is left is the user's manual pass,
-`docs/MANUAL_PASS.md`. The bring-up order is in `docs/TODO.md`.
+`docs/MANUAL_PASS.md`, and since 2026-10-17 every enhancement it judges ships on
+(`docs/ENV_VARS.md`). The bring-up order is in `docs/TODO.md`.
 
 ## The documents
 
