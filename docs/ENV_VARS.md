@@ -119,6 +119,7 @@ switch is added.
 | `KF1_TRANSLATION_PPF` | a `*.ppf` beside the disc | the translation's patch file |
 | `KF1_MESSAGETEXT` | saved, off | `1`: dialogue pictures read back into text and drawn in the game's own glyphs ("Message text" in `docs/GAME_INTERNALS.md`) |
 | `KF1_MESSAGETEXT_PROBE` | off | `1`: a line per dialogue picture: read or why not, exact or not, presents drawn; never the text |
+| `KF1_MESSAGETEXT_MARK` | saved, on | `0`: a dialogue picture with a glyph the tables lack stays the game's picture, instead of text with that glyph in magenta |
 | `KF1_MESSAGETEXT_TEST` | none | `C01/T11011,...`: each sign opens the next of these TALK pictures instead |
 | `KF1_DEBUG_NOCLIP`, `KF1_DEBUG_GODMODE`, `KF1_DEBUG_INFINITEMP`, `KF1_DEBUG_PEACEFUL` | off | `1`: the debug mod's switch on at boot, when the mod is enabled (`docs/MODS.md`) |
 | `KF1_DEBUG_HOTKEYS` | saved, on | `0`: the debug mod's hotkeys off |

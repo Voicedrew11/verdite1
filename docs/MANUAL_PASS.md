@@ -150,5 +150,5 @@ backends without the retained path.
 3. **Dialogue as text** (Settings ▸ Testing ▸ *Dialogue as text*, or
    `KF1_MESSAGETEXT=1`), with the translation on and off. Talk to anyone; the
    counters say 27 of 30 test pictures redraw pixel-exact. Look at: whether the
-   text and its fade look the same as with the switch off. *Decide*: whether it
+   text and its fade look the same as with the switch off. A glyph the tables lack is magenta in a box (*Mark glyphs the tables lack*); C03/T12032 has one (`KF1_MESSAGETEXT_TEST=C03/T12032` and Circle at `area1-sign`). *Decide*: whether it
    becomes the default.

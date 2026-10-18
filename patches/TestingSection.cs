@@ -65,6 +65,7 @@ public sealed class TestingSection : ISettingsSection
         new("kf1.subpixel", "KF1_SUBPIXEL", () => Subpixel.Enabled, v => Subpixel.Enabled = v),
         new("kf1.zbuffer", "KF1_ZBUFFER", () => ZBuffer.Enabled, v => ZBuffer.Enabled = v),
         new("kf1.messagetext", "KF1_MESSAGETEXT", () => MessageText.Enabled, v => MessageText.Enabled = v),
+        new("kf1.messagetext.mark", "KF1_MESSAGETEXT_MARK", () => MessageText.Mark, v => MessageText.Mark = v),
         new(Mouse.OnKey, "KF1_MOUSE", () => Mouse.Enabled, v => Mouse.Enabled = v),
         new(Mouse.LeadKey, "KF1_MOUSE_LEAD", () => Mouse.Lead, v => Mouse.Lead = v),
     ];
@@ -345,6 +346,8 @@ public sealed class TestingSection : ISettingsSection
             "Per-pixel occlusion from the depths the address map recovers; a triangle it missed keeps painter's order.");
         Toggle("Dialogue as text", K("kf1.messagetext"),
             "Reads each dialogue picture back into characters and draws them in the game's own glyphs; a picture it cannot read is left as it was.");
+        Toggle("Mark glyphs the tables lack", K("kf1.messagetext.mark"),
+            "Draws a glyph the tables cannot read yet in magenta, in a box, instead of leaving the whole picture as it was.");
 
         SceneFeatures.Draw();
 

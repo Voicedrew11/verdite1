@@ -50,9 +50,20 @@ public static class PictureText
 
     /// <summary>Read <paramref name="ink"/> (w × h, row-major) as <paramref name="font"/>.
     /// Empty string on success, otherwise why not.</summary>
-    public static string Read(bool[] ink, int w, int h, Font font, out Line[] lines)
+    /// <summary>What a run the table lacks reads as, for <see cref="Read"/> with
+    /// <c>unknown</c> set: the run is kept, in place, instead of refusing the picture.</summary>
+    public const string Unknown = "\uFFFD";
+
+    public static string Read(bool[] ink, int w, int h, Font font, out Line[] lines) =>
+        Read(ink, w, h, font, false, out lines, out _);
+
+    /// <summary>As <see cref="Read(bool[], int, int, Font, out Line[])"/>; with
+    /// <paramref name="keepUnknown"/>, a run the table lacks is a piece of
+    /// <see cref="Unknown"/> and <paramref name="unknown"/> counts them.</summary>
+    public static string Read(bool[] ink, int w, int h, Font font, bool keepUnknown, out Line[] lines, out int unknown)
     {
         lines = [];
+        unknown = 0;
         var bands = font.Fixed ? FixedBands(ink, w, h, font) : FoundBands(ink, w, h, font.Up + 1 + font.Down);
         if (bands == null) return "ink between the lines";
 
@@ -88,7 +99,12 @@ public static class PictureText
                     if (font.Pairs.TryGetValue(PairKey(k, Key(ink, w, runs[i + 1], top, font), gap), out var both)) { s = both; i++; }
                 }
                 if (s == null && !font.Runs.TryGetValue(k, out s))
-                    return $"unknown run at line {outLines.Count}, x {runs[i].L}, width {runs[i].R - runs[i].L + 1}";
+                {
+                    if (!keepUnknown)
+                        return $"unknown run at line {outLines.Count}, x {runs[i].L}, width {runs[i].R - runs[i].L + 1}";
+                    s = Unknown;
+                    unknown++;
+                }
                 sb.Append(s);
                 pieces.Add(new Piece(left, runs[i].R + 1, sb.ToString()));
                 sb.Clear();

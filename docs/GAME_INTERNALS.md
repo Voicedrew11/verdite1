@@ -524,6 +524,14 @@ ink) leaves the game's picture. Measured with `KF1_MESSAGETEXT_TEST` over 15 TAL
 files: Japanese 13 read, 13 exact, 2 left; English 14 read, 14 exact, 1 left. No
 text is logged; the probe gives counts and the refusal's reason.
 
+**Glyphs the tables lack** (`KF1_MESSAGETEXT_MARK`, on with the text): a
+picture no font reads exactly is read again with each unknown run kept in place,
+by the font that lacks fewest, and only when at most a quarter of its glyphs are
+unknown. Those runs are drawn from the picture's own pixels in magenta, in a
+magenta box, and the rest as text; the redraw check counts them as the picture
+has them. Measured on the three pictures the 15-file runs left: 1, 1 and 2 runs
+marked, all three redrawn exactly. The probe gives the count, never the glyph.
+
 Open: signs (KAN) are not read; the glyphs are gathered only from pictures shown,
 so drawing text that no picture held (another language's) needs a pass over every
 TALK file at start; what spacing rule the game's layout follows is not measured.

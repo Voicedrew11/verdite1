@@ -48,7 +48,14 @@ public sealed class MessageText : IFloatingPanel
     // The game's font, by font, character and width (one character can come in two cuts).
     static readonly Dictionary<(string Font, string Text, int W), Glyph> _font = new();
 
+    // This picture's runs the tables lack, by (line top, x): drawn as they are, marked.
+    static readonly Dictionary<(int Top, int X), Glyph> _marked = new();
+    const ushort MarkColour = 0x7C1F;   // magenta
+
     public static bool Enabled { get; set; }
+    /// <summary>Read a picture with runs the tables lack, and draw those in magenta
+    /// (KF1_MESSAGETEXT_MARK, on), instead of leaving the picture.</summary>
+    public static bool Mark { get; set; } = true;
     static bool _probe, _queued;
 
     static string _name = "";
@@ -56,7 +63,7 @@ public sealed class MessageText : IFloatingPanel
     static PictureText.Font? _shown;
     static PictureText.Line[] _lines = [];
     static int _r = 128, _g = 128, _b = 128;
-    static int _read, _refused, _drawn, _exact;
+    static int _read, _refused, _drawn, _exact, _unknown;
 
     public string Name => "kf1message";
     public bool IsOpen { get => _lines.Length > 0 && Enabled; set { } }
@@ -66,8 +73,9 @@ public sealed class MessageText : IFloatingPanel
     // KF1_MESSAGETEXT_TEST: the next sign opens these TALK pictures instead, in turn.
     static readonly Queue<string> _tests = new();
 
-    public static void Configure(string? on, string? probe, string? test = null)
+    public static void Configure(string? on, string? probe, string? test = null, string? mark = null)
     {
+        if (!string.IsNullOrWhiteSpace(mark)) Mark = mark.Trim() is not ("0" or "off");
         foreach (var t in (test ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             if (t.Length == 10) _tests.Enqueue(t.Replace('/', '\\'));
         if (!string.IsNullOrWhiteSpace(on)) Enabled = on.Trim() is not ("0" or "off");
@@ -149,7 +157,7 @@ public sealed class MessageText : IFloatingPanel
         if (!_inEvent || c.RA != LoadTimReturn || (!Enabled && !_probe)) return;
         if (!_name.Contains("TALK\\", StringComparison.OrdinalIgnoreCase)) return;
 
-        string why = Decode(m, c.A0, out var font, out var lines, out var colour, out uint clut);
+        string why = Decode(m, c.A0, out var font, out var lines, out var colour, out uint clut, out _unknown);
         if (why.Length > 0)
         {
             _refused++;
@@ -163,7 +171,7 @@ public sealed class MessageText : IFloatingPanel
         if (exact) _exact++;
         if (_probe)
             Console.WriteLine($"[KF1] message text: {_name} read as {font!.Name}, {lines.Length} line(s), " +
-                              $"{lines.Sum(l => l.Pieces.Length)} glyph(s), redrawn {(exact ? "exactly" : "NOT exactly")} " +
+                              $"{lines.Sum(l => l.Pieces.Length)} glyph(s), {_unknown} marked, redrawn {(exact ? "exactly" : "NOT exactly")} " +
                               $"({_read} read, {_exact} exact, {_refused} refused)");
         if (!Enabled || !exact) return;
 
@@ -175,9 +183,9 @@ public sealed class MessageText : IFloatingPanel
 
     // The TIM at a0: 4-bit, its first CLUT row, 256 texels wide.
     static string Decode(IMemory m, uint tim, out PictureText.Font? font, out PictureText.Line[] lines,
-                         out ushort[] colour, out uint clut)
+                         out ushort[] colour, out uint clut, out int unknown)
     {
-        font = null; lines = []; colour = new ushort[PicW * PicH]; clut = 0;
+        font = null; lines = []; colour = new ushort[PicW * PicH]; clut = 0; unknown = 0;
         uint flags = m.ReadU32(tim + 4);
         if (m.ReadU32(tim) != 0x10 || (flags & 7) != 0 || (flags & 8) == 0) return "not a 4-bit TIM with a CLUT";
         uint clutLen = m.ReadU32(tim + 8);
@@ -218,7 +226,16 @@ public sealed class MessageText : IFloatingPanel
             if (w.Length == 0) { font = f; return ""; }
             if (why.Length == 0) why = $"{f.Name}: {w}";
         }
-        return why;
+        if (!Mark) return why;
+
+        // Read with what the tables lack kept; the font that lacks least, and only a few.
+        foreach (var f in order)
+        {
+            if (PictureText.Read(ink, PicW, PicH, f, true, out var got, out int n).Length > 0) continue;
+            if (n * 4 > got.Sum(l => l.Pieces.Length) || (font != null && n >= unknown)) continue;
+            font = f; lines = got; unknown = n;
+        }
+        return font != null ? "" : why;
     }
 
     static (int X, int Y, int W, int H) Box(PictureText.Font f, PictureText.Line l, PictureText.Piece p) =>
@@ -226,20 +243,28 @@ public sealed class MessageText : IFloatingPanel
 
     static string Char(PictureText.Piece p) => p.Text.TrimStart(' ');
 
-    // Keep each glyph as the game drew it, by its character.
+    static bool Lacked(PictureText.Piece p) => Char(p) == PictureText.Unknown;
+
+    static Glyph? Find(PictureText.Font f, PictureText.Line l, PictureText.Piece p) =>
+        Lacked(p) ? _marked.GetValueOrDefault((l.Top, p.X))
+                  : _font.GetValueOrDefault((f.Name, Char(p), p.Right - p.X));
+
+    // Keep each glyph as the game drew it, by its character; a lacked one, by its place.
     static void Learn(PictureText.Font f, PictureText.Line[] lines, ushort[] colour)
     {
+        _marked.Clear();
         foreach (var l in lines)
             foreach (var p in l.Pieces)
             {
                 var (x0, y0, w, h) = Box(f, l, p);
                 var key = (f.Name, Char(p), w);
-                if (_font.ContainsKey(key)) continue;
+                if (!Lacked(p) && _font.ContainsKey(key)) continue;
                 var px = new ushort[w * h];
                 for (int y = 0; y < h; y++)
                     for (int x = 0; x < w; x++)
                         if (y0 + y is >= 0 and < PicH) px[y * w + x] = colour[(y0 + y) * PicW + x0 + x];
-                _font[key] = new Glyph(w, h, px);
+                if (Lacked(p)) _marked[(l.Top, p.X)] = new Glyph(w, h, px);
+                else _font[key] = new Glyph(w, h, px);
             }
     }
 
@@ -251,8 +276,8 @@ public sealed class MessageText : IFloatingPanel
         foreach (var l in lines)
             foreach (var p in l.Pieces)
             {
-                var (x0, y0, w, _) = Box(f, l, p);
-                if (!_font.TryGetValue((f.Name, Char(p), w), out var g)) return false;
+                var (x0, y0, _, _) = Box(f, l, p);
+                if (Find(f, l, p) is not { } g) return false;
                 for (int y = 0; y < g.H; y++)
                     for (int x = 0; x < g.W; x++)
                         if (y0 + y is >= 0 and < PicH && g.Px[y * g.W + x] != 0)
@@ -331,8 +356,11 @@ public sealed class MessageText : IFloatingPanel
             foreach (var l in lines)
                 foreach (var p in l.Pieces)
                 {
-                    var (x0, y0, w, _) = Box(f, l, p);
-                    if (!_font.TryGetValue((f.Name, Char(p), w), out var g)) continue;
+                    var (x0, y0, w, h) = Box(f, l, p);
+                    if (Find(f, l, p) is not { } g) continue;
+                    bool lacked = Lacked(p);
+                    if (lacked)
+                        dl.AddRect(Screen(x0 - 1, y0), Screen(x0 + w + 1, y0 + h), Modulate(MarkColour), 0f, ImDrawFlags.None, Math.Max(1f, scale * 0.5f));
                     for (int y = 0; y < g.H; y++)
                         for (int x = 0; x < g.W;)
                         {
@@ -340,7 +368,7 @@ public sealed class MessageText : IFloatingPanel
                             int end = x + 1;
                             while (end < g.W && g.Px[y * g.W + end] == px) end++;
                             if (px != 0)
-                                dl.AddRectFilled(Screen(x0 + x, y0 + y), Screen(x0 + end, y0 + y + 1), Modulate(px));
+                                dl.AddRectFilled(Screen(x0 + x, y0 + y), Screen(x0 + end, y0 + y + 1), Modulate(lacked ? MarkColour : px));
                             x = end;
                         }
                 }
