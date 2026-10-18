@@ -2057,6 +2057,23 @@ Four files in the directory have no entry below:
   every 2 s from five seconds into the message; after, `wide 125, vram fallback 0`
   for the whole wait. The map item itself not reached by the shell; **not looked
   at.** **No recompile.**
+- `0111-kept-static-maps.patch` — a port that holds one static map at a time and
+  returns to maps it built before (King's Field's areas, an exit walked back
+  through, a death) rebuilt each one: the sort in `SetStatic`, then on the next
+  frame the vertex buffer's upload and the mip keys' index, about 90 ms for a
+  million corners. `RetainedScene.StaticKeep` (0, the default, keeps none) keeps
+  that many maps by a key the port names: `KeepStatic(key, tag)` after
+  `SetStatic`, `RestoreStatic(key, out tag)` to put one back at its own
+  generation. The GL backend parks a kept generation's VAO, buffers and mip-key
+  tables when another map replaces it, frees those no longer kept, and swaps them
+  back on a restore. An array a kept map owns is never written over; the next one
+  is a dropped map's, or readied with its pages written on a pool thread
+  (`ReserveStatic` for the first), since a first sort into new memory took 41 ms
+  against 16. Generations are now numbered from a counter, so a restored one is
+  never reissued. Measured in KF1 (`KF1_MAPCACHE`, five kept): a return restores
+  in 0.1 ms with no upload frame, against 35 ms and a 56-65 ms frame before; a
+  first visit 35 ms as before. With `StaticKeep` at 0 nothing is kept, parked or
+  readied, so Verdite2 and Verdite3 run the old path. **No recompile.**
 
 ## Package bumps
 

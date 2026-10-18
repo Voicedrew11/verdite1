@@ -1,0 +1,230 @@
+diff --git a/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs b/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+index 9b43b8d..d12fbf1 100644
+--- a/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
++++ b/RecompOne.Runtime/Gpu/Backends/Common/GlRetained.cs
+@@ -316,12 +316,76 @@ public sealed partial class GlCore
+         NeighbourBlend.Uploads++;
+     }
+ 
++    /// <summary>0111. A kept static map's buffers and mip keys, parked while another
++    /// map is drawn.</summary>
++    sealed class ParkedWorld
++    {
++        public uint Vao, Vbo, MipVbo;
++        public int Verts;
++        public bool Mips;
++        public Dictionary<(int, int, uint), int> KeyAt = new();
++        public List<(int TPage, int Clut, uint Rect)> Keys = new();
++        public uint[] Entry = [];
++        public int[] Looked = [], HalfKeyAt = [], HalfKeys = [], Lone = [];
++    }
++
++    readonly Dictionary<int, ParkedWorld> _parked = new();
++
++    /// <summary>0111. Before the static map changes generation: parks the current one's
++    /// buffers if the scene keeps its generation, frees those it no longer keeps, and
++    /// takes back the new generation's if they are parked. True when they were.</summary>
++    bool SwapStatic(int gen)
++    {
++        foreach (int g in _parked.Keys.Where(g => !RetainedScene.IsKept(g)).ToList())
++        {
++            var d = _parked[g];
++            _gl.DeleteVertexArray(d.Vao); _gl.DeleteBuffer(d.Vbo); _gl.DeleteBuffer(d.MipVbo);
++            _parked.Remove(g);
++        }
++        bool park = _worldGen >= 0 && RetainedScene.IsKept(_worldGen) && !_parked.ContainsKey(_worldGen);
++        _parked.Remove(gen, out var back);
++        if (!park && back == null) return false;
++        if (park)
++            _parked[_worldGen] = new ParkedWorld
++            {
++                Vao = _worldVao, Vbo = _worldVbo, MipVbo = _worldMipVbo, Verts = _worldVerts,
++                Mips = _mipKeysGen == _worldGen, KeyAt = _mipKeyAt, Keys = _mipKeys, Entry = _mipKeyEntry,
++                Looked = _mipLooked, HalfKeyAt = _halfKeyAt, HalfKeys = _halfKeys, Lone = _loneKeys,
++            };
++        else if (back != null)
++        {
++            _gl.DeleteVertexArray(_worldVao); _gl.DeleteBuffer(_worldVbo); _gl.DeleteBuffer(_worldMipVbo);
++        }
++        if (back == null)
++        {
++            _worldVbo = _gl.GenBuffer();
++            _worldMipVbo = _gl.GenBuffer();
++            _worldVao = MakeWorldVao(_worldVbo, _worldMipVbo);
++            _mipKeyAt = new();
++            _mipKeys = new();
++            _mipKeysGen = -1;
++            return false;
++        }
++        _worldVao = back.Vao; _worldVbo = back.Vbo; _worldMipVbo = back.MipVbo;
++        _mipKeyAt = back.KeyAt; _mipKeys = back.Keys; _mipKeyEntry = back.Entry;
++        _mipLooked = back.Looked; _halfKeyAt = back.HalfKeyAt; _halfKeys = back.HalfKeys; _loneKeys = back.Lone;
++        _mipKeysGen = back.Mips ? gen : -1;
++        _mipTableDirty = true;
++        Array.Copy(RetainedScene.ChunkStart, _worldChunkStart, _worldChunkStart.Length);
++        Array.Copy(RetainedScene.ChunkCount, _worldChunkCount, _worldChunkCount.Length);
++        Array.Copy(RetainedScene.StaticCount, _worldStaticCount, _worldStaticCount.Length);
++        _worldVerts = back.Verts;
++        _worldGen = gen;
++        return true;
++    }
++
+     /// <summary>The static map, when it was rebuilt since the last upload.</summary>
+     void UploadStatic()
+     {
+         UploadRecords();
+         UploadNbHalves();
+         if (_worldGen == RetainedScene.StaticGeneration) return;
++        if (SwapStatic(RetainedScene.StaticGeneration)) return;
+         var s = RetainedScene.Static;
+         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldVbo);
+         _gl.BufferData<RetainedScene.Vertex>(BufferTargetARB.ArrayBuffer, s, BufferUsageARB.StaticDraw);
+@@ -891,8 +955,8 @@ public sealed partial class GlCore
+     // 0085: a static corner carries its texture's index (plus one) and the world
+     // program looks the entry up in a table of one word per texture, so an entry that
+     // moves costs a word, not the map's vertex buffer.
+-    readonly Dictionary<(int, int, uint), int> _mipKeyAt = new();
+-    readonly List<(int TPage, int Clut, uint Rect)> _mipKeys = new();
++    Dictionary<(int, int, uint), int> _mipKeyAt = new();
++    List<(int TPage, int Clut, uint Rect)> _mipKeys = new();
+     uint[] _mipKeyEntry = [];
+     uint[] _dynMip = [];
+     int _mipKeysGen = -1;
+diff --git a/RecompOne.Runtime/Gpu/RetainedScene.cs b/RecompOne.Runtime/Gpu/RetainedScene.cs
+index 658925f..b14e179 100644
+--- a/RecompOne.Runtime/Gpu/RetainedScene.cs
++++ b/RecompOne.Runtime/Gpu/RetainedScene.cs
+@@ -378,7 +378,12 @@ public static class RetainedScene
+     /// <summary>The static map, replaced whole. Sorted here into ranges and chunks.</summary>
+     public static void SetStatic(ReadOnlySpan<Vertex> tris)
+     {
+-        if (_static.Length < tris.Length) _static = new Vertex[tris.Length];
++        // 0111: an array a kept map owns is never written over; the spare readied
++        // off the game thread is taken first, so the sort does not fault in new pages.
++        if (_staticOwned || _static.Length < tris.Length)
++            _static = Interlocked.Exchange(ref _spare, null) is { } spare && spare.Length >= tris.Length
++                ? spare : new Vertex[tris.Length];
++        _staticOwned = false;
+         int n = tris.Length / 3 * 3;
+         Array.Clear(ChunkCount);
+         Array.Clear(ChunkUsed);
+@@ -446,7 +451,118 @@ public static class RetainedScene
+         Array.Copy(ChunkFogQ, _chunkPlainQ, Chunks);
+         Array.Copy(ChunkFogOf, _chunkPlainOf, Chunks);
+         RecordFog();
+-        StaticGeneration++;
++        StaticGeneration = ++_generations;
++    }
++
++    // ---- 0111: static maps kept by key ---------------------------------------------
++
++    /// <summary>0111. How many built static maps are kept, by a key the port names,
++    /// so that putting one back (<see cref="RestoreStatic"/>) skips the sort, and the
++    /// backend keeps its buffers and skips the upload. 0, the default, keeps none.</summary>
++    public static int StaticKeep { get; set; }
++
++    sealed class KeptStatic
++    {
++        public ulong Key;
++        public int Generation, Count;
++        public long Used;
++        public Vertex[] Verts = [];
++        public object? Tag;
++        public int[] Start = [], CountOf = [], RangeStart = [], RangeCount = [];
++        public float[] Min = [], Max = [], BlendMin = [], BlendMax = [], PlainQ = [];
++        public bool[] UsedChunks = [];
++        public Vertex[] PlainOf = [];
++        public ulong[] RecordsOf = [];
++    }
++
++    static readonly List<KeptStatic> _kept = new();
++    static bool _staticOwned;
++    static Vertex[]? _spare;
++    static int _generations;
++    static long _keptClock;
++
++    /// <summary>0111. Static maps put back, and kept maps dropped for room.</summary>
++    public static long StaticRestores, StaticEvictions;
++
++    /// <summary>0111. Whether a generation is held by a kept map; the backend keeps its
++    /// buffers while it is.</summary>
++    public static bool IsKept(int generation)
++    {
++        foreach (var k in _kept) if (k.Generation == generation) return true;
++        return false;
++    }
++
++    /// <summary>0111. Keeps the static map just set under <paramref name="key"/>, with the
++    /// port's own state beside it, dropping the least recently used past
++    /// <see cref="StaticKeep"/>.</summary>
++    public static void KeepStatic(ulong key, object? tag = null)
++    {
++        if (StaticKeep <= 0) return;
++        _kept.RemoveAll(k => k.Key == key);
++        _kept.Add(new KeptStatic
++        {
++            Key = key, Generation = StaticGeneration, Count = _staticCount, Used = ++_keptClock,
++            Verts = _static, Tag = tag,
++            Start = (int[])ChunkStart.Clone(), CountOf = (int[])ChunkCount.Clone(),
++            RangeStart = (int[])StaticStart.Clone(), RangeCount = (int[])StaticCount.Clone(),
++            Min = (float[])ChunkMin.Clone(), Max = (float[])ChunkMax.Clone(),
++            BlendMin = (float[])ChunkBlendMin.Clone(), BlendMax = (float[])ChunkBlendMax.Clone(),
++            PlainQ = (float[])_chunkPlainQ.Clone(), PlainOf = (Vertex[])_chunkPlainOf.Clone(),
++            UsedChunks = (bool[])ChunkUsed.Clone(), RecordsOf = (ulong[])_chunkRecords.Clone(),
++        });
++        _staticOwned = true;
++        Vertex[]? freed = null;
++        while (_kept.Count > StaticKeep)
++        {
++            var old = _kept.MinBy(k => k.Used)!;
++            _kept.Remove(old);
++            if (!ReferenceEquals(old.Verts, _static)) freed = old.Verts;
++            StaticEvictions++;
++        }
++        ReadySpare(freed, _static.Length);
++    }
++
++    /// <summary>0111. Readies an array for the first static map of about this many
++    /// corners off the game thread, so its first sort does not fault in new pages.</summary>
++    public static void ReserveStatic(int corners) => ReadySpare(null, corners);
++
++    /// <summary>0111. The next map's array: a dropped map's, or a new one with its
++    /// pages written once on a pool thread.</summary>
++    static void ReadySpare(Vertex[]? freed, int length)
++    {
++        if (freed != null && freed.Length >= length) { Volatile.Write(ref _spare, freed); return; }
++        if (Volatile.Read(ref _spare) is { } s && s.Length >= length) return;
++        ThreadPool.QueueUserWorkItem(_ =>
++        {
++            var a = new Vertex[length];
++            int step = Math.Max(1, 4096 / System.Runtime.CompilerServices.Unsafe.SizeOf<Vertex>());
++            for (int i = 0; i < a.Length; i += step) a[i].Flags = 0;
++            Volatile.Write(ref _spare, a);
++        });
++    }
++
++    /// <summary>0111. Puts back the static map kept under <paramref name="key"/>, at its
++    /// own generation, and hands back the port's state; false when none is kept.</summary>
++    public static bool RestoreStatic(ulong key, out object? tag)
++    {
++        tag = null;
++        var k = _kept.Find(e => e.Key == key);
++        if (k == null) return false;
++        k.Used = ++_keptClock;
++        _static = k.Verts;
++        _staticCount = k.Count;
++        _staticOwned = true;
++        k.Start.CopyTo(ChunkStart); k.CountOf.CopyTo(ChunkCount);
++        k.RangeStart.CopyTo(StaticStart); k.RangeCount.CopyTo(StaticCount);
++        k.Min.CopyTo(ChunkMin); k.Max.CopyTo(ChunkMax);
++        k.BlendMin.CopyTo(ChunkBlendMin); k.BlendMax.CopyTo(ChunkBlendMax);
++        k.UsedChunks.CopyTo(ChunkUsed);
++        k.PlainQ.CopyTo(_chunkPlainQ); k.PlainOf.CopyTo(_chunkPlainOf); k.RecordsOf.CopyTo(_chunkRecords);
++        RecordFog();
++        StaticGeneration = k.Generation;
++        StaticRestores++;
++        tag = k.Tag;
++        return true;
+     }
+ 
+     /// <summary>The quotient H*65536/z at and below which a corner's depth cue

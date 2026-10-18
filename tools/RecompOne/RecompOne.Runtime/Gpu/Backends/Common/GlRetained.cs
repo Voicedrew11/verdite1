@@ -316,12 +316,76 @@ public sealed partial class GlCore
         NeighbourBlend.Uploads++;
     }
 
+    /// <summary>0111. A kept static map's buffers and mip keys, parked while another
+    /// map is drawn.</summary>
+    sealed class ParkedWorld
+    {
+        public uint Vao, Vbo, MipVbo;
+        public int Verts;
+        public bool Mips;
+        public Dictionary<(int, int, uint), int> KeyAt = new();
+        public List<(int TPage, int Clut, uint Rect)> Keys = new();
+        public uint[] Entry = [];
+        public int[] Looked = [], HalfKeyAt = [], HalfKeys = [], Lone = [];
+    }
+
+    readonly Dictionary<int, ParkedWorld> _parked = new();
+
+    /// <summary>0111. Before the static map changes generation: parks the current one's
+    /// buffers if the scene keeps its generation, frees those it no longer keeps, and
+    /// takes back the new generation's if they are parked. True when they were.</summary>
+    bool SwapStatic(int gen)
+    {
+        foreach (int g in _parked.Keys.Where(g => !RetainedScene.IsKept(g)).ToList())
+        {
+            var d = _parked[g];
+            _gl.DeleteVertexArray(d.Vao); _gl.DeleteBuffer(d.Vbo); _gl.DeleteBuffer(d.MipVbo);
+            _parked.Remove(g);
+        }
+        bool park = _worldGen >= 0 && RetainedScene.IsKept(_worldGen) && !_parked.ContainsKey(_worldGen);
+        _parked.Remove(gen, out var back);
+        if (!park && back == null) return false;
+        if (park)
+            _parked[_worldGen] = new ParkedWorld
+            {
+                Vao = _worldVao, Vbo = _worldVbo, MipVbo = _worldMipVbo, Verts = _worldVerts,
+                Mips = _mipKeysGen == _worldGen, KeyAt = _mipKeyAt, Keys = _mipKeys, Entry = _mipKeyEntry,
+                Looked = _mipLooked, HalfKeyAt = _halfKeyAt, HalfKeys = _halfKeys, Lone = _loneKeys,
+            };
+        else if (back != null)
+        {
+            _gl.DeleteVertexArray(_worldVao); _gl.DeleteBuffer(_worldVbo); _gl.DeleteBuffer(_worldMipVbo);
+        }
+        if (back == null)
+        {
+            _worldVbo = _gl.GenBuffer();
+            _worldMipVbo = _gl.GenBuffer();
+            _worldVao = MakeWorldVao(_worldVbo, _worldMipVbo);
+            _mipKeyAt = new();
+            _mipKeys = new();
+            _mipKeysGen = -1;
+            return false;
+        }
+        _worldVao = back.Vao; _worldVbo = back.Vbo; _worldMipVbo = back.MipVbo;
+        _mipKeyAt = back.KeyAt; _mipKeys = back.Keys; _mipKeyEntry = back.Entry;
+        _mipLooked = back.Looked; _halfKeyAt = back.HalfKeyAt; _halfKeys = back.HalfKeys; _loneKeys = back.Lone;
+        _mipKeysGen = back.Mips ? gen : -1;
+        _mipTableDirty = true;
+        Array.Copy(RetainedScene.ChunkStart, _worldChunkStart, _worldChunkStart.Length);
+        Array.Copy(RetainedScene.ChunkCount, _worldChunkCount, _worldChunkCount.Length);
+        Array.Copy(RetainedScene.StaticCount, _worldStaticCount, _worldStaticCount.Length);
+        _worldVerts = back.Verts;
+        _worldGen = gen;
+        return true;
+    }
+
     /// <summary>The static map, when it was rebuilt since the last upload.</summary>
     void UploadStatic()
     {
         UploadRecords();
         UploadNbHalves();
         if (_worldGen == RetainedScene.StaticGeneration) return;
+        if (SwapStatic(RetainedScene.StaticGeneration)) return;
         var s = RetainedScene.Static;
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _worldVbo);
         _gl.BufferData<RetainedScene.Vertex>(BufferTargetARB.ArrayBuffer, s, BufferUsageARB.StaticDraw);
@@ -891,8 +955,8 @@ public sealed partial class GlCore
     // 0085: a static corner carries its texture's index (plus one) and the world
     // program looks the entry up in a table of one word per texture, so an entry that
     // moves costs a word, not the map's vertex buffer.
-    readonly Dictionary<(int, int, uint), int> _mipKeyAt = new();
-    readonly List<(int TPage, int Clut, uint Rect)> _mipKeys = new();
+    Dictionary<(int, int, uint), int> _mipKeyAt = new();
+    List<(int TPage, int Clut, uint Rect)> _mipKeys = new();
     uint[] _mipKeyEntry = [];
     uint[] _dynMip = [];
     int _mipKeysGen = -1;

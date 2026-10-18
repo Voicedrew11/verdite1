@@ -378,7 +378,12 @@ public static class RetainedScene
     /// <summary>The static map, replaced whole. Sorted here into ranges and chunks.</summary>
     public static void SetStatic(ReadOnlySpan<Vertex> tris)
     {
-        if (_static.Length < tris.Length) _static = new Vertex[tris.Length];
+        // 0111: an array a kept map owns is never written over; the spare readied
+        // off the game thread is taken first, so the sort does not fault in new pages.
+        if (_staticOwned || _static.Length < tris.Length)
+            _static = Interlocked.Exchange(ref _spare, null) is { } spare && spare.Length >= tris.Length
+                ? spare : new Vertex[tris.Length];
+        _staticOwned = false;
         int n = tris.Length / 3 * 3;
         Array.Clear(ChunkCount);
         Array.Clear(ChunkUsed);
@@ -446,7 +451,118 @@ public static class RetainedScene
         Array.Copy(ChunkFogQ, _chunkPlainQ, Chunks);
         Array.Copy(ChunkFogOf, _chunkPlainOf, Chunks);
         RecordFog();
-        StaticGeneration++;
+        StaticGeneration = ++_generations;
+    }
+
+    // ---- 0111: static maps kept by key ---------------------------------------------
+
+    /// <summary>0111. How many built static maps are kept, by a key the port names,
+    /// so that putting one back (<see cref="RestoreStatic"/>) skips the sort, and the
+    /// backend keeps its buffers and skips the upload. 0, the default, keeps none.</summary>
+    public static int StaticKeep { get; set; }
+
+    sealed class KeptStatic
+    {
+        public ulong Key;
+        public int Generation, Count;
+        public long Used;
+        public Vertex[] Verts = [];
+        public object? Tag;
+        public int[] Start = [], CountOf = [], RangeStart = [], RangeCount = [];
+        public float[] Min = [], Max = [], BlendMin = [], BlendMax = [], PlainQ = [];
+        public bool[] UsedChunks = [];
+        public Vertex[] PlainOf = [];
+        public ulong[] RecordsOf = [];
+    }
+
+    static readonly List<KeptStatic> _kept = new();
+    static bool _staticOwned;
+    static Vertex[]? _spare;
+    static int _generations;
+    static long _keptClock;
+
+    /// <summary>0111. Static maps put back, and kept maps dropped for room.</summary>
+    public static long StaticRestores, StaticEvictions;
+
+    /// <summary>0111. Whether a generation is held by a kept map; the backend keeps its
+    /// buffers while it is.</summary>
+    public static bool IsKept(int generation)
+    {
+        foreach (var k in _kept) if (k.Generation == generation) return true;
+        return false;
+    }
+
+    /// <summary>0111. Keeps the static map just set under <paramref name="key"/>, with the
+    /// port's own state beside it, dropping the least recently used past
+    /// <see cref="StaticKeep"/>.</summary>
+    public static void KeepStatic(ulong key, object? tag = null)
+    {
+        if (StaticKeep <= 0) return;
+        _kept.RemoveAll(k => k.Key == key);
+        _kept.Add(new KeptStatic
+        {
+            Key = key, Generation = StaticGeneration, Count = _staticCount, Used = ++_keptClock,
+            Verts = _static, Tag = tag,
+            Start = (int[])ChunkStart.Clone(), CountOf = (int[])ChunkCount.Clone(),
+            RangeStart = (int[])StaticStart.Clone(), RangeCount = (int[])StaticCount.Clone(),
+            Min = (float[])ChunkMin.Clone(), Max = (float[])ChunkMax.Clone(),
+            BlendMin = (float[])ChunkBlendMin.Clone(), BlendMax = (float[])ChunkBlendMax.Clone(),
+            PlainQ = (float[])_chunkPlainQ.Clone(), PlainOf = (Vertex[])_chunkPlainOf.Clone(),
+            UsedChunks = (bool[])ChunkUsed.Clone(), RecordsOf = (ulong[])_chunkRecords.Clone(),
+        });
+        _staticOwned = true;
+        Vertex[]? freed = null;
+        while (_kept.Count > StaticKeep)
+        {
+            var old = _kept.MinBy(k => k.Used)!;
+            _kept.Remove(old);
+            if (!ReferenceEquals(old.Verts, _static)) freed = old.Verts;
+            StaticEvictions++;
+        }
+        ReadySpare(freed, _static.Length);
+    }
+
+    /// <summary>0111. Readies an array for the first static map of about this many
+    /// corners off the game thread, so its first sort does not fault in new pages.</summary>
+    public static void ReserveStatic(int corners) => ReadySpare(null, corners);
+
+    /// <summary>0111. The next map's array: a dropped map's, or a new one with its
+    /// pages written once on a pool thread.</summary>
+    static void ReadySpare(Vertex[]? freed, int length)
+    {
+        if (freed != null && freed.Length >= length) { Volatile.Write(ref _spare, freed); return; }
+        if (Volatile.Read(ref _spare) is { } s && s.Length >= length) return;
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            var a = new Vertex[length];
+            int step = Math.Max(1, 4096 / System.Runtime.CompilerServices.Unsafe.SizeOf<Vertex>());
+            for (int i = 0; i < a.Length; i += step) a[i].Flags = 0;
+            Volatile.Write(ref _spare, a);
+        });
+    }
+
+    /// <summary>0111. Puts back the static map kept under <paramref name="key"/>, at its
+    /// own generation, and hands back the port's state; false when none is kept.</summary>
+    public static bool RestoreStatic(ulong key, out object? tag)
+    {
+        tag = null;
+        var k = _kept.Find(e => e.Key == key);
+        if (k == null) return false;
+        k.Used = ++_keptClock;
+        _static = k.Verts;
+        _staticCount = k.Count;
+        _staticOwned = true;
+        k.Start.CopyTo(ChunkStart); k.CountOf.CopyTo(ChunkCount);
+        k.RangeStart.CopyTo(StaticStart); k.RangeCount.CopyTo(StaticCount);
+        k.Min.CopyTo(ChunkMin); k.Max.CopyTo(ChunkMax);
+        k.BlendMin.CopyTo(ChunkBlendMin); k.BlendMax.CopyTo(ChunkBlendMax);
+        k.UsedChunks.CopyTo(ChunkUsed);
+        k.PlainQ.CopyTo(_chunkPlainQ); k.PlainOf.CopyTo(_chunkPlainOf); k.RecordsOf.CopyTo(_chunkRecords);
+        RecordFog();
+        StaticGeneration = k.Generation;
+        StaticRestores++;
+        tag = k.Tag;
+        return true;
     }
 
     /// <summary>The quotient H*65536/z at and below which a corner's depth cue
