@@ -109,6 +109,7 @@ switch is added.
 | `KF1_ANALOG_INVERTY`, `_INVERTTURN`, `_INVERTSTRAFE`, `_INVERTFWD` | off | `1`: invert that axis |
 | `KF1_ANALOG_PROBE` | off | `1`: a line every 10 s of what the sticks asked and stage A did; `trace`: a line a tick as well |
 | `KF1_WIDESCREEN` | off | `16:9`, `16:10`, `21:9`, a ratio, or `off` (`docs/WIDESCREEN.md`) |
+| `KF1_PRESENT_PROBE` | off | `1`: what each present picked (the wide target, a plain one, the VRAM fallback), every 2 s; `2` also the verdict and every live target on the frame it changes |
 | `KF1_WIDESCREEN_PROBE` | off | `1`: the margin census; `2` also lists screen-wide primitives |
 | `KF1_WIDESCREEN_HUD` | off | `1`: the HUD's gauges and compass at the edges of a wide picture (`docs/WIDESCREEN.md`) |
 | `KF1_WIDESCREEN_MENU` | on | `0`: leave the menu's background 320 wide |

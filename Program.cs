@@ -209,7 +209,8 @@ Kf1.Translation.Install();
 // default. See "Message text" in docs/GAME_INTERNALS.md.
 Kf1.MessageText.Configure(Environment.GetEnvironmentVariable("KF1_MESSAGETEXT"),
                           Environment.GetEnvironmentVariable("KF1_MESSAGETEXT_PROBE"),
-                          Environment.GetEnvironmentVariable("KF1_MESSAGETEXT_TEST"));
+                          Environment.GetEnvironmentVariable("KF1_MESSAGETEXT_TEST"),
+                          Environment.GetEnvironmentVariable("KF1_MESSAGETEXT_MARK"));
 Kf1.MessageText.Install();
 
 // The Testing tab in Settings: every switch above, live.
@@ -230,6 +231,14 @@ Kf1.OpenPacing.Install();
 // The sign's picture and the card message wait on the pad with no frames: the
 // hang watchdog is paused while they run.
 Kf1.FramelessWaits.Install();
+
+// KF1_PRESENT_PROBE=1: what each present picked (wide target, plain, VRAM
+// fallback), every 2 s; =2 also the verdict and every live target when it changes.
+{
+    var pp = Environment.GetEnvironmentVariable("KF1_PRESENT_PROBE");
+    if (pp is "1" or "2") RecompOne.Runtime.Hle.GpuHle.PresentProbe = true;
+    if (pp == "2") RecompOne.Runtime.Hle.GpuHle.PresentVerdictProbe = true;
+}
 
 // Scripted pad input, seconds:button:holdMs, timed from GAME.EXE's load, or from
 // OPEN.EXE's with KF1_AUTOPAD_FROM=open (the title needs input to reach the game):
