@@ -10,7 +10,7 @@ namespace Kf1;
 /// Sub-pixel vertex positioning, Verdite3's Subpixel on this disc. The fraction the
 /// GTE truncates is carried by the same address map as the depth; the work is in
 /// the fork and <see cref="GteDepth.Subpixel"/> switches it on. This file is the
-/// switch, the fractional cull's switch and the probe. Off until judged.
+/// switch, the fractional cull's switch and the probe. On by default.
 ///
 ///     KF1_SUBPIXEL=1          on; 0 or unset snaps every vertex to a whole pixel
 ///     KF1_SUBPIXEL_PROBE=1    a line every 2 s: the map's counters, how far
@@ -78,7 +78,7 @@ public static class Subpixel
 
     public static void Install()
     {
-        Enabled = _forced ?? false;
+        Enabled = _forced ?? true;
         GteDepth.Probe = _probe;
         Baseline();
         // Attached in every state, so the probe can be switched on live.

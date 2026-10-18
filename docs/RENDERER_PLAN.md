@@ -193,7 +193,8 @@ advancing at the drawn rate.
 **Done 2026-10-15** ("The retained scene" in `docs/GPU_RENDERER.md`): the gate's
 counters hold. The map, the models, the seven measured semi meshes (as blended
 faces) and the flipbook sprites are retained. No cell changes mid-area, so there
-is no dirty update to write. Off by default until judged.
+is no dirty update to write. Off by default until judged; on by default since
+2026-10-17.
 
 **Completed 2026-10-16**. What the 2026-10-15 close left as packets was not all
 decided; it was skipped:
@@ -244,14 +245,15 @@ packets except those listed by caller and reason.
 are within 1 of 255 everywhere checked, and the map and the models reach the
 depth, normal and surface buffers. Built: render and enhancement distance with the
 fade, the game's fog (GTE curve, one pair) with corners/depth/distance modes,
-per-pixel lighting, AO, anisotropy and mipmaps, all off until judged. Not built:
+per-pixel lighting, AO, anisotropy and mipmaps, all off until judged (on by
+default since 2026-10-17). Not built:
 `EvenFog` (not applicable: there is no per-tile fog level), `Pgxp` (not used by
 Verdite2's retained path or Verdite3), `AoWorld` (needs a fork patch for the
 grid's sizes, and a KF1 adapter) and `ProjectileLights` (effects not identified).
 The user's judging is what is left.
 
-The enhancements, in the order Verdite2 shipped them. Each is a switch, off until
-the user has looked at it, and live in Settings ▸ Testing:
+The enhancements, in the order Verdite2 shipped them. Each is a switch, on by
+default since 2026-10-17 (off until judged before), and live in Settings ▸ Testing:
 
 1. **`RenderDistance`** and **`EnhancementDistance`**: the map and models past the
    stencils' reach, faded rather than popped (`0089`, `0098`), with

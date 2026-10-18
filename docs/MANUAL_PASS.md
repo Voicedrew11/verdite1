@@ -6,9 +6,12 @@ counters already say, so the only thing left is the eye. Written 2026-10-16 at
 the close of Step 8 of `RENDERER_PLAN.md`. The measurements behind it are in
 "Whole-game coverage (Step 8)" in `GPU_RENDERER.md`.
 
-**Nothing here changes a default.** Each item ends with a decision: keep the
-default, or change it. Record the answer by striking the item through here and
-noting it in `TODO.md`; a default changes in its own commit after that.
+**Every enhancement here is on by default** (2026-10-17, the user: on, so it can
+be debugged in play, rather than off until judged), at the value Verdite3 judged
+for its own; the defaults are in `ENV_VARS.md`. Each item ends with a decision:
+keep it on, or change it. Record the answer by striking the item through here and
+noting it in `TODO.md`; a changed default goes in its own commit after that. The
+comparisons below still work: each switch turns off in Settings ▸ Testing.
 
 ## Setting up
 
@@ -147,8 +150,8 @@ backends without the retained path.
 2. **The ending** (`scripts/kf1sh.py poke 8009F847 01`, `scripts/kf1sh.py warp
    1 31000 5000`, then step off that cell and back onto it): OPEN.EXE presents for 4-6 minutes and does not return to the
    title. Look at: whether its last screen waits for a button.
-3. **Dialogue as text** (Settings ▸ Testing ▸ *Dialogue as text*, or
-   `KF1_MESSAGETEXT=1`), with the translation on and off. Talk to anyone; the
+3. **Dialogue as text** (on by default; Settings ▸ Testing ▸ *Dialogue as
+   text*, or `KF1_MESSAGETEXT=0` to compare), with the translation on and off. Talk to anyone; the
    counters say 27 of 30 test pictures redraw pixel-exact. Look at: whether the
    text and its fade look the same as with the switch off. A glyph the tables lack is magenta in a box (*Mark glyphs the tables lack*); C03/T12032 has one (`KF1_MESSAGETEXT_TEST=C03/T12032` and Circle at `area1-sign`). *Decide*: whether it
-   becomes the default.
+   stays the default.

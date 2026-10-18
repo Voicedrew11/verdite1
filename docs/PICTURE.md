@@ -2,8 +2,9 @@
 
 Verdite3's `docs/PICTURE.md` is the model. Every feature here is the fork's work
 (`GteDepth`, `GteVertexMap`, the GL backend); this game's files are the switches,
-the probes, and the two places the dither reaches the GPU. **All are off until
-judged by eye**, and each is live in Settings ▸ Testing.
+the probes, and the two places the dither reaches the GPU. **All are on by
+default** (2026-10-17, Verdite3's judged defaults, so the eye meets them in play;
+`ENV_VARS.md`), and each is live in Settings ▸ Testing to turn off and compare.
 
 ## Unit 1: no dither, 24-bit
 

@@ -12,20 +12,20 @@ namespace Kf1;
 /// kept value in interface.ini (`kf1.*`), put back at the next boot unless the
 /// variable is set, which wins.
 ///
-///     KF1_PERPIXEL=0|1               per-pixel lighting (off)
+///     KF1_PERPIXEL=0|1               per-pixel lighting (on)
 ///     KF1_FOG=0|corners|1|depth|2|distance|radial
-///                                    fog at the corners, by pixel depth, or by distance from the eye (corners)
-///     KF1_AO=0|1                     ambient occlusion (off)
+///                                    fog at the corners, by pixel depth, or by distance from the eye (distance)
+///     KF1_AO=0|1                     ambient occlusion (on)
 ///     KF1_AO_NORMALS=0|1            the occlusion's normals from the geometry (on)
 ///     KF1_AO_QUALITY=low|medium|high occlusion quality (medium)
-///     KF1_ANISO=1..16               anisotropic filtering (1, off)
-///     KF1_MIPMAPS=0|1               mipmaps (off)
+///     KF1_ANISO=1..16               anisotropic filtering (16; 1 is off)
+///     KF1_MIPMAPS=0|1               mipmaps (on)
 ///     KF1_ENHANCEDIST=cells         enhance out to this many cells; 0 or unset, at every distance
-///     KF1_RENDERDIST=cells          draw this many cells out; 0 or unset, the game's
-///     KF1_RENDERDIST_FADE=cells     fade in over this band at the edge; 0 or unset, none
+///     KF1_RENDERDIST=cells          draw this many cells out (16); 0, the game's
+///     KF1_RENDERDIST_FADE=cells     fade in over this band at the edge (3); 0, none
 ///
 /// Step 4 of docs/RENDERER_PLAN.md; see "The picture on the retained scene" in
-/// docs/GPU_RENDERER.md. Each is off until judged.
+/// docs/GPU_RENDERER.md. Defaults are Verdite3's judged ones.
 /// </summary>
 public static class SceneFeatures
 {
@@ -35,6 +35,8 @@ public static class SceneFeatures
     const string FogKey = "kf1.fog", AoQualityKey = "kf1.ao.quality", AnisoKey = "kf1.aniso";
     const string GpuWorldKey = "kf1.gpuworld";
     const string EnhanceKey = "kf1.enhancedistance", RenderKey = "kf1.renderdistance", FadeKey = "kf1.renderdistance.fade";
+    const int DefaultFog = 2, DefaultAniso = 16;
+    const float DefaultRender = 16f, DefaultFade = 3f;
 
     static int _quality = 1;
 
@@ -43,10 +45,10 @@ public static class SceneFeatures
 
     static readonly Kept[] Switches =
     [
-        new("kf1.perpixel", "KF1_PERPIXEL", () => GteLightMap.Enabled, v => GteLightMap.Enabled = v, false),
-        new("kf1.ao", "KF1_AO", () => GteDepth.AmbientOcclusion, v => GteDepth.AmbientOcclusion = v, false),
+        new("kf1.perpixel", "KF1_PERPIXEL", () => GteLightMap.Enabled, v => GteLightMap.Enabled = v, true),
+        new("kf1.ao", "KF1_AO", () => GteDepth.AmbientOcclusion, v => GteDepth.AmbientOcclusion = v, true),
         new("kf1.ao.normals", "KF1_AO_NORMALS", () => GteDepth.AoNormals, v => GteDepth.AoNormals = v, true),
-        new("kf1.mipmaps", "KF1_MIPMAPS", () => GteDepth.Mipmaps, v => GteDepth.Mipmaps = v, false),
+        new("kf1.mipmaps", "KF1_MIPMAPS", () => GteDepth.Mipmaps, v => GteDepth.Mipmaps = v, true),
     ];
 
     static readonly string[] FogItems = ["At the corners (the game's)", "By pixel depth", "By distance from the eye"];
@@ -77,12 +79,12 @@ public static class SceneFeatures
     public static void Configure()
     {
         foreach (var k in Switches) k.Set(Flag(k.Env, k.Default));
-        SetFog(Env("KF1_FOG")?.Trim().ToLowerInvariant() switch { "1" or "depth" => 1, "2" or "distance" or "radial" => 2, _ => 0 });
+        SetFog(Env("KF1_FOG")?.Trim().ToLowerInvariant() switch { "0" or "corners" => 0, "1" or "depth" => 1, _ => DefaultFog });
         SetQuality(Env("KF1_AO_QUALITY")?.Trim().ToLowerInvariant() switch { "low" => 0, "high" => 2, _ => 1 });
-        GteDepth.Anisotropy = Math.Clamp(int.TryParse(Env("KF1_ANISO"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int a) ? a : 1, 1, 16);
+        GteDepth.Anisotropy = Math.Clamp(int.TryParse(Env("KF1_ANISO"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int a) ? a : DefaultAniso, 1, 16);
         SetDistance(FloatEnv("KF1_ENHANCEDIST"));
-        RenderDistance.SetCells(FloatEnv("KF1_RENDERDIST"));
-        RenderDistance.SetFade(FloatEnv("KF1_RENDERDIST_FADE"));
+        RenderDistance.SetCells(FloatEnv("KF1_RENDERDIST", DefaultRender));
+        RenderDistance.SetFade(FloatEnv("KF1_RENDERDIST_FADE", DefaultFade));
     }
 
     /// <summary>Puts the kept values back, for each variable that is unset. Called from
@@ -111,8 +113,8 @@ public static class SceneFeatures
         return string.IsNullOrEmpty(v) ? fallback : v is not ("0" or "off");
     }
 
-    static float FloatEnv(string name) =>
-        float.TryParse(Env(name), NumberStyles.Float, CultureInfo.InvariantCulture, out float v) && float.IsFinite(v) ? v : 0f;
+    static float FloatEnv(string name, float fallback = 0f) =>
+        float.TryParse(Env(name), NumberStyles.Float, CultureInfo.InvariantCulture, out float v) && float.IsFinite(v) ? v : fallback;
 
     static void ReadFloat(string key, Action<float> set)
     {
@@ -155,7 +157,7 @@ public static class SceneFeatures
     public static void Draw()
     {
         ImGui.SeparatorText("World on the GPU");
-        Note("Not judged yet: each ships off until it has been looked at. Depth fog, distance fog and the enhancement distance act through per-pixel lighting.");
+        Note("On by default, to be looked at. Depth fog, distance fog and the enhancement distance act through per-pixel lighting.");
 
         int mode = GpuWorld.Setting;
         ImGui.SetNextItemWidth(240);

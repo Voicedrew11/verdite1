@@ -63,7 +63,7 @@ Kf1.AgentServer.Install();
 Kf1.AutoStart.Configure(Environment.GetEnvironmentVariable("KF1_AUTOSTART"));
 Kf1.AutoStart.Install();
 
-// Frame pacing: off unless KF1_FPS is set. See "Frame pacing" in docs/DEVELOPMENT.md.
+// Frame pacing: 144 unless KF1_FPS says otherwise (0 turns it off). See "Frame pacing" in docs/DEVELOPMENT.md.
 Kf1.FramePacing.Configure(Environment.GetEnvironmentVariable("KF1_FPS"),
                           Environment.GetEnvironmentVariable("KF1_TICKRATE"),
                           Environment.GetEnvironmentVariable("KF1_FPS_PROBE"));
@@ -146,7 +146,7 @@ Kf1.HudSmoothing.Configure(Environment.GetEnvironmentVariable("KF1_SMOOTH_GAUGES
                            Environment.GetEnvironmentVariable("KF1_HUD_PROBE"));
 
 // The picture: 24-bit shading, no dither, perspective, sub-pixel and the Z-buffer,
-// each off until judged. See docs/PICTURE.md.
+// each on by default. See docs/PICTURE.md.
 Kf1.TrueColor.Configure(Environment.GetEnvironmentVariable("KF1_TRUECOLOR"));
 Kf1.NoDither.Configure(Environment.GetEnvironmentVariable("KF1_NODITHER"),
                        Environment.GetEnvironmentVariable("KF1_NODITHER_PROBE"));
@@ -186,7 +186,7 @@ Mouse.Configure(Kf1.MouseLook.Game);
 Mouse.Install();
 Kf1.MouseLook.Install();
 
-// Widescreen: off (4:3) unless KF1_WIDESCREEN or the saved aspect asks. See
+// Widescreen: 16:9 unless KF1_WIDESCREEN or the saved aspect says otherwise. See
 // docs/WIDESCREEN.md.
 Kf1.Widescreen.Configure(Environment.GetEnvironmentVariable("KF1_WIDESCREEN"),
                          Environment.GetEnvironmentVariable("KF1_WIDESCREEN_PROBE"),
@@ -205,7 +205,7 @@ Kf1.Translation.Configure(Environment.GetEnvironmentVariable("KF1_TRANSLATION"),
                           Environment.GetEnvironmentVariable("KF1_TRANSLATION_PPF"));
 Kf1.Translation.Install();
 
-// Dialogue pictures read back into text and drawn in the game's own glyphs; off by
+// Dialogue pictures read back into text and drawn in the game's own glyphs; on by
 // default. See "Message text" in docs/GAME_INTERNALS.md.
 Kf1.MessageText.Configure(Environment.GetEnvironmentVariable("KF1_MESSAGETEXT"),
                           Environment.GetEnvironmentVariable("KF1_MESSAGETEXT_PROBE"),

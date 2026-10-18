@@ -4,7 +4,8 @@ Verdite3's `docs/WIDESCREEN.md` is the model. The runtime draws a display buffer
 into a render target with extra columns either side, copies only the original
 columns back to VRAM, and presents the widened target at the chosen aspect; the
 projection is untouched, so pixels keep their aspect and the margin shows only
-what the game submits past the screen edge. **Off (4:3) until judged by eye.**
+what the game submits past the screen edge. **16:9, with the HUD at the edges, by
+default** since 2026-10-17 (`ENV_VARS.md`); `KF1_WIDESCREEN=off` is 4:3.
 
 ## The margin, the latches and the tints
 

@@ -17,13 +17,13 @@ namespace Kf1;
 /// the tolerance and the report are here; the test is the fork's
 /// (<see cref="GteDepth"/>, <see cref="BlendOrder"/>). Verdite3's ZBuffer.
 ///
-///     KF1_ZBUFFER=1             on; 0 or unset leaves the ordering table
+///     KF1_ZBUFFER=0             the ordering table alone; 1 or unset is on
 ///     KF1_ZBUFFER_PACKETS=0     the address map's depths even when the records are there
 ///     KF1_ZBUFFER_PROBE=1       a line every 2 s: records, hits, tested, unmatched
 ///     KF1_BLENDORDER=0          blended surfaces in table order again (0079)
 ///     KF1_ZBUFFER_THRESHOLD=N   restart the depth buffer on an N-unit step (0051)
 ///
-/// Off until judged. See "Unit 3" in docs/PICTURE.md.
+/// On by default. See "Unit 3" in docs/PICTURE.md.
 /// </summary>
 public static class ZBuffer
 {
@@ -53,7 +53,7 @@ public static class ZBuffer
     /// <summary>Live: write the report to the console, once every two seconds.</summary>
     public static bool ProbeOn { get; set; }
 
-    /// <summary>KF1_ZBUFFER was set, so it wins; unset leaves the switch off.</summary>
+    /// <summary>KF1_ZBUFFER=0 turns it off; unset leaves it on.</summary>
     static bool _forced;
 
     static float _threshold;
@@ -68,7 +68,7 @@ public static class ZBuffer
 
     public static void Configure(string? on, string? probe)
     {
-        _forced = !string.IsNullOrWhiteSpace(on) && on.Trim() is not ("0" or "off");
+        _forced = string.IsNullOrWhiteSpace(on) || on.Trim() is not ("0" or "off");
         ProbeOn = !string.IsNullOrWhiteSpace(probe) && probe.Trim() is not ("0" or "off");
 
         // 0079: on by default, since it is what the depth test needs; KF1_BLENDORDER=0 compares.

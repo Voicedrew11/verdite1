@@ -10,7 +10,7 @@ namespace Kf1;
 /// Perspective-correct textures, Verdite3's Perspective on this disc. The work is
 /// in the fork: <see cref="GteDepth.Enabled"/> switches the address map
 /// (<see cref="GteVertexMap"/>) on and the renderers interpolate U/W, V/W and 1/W.
-/// This file is the switch and the probe only. Off until judged.
+/// This file is the switch and the probe only. On by default.
 ///
 ///     KF1_PERSPECTIVE=1        on; 0 or unset is the console's affine mapping
 ///     KF1_PERSPECTIVE_PROBE=1  a line every 2 s: the map's roots, propagations,
@@ -74,7 +74,7 @@ public static class Perspective
 
     public static void Install()
     {
-        Enabled = _forced ?? false;
+        Enabled = _forced ?? true;
         Baseline();
         // Attached in every state, so the probe can be switched on live.
         HookAttach.OnOverlayLoad("perspective", Attach);

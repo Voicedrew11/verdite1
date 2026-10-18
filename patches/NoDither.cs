@@ -11,7 +11,7 @@ namespace Kf1;
 /// ways: PutDrawEnv's <c>dtd</c> byte at <c>DRAWENV+0x16</c>, and E1 words linked into
 /// the ordering table. Both end in the GPU's draw-mode decode, which the runtime's
 /// <c>Gpu.SuppressDither</c> (0094) masks, so the game's memory is never touched; the
-/// table walk runs only for the probe. Off until judged.
+/// table walk runs only for the probe. On by default.
 ///
 ///     KF1_NODITHER=1         no dither; 0 or unset keeps the crosshatch
 ///     KF1_NODITHER_PROBE=1   once every 2 s: draw envs and table words that asked
@@ -54,7 +54,7 @@ public static class NoDither
 
     public static void Configure(string? on, string? probe)
     {
-        if (!string.IsNullOrWhiteSpace(on)) Enabled = on.Trim() is not ("0" or "off");
+        Enabled = string.IsNullOrWhiteSpace(on) || on.Trim() is not ("0" or "off");
         ProbeOn = probe?.Trim() == "1";
     }
 

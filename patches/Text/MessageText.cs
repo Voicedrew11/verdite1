@@ -78,7 +78,7 @@ public sealed class MessageText : IFloatingPanel
         if (!string.IsNullOrWhiteSpace(mark)) Mark = mark.Trim() is not ("0" or "off");
         foreach (var t in (test ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             if (t.Length == 10) _tests.Enqueue(t.Replace('/', '\\'));
-        if (!string.IsNullOrWhiteSpace(on)) Enabled = on.Trim() is not ("0" or "off");
+        Enabled = string.IsNullOrWhiteSpace(on) || on.Trim() is not ("0" or "off");
         if (!string.IsNullOrWhiteSpace(probe)) _probe = probe != "0";
     }
 

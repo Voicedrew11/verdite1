@@ -12,7 +12,7 @@ namespace Kf1;
 /// <summary>
 /// Draw at any rate and tick the world at 15 Hz by default (the gate's own is 20):
 ///
-///     KF1_FPS=60|144|off   the picture's rate (off unless set: not judged yet)
+///     KF1_FPS=60|144|off   the picture's rate (144 unset; off is uncapped, 0 no pacing)
 ///     KF1_TICKRATE=15      the world's; 20 is the frame gate's
 ///     KF1_FPS_PROBE=1      a line a second: fps drawn, ticks taken, packets drawn
 ///
@@ -147,16 +147,16 @@ public static class FramePacing
                 throw new ArgumentException($"KF1_TICKRATE: cannot read '{tickRate}'");
             SetTickRate(hz);
         }
-        if (string.IsNullOrWhiteSpace(fps)) return;
+        if (fps?.Trim() == "0") return;
         Enabled = true;
-        if (fps.Equals("off", StringComparison.OrdinalIgnoreCase)) TargetFps = 0.0;
+        if (string.IsNullOrWhiteSpace(fps)) TargetFps = DefaultFps;
+        else if (fps.Equals("off", StringComparison.OrdinalIgnoreCase)) TargetFps = 0.0;
         else if (double.TryParse(fps, NumberStyles.Float, CultureInfo.InvariantCulture, out double rate))
             TargetFps = Math.Clamp(rate, 5.0, 1000.0);
         else throw new ArgumentException($"KF1_FPS: cannot read '{fps}'");
     }
 
-    /// <summary>The frame rate pacing aims for when the Testing tab turns it on with
-    /// none chosen; KF1_FPS unset leaves pacing off.</summary>
+    /// <summary>The frame rate pacing aims for with none chosen.</summary>
     public const double DefaultFps = 144.0;
 
     static double _hostFps = -1.0;

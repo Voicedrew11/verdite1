@@ -303,7 +303,7 @@ public sealed class TestingSection : ISettingsSection
         if (!FramePacing.Enabled) ImGui.EndDisabled();
 
         ImGui.SeparatorText("Picture");
-        Note("Not judged yet: each ships off until it has been looked at.");
+        Note("On by default, to be looked at.");
         string[] shading = ["Dither (the console)", "None", "Smooth (24-bit)"];
         int sh = Shading;
         ImGui.SetNextItemWidth(200);

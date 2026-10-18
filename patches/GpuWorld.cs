@@ -15,9 +15,9 @@ namespace Kf1;
 /// <see cref="RetainedScene"/>, which draws them at the ordering table's far end
 /// under the packets the game still writes.
 ///
-///     KF1_GPU_WORLD=0|reference  the packets only (the default, until judged)
+///     KF1_GPU_WORLD=0|reference  the packets only
 ///     KF1_GPU_WORLD=capture      the scene published beside the packets, nothing suppressed
-///     KF1_GPU_WORLD=1|retained   the scene drawn; the world's packets suppressed
+///     KF1_GPU_WORLD=1|retained   the scene drawn; the world's packets suppressed (the default)
 ///     KF1_GPU_MAP=0              the map left to its packets
 ///     KF1_GPU_MODELS=0           the models left to their packets
 ///     KF1_GPU_ARM=0              the arm left to its packets
@@ -105,9 +105,9 @@ public static class GpuWorld
     {
         Mode = Environment.GetEnvironmentVariable("KF1_GPU_WORLD")?.Trim().ToLowerInvariant() switch
         {
+            "0" or "off" or "reference" => 0,
             "capture" or "shadow" => 1,
-            "1" or "on" or "retained" or "2" => 2,
-            _ => 0,
+            _ => 2,
         };
         MapOn = Flag("KF1_GPU_MAP", true);
         ModelsOn = Flag("KF1_GPU_MODELS", true);

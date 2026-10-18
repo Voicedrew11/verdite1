@@ -76,9 +76,10 @@ public static class Widescreen
         ("21:9",      64f / 27f),
     ];
 
-    /// <summary>The target aspect. 4:3 is off, and in this project a picture feature
-    /// ships off until a person has judged it, so 4:3 is the default.</summary>
-    public static float Aspect { get; private set; } = FourThree;
+    /// <summary>The target aspect; 4:3 is off.</summary>
+    public static float Aspect { get; private set; } = DefaultAspect;
+
+    public const float DefaultAspect = 16f / 9f;
 
     /// <summary>Widen the game's full-screen tints -- the death fade, the damage
     /// flash -- across the margin. On whenever an aspect is chosen;
@@ -88,9 +89,9 @@ public static class Widescreen
     /// <summary>Whether the aspect is actually widening anything.</summary>
     public static bool On => Display.WideAspect > 0f;
 
-    /// <summary>Whether the HUD is moved out to the new edges. Off until judged;
+    /// <summary>Whether the HUD is moved out to the new edges. On by default;
     /// kept as <c>kf1.widescreen.hud</c> by the Testing tab.</summary>
-    public static bool AnchorHud { get; private set; }
+    public static bool AnchorHud { get; private set; } = true;
 
     /// <summary>Takes effect on the next frame the HUD is drawn.</summary>
     public static void SetAnchorHud(bool on) => AnchorHud = on;
@@ -172,7 +173,7 @@ public static class Widescreen
 
         Event.AddListener<RuntimeReadyEvent>(_ =>
         {
-            Aspect = _forced ?? RecompOne.Runtime.Runtime.View.GetFloat(AspectKey, FourThree);
+            Aspect = _forced ?? RecompOne.Runtime.Runtime.View.GetFloat(AspectKey, DefaultAspect);
 
             // The comparison, not a saved key: a player who ticked the old option off
             // would otherwise be stuck with it with nothing left to put it back.
