@@ -16,6 +16,7 @@ bool texture_store_upload_tim(TextureStore *store, const u8 *bytes, std::size_t 
     kf_tim_compose({bytes, size}, store->words);
     for (std::size_t i = 0; i < store->entries.size(); ++i)
         store->entries[i].dirty = true;
+    ++store->generation;
     return true;
 } catch (const codec::Error &error) {
     error.report();
@@ -37,6 +38,7 @@ bool texture_store_translate_tim(TextureStore *store, const u8 *before, std::siz
             store->words[i] = new_words[i];
     for (std::size_t i = 0; i < store->entries.size(); ++i)
         store->entries[i].dirty = true;
+    ++store->generation;
     return true;
 } catch (const codec::Error &error) {
     error.report();

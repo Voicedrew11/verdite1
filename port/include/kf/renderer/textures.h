@@ -3,6 +3,7 @@
 
 #include <kf/platform/assets.h>
 
+#include <cstdint>
 #include <vector>
 
 namespace kf {
@@ -21,6 +22,7 @@ struct TextureStore {
     // framebuffer, command memory, or an address space exposed to gameplay.
     std::vector<u16> words;
     std::vector<TextureEntry> entries;
+    std::uint64_t generation = 0;   // counts changes to words
 };
 bool texture_store_upload_tim(TextureStore *store, const u8 *bytes, std::size_t size);
 // Replace only translated texels/palette entries; retain later map/menu uploads.

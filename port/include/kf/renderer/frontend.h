@@ -91,6 +91,9 @@ struct GameFrame {
     std::optional<CameraPose> camera;   // none: a 2D frame (menus, the opening), never smoothed
     std::span<const GameLight> lights;
     std::span<const EntityPose> entities;
+    // The look input this update added to camera->rotation (angle units), so a
+    // smoothed view keeps showing it while blending towards this update.
+    SVECTOR look_applied{0, 0, 0};
 };
 
 // Takes the backend for the rest of the run. False if it cannot draw at all.
@@ -119,8 +122,8 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns);
 // Draws the last submitted frame as seen at now_ns, then the overlay (may be
 // null), and presents it to a window of the given size. When smoothing,
 // positions blend between the last two updates while the view turns by
-// pending_look, the look input the game has not consumed yet, so looking has
-// no update of lag.
+// pending_look (angle units), the look input the game has not consumed yet,
+// so looking has no update of lag.
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look,
                       int window_width, int window_height, const ImDrawData *overlay);
 // The window as last presented, overlay included, RGBA8 with the top row first

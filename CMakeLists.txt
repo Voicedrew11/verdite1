@@ -212,11 +212,18 @@ if(doctest_FOUND)
   add_test(NAME verdite COMMAND verdite_tests)
 endif()
 
+# The renderer frontend's API-free parts: batching, texture layers, smoothing. Tested on their own.
+add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/texture_layers.cpp
+  port/renderer/view_smoothing.cpp)
+target_link_libraries(kf_frontend PUBLIC kf_support)
+target_compile_options(kf_frontend PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp
-  port/renderer/textures.cpp port/renderer/lighting.cpp port/renderer/projection.cpp)
+  port/renderer/textures.cpp port/renderer/lighting.cpp port/renderer/projection.cpp
+  port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES})
-target_link_libraries(kf_host PUBLIC kf_support SDL3::SDL3 kf_ext verdite)
+target_link_libraries(kf_host PUBLIC kf_support kf_frontend SDL3::SDL3 kf_ext verdite)
 if(WIN32)
   target_link_libraries(kf_host PUBLIC kf_glshim)
 endif()
@@ -237,3 +244,11 @@ if(WIN32)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:kings-field>)
 endif()
 install(TARGETS kings-field RUNTIME DESTINATION bin)
+
+# port/'s tests: the parts that run without a window or GPU.
+if(doctest_FOUND)
+  add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp)
+  target_link_libraries(kf_port_tests PRIVATE kf_frontend doctest::doctest)
+  target_compile_options(kf_port_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME port COMMAND kf_port_tests)
+endif()

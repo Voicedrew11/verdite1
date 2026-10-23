@@ -40,7 +40,7 @@ struct GpuVertex {
     VertexTexturing texturing;
     u8 dither;                      // 1: the PS1 dithered this face
     u8 casts_shadow;
-    u16 entity;                     // index into the present's entity motions, 0: none
+    u16 entity;                     // index into FrameView::motions, 0: none
     u16 padding = 0;
 };
 
@@ -59,21 +59,22 @@ struct DrawRun {
     u32 vertex_count;
 };
 
-// How the uploaded update is seen in this displayed frame: the shown camera
-// relative to the update's (row-major 3 x 4: rotation, then translation in
-// world units), and the projection to the screen.
-struct FrameView {
-    std::array<float, 12> update_to_shown;
-    float projection_distance;
-    float center_x, center_y;
+// How faces move from where their update drew them to where this frame shows
+// them: row-major 3 x 4 (rotation, then translation in world units), from the
+// update's camera space to the shown camera's. Vertices with cz = 0 never move.
+struct Motion {
+    std::array<float, 12> to_shown;
 };
 
-// An entity's offset between where it was drawn and where it is shown, in the
-// update's camera space, applied around its origin.
-struct EntityMotion {
-    std::array<float, 3> origin;
-    std::array<float, 3> offset;
-    float yaw;                      // radians
+// How the uploaded update is seen in this displayed frame.
+struct FrameView {
+    std::span<const Motion> motions;        // [0]: faces of no entity; [n]: GpuVertex::entity n
+    bool reproject;                         // false: draw x, y as the update projected them
+    bool whole_pixels;                      // reprojected positions drop their fractions
+    float projection_distance;
+    float center_x, center_y;               // in the original 320 columns
+    std::array<float, 9> camera_to_world;   // the shown camera, row-major (light occlusion)
+    std::array<float, 3> camera_world;      // world units
 };
 
 class RenderBackend {
@@ -92,11 +93,11 @@ public:
     virtual void upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs,
                               const FrameStyle &style) = 0;
     // Draws the uploaded frame from view, then the overlay (may be null), and
-    // presents. lights: in the update's camera space, with strength and this
-    // frame's flicker applied. A window of size 0 (minimised) draws nothing.
-    virtual void present(const FrameView &view, std::span<const EntityMotion> entities,
-                         std::span<const RenderLight> lights, int window_width, int window_height,
-                         const ImDrawData *overlay) = 0;
+    // presents. lights: in the shown camera's space, nearest first, with
+    // strength and this frame's flicker applied. A window of size 0
+    // (minimised) draws nothing.
+    virtual void present(const FrameView &view, std::span<const RenderLight> lights,
+                         int window_width, int window_height, const ImDrawData *overlay) = 0;
     // The last presented image, RGBA8, top row first. The null backend has none.
     virtual std::optional<Image> capture() = 0;
 };
