@@ -343,6 +343,11 @@ void draw_settings_window() {
             changed = true;
         }
         ImGui::SetItemTooltip("Distant textures are averaged instead of shimmering as you move.\nVulkan only.");
+        if (ImGui::Checkbox("Detailed distant walls", &s.detailed_map)) {
+            apply_render_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("Draws every map cell with its close-up model. The PlayStation used\ncoarse models past the nearest cells, so wall textures changed as you walked up.");
         static const char *const anisotropy_labels[] = {"Off", "2x", "4x", "8x", "16x"};
         int anisotropy_index = 0;
         while (anisotropy_index < 4 && (2 << anisotropy_index) <= s.anisotropy)

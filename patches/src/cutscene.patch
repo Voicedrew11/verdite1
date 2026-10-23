@@ -91,6 +91,21 @@ index 9fd3331f75a261bfdede047ae7677ef281315b44..b2c435ed951247543e94c24cf16dfe77
          out++;
          vertex++;
      }
+diff --git a/src/cutscene/render_map_cells.cpp b/src/cutscene/render_map_cells.cpp
+index 63c0be518269eeb6871a8eea05945cf8048fd062..e4c58ebf9c9f15b836b42ba7a84c50fe7c61f2ed 100644
+--- a/src/cutscene/render_map_cells.cpp
++++ b/src/cutscene/render_map_cells.cpp
+@@ -22,7 +22,9 @@ void cutscene_render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+         return;
+     }
+     orientation = kf_enum_encode<u8>(cutscene_map_cell_orientation_grid.cells[row][col]) - 1;
+-    if (visibility == KF_CELL_WINDOW_DISTANT) {
++    // PC extension: the distant meshes stretch each texture over a few large
++    // faces, so walls changed pattern as they came near; keep the detailed ones.
++    if (visibility == KF_CELL_WINDOW_DISTANT && !kf::render_detailed_map) {
+         object_index += KF_MAP_MESHES_PER_BANK;
+     }
+     position = VECTOR{
 diff --git a/src/cutscene/render_sprite.cpp b/src/cutscene/render_sprite.cpp
 index d4f416a15c3c24fd3a644ed9231d0926c8e8bf93..37085cf7420792ce419fb6a8b2a1f24a53d2a82a 100644
 --- a/src/cutscene/render_sprite.cpp

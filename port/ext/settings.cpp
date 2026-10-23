@@ -102,6 +102,7 @@ void settings_load() {
     current.ao_quality = std::clamp(static_cast<int>(read_number(display, "ao_quality", current.ao_quality)), 0, 2);
     current.texture_filter = static_cast<int>(read_number(display, "texture_filter", current.texture_filter));
     current.mipmaps = read_bool(display, "mipmaps", current.mipmaps);
+    current.detailed_map = read_bool(display, "detailed_map", current.detailed_map);
     current.anisotropy = std::clamp(static_cast<int>(read_number(display, "anisotropy", current.anisotropy)), 1, 16);
     current.enhanced_distance =
         std::clamp(static_cast<int>(read_number(display, "enhanced_distance", current.enhanced_distance)), 0, 16);
@@ -174,6 +175,7 @@ void settings_save_if_dirty() {
     write_value(display, "ao_quality", cJSON_CreateNumber(current.ao_quality));
     write_value(display, "texture_filter", cJSON_CreateNumber(current.texture_filter));
     write_value(display, "mipmaps", cJSON_CreateBool(current.mipmaps));
+    write_value(display, "detailed_map", cJSON_CreateBool(current.detailed_map));
     write_value(display, "anisotropy", cJSON_CreateNumber(current.anisotropy));
     write_value(display, "fog", cJSON_CreateNumber(current.fog));
     write_value(display, "enhanced_distance", cJSON_CreateNumber(current.enhanced_distance));
@@ -249,6 +251,7 @@ const Settings &effective_settings() {
     classic.ambient_occlusion = false;
     classic.texture_filter = 0;
     classic.mipmaps = false;
+    classic.detailed_map = false;
     classic.anisotropy = 1;
     classic.fog = 0;
     classic.antialiasing = 0;
@@ -313,6 +316,7 @@ void apply_render_settings() {
     const Settings &e = effective_settings();
     render_subpixel = e.subpixel;
     render_perspective = e.perspective;
+    render_detailed_map = e.detailed_map;
     render_depth_buffer = e.depth_buffer;
     render_true_color = e.true_color;
     render_dynamic_lights = e.dynamic_lights;

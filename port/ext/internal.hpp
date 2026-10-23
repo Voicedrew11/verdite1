@@ -45,6 +45,7 @@ struct Settings {
     int ao_quality = 1;         // 0 low, 1 medium, 2 high (OcclusionQuality)
     int texture_filter = 0;     // 0 nearest (original), 1 bilinear, 2 three-point
     bool mipmaps = true;        // distant textures averaged instead of shimmering
+    bool detailed_map = true;   // distant map cells keep their detailed meshes
     int anisotropy = 16;        // 1 (off), 2, 4, 8 or 16 samples along slanted textures
     int enhanced_distance = 0;  // cells past which the picture is the game's own; 0: everywhere
     int fog = 2;                // 0 at the corners (original), 1 per pixel by depth, 2 by distance (FogMode)

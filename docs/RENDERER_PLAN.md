@@ -169,6 +169,16 @@ smoothing off, sub-pixel pictures are reprojected the same way
 (`ViewSmoothing::view_exact`), and whole-pixel (Classic) ones keep the game's
 matrix. The GL renderer still draws with the game's matrix.
 
+### Detailed distant walls
+
+Each map attribute has two meshes in MIXB.DAT's map TMD: object n for the
+nearest 3x3 cells of the cell window and n + 100 for the rest. The distant
+one has a quarter to a seventh of the faces (B1: 28 against 4 for a plain
+wall), and a texture page cannot tile, so each texture is stretched over the
+larger faces: a wall changed pattern as the player walked up to it. Display >
+Detailed distant walls (on; off in Classic mode) draws every cell with its near
+mesh (`render_detailed_map`, patched into both `render_map_cells.cpp`).
+
 ### Ambient occlusion and the surface buffer
 
 Vulkan draws the opaque world faces a second time each frame, with a depth

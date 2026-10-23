@@ -1715,7 +1715,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..561e7d10cdac807440e06d09547a4a36
      animation_cache_release_stale();
      // World rendering also advances floor sprites and notifications. Pace every
 diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
-index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..13b1917d4b1f804182820b430af11393a4b8ee76 100644
+index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcde791e786 100644
 --- a/src/game/render_map_cells.cpp
 +++ b/src/game/render_map_cells.cpp
 @@ -3,6 +3,10 @@
@@ -1729,7 +1729,18 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..13b1917d4b1f804182820b430af11393
  
  enum {
      ILLUSION_STAFF_REMAP_PHASE_MASK = 3,
-@@ -88,7 +92,90 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+@@ -68,7 +72,9 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+         return;
+     }
+     orientation = kf_enum_encode<u8>(map_cell_orientation_grid.cells[row][col]) - 1;
+-    if (visibility == KF_CELL_WINDOW_DISTANT) {
++    // PC extension: the distant meshes stretch each texture over a few large
++    // faces, so walls changed pattern as they came near; keep the detailed ones.
++    if (visibility == KF_CELL_WINDOW_DISTANT && !kf::render_detailed_map) {
+         object_index += KF_MAP_MESHES_PER_BANK;
+     }
+     position = VECTOR{
+@@ -88,7 +94,90 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
      kf::render_place_model(cell_matrix, game_graphics_runtime.render_state.view_matrix, position);
      kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, game_graphics_runtime.render_state.quadrant_matrices[orientation], cell_matrix);
      tmd_select_object_vertices(tmd_context(), object_index);
@@ -1820,7 +1831,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..13b1917d4b1f804182820b430af11393
  }
  
  void render_map_cells(void)
-@@ -103,15 +190,20 @@ void render_map_cells(void)
+@@ -103,15 +192,20 @@ void render_map_cells(void)
      if ((u16)(game_graphics_runtime.render_state.view_rotation.vx + (KF_ANGLE_EIGHTH_TURN - 1))
          >= 2 * KF_ANGLE_EIGHTH_TURN - 1) {
          game_graphics_runtime.active_cell_window = &render_fixed_cell_window;

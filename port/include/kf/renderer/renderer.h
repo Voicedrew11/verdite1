@@ -38,6 +38,7 @@ inline u16 render_entity_tag = 0;
 inline u32 render_entity_identity = 0;
 inline bool render_subpixel = true;     // keep projected positions' fractions
 inline bool render_perspective = true;  // perspective-correct textures and shading
+inline bool render_detailed_map = true; // distant map cells drawn with their near (detailed) meshes
 inline bool render_depth_buffer = false; // per-pixel occlusion for 3D faces (experimental)
 inline bool render_true_color = false;   // 24-bit shading and blending, no dither
 inline bool render_dynamic_lights = false; // per-pixel point lights from torches and spells
