@@ -1,10 +1,48 @@
 {
   "version": 3,
   "configurePresets": [
-    {"name": "linux", "generator": "Ninja", "binaryDir": "${sourceDir}/build/linux", "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++"}},
-    {"name": "sanitize", "inherits": "linux", "binaryDir": "${sourceDir}/build/sanitize", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "KF_SANITIZE": "ON"}},
-    {"name": "windows", "generator": "Ninja", "binaryDir": "${sourceDir}/build/windows", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++"}},
-    {"name": "wasm", "generator": "Ninja", "binaryDir": "${sourceDir}/build/wasm", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}}
+    {
+      "name": "linux",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "sanitize",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build/sanitize",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "KF_SANITIZE": "ON"
+      }
+    },
+    {
+      "name": "windows",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    }
   ],
-  "buildPresets": [{"name": "linux", "configurePreset": "linux"}, {"name": "sanitize", "configurePreset": "sanitize"}, {"name": "wasm", "configurePreset": "wasm"}, {"name": "windows", "configurePreset": "windows"}]
+  "buildPresets": [
+    {
+      "name": "linux",
+      "configurePreset": "linux"
+    },
+    {
+      "name": "sanitize",
+      "configurePreset": "sanitize"
+    },
+    {
+      "name": "windows",
+      "configurePreset": "windows"
+    }
+  ]
 }

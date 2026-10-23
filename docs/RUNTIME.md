@@ -12,12 +12,12 @@ replaced by a plain PC equivalent. Sound is the one partial exception.
 | PS1 part | in kf1-enhanced |
 |---|---|
 | CPU | none: the decomp's C/C++, compiled natively |
-| GTE | none: the math the game asked of it is ordinary code in the game's 12-bit fixed point (`src/lib/fixed_math.cpp`), so results match; only conventions remain (`KF_GTE_DEPTH_TO_OT_SHIFT`) |
-| GPU, VRAM | none: faces go into a draw list that GLES draws; textures become materials at load ("this is not runtime emulated VRAM", `include/kf/lib/codec.h:27`); 1024x512 survives as a texture-coordinate convention |
+| GTE | none: the math the game asked of it is ordinary code in the game's 12-bit fixed point (`decomp/src/lib/fixed_math.cpp`), so results match; only conventions remain (`KF_GTE_DEPTH_TO_OT_SHIFT`) |
+| GPU, VRAM | none: faces go into a draw list that GLES draws; textures become materials at load ("this is not runtime emulated VRAM", `decomp/include/kf/lib/codec.h:27`); 1024x512 survives as a texture-coordinate convention |
 | CD | none: the files are extracted once into `data/` and read as files |
-| BIOS, interrupts, DMA, timers | none: a 60 Hz host clock with waits (`src/platform/host.cpp`) |
+| BIOS, interrupts, DMA, timers | none: a 60 Hz host clock with waits (`port/platform/host.cpp`) |
 | memory card | none: the game's save format in `.kfs` files |
-| SPU | **reimplemented at a high level**: `src/audio/sound.cpp` (709 lines) mixes 24 voices at 44.1 kHz, decodes PS1 ADPCM (16-byte blocks, 28 samples), runs the envelopes and the sequenced music. Not register level, and its reverb is a generic comb and diffuser design, not the SPU's |
+| SPU | **reimplemented at a high level**: `decomp/src/audio/sound.cpp` (709 lines, patched) mixes 24 voices at 44.1 kHz, decodes PS1 ADPCM (16-byte blocks, 28 samples), runs the envelopes and the sequenced music. Not register level, and its reverb is a generic comb and diffuser design, not the SPU's |
 
 The recompilations are the opposite: RecompOne translates the MIPS to C# and
 emulates everything around it (the GPU in software into 1 MB of VRAM, the GTE,
@@ -35,7 +35,7 @@ Consequences:
 
 ## World rate
 
-The main loop (`src/game/game.cpp`) steps the world once per
+The main loop (`decomp/src/game/game.cpp`) steps the world once per
 `FRAME_PACER_INTERVAL_TICKS` = 3 ticks of the 60 Hz host clock: 20 updates a
 second, the rate of the game's own frame gate (`func_800149F4` on `main`,
 `docs/GAME_INTERNALS.md` there). `frame_pacer_wait` restarts from the time it
@@ -78,7 +78,7 @@ The user's report (2026-10-22, uncapped, vsync off, `frame_rate: -1`, an RX
 the code, not profiled, so the shares are estimates:
 
 1. **One draw call per triangle.** The main loop in
-   `src/renderer/renderer.cpp:1004-1024`, for every triangle: toggles depth test
+   `port/renderer/renderer.cpp:1004-1024`, for every triangle: toggles depth test
    and depth writes, binds its texture, sets 3-4 uniforms (texture mode, dither,
    blend mode, UV bounds), uploads its 3 vertices with `glBufferData`, and calls
    `glDrawArrays(GL_TRIANGLES, 0, 3)`. A room is a few thousand triangles, so
@@ -88,7 +88,7 @@ the code, not profiled, so the shares are estimates:
    (`renderer.cpp:993-996`, `glCopyTexSubImage2D` of its bounds), each a
    pipeline stall.
 3. **Smoothing on the CPU.** Every displayed frame, `smooth_present`
-   (`src/platform/host.cpp`) copies the last tick's face list and re-projects
+   (`port/platform/host.cpp`) copies the last tick's face list and re-projects
    every vertex single-threaded, then the per-triangle loop runs again in full.
 4. Smaller: the shadow cube maps redrawn for every shadowing light every frame;
    `glGetUniformLocation` looked up every frame in the post passes.

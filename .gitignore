@@ -1,33 +1,22 @@
+# Build output (contains disc-derived bytes once the English delta is embedded)
 /build/
 /result
 /result-*
-*.kfpack
 __pycache__/
 *.pyc
-*.bin
-*.cue
-*.iso
+
+# tools/patches.py working copy
+/work/
 
 # Game data and disc images (never commit these)
 /data/
+*.bin
+*.cue
+*.iso
 *.img
 *.ccd
 *.sub
-*.mdf
-*.mds
 *.chd
-*.ecm
-*.pbp
 *.ppf
-*.xdelta
-*.7z
-*.zip
-
-# Saves, logs and release output
 *.kfs
-*.kfs.map
-*.kfs.bak
-kf.log
-/dist/
-# Derived translation payload; never commit or publish (terms unstated).
 *.kfdelta

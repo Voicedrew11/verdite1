@@ -1,0 +1,28 @@
+diff --git a/src/lib/tmd.cpp b/src/lib/tmd.cpp
+index bd1a7d89d2a8a8e367ec41c6577dc02429a7c729..8674006ac58bfa40de0ee3d2d6341ea6cdb1cebe 100644
+--- a/src/lib/tmd.cpp
++++ b/src/lib/tmd.cpp
+@@ -228,6 +228,12 @@ void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_
+         projected->position = {point.x, point.y};
+         projected->p2 = point.fog << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT;
+         projected->sz = point.depth >> depth_shift;
++        projected->fx = point.fx;
++        projected->fy = point.fy;
++        projected->w = point.w;
++        projected->cx = point.cx;
++        projected->cy = point.cy;
++        projected->cz = point.cz;
+         projected++;
+         vertex++;
+     }
+@@ -250,6 +256,10 @@ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model
+         projected->position.vy = transformed.vy;
+         projected->p2 = transformed.vz;
+         projected->sz = transformed.vz;
++        projected->fx = projected->position.vx;
++        projected->fy = projected->position.vy;
++        projected->w = 0;
++        projected->cx = projected->cy = projected->cz = 0;
+         projected++;
+         vertex++;
+     }

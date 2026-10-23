@@ -1,0 +1,116 @@
+diff --git a/src/cutscene/opening_helpers.cpp b/src/cutscene/opening_helpers.cpp
+index eba4d2d2409d6cfa648463a7093e138fa4184c75..2530eb75d213cda8d51c209ebad482e0eaf2c48f 100644
+--- a/src/cutscene/opening_helpers.cpp
++++ b/src/cutscene/opening_helpers.cpp
+@@ -9,6 +9,11 @@ void opening_poll_input(void)
+ {
+     u32 input = kf::host_read_buttons();
+ 
++    // PC extension: F4 skips straight into the game, which then quick loads.
++    if (kf::host_opening_quick_load()) {
++        opening_input_action = KF_OPENING_INPUT_SKIP;
++        return;
++    }
+     if (input != 0) {
+         if ((input & kf::Button::Start) != 0) {
+             opening_input_action = KF_OPENING_INPUT_SKIP;
+diff --git a/src/cutscene/opening_scenes.cpp b/src/cutscene/opening_scenes.cpp
+index df82fcdadb81e615079cc66d7334b977a58a0825..fecf6aa3ae4edeb2e62225e30b612cbfb1716a2a 100644
+--- a/src/cutscene/opening_scenes.cpp
++++ b/src/cutscene/opening_scenes.cpp
+@@ -18,6 +18,10 @@ enum {
+     ENDING_SCROLL_BLEND_LAST = 0xfff,
+     ENDING_SCROLL_BLEND_STEP = 0x40,
+     SCENE0_UPDATES_PER_SECOND = 22,
++    // Scene 3 (story panels over the flythrough) has the same per-update camera
++    // and 1-pixel text steps as scene 0; presenting once per 60 Hz tick ran it
++    // three times too fast. Reuse scene 0's retail-calibrated cadence.
++    SCENE3_UPDATES_PER_SECOND = SCENE0_UPDATES_PER_SECOND,
+     SCENE0_ROTATION_START_POINT = 8,
+     SCENE0_FADE_OUT_START_POINT = 15,
+     SCENE0_YAW_STEP = 40,
+@@ -397,6 +401,7 @@ void opening_scene3_run(void)
+     decreasing_yaw_model->rotation.y = 0;
+     increasing_yaw_model->rotation.y = 0;
+     opening_camera_path_begin(opening_scene3_camera_path);
++    auto pacer = kf::host_begin_update_pacer(SCENE3_UPDATES_PER_SECOND);
+ 
+     blend = 0;
+     for (;;) {
+@@ -407,6 +412,7 @@ void opening_scene3_run(void)
+             &opening_camera_path_state.position,
+             &opening_camera_path_state.rotation);
+         opening_poll_input();
++        kf::host_wait_update(pacer);
+         blend += OPENING_COLOR_FADE_STEP;
+         if (blend >= KF_FIXED12_ONE + 1) {
+             break;
+@@ -423,6 +429,7 @@ void opening_scene3_run(void)
+             &opening_camera_path_state.position,
+             &opening_camera_path_state.rotation);
+         opening_poll_input();
++        kf::host_wait_update(pacer);
+         if (opening_input_action != KF_OPENING_INPUT_NONE) {
+             break;
+         }
+@@ -455,6 +462,7 @@ void opening_scene3_run(void)
+         } while (panel_index < KF_OPENING_SCENE3_PANEL_COUNT);
+         display_present_frame(open_graphics_runtime.display_state);
+         opening_poll_input();
++        kf::host_wait_update(pacer);
+     } while (opening_input_action == KF_OPENING_INPUT_NONE);
+ 
+     transition_position = {
+diff --git a/src/cutscene/render.cpp b/src/cutscene/render.cpp
+index 80acf35e6167d9fd8e4ca63e57a793b91b43d100..d25fb38b6a2fa7a11485aee6a072d24977f488a9 100644
+--- a/src/cutscene/render.cpp
++++ b/src/cutscene/render.cpp
+@@ -20,6 +20,12 @@ void cutscene_tmd_project_vertices(s32 count, const MATRIX *model, const kf::Pro
+         projected->position = {point.x, point.y};
+         projected->p2 = point.fog << open_graphics_runtime.tmd_projection_shift;
+         projected->sz = point.depth;
++        projected->fx = point.fx;
++        projected->fy = point.fy;
++        projected->w = point.w;
++        projected->cx = point.cx;
++        projected->cy = point.cy;
++        projected->cz = point.cz;
+         projected++;
+         vertex++;
+     }
+@@ -39,6 +45,12 @@ void tmd_project_vertices_perspective_right(s32 count, const MATRIX *model, cons
+         out->position = {point.x, point.y};
+         out->p2 = point.fog >> open_graphics_runtime.tmd_projection_shift;
+         out->sz = point.depth;
++        out->fx = point.fx;
++        out->fy = point.fy;
++        out->w = point.w;
++        out->cx = point.cx;
++        out->cy = point.cy;
++        out->cz = point.cz;
+         out++;
+         vertex++;
+     }
+diff --git a/src/cutscene/render_sprite.cpp b/src/cutscene/render_sprite.cpp
+index d4f416a15c3c24fd3a644ed9231d0926c8e8bf93..37085cf7420792ce419fb6a8b2a1f24a53d2a82a 100644
+--- a/src/cutscene/render_sprite.cpp
++++ b/src/cutscene/render_sprite.cpp
+@@ -30,10 +30,16 @@ void cutscene_render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpri
+     kf::DrawFace face {};
+     CVECTOR color {};
+     face.shape = kf::FaceShape::Quad;
++    face.casts_shadow = false;
+     face.material = open_graphics_runtime.floor_item_state.material.surface;
+     for (unsigned i = 0; i < 4; ++i) {
+-        face.vertices[i].x = positions[i].x;
+-        face.vertices[i].y = positions[i].y;
++        face.vertices[i].x = kf::render_subpixel ? positions[i].fx : positions[i].x;
++        face.vertices[i].y = kf::render_subpixel ? positions[i].fy : positions[i].y;
++        face.vertices[i].w = kf::render_perspective ? positions[i].w : 0.0f;
++        const bool world = !kf::render_camera_fixed && positions[i].cz > 0;
++        face.vertices[i].cx = world ? positions[i].cx : 0.0f;
++        face.vertices[i].cy = world ? positions[i].cy : 0.0f;
++        face.vertices[i].cz = world ? positions[i].cz : 0.0f;
+     }
+     render_face_uv_rectangle(&face, sprite->u, sprite->v,
+         sprite->u + sprite->u_span, sprite->v + sprite->v_span);

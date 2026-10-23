@@ -1,0 +1,4 @@
+[submodule "decomp"]
+	path = decomp
+	url = https://github.com/Voicedrew11/kings-field-decomp.git
+	branch = port

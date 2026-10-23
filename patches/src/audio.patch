@@ -1,0 +1,82 @@
+diff --git a/src/audio/sound.cpp b/src/audio/sound.cpp
+index bc5195e96b62ebb4a241caab0d36e0bf825b61ed..804ce2ed6fa4da27fa81b9d5380f31f6b3c07c55 100644
+--- a/src/audio/sound.cpp
++++ b/src/audio/sound.cpp
+@@ -122,6 +122,10 @@ struct SoundState {
+     Reverb reverb;
+     float master_left, master_right;
+     bool failed, paused;
++    // SoundPause::KeepMusic: effects are frozen and the mix runs on real time,
++    // which the game clock excludes; music_frames keeps that time afterwards.
++    bool effects_frozen;
++    std::uint64_t music_frames, music_since_ns;
+ };
+ static SoundState sound;
+ 
+@@ -386,6 +390,8 @@ static void mix_frame(float &left, float &right) {
+     for (auto &voice : sound.voices) {
+         if (voice.envelope.phase == EnvelopePhase::Off)
+             continue;
++        if (sound.effects_frozen && !voice.sequence)
++            continue;   // a sound effect, held until the game resumes
+         if (!voice.current_valid) {
+             voice.envelope.phase = EnvelopePhase::Off;
+             continue;
+@@ -421,11 +427,17 @@ static void mix_frame(float &left, float &right) {
+     right = std::clamp((right + reverb_channel(1, send_right) * sound.reverb.right) * sound.master_right, -1.0f, 1.0f);
+ }
+ 
+-static std::uint64_t clock_frame() {
+-    const auto ns = host_clock_ns();
++static std::uint64_t frames_of(std::uint64_t ns) {
+     return ns / nanoseconds_per_second * sample_rate + ns % nanoseconds_per_second * sample_rate / nanoseconds_per_second;
+ }
+ 
++static std::uint64_t clock_frame() {
++    std::uint64_t frames = frames_of(host_clock_ns()) + sound.music_frames;
++    if (sound.effects_frozen)
++        frames += frames_of(SDL_GetTicksNS() - sound.music_since_ns);
++    return frames;
++}
++
+ static void render_elapsed() {
+     if (sound.paused || sound.failed)
+         return;
+@@ -541,14 +553,37 @@ void sound_poll() {
+ }
+ 
+ void sound_set_paused(bool paused) {
++    sound_set_pause(paused ? SoundPause::All : SoundPause::None);
++}
++
++void sound_set_pause(SoundPause pause) {
+     if (!sound.stream)
+         return;
+     sound_poll();
++    // Fold real time spent with music playing into the audio clock, so it
++    // continues without a jump when the game clock resumes.
++    if (sound.effects_frozen) {
++        sound.music_frames += frames_of(SDL_GetTicksNS() - sound.music_since_ns);
++        sound.effects_frozen = false;
++    }
++    if (pause == SoundPause::KeepMusic) {
++        sound.effects_frozen = true;
++        sound.music_since_ns = SDL_GetTicksNS();
++    }
++    const bool paused = pause == SoundPause::All;
++    if (paused == sound.paused)
++        return;
+     sound.paused = paused;
+     if (!(paused ? SDL_PauseAudioStreamDevice(sound.stream) : SDL_ResumeAudioStreamDevice(sound.stream)))
+         host_fail("Cannot pause or resume audio playback");
+ }
+ 
++// Port extension: player volume, applied after the game's own mix.
++void sound_set_output_gain(float gain) {
++    if (sound.stream)
++        SDL_SetAudioStreamGain(sound.stream, gain);
++}
++
+ void sound_reset(ReverbPreset preset, s16 depth_left, s16 depth_right) {
+     sound_poll();
+     clear();

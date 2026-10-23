@@ -1,0 +1,126 @@
+diff --git a/include/kf/game/effect.h b/include/kf/game/effect.h
+index 67762066d9c693b982b170ab6d62b4c126e1db0e..2ea59371c8c44b03977fb57aa1a2432ed4d0e13a 100644
+--- a/include/kf/game/effect.h
++++ b/include/kf/game/effect.h
+@@ -357,6 +357,8 @@ extern int effect_magic_power(KfEffectRecord *effect);
+ extern void effect_update_swinging_hazard(SVECTOR *probe_offset, KfEffectPhase phase_limit);
+ extern void effect_update_orbiting_projectile(s32 orbit_radius, KfEffectPhase phase_limit);
+ extern void effect_floor_deform_line(s32 segment_index, s32 progress_start, s32 progress_step);
++// PC extension (automap): the floor lines the Harp raises.
++extern const KfFloorDeformSegment &effect_floor_deform_segment(s32 segment_index);
+ extern void effect_scatter_triple(KfEffectDirectionWords *velocity);
+ extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
+ extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
+diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
+index c111003f16b3c422f92f7c55ae9d3a59fbbfb863..700ecfbcd58345d837227dea25f30bc346b4fd8d 100644
+--- a/include/kf/game/menu.h
++++ b/include/kf/game/menu.h
+@@ -51,6 +51,7 @@ enum {
+     KF_MENU_CONFIG_GAUGES_ROW = 2,
+     KF_MENU_CONFIG_COMPASS_ROW = 3,
+     KF_MENU_CONFIG_SETTING_COUNT = 4,
++    // Port addition: the language row sits between the settings and Return.
+     KF_MENU_CONFIG_LANGUAGE_ROW = KF_MENU_CONFIG_SETTING_COUNT,
+     KF_MENU_CONFIG_RETURN_ROW = KF_MENU_CONFIG_LANGUAGE_ROW + 1,
+     KF_MENU_CONFIG_ROW_COUNT = KF_MENU_CONFIG_RETURN_ROW + 1
+@@ -341,6 +342,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+ extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
+ extern void menu_frame_begin(void);
+ extern void menu_item_model_preview(KfObjectId item_id);
++// PC extension: while set, item previews compare equipment totals for this slot.
++extern void menu_set_equipment_compare(KfEquipmentMenuCategory category);
+ extern void menu_list_init(KfMenuList *list, KfMenuWindowKind window_kind, s32 title_row);
+ extern KfMenuResult menu_list_confirm(
+     const KfMenuList *list, KfMenuConfirmKind confirm_kind, KfMenuPreviewMode preview_mode,
+diff --git a/include/kf/game/menu_text.h b/include/kf/game/menu_text.h
+index 5ab5fc05c58676543cb80a0deb4f824fd9e158ea..38be8307f352914e0e85ac79097a3a979b5ac56e 100644
+--- a/include/kf/game/menu_text.h
++++ b/include/kf/game/menu_text.h
+@@ -21,17 +21,17 @@ inline MenuGlyphRow menu_label(MenuLabel label)
+     switch (label) {
+     case MenuLabel::Language:
+         // The translation's individual capitals also spell BACK and COMPASS.
+-        // Japanese uses the original kana: げんご.
++        // Japanese uses the original kana (hiragana n is glyph 0x67): げんご.
+         return english ? MenuGlyphRow{{0x136, 0xdc, 0x50, 0x146, 0x11, 0xdc, 0x146, 0x138, MENU_TEXT_END}}
+-                       : MenuGlyphRow{{MENU_TEXT_DAKUTEN | 0x48, 0x6d, MENU_TEXT_DAKUTEN | 0x49, MENU_TEXT_END}};
++                       : MenuGlyphRow{{MENU_TEXT_DAKUTEN | 0x48, 0x67, MENU_TEXT_DAKUTEN | 0x49, MENU_TEXT_END}};
+     case MenuLabel::LanguageName:
+         // ENGLISH / にほんご.
+         return english ? MenuGlyphRow{{0x138, 0x50, 0x146, 0x136, 0x4, 0x134, 0x3, MENU_TEXT_END}}
+-                       : MenuGlyphRow{{0x55, 0x5d, 0x6d, MENU_TEXT_DAKUTEN | 0x49, MENU_TEXT_END}};
++                       : MenuGlyphRow{{0x55, 0x5d, 0x67, MENU_TEXT_DAKUTEN | 0x49, MENU_TEXT_END}};
+     case MenuLabel::LanguageUnavailable:
+         // NO DATA / つかえません.
+         return english ? MenuGlyphRow{{0x50, 0x0, MENU_TEXT_BLANK, 0xb, 0xdc, 0x10, 0xdc, MENU_TEXT_END}}
+-                       : MenuGlyphRow{{0x51, 0x45, 0x43, 0x5e, 0x4d, 0x6d, MENU_TEXT_END}};
++                       : MenuGlyphRow{{0x51, 0x45, 0x43, 0x5e, 0x4d, 0x67, MENU_TEXT_END}};
+     case MenuLabel::Pickup:
+         return english ? MenuGlyphRow{{0x00, 0x06, MENU_TEXT_END}}
+                        : MenuGlyphRow{{0x53, 0x6a, MENU_TEXT_END}};
+diff --git a/include/kf/game/player.h b/include/kf/game/player.h
+index 12c6b10d2ba2987deb3e6674280565b936e89ed2..e704295a9881a092218df013d66df7859380eff3 100644
+--- a/include/kf/game/player.h
++++ b/include/kf/game/player.h
+@@ -218,6 +218,7 @@ extern void player_apply_radial_damage(
+     u16 scale_q12, u16 multiplier_tenths);
+ extern s32 player_calculate_damage_component(s32 defender_power, s32 defense, s32 attack);
+ extern void player_clear_motion(void);
++extern void player_compute_combat_stats(KfPlayerState &p);
+ extern void player_death_apply_visual_fade(const MATRIX *color_from, s32 blend);
+ extern void player_death_begin(void);
+ extern void player_death_restart(void);
+diff --git a/include/kf/game/render.h b/include/kf/game/render.h
+index c40c27d7ee821a0d39cf5be44c43fdb215ce71cc..bc997eb2b73220e86031bc9a534948f169f32fd9 100644
+--- a/include/kf/game/render.h
++++ b/include/kf/game/render.h
+@@ -113,6 +113,7 @@ typedef struct KfTmdState {
+ extern std::array<MATRIX, KF_GAME_COLOR_PRESET_COUNT> color_matrix_table;
+ extern std::array<KfCellWindow, KF_CELL_WINDOW_YAW_COUNT> render_cell_windows;
+ extern std::array<KfSpriteQuad, KF_FLOOR_ITEM_SPRITE_COUNT> floor_item_sprites;
++void render_publish_light(s32 x, s32 y, s32 z, float radius, float r, float g, float b, float flicker);
+ extern std::array<KfSpriteQuad, KF_EFFECT_BILLBOARD_SPRITE_COUNT> effect_billboard_sprites;
+ extern std::array<KfHudModel, KF_HUD_MODEL_TABLE_ROWS> hud_models;
+ extern std::array<KfHudSprite, KF_HUD_TABLE_ROWS> hud_sprites;
+@@ -153,5 +154,15 @@ extern void render_weapon(void);
+ extern void screen_show_image_until_input(const char *path);
+ 
+ extern void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &projection);
++// PC extension: while set (by render_map_cell), tmd_project_vertices computes the
++// sub-pixel positions and camera coordinates of map cells exactly, as
++// view * (position + quadrant * vertex). Neighbouring cells then share
++// bit-identical corners, so distant floors and walls have no pinhole cracks.
++struct KfPreciseMapTransform {
++    const MATRIX *view;
++    const MATRIX *quadrant;
++    SVECTOR position;
++};
++extern const KfPreciseMapTransform *render_precise_map;
+ 
+ #endif // KF_GAME_RENDER_H
+diff --git a/include/kf/game/resources.h b/include/kf/game/resources.h
+index 4332ed88d5ddce90641cfba41cc1efb3c84362c0..6b288c3acc789b4037c6c11ec17b5f494155af13 100644
+--- a/include/kf/game/resources.h
++++ b/include/kf/game/resources.h
+@@ -6,6 +6,9 @@
+ extern KfMemoryArena memory_arena;
+ 
+ extern void common_resources_load(void);
++// Applies a language change requested from Configuration or the F1 overlay:
++// switches the game files, the translated font texels and the menu text. Call
++// only where no menu or dialogue holds text from the old language.
+ extern bool game_apply_language(void);
+ 
+ #endif // KF_GAME_RESOURCES_H
+diff --git a/include/kf/game/save.h b/include/kf/game/save.h
+index 35636457c6d504dfede73c5568fb25701f4a9a9d..ac78de0b7e8d4a020aefc74ebf34571126e29e63 100644
+--- a/include/kf/game/save.h
++++ b/include/kf/game/save.h
+@@ -28,5 +28,7 @@ struct KfSaveSlotSummary {
+ KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries);
+ KfSaveResult save_system_read_slot(kf::SaveSlot slot);
+ KfSaveResult save_system_write_slot(kf::SaveSlot slot);
++bool save_system_quick_write(void);
++bool save_system_quick_read(void);
+ 
+ #endif // KF_GAME_SAVE_H

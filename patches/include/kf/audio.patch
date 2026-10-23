@@ -1,0 +1,16 @@
+diff --git a/include/kf/audio/sound.h b/include/kf/audio/sound.h
+index 5d5a973c0f1a2e1274e08b62d75ca19b79bc1822..2b58050ee7737019c23a71b863756cc85747f877 100644
+--- a/include/kf/audio/sound.h
++++ b/include/kf/audio/sound.h
+@@ -16,6 +16,11 @@ bool sound_start();
+ void sound_shutdown();
+ void sound_poll();
+ void sound_set_paused(bool paused);
++// PC extension: while the game is paused, keep the music playing (on real time)
++// and freeze only sound effects, which resume where they left off.
++enum class SoundPause : u8 { None, KeepMusic, All };
++void sound_set_pause(SoundPause pause);
++void sound_set_output_gain(float gain);
+ void sound_reset(ReverbPreset preset, s16 depth_left, s16 depth_right);
+ void sound_master_volume(s16 left, s16 right);
+ SoundBank *sound_bank_load(const u8 *header, std::size_t header_size,

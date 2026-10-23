@@ -1,0 +1,2 @@
+# The patches must keep LF endings on every platform: they are applied to the decomp as committed.
+*.patch -text

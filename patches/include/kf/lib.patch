@@ -1,0 +1,86 @@
+diff --git a/include/kf/lib/render_face.h b/include/kf/lib/render_face.h
+index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..a73df60743df66ac1fc5d2aba151b5e8d6404035 100644
+--- a/include/kf/lib/render_face.h
++++ b/include/kf/lib/render_face.h
+@@ -26,9 +26,41 @@ std::optional<KfProjectedFace> render_projected_triangle(
+     u16 first, u16 second, u16 third);
+ void render_face_uvs(kf::DrawFace &face, std::initializer_list<u16> texcoords);
+ 
++// PC extension: faces that reach behind the camera, or whose corners project past
++// the screen-coordinate range, get saturated coordinates that no longer show
++// which way they face (the PlayStation dropped them; widescreen and steep looks
++// show the holes). Those faces are decided in camera space, where the sign of
++// a . (b x c) equals the sign of the projected winding; the host then clips
++// them at its near plane.
++inline bool render_face_needs_camera_test(const KfScreenVertex *a, const KfScreenVertex *b, const KfScreenVertex *c)
++{
++    // Orthographic vertices (HUD models such as the compass needle) have no
++    // camera-space position (w = 0): they keep the screen test.
++    if (a->w == 0.0f || b->w == 0.0f || c->w == 0.0f)
++        return false;
++    for (const KfScreenVertex *v : {a, b, c}) {
++        if (v->cz < kf::render_near_depth || v->fx <= -1024.0f || v->fx >= 1023.0f || v->fy <= -1024.0f || v->fy >= 1023.0f)
++            return true;
++    }
++    return false;
++}
++
+ inline std::int64_t render_face_winding(const KfScreenVertex *a,
+     const KfScreenVertex *b, const KfScreenVertex *c)
+ {
++    if (render_face_needs_camera_test(a, b, c)) {
++        const double bx = b->cx, by = b->cy, bz = b->cz, cx = c->cx, cy = c->cy, cz = c->cz;
++        const double triple = a->cx * (by * cz - bz * cy) + a->cy * (bz * cx - bx * cz) + a->cz * (bx * cy - by * cx);
++        return triple > 0 ? 1 : triple < 0 ? -1 : 0;
++    }
++    // Sub-pixel vertices: test the positions actually drawn. Whole-pixel
++    // corners can flip small distant faces' winding, which culls them for a
++    // frame and makes models and wall joins flicker as the camera moves.
++    if (kf::render_subpixel) {
++        const double area = (static_cast<double>(b->fx) - a->fx) * (static_cast<double>(c->fy) - a->fy)
++            - (static_cast<double>(b->fy) - a->fy) * (static_cast<double>(c->fx) - a->fx);
++        return area > 0 ? 1 : area < 0 ? -1 : 0;
++    }
+     // Retail tests the projected coordinates, including their saturation.
+     const std::int64_t ab_x = b->position.vx - a->position.vx;
+     const std::int64_t ab_y = b->position.vy - a->position.vy;
+@@ -54,8 +86,22 @@ inline kf::FaceMaterial render_texture_material(u16 page, u16 palette)
+ 
+ inline void render_face_vertex(kf::DrawFace *face, unsigned index, const KfScreenVertex *vertex)
+ {
+-    face->vertices[index].x = vertex->position.vx;
+-    face->vertices[index].y = vertex->position.vy;
++    auto &out = face->vertices[index];
++    if (kf::render_subpixel) {
++        out.x = vertex->fx;
++        out.y = vertex->fy;
++    } else {
++        out.x = vertex->position.vx;
++        out.y = vertex->position.vy;
++    }
++    out.w = kf::render_perspective ? vertex->w : 0.0f;
++    // cz = 0 marks camera-fixed and orthographic vertices (w = 0: HUD models such
++    // as the compass needle); world vertices may lie behind the camera (negative
++    // cz) and are clipped by the host.
++    const bool world = !kf::render_camera_fixed && vertex->w > 0.0f;
++    out.cx = world ? vertex->cx : 0.0f;
++    out.cy = world ? vertex->cy : 0.0f;
++    out.cz = world ? (vertex->cz == 0.0f ? -0.001f : vertex->cz) : 0.0f;
+ }
+ 
+ inline void render_face_uv(kf::DrawFace *face, unsigned index, u16 uv)
+diff --git a/include/kf/lib/tmd.h b/include/kf/lib/tmd.h
+index a57bbbd53528f8485840a5032d6bd283092728c7..3067d7bcfc3590b21229dca6dd8d8d0b11383d03 100644
+--- a/include/kf/lib/tmd.h
++++ b/include/kf/lib/tmd.h
+@@ -126,6 +126,10 @@ typedef struct KfScreenVertex {
+     DVECTOR position;
+     s16 sz;
+     s16 p2;
++    // PC extension (see kf::ProjectedPoint): sub-pixel position and camera depth.
++    // w = 0 marks orthographic vertices, which are drawn without perspective.
++    float fx, fy, w;
++    float cx, cy, cz;   // camera space (frame smoothing); cz = 0: not re-projectable
+ } KfScreenVertex;
+ 
+ struct KfTmdContext {

@@ -1,11 +1,11 @@
 # Verdite1 on the decomp
 
 Branch `decomp` of `Voicedrew11/verdite1`: Verdite1's features carried onto
-[acranon/kf1-enhanced](https://github.com/acranon/kf1-enhanced) (`enhanced`),
-which is built on [sushi-shi/kings-field-decomp](https://github.com/sushi-shi/kings-field-decomp)
-(`port`). All three are CC0 or ours. Started 2026-10-22.
+[sushi-shi/kings-field-decomp](https://github.com/sushi-shi/kings-field-decomp)
+(`port`), starting from [acranon/kf1-enhanced](https://github.com/acranon/kf1-enhanced)
+(`enhanced`). Both are CC0. Started 2026-10-22.
 
-`main` is the RecompOne recompilation and shares no history with this branch.
+`main` is the RecompOne recompilation and shares no files with this branch.
 Nothing from `main` is merged; features are rewritten here in C/C++.
 
 The rendering plan (API, platforms, tiers, picture quality) is
@@ -74,22 +74,76 @@ It is first built inside Verdite1, then extracted into the subtree.
   the visual features.
 - **Licensing is simpler.** The decomps are CC0; nothing from the disc ships.
 
+## Layout
+
+Holyland's (`../holyland`, `docs/port/README.md` there), set up 2026-10-22:
+
+```
+decomp/        submodule: Voicedrew11/kings-field-decomp (our fork of sushi-shi), pinned on `port`
+patches/       Verdite's edits to the decomp's game code, one diff per copied directory
+port/          platform layer, renderer, overlay, settings, mods: ours, edited in place
+third_party/   Dear ImGui, Lua, cJSON, the GLES headers and loader (kf1-enhanced's vendor/)
+tools/         patches.py, from holyland
+work/          (gitignored) the editable copy patches.py makes
+```
+
+- **The decomp is read-only.** Configure copies its game code (`codecs`,
+  `src/{audio,cutscene,game,lib}`, `include/kf/{audio,cutscene,game,lib}`; the
+  list is `KF_COPIED` in `CMakeLists.txt` and `COPIED` in `tools/patches.py`),
+  applies `patches/`, and compiles the read-only copy in
+  `build/<preset>/decomp_src/`. It fails if `decomp/` has local changes.
+- **Game-code edits**: `python3 tools/patches.py apply`, edit `work/`,
+  `python3 tools/patches.py save`, commit `patches/`.
+- **The decomp's platform layer and renderer are not used.** `src/platform`,
+  `src/renderer`, `include/kf/platform` and `include/kf/renderer` are replaced
+  by `port/`, which is where the Vulkan renderer and the C++ core will grow.
+  `port/include` comes first on the include path.
+- **The pin is `150ae354`**, the `sushi-shi/port` commit kf1-enhanced is based
+  on, so the first layout reproduces kf1-enhanced exactly. The submodule's
+  `upstream` remote is sushi-shi; `python3 tools/patches.py upgrade <commit>`
+  moves the pin. The decomp has no `config/symbol_addrs.txt`, so unlike
+  holyland's, renames are not followed: they come up as conflicts or compile
+  errors. Move the pin often and in small steps.
+- **The fork is a fork** so that pinned commits survive sushi-shi's
+  regenerations. It carries only upstream commits.
+- kf1-enhanced's tests (`tests/`) were not carried: its CMake never built them.
+  Its WebAssembly build (`web/`) was dropped.
+
+How kf1-enhanced's tree was split (from `ac147450` against the pin): its
+`src/{platform,renderer,ext}` and `include/kf/{platform,renderer,ext}` went to
+`port/`, `vendor/` to `third_party/`, `mods/` and its docs as they were; its
+edits to the game code became `patches/` (36 files, seven patch files, 2,081
+lines). The scripts the build uses (`english_patch.py`, the layout table) were
+unchanged from sushi-shi's, so the build reads them from `decomp/scripts/`.
+
+**Checked**: the new layout's binary has the same 3,939 symbols, with the same
+names, sizes and types, as kf1-enhanced's built from its own tree. Its
+read-only strings differ only in the source paths and in the order two strings
+were laid out. It boots as before. `patches.py apply` then `save` changes
+nothing, and configure refuses an edited `decomp/`.
+
 ## Remotes
 
-| remote | repo | branch we follow |
-|---|---|---|
-| `origin` | Voicedrew11/verdite1 | `decomp` (this) |
-| `kf1-enhanced` | acranon/kf1-enhanced | `enhanced` (base, `ac147450`) |
-| `sushi-shi` | sushi-shi/kings-field-decomp | `port` |
+| where | remote | repo | role |
+|---|---|---|---|
+| this repo | `origin` | Voicedrew11/verdite1 | `decomp` (this branch) |
+| this repo | `kf1-enhanced` | acranon/kf1-enhanced | where `port/` came from; read for later changes |
+| `decomp/` | `origin` | Voicedrew11/kings-field-decomp | the fork the submodule pins |
+| `decomp/` | `upstream` | sushi-shi/kings-field-decomp | what the fork follows (`port`) |
 
 At the branch point `enhanced` was 23 commits ahead of `sushi-shi/port` and 37
 behind it. Nothing goes upstream to either: no pull requests, no issues.
 
 ## Build and run (Linux)
 
-SDL3 is not a system package here; the flake supplies the toolchain.
+SDL3 is not a system package here; the flake's dev shell supplies the
+toolchain and the English delta. A flake does not see submodule files, so it
+fetches the decomp's scripts from the fork at the pin; **moving the pin means
+updating the `rev` and `hash` in `flake.nix` too**
+(`nix flake prefetch github:Voicedrew11/kings-field-decomp/<rev>`).
 
 ```bash
+git submodule update --init decomp
 nix develop -c cmake --preset linux
 nix develop -c cmake --build --preset linux
 ```
@@ -186,7 +240,9 @@ The branch is pushed to `origin/decomp`.
 
 1. ~~Build and boot on Linux from the user's disc.~~ Done 2026-10-22. The
    user plays the baseline to judge it by eye.
-2. Merge `sushi-shi/port` (recommended, while the branch has few changes).
+2. ~~The holyland layout.~~ Done 2026-10-22. Next: move the pin to
+   `sushi-shi/port`'s head (37 commits, the readability pass among them) with
+   `patches.py upgrade`, and bring `port/` up to its interfaces.
 3. Infrastructure the rest leans on: headless/turbo, state beacon + command
    channel, then the fuzzer.
 4. The renderer frontend and the Vulkan backend, in the order of

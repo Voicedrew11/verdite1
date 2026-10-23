@@ -35,7 +35,7 @@ four semi-transparency modes, palettes, map cells, models. It hands a backend
 finished draw lists. Every Verdite feature lives in the frontend or in shaders
 written once, never in backend-specific logic. kf1-enhanced's draw list (whole
 faces with camera-space positions, material and blend mode, sorted before
-drawing; `include/kf/renderer/renderer.h`) is the starting point.
+drawing; `port/include/kf/renderer/renderer.h`) is the starting point.
 
 The backend interface stays narrow (draw lists, materials, render targets),
 so another API later touches one directory.

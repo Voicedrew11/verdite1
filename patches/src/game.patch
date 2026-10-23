@@ -1,0 +1,1627 @@
+diff --git a/src/game/actor_behavior.cpp b/src/game/actor_behavior.cpp
+index 741aaab25792b6a43be8ed59b90ce39070425853..dbac4692d7f49bb4a98e482b31f93d2ea5fb4c60 100644
+--- a/src/game/actor_behavior.cpp
++++ b/src/game/actor_behavior.cpp
+@@ -10,6 +10,8 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <kf/platform/input.h>
++
+ 
+ enum {
+     ACTOR_ACTIVATION_RANGE = 28000,
+@@ -1079,7 +1081,10 @@ void actor_update_current_action(void)
+                     actor->position.vx, actor->position.vy, actor->position.vz,
+                     definition->collision_radius, definition->collision_height,
+                     ACTOR_VELOCITY_COLLISION_FLAGS);
+-                if (result.kind == KfCollisionKind::Ceiling) {
++
++                // Retail compares the shifted kind with the ceiling detail, so this never
++                // ran; the port option checks for a ceiling hit (upstream sushi-shi #50).
++                if (kf::fix_actor_ceiling_fall && result.kind == KfCollisionKind::Ceiling) {
+                     actor->vertical_state = KF_ACTOR_VERTICAL_FALL;
+                 }
+                 actor->action_progress = KF_ACTOR_PROGRESS_COMPLETE;
+diff --git a/src/game/audio.cpp b/src/game/audio.cpp
+index 31f832db7b441760cf013f561eaf55ce8ee9842c..80c2e53fe4ef7943fcf892407d9bd9849a79840d 100644
+--- a/src/game/audio.cpp
++++ b/src/game/audio.cpp
+@@ -10,6 +10,8 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <kf/game/game.h>
++#include <kf/platform/input.h>
+ 
+ enum {
+     GAME_SEQUENCE_BUFFER_BYTES = 0x3000,
+@@ -131,7 +133,10 @@ KfAudioPlaybackResult audio_play_spatial(
+         angle = KF_ANGLE_FULL_TURN - angle;
+     }
+     angle >>= 1;
+-    if ((sound->tone_and_flags & KF_SOUND_PAN_NARROWING_FLAG) != 0) {
++    // Retail compares the masked high bit to 1, so this branch never runs. The
++    // port option tests it for nonzero instead (upstream sushi-shi #51).
++    if (kf::fix_spatial_panning ? (sound->tone_and_flags & KF_SOUND_PAN_NARROWING_FLAG) != 0
++                                : (sound->tone_and_flags & KF_SOUND_PAN_NARROWING_FLAG) == 1) {
+         distance_gain_q7 += GAME_SOUND_PAN_NARROWING_GAIN_BOOST;
+         distance_gain_q7 = std::min<s32>(distance_gain_q7, KF_AUDIO_MAX_VOLUME);
+     }
+diff --git a/src/game/automap_feed.cpp b/src/game/automap_feed.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4c951d4bb
+--- /dev/null
++++ b/src/game/automap_feed.cpp
+@@ -0,0 +1,285 @@
++// PC extension: publishes the current floor for the automap (kf/platform/automap.h).
++#include <kf/game/game.h>
++#include <kf/platform/automap.h>
++#include <array>
++
++namespace {
++constexpr float tile_size = KF_MAP_TILE_SIZE;
++
++struct WarpLink { u8 x, z, floor_a, floor_b; };
++// Floor changes keep the cell, so each link sits on the same cell on both floors
++// (player_warp_trigger_update). floor_b 0 marks a same-floor teleport pair.
++constexpr WarpLink warp_links[] = {
++    {29, 56, 1, 2}, {25, 11, 1, 3}, {39, 35, 1, 4}, {28, 18, 2, 3},
++    {7, 22, 3, 4}, {43, 92, 3, 4}, {39, 69, 4, 5}
++};
++constexpr u8 floor1_exit_x = 15, floor1_exit_z = 2;
++
++u8 warp_label(int floor, int x, int z)
++{
++    for (const auto &link : warp_links) {
++        if (link.x != x || link.z != z)
++            continue;
++        if (link.floor_a == floor)
++            return link.floor_b;
++        if (link.floor_b == floor)
++            return link.floor_a;
++    }
++    if (floor == 1 && x == floor1_exit_x && z == floor1_exit_z)
++        return kf::automap_warp_exit;
++    return kf::automap_warp_teleport;
++}
++
++kf::AutomapCell cell_kind(KfMapCellKind kind, KfMapAttribute attribute)
++{
++    switch (kind) {
++    case KF_MAP_CELL_BLOCKED:
++        return attribute == KF_MAP_ATTRIBUTE_NONE ? kf::AutomapCell::Void : kf::AutomapCell::Wall;
++    case KF_MAP_CELL_X_GE_Z: return kf::AutomapCell::HalfXGeZ;
++    case KF_MAP_CELL_SUM_LE_SIZE: return kf::AutomapCell::HalfSumLe;
++    case KF_MAP_CELL_Z_GE_X: return kf::AutomapCell::HalfZGeX;
++    case KF_MAP_CELL_SUM_GE_SIZE: return kf::AutomapCell::HalfSumGe;
++    default: return kf::AutomapCell::Floor;
++    }
++}
++
++// Falling more than this kills (player_update_floor_motion), in floor height units.
++constexpr int fatal_drop_steps = 3000 / KF_MAP_HEIGHT_STEP;
++
++// Marks chasms: walkable cells that can only be entered by a fatal fall, such as
++// the trenches under Floor 2's bridges. Cells join when their floors differ by
++// less than a fatal drop; a group with floor a fatal drop higher beside it and
++// none a fatal drop lower is a chasm, unless the player stands in it. (A
++// walkway between pits is beside lower floor, so it stays.)
++void find_chasms(std::array<bool, KF_MAP_CELL_COUNT> &chasm, int player_cell)
++{
++    static std::array<s16, KF_MAP_CELL_COUNT> group;
++    static std::array<u16, KF_MAP_CELL_COUNT> queue;
++    group.fill(-1);
++    chasm.fill(false);
++    auto walkable = [](int i) { return map_collision_grid.linear[i] != KF_MAP_CELL_BLOCKED; };
++    auto height = [](int i) { return static_cast<int>(map_floor_height_grid.linear[i]); };
++    s16 groups = 0;
++    for (int start = 0; start < KF_MAP_CELL_COUNT; ++start) {
++        if (!walkable(start) || group[start] >= 0)
++            continue;
++        int head = 0, tail = 0;
++        bool below_fatal_edge = false, above_fatal_edge = false, has_player = false;
++        group[start] = groups;
++        queue[tail++] = static_cast<u16>(start);
++        while (head < tail) {
++            const int i = queue[head++];
++            has_player |= i == player_cell;
++            const int x = i % KF_MAP_COLUMNS, z = i / KF_MAP_COLUMNS;
++            const int next[4][2] = {{x - 1, z}, {x + 1, z}, {x, z - 1}, {x, z + 1}};
++            for (const auto &[nx, nz] : next) {
++                if (nx < 0 || nz < 0 || nx >= KF_MAP_COLUMNS || nz >= KF_MAP_ROWS)
++                    continue;
++                const int n = nz * KF_MAP_COLUMNS + nx;
++                if (!walkable(n))
++                    continue;
++                const int rise = height(n) - height(i);
++                if (rise >= fatal_drop_steps) {
++                    below_fatal_edge = true;
++                } else if (rise <= -fatal_drop_steps) {
++                    above_fatal_edge = true;
++                } else if (group[n] < 0) {
++                    group[n] = groups;
++                    queue[tail++] = static_cast<u16>(n);
++                }
++            }
++        }
++        if (below_fatal_edge && !above_fatal_edge && !has_player)
++            for (int k = 0; k < tail; ++k)
++                chasm[queue[k]] = true;
++        ++groups;
++    }
++}
++
++// The Harp's bridges per floor: segments of effect_floor_deform_line, as
++// player_use_item raises them (Floor 2: 0-3, Floor 3: 4).
++struct HarpSegments { int floor, first, count; };
++constexpr HarpSegments harp_segments[] = {{2, 0, 4}, {3, 4, 1}};
++
++// Doors swing or lift while animating, so remember each door's closed yaw.
++u16 door_closed_yaw[KF_MAP_OBJECT_CAPACITY];
++
++bool all_empty(const KfObjectId *ids)
++{
++    for (int i = 0; i < KF_MAP_CONTAINER_ITEM_COUNT; ++i)
++        if (ids[i] != KF_OBJECT_NONE)
++            return false;
++    return true;
++}
++}
++
++void automap_publish(void)
++{
++    auto &snapshot = kf::automap_snapshot();
++    const int floor = kf_enum_encode<u8>(player_state.progress_state.current_floor);
++    snapshot.serial++;
++    if (floor < 1 || floor > kf::automap_floor_count) {
++        snapshot.floor = 0;
++        return;
++    }
++    snapshot.floor = floor;
++    const auto &stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)];
++    snapshot.owns_map = stock[kf_enum_encode<u8>(KF_ITEM_WATCHMAN_MAP)] != 0
++        || stock[kf_enum_encode<u8>(KF_ITEM_SORCERER_MAP)] != 0;
++    snapshot.player_x = static_cast<float>(player_state.camera_position.vx) / tile_size;
++    snapshot.player_z = static_cast<float>(player_state.camera_position.vz) / tile_size;
++    snapshot.player_yaw = static_cast<float>(player_state.camera_rotation.vy & KF_ANGLE_WRAP_MASK)
++        * (6.2831853f / (KF_ANGLE_WRAP_MASK + 1));
++
++    snapshot.marker_count = 0;
++    auto add = [&](kf::AutomapMarkerKind kind, float x, float z, u8 label = 0, const KfObjectId *items = nullptr,
++                   int item_count = 0) -> void {
++        if (snapshot.marker_count >= kf::automap_marker_capacity)
++            return;
++        kf::AutomapMarker marker{kind, label, {kf::automap_no_item, kf::automap_no_item, kf::automap_no_item, kf::automap_no_item}, x, z};
++        for (int i = 0; i < item_count && i < 4; ++i)
++            marker.items[i] = kf_enum_encode<u8>(items[i]);
++        snapshot.markers[snapshot.marker_count++] = marker;
++    };
++
++    static std::array<bool, KF_MAP_CELL_COUNT> chasm;
++    const int player_cell_x = static_cast<int>(snapshot.player_x), player_cell_z = static_cast<int>(snapshot.player_z);
++    find_chasms(chasm, player_cell_x >= 0 && player_cell_x < KF_MAP_COLUMNS && player_cell_z >= 0 && player_cell_z < KF_MAP_ROWS
++                           ? player_cell_z * KF_MAP_COLUMNS + player_cell_x : -1);
++    for (int i = 0; i < KF_MAP_ROWS * KF_MAP_COLUMNS; ++i) {
++        const auto attribute = map_cell_attribute_grid.linear[i];
++        snapshot.cells[i] = chasm[i] ? kf::AutomapCell::Chasm : cell_kind(map_collision_grid.linear[i], attribute);
++        auto hazard = kf::AutomapHazard::None;
++        if (attribute == KF_MAP_ATTRIBUTE_PITFALL)
++            hazard = kf::AutomapHazard::Pit;
++        else if (attribute == KF_MAP_ATTRIBUTE_POISON_HOLE)
++            hazard = kf::AutomapHazard::Poison;
++        else if (attribute == KF_MAP_ATTRIBUTE_BOTTOMLESS_PIT)
++            hazard = kf::AutomapHazard::Bottomless;
++        snapshot.hazards[i] = hazard;
++        if (attribute == KF_MAP_ATTRIBUTE_WARP) {
++            const int x = i % KF_MAP_COLUMNS, z = i / KF_MAP_COLUMNS;
++            add(kf::AutomapMarkerKind::Warp, x + 0.5f, z + 0.5f, warp_label(floor, x, z));
++        }
++    }
++
++    for (const auto &harp : harp_segments) {
++        if (harp.floor != floor)
++            continue;
++        for (int s = harp.first; s < harp.first + harp.count; ++s) {
++            const auto &segment = effect_floor_deform_segment(s);
++            int x = segment.column, z = segment.row;
++            for (int k = 0; k < segment.cell_count; ++k) {
++                const int i = z * KF_MAP_COLUMNS + x;
++                // Raised once it is within a step of the walkway it joins.
++                const bool raised = map_floor_height_grid.linear[i] + 6 >= segment.end_height;
++                snapshot.cells[i] = raised ? kf::AutomapCell::HarpBridgeRaised : kf::AutomapCell::HarpBridge;
++                x += static_cast<s8>(segment.column_step);
++                z += static_cast<s8>(segment.row_step);
++            }
++            const float half = (segment.cell_count - 1) * 0.5f;
++            add(kf::AutomapMarkerKind::HarpBridge, segment.column + 0.5f + static_cast<s8>(segment.column_step) * half,
++                segment.row + 0.5f + static_cast<s8>(segment.row_step) * half);
++        }
++    }
++
++    for (int slot = 0; slot < KF_MAP_OBJECT_CAPACITY; ++slot) {
++        const auto &object = map_object_state.objects[slot];
++        if (object.object_id == KF_OBJECT_NONE)
++            continue;
++        const auto behavior = map_object_state.definitions.entries[kf_enum_encode<u8>(object.object_id)].behavior_type;
++        const float x = static_cast<float>(object.position.vx) / tile_size;
++        const float z = static_cast<float>(object.position.vz) / tile_size;
++        switch (behavior) {
++        case KF_MAP_OBJECT_OP_HINGED_DOOR:
++        case KF_MAP_OBJECT_OP_LIFT_DOOR:
++        case KF_MAP_OBJECT_OP_03: {
++            if (object.action == KF_MAP_OBJECT_OP_NONE)
++                door_closed_yaw[slot] = static_cast<u16>(object.rotation.angles.y);
++            // Snap to the nearest quarter turn, as the collision marking expects.
++            const int yaw = ((door_closed_yaw[slot] + KF_ANGLE_EIGHTH_TURN) & KF_ANGLE_WRAP_MASK) & ~(KF_ANGLE_QUARTER_TURN - 1);
++            int cx = object.cell_x, cz = object.cell_z;
++            int ax = cx, az = cz, bx = cx, bz = cz;
++            if (behavior == KF_MAP_OBJECT_OP_HINGED_DOOR) {
++                switch (yaw) {
++                case 0: ax = bx = cx + 1; bz = cz - 1; break;
++                case KF_ANGLE_QUARTER_TURN: az = bz = cz + 1; bx = cx + 1; break;
++                case KF_ANGLE_HALF_TURN: ax = bx = cx - 1; bz = cz + 1; break;
++                default: az = bz = cz - 1; bx = cx - 1; break;
++                }
++            } else {
++                switch (yaw) {
++                case 0: bz = cz + 1; break;
++                case KF_ANGLE_QUARTER_TURN: bx = cx + 1; break;
++                case KF_ANGLE_HALF_TURN: bz = cz - 1; break;
++                default: bx = cx - 1; break;
++                }
++            }
++            bool placed = false;
++            for (const auto [dx, dz] : {std::pair{ax, az}, std::pair{bx, bz}}) {
++                if (dx < 0 || dz < 0 || dx >= KF_MAP_COLUMNS || dz >= KF_MAP_ROWS)
++                    continue;
++                const int i = dz * KF_MAP_COLUMNS + dx;
++                snapshot.cells[i] = map_collision_grid.linear[i] == KF_MAP_CELL_BLOCKED
++                    ? kf::AutomapCell::Door : kf::AutomapCell::DoorOpen;
++                placed = true;
++            }
++            if (placed) {
++                const u8 link = object.link.fields.link_id;
++                add(link != KF_MAP_LINK_NONE ? kf::AutomapMarkerKind::LockedDoor : kf::AutomapMarkerKind::Door,
++                    (ax + bx) * 0.5f + 0.5f, (az + bz) * 0.5f + 0.5f, link);
++            }
++            break;
++        }
++        case KF_MAP_OBJECT_OP_SAVE_POINT:
++            add(kf::AutomapMarkerKind::SavePoint, x, z);
++            break;
++        case KF_MAP_OBJECT_OP_RESTORE_POINT:
++            add(kf::AutomapMarkerKind::Fountain, x, z, object.link.fields.link_id == KF_MAP_LINK_NONE);
++            break;
++        case KF_MAP_OBJECT_OP_HINGED_CONTAINER:
++            if (!all_empty(object.link.hinged_container.item_ids))
++                add(kf::AutomapMarkerKind::Chest, x, z, object.link.hinged_container.link_id,
++                    object.link.hinged_container.item_ids, KF_MAP_CONTAINER_ITEM_COUNT);
++            break;
++        case KF_MAP_OBJECT_OP_ITEM_CONTAINER:
++            if (!all_empty(object.link.item_ids))
++                add(kf::AutomapMarkerKind::Chest, x, z, kf::automap_unlocked, object.link.item_ids, KF_MAP_CONTAINER_ITEM_COUNT);
++            break;
++        case KF_MAP_OBJECT_OP_ITEM_PICKUP:
++        case KF_MAP_OBJECT_OP_GOLD_PICKUP:
++            add(kf::AutomapMarkerKind::Item, x, z, 0, &object.object_id, 1);
++            break;
++        default:
++            break;
++        }
++    }
++
++    for (const auto &event : map_runtime_state.events) {
++        if (event.state == KF_MAP_EVENT_ACTIVE)
++            add(kf::AutomapMarkerKind::Npc, static_cast<float>(event.home_x) / tile_size,
++                static_cast<float>(event.home_z) / tile_size, kf_enum_encode<u8>(event.character_id));
++    }
++    for (const auto &actor : actor_state.actors) {
++        if (actor.slot_state == KF_ACTOR_SLOT_FREE)
++            continue;
++        // Placed enemies may carry a set item, dropped when they die (respawning
++        // ones only roll their kind's random drop, which is not shown).
++        const bool placed = actor.slot_state != KF_ACTOR_SLOT_DYNAMIC && actor.slot_state != KF_ACTOR_SLOT_RESPAWNING;
++        const KfObjectId drop = actor.death_drop_object_id;
++        const bool carries = placed && drop != KF_MAP_OBJECT_DROP_DISABLED && drop != KF_OBJECT_NONE
++            && kf_enum_encode<u8>(drop) < KF_ITEM_COUNT;
++        const bool awake = actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
++            && actor.action != KF_ACTOR_ACTION_DYING && actor.action != KF_ACTOR_ACTION_POST_DEATH;
++        if (awake) {
++            add(kf::AutomapMarkerKind::Enemy, static_cast<float>(actor.position.vx) / tile_size,
++                static_cast<float>(actor.position.vz) / tile_size, 0, carries ? &drop : nullptr, carries ? 1 : 0);
++        } else if (carries && (actor.lifecycle == KF_ACTOR_LIFECYCLE_DORMANT
++                               || actor.lifecycle == KF_ACTOR_LIFECYCLE_WAIT_FOR_RANGE_EXIT)) {
++            // Not woken yet (they appear as the player comes near): marked at
++            // their spawn cell so the drop can be found in advance.
++            add(kf::AutomapMarkerKind::Enemy, actor.tile_x + 0.5f, actor.tile_z + 0.5f, 0, &drop, 1);
++        }
++    }
++    kf::automap_published();
++}
+diff --git a/src/game/effect_update.cpp b/src/game/effect_update.cpp
+index 7d2e8fa5ced73f0089872cc2470dd41570517fa8..a03c9f140b2e3e749599bd3cb5f613646f4bf749 100644
+--- a/src/game/effect_update.cpp
++++ b/src/game/effect_update.cpp
+@@ -163,6 +163,11 @@ void effect_update_orbiting_projectile(s32 orbit_radius, KfEffectPhase phase_lim
+     }
+ }
+ 
++const KfFloorDeformSegment &effect_floor_deform_segment(s32 segment_index)
++{
++    return floor_deform_segments[segment_index];
++}
++
+ void effect_floor_deform_line(s32 segment_index, s32 progress_start, s32 progress_step)
+ {
+     KfFloorDeformSegment *segment = &floor_deform_segments[segment_index];
+diff --git a/src/game/entity_render.cpp b/src/game/entity_render.cpp
+index 4466b749e702d2b76c3e95d3dd360917171275e9..6dc853cd5b29706a1aa30827bc6b859d27d354c3 100644
+--- a/src/game/entity_render.cpp
++++ b/src/game/entity_render.cpp
+@@ -57,6 +57,21 @@ void render_effect(KfEffectRecord *effect, const MATRIX *lights)
+     if (effect->render_id.model == KF_EFFECT_MODEL_NONE) {
+         return;
+     }
++    // PC extension (dynamic lighting): fire and lightning projectiles light their surroundings.
++    const auto billboard = effect->render_id.billboard;
++    if (effect->animation_clip == KF_ANIMATION_CLIP_NONE) {
++        if (billboard <= KF_EFFECT_BILLBOARD_FIRE_BALL_FRAME_4) {
++            render_publish_light(effect->position.vx, effect->position.vy, effect->position.vz,
++                6000.0f, 1.2f, 0.55f, 0.2f, 0.6f);
++        } else if (billboard == KF_EFFECT_BILLBOARD_LIGHTNING_BOLT || billboard == KF_EFFECT_BILLBOARD_LIGHTNING_BOLT_FRAME_1
++                   || billboard == KF_EFFECT_BILLBOARD_LIGHTNING_BOLT_ALTERNATE
++                   || billboard == KF_EFFECT_BILLBOARD_LIGHTNING_ALTERNATE_FRAME_1
++                   || (billboard >= KF_EFFECT_BILLBOARD_LIGHTNING_IMPACT && billboard <= KF_EFFECT_BILLBOARD_LIGHTNING_IMPACT_FRAME_2)
++                   || (billboard >= KF_EFFECT_BILLBOARD_LIGHTNING_IMPACT_ALTERNATE && billboard <= KF_EFFECT_BILLBOARD_IMPACT_ALTERNATE_FRAME_2)) {
++            render_publish_light(effect->position.vx, effect->position.vy, effect->position.vz,
++                6000.0f, 0.55f, 0.7f, 1.3f, 0.9f);
++        }
++    }
+     relative_position = VECTOR{
+         effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
+         effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
+diff --git a/src/game/game.cpp b/src/game/game.cpp
+index 61e9587c017036b99d03efd2af7020e607880341..47cd05c3f9a34cb39a27c2d026adbb77190ff533 100644
+--- a/src/game/game.cpp
++++ b/src/game/game.cpp
+@@ -20,8 +20,11 @@ static std::uint64_t frame_pacer_last_tick;
+ 
+ GameResult game_result;
+ 
++void automap_publish(void);
++
+ void game_main_loop(void)
+ {
++    // A language chosen during the opening takes effect before anything loads.
+     kf::language_apply_pending();
+     game_graphics_runtime = {};
+     actor_state = {};
+@@ -40,12 +43,26 @@ void game_main_loop(void)
+     common_resources_load();
+     kf::host_language_status("Language ready.");
+     game_initialize_session();
++    // KF_TEST_GIVE=<item id>,...: adds items for automated menu tests.
++    if (const char *give = std::getenv("KF_TEST_GIVE")) {
++        for (const char *cursor = give; *cursor;) {
++            const int id = std::atoi(cursor);
++            if (id >= 0 && id < KF_ITEM_COUNT)
++                item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][id]++;
++            const char *comma = std::strchr(cursor, ',');
++            if (!comma)
++                break;
++            cursor = comma + 1;
++        }
++    }
+     memory_set_allocation_mode(memory_arena, KF_MEMORY_REBASE_ARENA);
+     map_load_floor_wrapper();
+     frame_pacer_last_tick = kf::host_clock_tick();
+     player_warp_shimmer_at_player(KF_WARP_SHIMMER_SHRINK_REMOVE);
+     game_result = GameResult::Running;
+     for (;;) {
++        // Between updates no menu or dialogue holds text, so a language change
++        // requested from the F1 overlay can be applied here.
+         game_apply_language();
+         player_update();
+         if (game_result != GameResult::Running) {
+@@ -59,6 +76,7 @@ void game_main_loop(void)
+         effect_pool_update();
+         map_event_pool_update();
+         render_frame(&player_position_snapshot, &player_rotation_snapshot);
++        automap_publish();
+         player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
+         if (player_current_map_attribute()
+             == KF_MAP_ATTRIBUTE_WARP) {
+diff --git a/src/game/item.cpp b/src/game/item.cpp
+index 3336e18ab7c21a60d181b49376c2121473910a21..630a0241f57c1a082a0e1c2ba5793caa3d343d68 100644
+--- a/src/game/item.cpp
++++ b/src/game/item.cpp
+@@ -205,6 +205,8 @@ void menu_resources_reload(void)
+     // label, moved into that removed row in the native menu description.
+     auto &save_layout = menu_window_layouts[kf_enum_encode<s32>(KF_MENU_WINDOW_SAVE)];
+     save_layout.rows[KF_MENU_SAVE_RETURN_ROW].glyphs = save_layout.rows[stat_save_return_row].glyphs;
++    // Port addition: Configuration gets a language row where Return was, and
++    // Return moves down a row. menu_draw_window draws the row's text.
+     auto &config = menu_window_layouts[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)];
+     config.rows[KF_MENU_CONFIG_RETURN_ROW] = config.rows[KF_MENU_CONFIG_LANGUAGE_ROW];
+     config.rows[KF_MENU_CONFIG_RETURN_ROW].position.y += config.rows[1].position.y - config.rows[0].position.y;
+diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
+index db35b0bba66fdf151c9f57f5dda56f61827168c6..eb1a0efe6009f08c6c2df06d9ab7672cf326e740 100644
+--- a/src/game/map_scripts.cpp
++++ b/src/game/map_scripts.cpp
+@@ -51,6 +51,7 @@ enum {
+     MAP_WEAPON_TRANSFORM_HOLD_UPDATES = 40,
+     MAP_WEAPON_TRANSFORM_SWAP_COUNTDOWN = 20,
+     MAP_SHOP_SEQUENCE_INDEX = 2,
++    MAP_KEY_UNLOCK_VOLUME = 110,   // as when a key is used from the item menu
+     MAP_FLOOR3_DIALOGUE_DOOR_LINK = 0x37
+ };
+ 
+@@ -497,6 +498,24 @@ static void map_finish_event_interaction(KfMapEvent *event)
+     player_clear_motion();
+ }
+ 
++// PC extension: interacting with a lock whose key the player carries uses it,
++// as choosing the key from the item menu would (keys are not used up).
++static bool map_unlock_with_carried_key(KfMapObject *object)
++{
++    if (kf::classic_mode || !kf::auto_use_keys)
++        return false;
++    const auto &stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)];
++    for (const auto key : {KF_ITEM_KEY_OF_THE_DEAD, KF_ITEM_RAITO_FAMILY_KEY, KF_ITEM_DUNGEON_KEY, KF_ITEM_SORCERER_KEY}) {
++        const u8 id = kf_enum_encode<u8>(key);
++        if (object->link.fields.link_id != id || stock[id] == 0)
++            continue;
++        object->link.fields.link_id = KF_MAP_LINK_NONE;
++        sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_KEY_UNLOCK], MAP_KEY_UNLOCK_VOLUME);
++        return true;
++    }
++    return false;
++}
++
+ static void map_interact_hinged_container(KfMapObject *object,
+     const VECTOR *position, SVECTOR *rotation)
+ {
+@@ -506,6 +525,8 @@ static void map_interact_hinged_container(KfMapObject *object,
+     KfObjectId *item_id;
+ 
+     if (object->link.fields.link_id != KF_MAP_LINK_NONE) {
++        if (map_unlock_with_carried_key(object))
++            return;
+         notify_enqueue(object->link.fields.linked_notification);
+         return;
+     }
+@@ -742,7 +763,8 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+                     break;
+                 }
+                 if (object->link.fields.link_id != KF_MAP_LINK_NONE) {
+-                    notify_enqueue(object->link.fields.default_notification);
++                    if (!map_unlock_with_carried_key(object))
++                        notify_enqueue(object->link.fields.default_notification);
+                     break;
+                 }
+                 map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_LIFT_DOOR);
+@@ -756,7 +778,8 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+                     break;
+                 }
+                 if (object->link.fields.link_id != KF_MAP_LINK_NONE && definition->behavior_type == KF_MAP_OBJECT_OP_HINGED_DOOR) {
+-                    notify_enqueue(object->link.fields.default_notification);
++                    if (!map_unlock_with_carried_key(object))
++                        notify_enqueue(object->link.fields.default_notification);
+                     break;
+                 }
+ 
+diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
+index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54bb828c153 100644
+--- a/src/game/menu_runtime.cpp
++++ b/src/game/menu_runtime.cpp
+@@ -598,7 +598,13 @@ void menu_config_panel(void)
+         menu_config_panel_draw(on_label, off_label, option_states);
+         menu_draw_window(KF_MENU_WINDOW_CONFIG, KF_MENU_CONFIG_ROW_COUNT, row, confirm);
+         if (language_failed) {
+-            MenuGlyphString message{{16, 190}, menu_label(MenuLabel::LanguageUnavailable)};
++            // Below the language row (port placement), clear of Return.
++            MenuGlyphString message;
++            message.position = menu_window_layouts[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)]
++                                   .rows[KF_MENU_CONFIG_LANGUAGE_ROW].position;
++            message.position.x = CONFIG_OPTION_ON_X;
++            message.position.y += 16;
++            message.glyphs = menu_label(MenuLabel::LanguageUnavailable);
+             menu_draw_string(&menu_assets.glyph_atlas, &message);
+         }
+         menu_present_frame();
+@@ -1136,6 +1142,212 @@ enum {
+     MENU_INVENTORY_QUANTITY_VALUE_X = 279
+ };
+ 
++// PC extension: equipment stats beside the item preview (inventory, equip and
++// shop screens). While an equip screen is open, rows show the current total and
++// the total with the highlighted item, tinted by whether it goes up or down.
++namespace {
++enum class MenuItemSlot { None, Weapon, Head, Body, Shield, Arm, Leg, Accessory };
++KfEquipmentMenuCategory menu_stats_compare = KF_EQUIP_MENU_NONE;
++
++enum {
++    MENU_STATS_LABEL_X = 174,
++    MENU_STATS_VALUE_X = 206,
++    MENU_STATS_NEW_VALUE_X = 232,
++    MENU_STATS_ROW_STEP = 13,
++    MENU_STATS_DIGITS = 3,
++    MENU_STATS_LABEL_CELLS = 2
++};
++constexpr s32 MENU_STATS_MODEL_X = 1624;
++constexpr s32 MENU_STATS_MODEL_Y = 600;
++constexpr s32 MENU_STATS_MODEL_Z = 2800;
++
++MenuItemSlot menu_item_slot(KfObjectId id)
++{
++    const s32 code = kf_enum_encode<u8>(id);
++    auto in = [code](KfObjectId first, KfObjectId end) {
++        return code >= kf_enum_encode<u8>(first) && code < kf_enum_encode<u8>(end);
++    };
++    if (id == KF_OBJECT_NONE)
++        return MenuItemSlot::None;
++    if (in(KF_ITEM_SHORT_SWORD, KF_ITEM_IRON_MASK)) return MenuItemSlot::Weapon;
++    if (in(KF_ITEM_IRON_MASK, KF_ITEM_BREASTPLATE)) return MenuItemSlot::Head;
++    if (in(KF_ITEM_BREASTPLATE, KF_ITEM_SMALL_SHIELD)) return MenuItemSlot::Body;
++    if (in(KF_ITEM_SMALL_SHIELD, KF_ITEM_GAUNTLET)) return MenuItemSlot::Shield;
++    if (in(KF_ITEM_GAUNTLET, KF_ITEM_IRON_BOOTS)) return MenuItemSlot::Arm;
++    if (in(KF_ITEM_IRON_BOOTS, KF_ITEM_GOLD_COIN)) return MenuItemSlot::Leg;
++    if (code >= kf_enum_encode<u8>(KF_ITEM_LIGHT_RING) && code <= kf_enum_encode<u8>(KF_ITEM_GOLD_CROSS))
++        return MenuItemSlot::Accessory;
++    return MenuItemSlot::None;
++}
++
++MenuItemSlot menu_category_slot(KfEquipmentMenuCategory category)
++{
++    switch (category) {
++    case KF_EQUIP_MENU_WEAPON: return MenuItemSlot::Weapon;
++    case KF_EQUIP_MENU_SHIELD: return MenuItemSlot::Shield;
++    case KF_EQUIP_MENU_HEAD: return MenuItemSlot::Head;
++    case KF_EQUIP_MENU_BODY: return MenuItemSlot::Body;
++    case KF_EQUIP_MENU_ARM: return MenuItemSlot::Arm;
++    case KF_EQUIP_MENU_LEG: return MenuItemSlot::Leg;
++    case KF_EQUIP_MENU_ACCESSORY: return MenuItemSlot::Accessory;
++    default: return MenuItemSlot::None;
++    }
++}
++
++// Totals with `id` (or nothing) in `slot`, by the game's own formula.
++KfPlayerState menu_stats_with(MenuItemSlot slot, KfObjectId id)
++{
++    KfPlayerState p = player_state;
++    switch (slot) {
++    case MenuItemSlot::Weapon: p.equipped_weapon_id = id; break;
++    case MenuItemSlot::Head: p.equipped_head_armor_id = id; break;
++    case MenuItemSlot::Body: p.equipped_body_armor_id = id; break;
++    case MenuItemSlot::Shield: p.equipped_shield_id = id; break;
++    case MenuItemSlot::Arm: p.equipped_arm_armor_id = id; break;
++    case MenuItemSlot::Leg: p.equipped_leg_armor_id = id; break;
++    case MenuItemSlot::Accessory: p.equipped_accessory_id = id; break;
++    case MenuItemSlot::None: break;
++    }
++    player_compute_combat_stats(p);
++    return p;
++}
++
++enum class MenuStatGroup { Attack, Defense, Power };
++// Stat labels as rows: the English patch changes some of them (see menu_label).
++MenuGlyphRow menu_stat_row(MenuLabel label) { return menu_label(label); }
++template <std::size_t N>
++MenuGlyphRow menu_stat_row(const std::array<s16, N> &sequence)
++{
++    MenuGlyphRow row{};
++    std::copy_n(sequence.begin(), std::min<std::size_t>(N, MENU_GLYPHS_PER_ROW), row.codes.begin());
++    return row;
++}
++
++struct MenuStat {
++    MenuGlyphRow (*label)();
++    MenuStatGroup group;
++    s32 (*value)(const KfPlayerState &);
++};
++
++const MenuStat menu_stats[] = {
++    {[] { return menu_stat_row(MenuLabel::Cutting); }, MenuStatGroup::Attack, [](const KfPlayerState &p) -> s32 { return p.cutting_attack; }},
++    {[] { return menu_stat_row(MenuLabel::Striking); }, MenuStatGroup::Attack, [](const KfPlayerState &p) -> s32 { return p.striking_attack; }},
++    {[] { return menu_stat_row(menu_glyphs::piercing); }, MenuStatGroup::Attack, [](const KfPlayerState &p) -> s32 { return p.piercing_attack; }},
++    {[] { return menu_stat_row(MenuLabel::Holy); }, MenuStatGroup::Attack, [](const KfPlayerState &p) -> s32 { return p.holy_attack; }},
++    {[] { return menu_stat_row(MenuLabel::Fire); }, MenuStatGroup::Attack, [](const KfPlayerState &p) -> s32 { return p.fire_attack; }},
++    {[] { return menu_stat_row(MenuLabel::Cutting); }, MenuStatGroup::Defense, [](const KfPlayerState &p) -> s32 { return p.cutting_defense; }},
++    {[] { return menu_stat_row(MenuLabel::Striking); }, MenuStatGroup::Defense, [](const KfPlayerState &p) -> s32 { return p.striking_defense; }},
++    {[] { return menu_stat_row(menu_glyphs::piercing); }, MenuStatGroup::Defense, [](const KfPlayerState &p) -> s32 { return p.piercing_defense; }},
++    {[] { return menu_stat_row(MenuLabel::PoisonResistance); }, MenuStatGroup::Defense, [](const KfPlayerState &p) -> s32 { return p.poison_resistance; }},
++    {[] { return menu_stat_row(MenuLabel::MagicDefense); }, MenuStatGroup::Defense, [](const KfPlayerState &p) -> s32 { return p.magic_defense; }},
++    {[] { return menu_stat_row(MenuLabel::Fire); }, MenuStatGroup::Defense, [](const KfPlayerState &p) -> s32 { return p.fire_defense; }},
++    {[] { return menu_stat_row(MenuLabel::PhysicalPower); }, MenuStatGroup::Power, [](const KfPlayerState &p) -> s32 { return p.physical_power; }},
++    {[] { return menu_stat_row(MenuLabel::MagicPower); }, MenuStatGroup::Power, [](const KfPlayerState &p) -> s32 { return p.magic; }},
++};
++
++// The first word of a status-screen label: the English patch pads some labels
++// with blanks and a shared suffix that would not fit beside the preview.
++void menu_stats_label(MenuGlyphString &gs, const MenuGlyphRow &row)
++{
++    const s16 *sequence = row.codes.data();
++    s32 count = 0;
++    for (s32 i = 0; i < MENU_GLYPHS_PER_ROW && sequence[i] != MENU_TEXT_END && count < MENU_STATS_LABEL_CELLS; i++) {
++        if (sequence[i] == MENU_TEXT_BLANK) {
++            if (count > 0)
++                break;
++            continue;
++        }
++        gs.glyphs.codes[count++] = sequence[i];
++    }
++    gs.glyphs.codes[count] = MENU_TEXT_END;
++    menu_draw_string(&menu_assets.glyph_atlas, &gs);
++}
++}
++
++// Multiplies the colour of numbers drawn by menu_draw_number.
++static float menu_number_tint[3] = {1.0f, 1.0f, 1.0f};
++
++namespace {
++void menu_stats_number(MenuGlyphString &gs, s32 x, s32 value, s32 compare_to, bool compare, bool dim = false)
++{
++    gs.position.x = x;
++    if (!compare && dim) {
++        menu_number_tint[0] = menu_number_tint[1] = menu_number_tint[2] = 0.72f;
++    } else if (compare && value > compare_to) {
++        menu_number_tint[0] = 0.55f; menu_number_tint[1] = 1.35f; menu_number_tint[2] = 0.55f;
++    } else if (compare && value < compare_to) {
++        menu_number_tint[0] = 1.45f; menu_number_tint[1] = 0.5f; menu_number_tint[2] = 0.45f;
++    }
++    menu_format_number(value < 0 ? 0 : value, MENU_STATS_DIGITS, KF_FORMAT_PAD_SPACES, gs.glyphs.codes);
++    menu_draw_number(&menu_assets.number_atlas, &gs);
++    menu_number_tint[0] = menu_number_tint[1] = menu_number_tint[2] = 1.0f;
++}
++
++bool menu_stats_available(KfObjectId item_id)
++{
++    if (kf::classic_mode)
++        return false;
++    return menu_category_slot(menu_stats_compare) != MenuItemSlot::None || menu_item_slot(item_id) != MenuItemSlot::None;
++}
++
++// Draws the rows from y down; returns false when the item has nothing to show.
++// bottom (optional) receives the row below the last one drawn.
++bool menu_draw_item_stats(KfObjectId item_id, s32 y, s32 *bottom = nullptr)
++{
++    if (bottom)
++        *bottom = y;
++    if (kf::classic_mode)
++        return false;
++    const MenuItemSlot compare_slot = menu_category_slot(menu_stats_compare);
++    const bool compare = compare_slot != MenuItemSlot::None;
++    const MenuItemSlot slot = compare ? compare_slot : menu_item_slot(item_id);
++    if (slot == MenuItemSlot::None)
++        return false;
++    // One item: what it adds (totals with it minus without it). Compare: totals now and with it.
++    const KfPlayerState before = compare ? menu_stats_with(MenuItemSlot::None, KF_OBJECT_NONE)
++                                         : menu_stats_with(slot, KF_OBJECT_NONE);
++    const KfPlayerState after = menu_stats_with(slot, item_id);
++    const MenuStatGroup group = slot == MenuItemSlot::Weapon ? MenuStatGroup::Attack : MenuStatGroup::Defense;
++
++    MenuGlyphString gs;
++    gs.position.x = MENU_STATS_LABEL_X;
++    gs.position.y = y;
++    bool any = false;
++    for (const auto &stat : menu_stats) {
++        const s32 now = stat.value(before), with = stat.value(after);
++        bool shown = now != with;
++        // Weapons and armour in the equip screen list their whole group, so
++        // the totals can be read even where this item adds nothing.
++        if (compare && stat.group == group && slot != MenuItemSlot::Accessory)
++            shown = now != 0 || with != 0;
++        if (!shown)
++            continue;
++        if (!any) {
++            menu_stats_label(gs, menu_label(group == MenuStatGroup::Attack ? MenuLabel::Attack : MenuLabel::Defense));
++            gs.position.y += MENU_STATS_ROW_STEP + 2;
++            any = true;
++        }
++        gs.position.x = MENU_STATS_LABEL_X;
++        menu_stats_label(gs, stat.label());
++        if (compare) {
++            menu_stats_number(gs, MENU_STATS_VALUE_X, now, now, false, true);   // current, dimmed
++            menu_stats_number(gs, MENU_STATS_NEW_VALUE_X, with, now, true);
++        } else {
++            menu_stats_number(gs, MENU_STATS_VALUE_X, with - now, 0, false);
++        }
++        gs.position.y += MENU_STATS_ROW_STEP;
++    }
++    if (bottom)
++        *bottom = gs.position.y;
++    return any;
++}
++}
++
++void menu_set_equipment_compare(KfEquipmentMenuCategory category)
++{
++    menu_stats_compare = category;
++}
++
+ void menu_item_model_preview(KfObjectId item_id)
+ {
+     MenuGlyphString text;
+@@ -1143,10 +1355,15 @@ void menu_item_model_preview(KfObjectId item_id)
+     MATRIX light_source;
+     MATRIX light_result;
+ 
++    // Stats share the panel: the model moves right and a little further away.
++    s32 stats_bottom = MENU_ITEM_PREVIEW_NAME_Y + 2 * MENU_ITEM_PREVIEW_LINE_HEIGHT;
++    const bool stats = menu_stats_available(item_id)
++        && menu_draw_item_stats(item_id, stats_bottom + 2, &stats_bottom);
+     if (item_id != KF_OBJECT_NONE) {
+-        rotation.t[0] = MENU_ITEM_PREVIEW_TRANSLATION_X;
+-        rotation.t[1] = MENU_ITEM_PREVIEW_TRANSLATION_Y;
+-        rotation.t[2] = MENU_ITEM_PREVIEW_TRANSLATION_Z;
++        kf::host_menu_preview_item(kf_enum_encode<u8>(item_id), stats_bottom);
++        rotation.t[0] = stats ? MENU_STATS_MODEL_X : MENU_ITEM_PREVIEW_TRANSLATION_X;
++        rotation.t[1] = stats ? MENU_STATS_MODEL_Y : MENU_ITEM_PREVIEW_TRANSLATION_Y;
++        rotation.t[2] = stats ? MENU_STATS_MODEL_Z : MENU_ITEM_PREVIEW_TRANSLATION_Z;
+         menu_item_preview_rotation.vy =
+             (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
+             & KF_ANGLE_WRAP_MASK;
+@@ -1203,9 +1420,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+         return;
+     }
+ 
+-    rotation.t[0] = MENU_ITEM_PREVIEW_TRANSLATION_X;
+-    rotation.t[1] = MENU_ITEM_PREVIEW_TRANSLATION_Y;
+-    rotation.t[2] = MENU_ITEM_PREVIEW_TRANSLATION_Z;
++    // Shops show the price and owned rows first, then the item's stats.
++    s32 stats_bottom = MENU_ITEM_PREVIEW_NAME_Y + 3 * MENU_ITEM_PREVIEW_LINE_HEIGHT;
++    const bool stats = menu_draw_item_stats(item_id, stats_bottom + 2, &stats_bottom);
++    kf::host_menu_preview_item(kf_enum_encode<u8>(item_id), stats_bottom);
++    rotation.t[0] = stats ? MENU_STATS_MODEL_X : MENU_ITEM_PREVIEW_TRANSLATION_X;
++    rotation.t[1] = stats ? MENU_STATS_MODEL_Y : MENU_ITEM_PREVIEW_TRANSLATION_Y;
++    rotation.t[2] = stats ? MENU_STATS_MODEL_Z : MENU_ITEM_PREVIEW_TRANSLATION_Z;
+     menu_item_preview_rotation.vy =
+         (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
+         & KF_ANGLE_WRAP_MASK;
+@@ -1802,6 +2023,11 @@ void menu_draw_number(
+         auto face = menu_text_glyph(atlas, label, x_offset);
+         const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
+         render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
++        for (auto &vertex : face.vertices) {
++            vertex.r *= menu_number_tint[0];
++            vertex.g *= menu_number_tint[1];
++            vertex.b *= menu_number_tint[2];
++        }
+         menu_submit_template(face, MENU_CONTENT_OT_DEPTH);
+     }
+ }
+diff --git a/src/game/menu_select.cpp b/src/game/menu_select.cpp
+index 0b9939e86e86b94c1b9e04fbb9435e8e999a59cb..fad189868b50db9ccdf2d6b14d6873da979e6056 100644
+--- a/src/game/menu_select.cpp
++++ b/src/game/menu_select.cpp
+@@ -86,6 +86,7 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
+             return;
+     }
+ 
++    menu_set_equipment_compare(equipment_category);
+     for (;;) {
+         if (confirm == KF_MENU_CONFIRM_REQUESTED) {
+             if (menu_list_confirm(&ctx, KF_MENU_CONFIRM_EQUIP,
+@@ -109,8 +110,10 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
+                 selection = kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED);
+             }
+         } else if (menu_list_handle_navigation(ctx, input, prev)) {
+-            if (menu_load_item_model(item_ids[ctx.selected_index]) != KF_RESOURCE_LOADED)
++            if (menu_load_item_model(item_ids[ctx.selected_index]) != KF_RESOURCE_LOADED) {
++                menu_set_equipment_compare(KF_EQUIP_MENU_NONE);
+                 return;
++            }
+         } else if (kf::button_pressed(input, prev, kf::Button::Confirm)) {
+             menu_play_input_sound(MENU_SOUND_CONFIRM);
+             confirm = KF_MENU_CONFIRM_REQUESTED;
+@@ -126,6 +129,7 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
+         menu_present_frame();
+     }
+ 
++    menu_set_equipment_compare(KF_EQUIP_MENU_NONE);
+     menu_release_item_model();
+     if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
+         switch (equipment_category) {
+diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
+index a1cd94fee823f5e3e4e51e80b792d3d7183fae87..b92f9dd8e6d3c414c7866efd6a8a451b993be9a3 100644
+--- a/src/game/player_death.cpp
++++ b/src/game/player_death.cpp
+@@ -65,6 +65,10 @@ void player_death_begin(void)
+ 
+ void game_state_initialize(void)
+ {
++    u8 *cursor;
++    s32 count;
++
++    kf::automap_reset();
+     player_state.experience = 0;
+     player_state.progress_state.level = 1;
+     player_state.progress_state.current_floor = KF_FLOOR_1;
+@@ -223,125 +227,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
+     }
+ }
+ 
+-void player_recalculate_combat_stats(void)
++// Combat totals for the equipment in p, without side effects (the equipment
++// screens preview them too).
++void player_compute_combat_stats(KfPlayerState &p)
+ {
+     const KfWeaponRecord *weapon;
+     const KfArmorRecord *armor;
+     s32 power;
+ 
+-    player_state.cutting_attack = 0;
+-    player_state.striking_attack = 0;
+-    player_state.piercing_attack = 0;
+-    player_state.holy_attack = 0;
+-    player_state.fire_attack = 0;
+-    player_state.cutting_defense = 0;
+-    player_state.striking_defense = 0;
+-    player_state.piercing_defense = 0;
+-    player_state.poison_resistance = 0;
+-    player_state.magic_defense = 0;
+-    player_state.fire_defense = 0;
+-    player_state.physical_power = player_state.base_physical_power;
+-    player_state.magic = player_state.base_magic;
+-    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
+-        power = player_state.physical_power - CURSE_PHYSICAL_POWER_PENALTY;
++    p.cutting_attack = 0;
++    p.striking_attack = 0;
++    p.piercing_attack = 0;
++    p.holy_attack = 0;
++    p.fire_attack = 0;
++    p.cutting_defense = 0;
++    p.striking_defense = 0;
++    p.piercing_defense = 0;
++    p.poison_resistance = 0;
++    p.magic_defense = 0;
++    p.fire_defense = 0;
++    p.physical_power = p.base_physical_power;
++    p.magic = p.base_magic;
++    if ((p.status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
++        power = p.physical_power - CURSE_PHYSICAL_POWER_PENALTY;
+         power = std::max<s32>(power, 0);
+-        player_state.physical_power = power;
+-    }
+-    if (player_state.equipped_weapon_id != KF_OBJECT_NONE) {
+-        weapon = &weapon_records.entries[kf_enum_encode<u8>(player_state.equipped_weapon_id)];
+-        player_state.cutting_attack += weapon->attack_components[KF_COMBAT_COMPONENT_CUTTING];
+-        player_state.striking_attack += weapon->attack_components[KF_COMBAT_COMPONENT_STRIKING];
+-        player_state.piercing_attack += weapon->attack_components[KF_COMBAT_COMPONENT_PIERCING];
+-        player_state.holy_attack += weapon->attack_components[KF_COMBAT_COMPONENT_HOLY];
+-        player_state.fire_attack += weapon->attack_components[KF_COMBAT_COMPONENT_FIRE];
+-    }
+-    if (player_state.equipped_head_armor_id != KF_OBJECT_NONE) {
+-        armor = &armor_records.entries[kf_enum_encode<u8>(player_state.equipped_head_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.striking_defense += armor->striking_defense;
+-        player_state.piercing_defense += armor->piercing_defense;
+-        player_state.poison_resistance += armor->poison_resistance;
+-        player_state.magic_defense += armor->magic_defense;
+-        player_state.fire_defense += armor->fire_defense;
+-    }
+-    if (player_state.equipped_body_armor_id != KF_OBJECT_NONE) {
+-        armor = &armor_records.entries[kf_enum_encode<u8>(player_state.equipped_body_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.striking_defense += armor->striking_defense;
+-        player_state.piercing_defense += armor->piercing_defense;
+-        player_state.poison_resistance += armor->poison_resistance;
+-        player_state.magic_defense += armor->magic_defense;
+-        player_state.fire_defense += armor->fire_defense;
+-    }
+-    if (player_state.equipped_arm_armor_id != KF_OBJECT_NONE) {
+-        armor = &armor_records.entries[kf_enum_encode<u8>(player_state.equipped_arm_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.striking_defense += armor->striking_defense;
+-        player_state.piercing_defense += armor->piercing_defense;
+-        player_state.poison_resistance += armor->poison_resistance;
+-        player_state.magic_defense += armor->magic_defense;
+-        player_state.fire_defense += armor->fire_defense;
+-    }
+-    if (player_state.equipped_leg_armor_id != KF_OBJECT_NONE) {
+-        armor = &armor_records.entries[kf_enum_encode<u8>(player_state.equipped_leg_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.striking_defense += armor->striking_defense;
+-        player_state.piercing_defense += armor->piercing_defense;
+-        player_state.poison_resistance += armor->poison_resistance;
+-        player_state.magic_defense += armor->magic_defense;
+-        player_state.fire_defense += armor->fire_defense;
+-    }
+-    if (player_state.equipped_shield_id != KF_OBJECT_NONE) {
+-        armor = &armor_records.entries[kf_enum_encode<u8>(player_state.equipped_shield_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.cutting_defense += armor->cutting_defense;
+-        player_state.striking_defense += armor->striking_defense;
+-        player_state.piercing_defense += armor->piercing_defense;
+-        player_state.poison_resistance += armor->poison_resistance;
+-        player_state.magic_defense += armor->magic_defense;
+-        player_state.fire_defense += armor->fire_defense;
+-    }
+-    switch (player_state.equipped_accessory_id) {
++        p.physical_power = power;
++    }
++    if (p.equipped_weapon_id != KF_OBJECT_NONE) {
++        weapon = &weapon_records.entries[kf_enum_encode<u8>(p.equipped_weapon_id)];
++        p.cutting_attack += weapon->attack_components[KF_COMBAT_COMPONENT_CUTTING];
++        p.striking_attack += weapon->attack_components[KF_COMBAT_COMPONENT_STRIKING];
++        p.piercing_attack += weapon->attack_components[KF_COMBAT_COMPONENT_PIERCING];
++        p.holy_attack += weapon->attack_components[KF_COMBAT_COMPONENT_HOLY];
++        p.fire_attack += weapon->attack_components[KF_COMBAT_COMPONENT_FIRE];
++    }
++    if (p.equipped_head_armor_id != KF_OBJECT_NONE) {
++        armor = &armor_records.entries[kf_enum_encode<u8>(p.equipped_head_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
++        p.cutting_defense += armor->cutting_defense;
++        p.cutting_defense += armor->cutting_defense;
++        p.striking_defense += armor->striking_defense;
++        p.piercing_defense += armor->piercing_defense;
++        p.poison_resistance += armor->poison_resistance;
++        p.magic_defense += armor->magic_defense;
++        p.fire_defense += armor->fire_defense;
++    }
++    if (p.equipped_body_armor_id != KF_OBJECT_NONE) {
++        armor = &armor_records.entries[kf_enum_encode<u8>(p.equipped_body_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
++        p.cutting_defense += armor->cutting_defense;
++        p.cutting_defense += armor->cutting_defense;
++        p.striking_defense += armor->striking_defense;
++        p.piercing_defense += armor->piercing_defense;
++        p.poison_resistance += armor->poison_resistance;
++        p.magic_defense += armor->magic_defense;
++        p.fire_defense += armor->fire_defense;
++    }
++    if (p.equipped_arm_armor_id != KF_OBJECT_NONE) {
++        armor = &armor_records.entries[kf_enum_encode<u8>(p.equipped_arm_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
++        p.cutting_defense += armor->cutting_defense;
++        p.cutting_defense += armor->cutting_defense;
++        p.striking_defense += armor->striking_defense;
++        p.piercing_defense += armor->piercing_defense;
++        p.poison_resistance += armor->poison_resistance;
++        p.magic_defense += armor->magic_defense;
++        p.fire_defense += armor->fire_defense;
++    }
++    if (p.equipped_leg_armor_id != KF_OBJECT_NONE) {
++        armor = &armor_records.entries[kf_enum_encode<u8>(p.equipped_leg_armor_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
++        p.cutting_defense += armor->cutting_defense;
++        p.cutting_defense += armor->cutting_defense;
++        p.striking_defense += armor->striking_defense;
++        p.piercing_defense += armor->piercing_defense;
++        p.poison_resistance += armor->poison_resistance;
++        p.magic_defense += armor->magic_defense;
++        p.fire_defense += armor->fire_defense;
++    }
++    if (p.equipped_shield_id != KF_OBJECT_NONE) {
++        armor = &armor_records.entries[kf_enum_encode<u8>(p.equipped_shield_id) - kf_enum_encode<u8>(KF_ITEM_IRON_MASK)];
++        p.cutting_defense += armor->cutting_defense;
++        p.cutting_defense += armor->cutting_defense;
++        p.striking_defense += armor->striking_defense;
++        p.piercing_defense += armor->piercing_defense;
++        p.poison_resistance += armor->poison_resistance;
++        p.magic_defense += armor->magic_defense;
++        p.fire_defense += armor->fire_defense;
++    }
++    switch (p.equipped_accessory_id) {
+     default:
+         // Other items (including no accessory) grant no accessory-specific bonus.
+         break;
+     case KF_ITEM_LIGHT_RING:
+-        player_state.holy_attack += LIGHT_RING_HOLY_ATTACK_BONUS;
++        p.holy_attack += LIGHT_RING_HOLY_ATTACK_BONUS;
+         break;
+     case KF_ITEM_MOON_AMULET:
+-        player_state.magic_defense += MOON_AMULET_MAGIC_DEFENSE_BONUS;
++        p.magic_defense += MOON_AMULET_MAGIC_DEFENSE_BONUS;
+         break;
+     case KF_ITEM_WIND_BLADE_BRACELET:
+-        player_state.fire_defense += WIND_BLADE_BRACELET_FIRE_DEFENSE_BONUS;
++        p.fire_defense += WIND_BLADE_BRACELET_FIRE_DEFENSE_BONUS;
+         break;
+     case KF_ITEM_TWO_HEADED_DRAGON_RING:
+-        player_state.magic += TWO_HEADED_DRAGON_RING_MAGIC_BONUS;
++        p.magic += TWO_HEADED_DRAGON_RING_MAGIC_BONUS;
+         break;
+     case KF_ITEM_VERDITE:
+-        player_state.magic += VERDITE_EQUIPPED_MAGIC_BONUS;
++        p.magic += VERDITE_EQUIPPED_MAGIC_BONUS;
+         break;
+     case KF_ITEM_GOLD_CROSS:
+-        player_state.holy_attack += GOLD_CROSS_HOLY_ATTACK_BONUS;
++        p.holy_attack += GOLD_CROSS_HOLY_ATTACK_BONUS;
+         break;
+     }
+-    if (player_state.equipped_head_armor_id == KF_ITEM_BLACK_MASK) {
+-        player_state.physical_power -= BLACK_MASK_PHYSICAL_POWER_PENALTY;
++    if (p.equipped_head_armor_id == KF_ITEM_BLACK_MASK) {
++        p.physical_power -= BLACK_MASK_PHYSICAL_POWER_PENALTY;
++    }
++    if ((p.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
++        p.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
+     }
+-    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
+-        player_state.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
++    if (p.physical_power >= KF_PLAYER_POWER_MAX + 1) {
++        p.physical_power = KF_PLAYER_POWER_MAX;
+     }
++    if (p.magic >= KF_PLAYER_POWER_MAX + 1) {
++        p.magic = KF_PLAYER_POWER_MAX;
++    }
++}
++
++void player_recalculate_combat_stats(void)
++{
++    player_compute_combat_stats(player_state);
+     const auto &healing = effect_state.magic.entries[kf_enum_encode<u8>(KF_MAGIC_HEALING)];
+     if (healing.learned != KF_MAGIC_UNLEARNED) {
+         player_learn_trained_magic(KF_MAGIC_DISPOISON, DISPOISON_REQUIRED_BASE_MAGIC);
+     }
+     player_learn_trained_magic(KF_MAGIC_FIRE_WALL, FIRE_WALL_REQUIRED_BASE_MAGIC);
+     player_learn_trained_magic(KF_MAGIC_LIGHTNING_BOLT, LIGHTNING_BOLT_REQUIRED_BASE_MAGIC);
+-    player_state.physical_power = std::min<s32>(player_state.physical_power, KF_PLAYER_POWER_MAX);
+-    player_state.magic = std::min<s32>(player_state.magic, KF_PLAYER_POWER_MAX);
+ }
+ 
+ void player_increment_physical_power_training(void)
+diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
+index 1305eaf87697c1b0dfb5aa889896116dd3f36e49..0c5e150b7468ea506da06c06ebe5381c4c9a397f 100644
+--- a/src/game/player_update.cpp
++++ b/src/game/player_update.cpp
+@@ -330,6 +330,9 @@ static void player_update_movement_input(u32 input)
+         player_turn_step_limit = PLAYER_SLOWED_TURN_LIMIT;
+     } else {
+         player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
++        if (kf::host_run_held()) {
++            player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT * kf::player_run_speed / 100;
++        }
+         player_turn_step_limit = PLAYER_NORMAL_TURN_LIMIT;
+     }
+     if (input & kf::Button::Up) {
+@@ -436,11 +439,11 @@ static void player_update_view_input(u32 input)
+     if (motion.pitch_step > 0) {
+         player_state.camera_rotation.vx += motion.pitch_step;
+         player_state.camera_rotation.vx =
+-            std::min<s32>(player_state.camera_rotation.vx, KF_PLAYER_CAMERA_PITCH_LIMIT);
++            std::min<s32>(player_state.camera_rotation.vx, kf::player_pitch_limit);
+     } else if (motion.pitch_step < 0) {
+         player_state.camera_rotation.vx += motion.pitch_step;
+         player_state.camera_rotation.vx =
+-            std::max<s32>(player_state.camera_rotation.vx, -KF_PLAYER_CAMERA_PITCH_LIMIT);
++            std::max<s32>(player_state.camera_rotation.vx, -kf::player_pitch_limit);
+     }
+ }
+ 
+@@ -623,6 +626,42 @@ static void player_restore_loaded_game()
+     player_select_magic(player_state.selected_magic_id);
+ }
+ 
++// PC extension: F2 quick save / F4 quick load through the game's own save
++// record, applied between updates the way the menu's Load returns.
++static void player_quick_save()
++{
++    if (player_state.update_state != KF_PLAYER_UPDATE_NORMAL) {
++        kf::host_show_message("Cannot quick save right now");
++        return;
++    }
++    map_world_state_persist();
++    kf::host_show_message(save_system_quick_write() ? "Quick saved" : "Quick save failed");
++}
++
++static void player_quick_load()
++{
++    auto &motion = player_state.motion_state;
++
++    if (player_state.update_state == KF_PLAYER_UPDATE_RECOVERY_FADE) {
++        return;
++    }
++    const bool dying = player_state.update_state == KF_PLAYER_UPDATE_DYING;
++    collision_adjust_cell_occupancy(motion.map_cell.x, motion.map_cell.z, -1);
++    if (!save_system_quick_read()) {
++        collision_adjust_cell_occupancy(motion.map_cell.x, motion.map_cell.z, 1);
++        kf::host_show_message("No quick save to load (F2 saves)");
++        return;
++    }
++    if (dying) {
++        // Undo the death fade's colour, fog and HUD dimming.
++        player_death_apply_visual_fade(&player_death_saved_color_matrix, 0);
++    }
++    player_restore_loaded_game();
++    player_clear_motion();
++    collision_adjust_cell_occupancy(motion.map_cell.x, motion.map_cell.z, 1);
++    kf::host_show_message("Quick loaded");
++}
++
+ void player_update(void)
+ {
+     auto &motion = player_state.motion_state;
+@@ -630,6 +669,18 @@ void player_update(void)
+ 
+     input = kf::host_read_buttons();
+     const auto look = kf::host_take_look();
++    // Classic mode has no quick save or load (the request is still taken).
++    const auto quick = kf::host_take_quick_request();
++    switch (kf::classic_mode ? kf::QuickRequest::None : quick) {
++    case kf::QuickRequest::Save:
++        player_quick_save();
++        break;
++    case kf::QuickRequest::Load:
++        player_quick_load();
++        break;
++    case kf::QuickRequest::None:
++        break;
++    }
+     if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
+         player_death_update();
+         return;
+@@ -643,7 +694,7 @@ void player_update(void)
+         (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
+     player_state.camera_rotation.vx = std::clamp<s32>(
+         player_state.camera_rotation.vx + look.pitch,
+-        -KF_PLAYER_CAMERA_PITCH_LIMIT, KF_PLAYER_CAMERA_PITCH_LIMIT);
++        -kf::player_pitch_limit, kf::player_pitch_limit);
+     if (input & kf::Button::Select) {
+         display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
+     }
+diff --git a/src/game/player_use_item.cpp b/src/game/player_use_item.cpp
+index e2d2e6cd2a91122d9b5bc3484428d0775c7746d2..353e921b1991c52588e7d9b2bd0eb4f0726a88ad 100644
+--- a/src/game/player_use_item.cpp
++++ b/src/game/player_use_item.cpp
+@@ -113,6 +113,8 @@ void player_use_item(KfObjectId item_id)
+             }
+             index++;
+         }
++        // Retail falls through into the seal-stone search here, which can read an
++        // invalid object (upstream sushi-shi #47).
+         break;
+ 
+     case KF_ITEM_DRAGON_CHALICE:
+diff --git a/src/game/render.cpp b/src/game/render.cpp
+index 176879d41cab61225d665e1856ea8551754cac48..0e9be82091e1a39a265cfdee5fe66b14cd3264ab 100644
+--- a/src/game/render.cpp
++++ b/src/game/render.cpp
+@@ -201,6 +201,38 @@ void render_initialize(void)
+     animation_cache_reset();
+ }
+ 
++const KfPreciseMapTransform *render_precise_map;
++
++// Exact map cell transform (see KfPreciseMapTransform); integer results are
++// unchanged, only the drawn sub-pixel position and camera coordinates.
++static void render_precise_map_point(const KfPreciseMapTransform &cell, const kf::Projection &projection,
++    const SVECTOR &vertex, KfScreenVertex &out)
++{
++    const s32 local[3] = {vertex.vx, vertex.vy, vertex.vz};
++    const s32 offset[3] = {cell.position.vx, cell.position.vy, cell.position.vz};
++    double world[3];
++    for (int r = 0; r < 3; ++r) {
++        // Quadrant matrices hold 0 and +-4096, so this is exact (and shared
++        // corners of neighbouring cells get identical world positions).
++        s32 rotated = 0;
++        for (int k = 0; k < 3; ++k)
++            rotated += cell.quadrant->m[r][k] * local[k];
++        world[r] = rotated / 4096.0 + offset[r];
++    }
++    double camera[3];
++    for (int r = 0; r < 3; ++r)
++        camera[r] = (cell.view->m[r][0] * world[0] + cell.view->m[r][1] * world[1] + cell.view->m[r][2] * world[2]) / 4096.0;
++    constexpr double minimum_perspective_depth = 16.0;
++    const double depth = std::max(camera[2], minimum_perspective_depth);
++    const double scale = projection.distance / depth;
++    out.fx = static_cast<float>(std::clamp(camera[0] * scale + projection.center_x, -1024.0, 1023.0));
++    out.fy = static_cast<float>(std::clamp(camera[1] * scale + projection.center_y, -1024.0, 1023.0));
++    out.w = static_cast<float>(depth);
++    out.cx = static_cast<float>(camera[0]);
++    out.cy = static_cast<float>(camera[1]);
++    out.cz = static_cast<float>(camera[2]);
++}
++
+ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &projection)
+ {
+     if (count < 0 || count > KF_PROJECTED_VERTEX_CAPACITY)
+@@ -215,6 +247,14 @@ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &
+         projected->position = {point.x, point.y};
+         projected->p2 = point.fog << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT;
+         projected->sz = point.depth;
++        projected->fx = point.fx;
++        projected->fy = point.fy;
++        projected->w = point.w;
++        projected->cx = point.cx;
++        projected->cy = point.cy;
++        projected->cz = point.cz;
++        if (render_precise_map && kf::render_subpixel)
++            render_precise_map_point(*render_precise_map, projection, *vertex, *projected);
+         projected++;
+         vertex++;
+     }
+diff --git a/src/game/render_enqueuers.cpp b/src/game/render_enqueuers.cpp
+index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..1d355c4aa873fe303d50a7f84b8fdc2dfbe30022 100644
+--- a/src/game/render_enqueuers.cpp
++++ b/src/game/render_enqueuers.cpp
+@@ -477,10 +477,16 @@ void render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpriteDepthCu
+     kf::DrawFace face {};
+     CVECTOR color {};
+     face.shape = kf::FaceShape::Quad;
++    face.casts_shadow = false;
+     face.material = game_graphics_runtime.active_render_material;
+     for (unsigned i = 0; i < 4; ++i) {
+-        face.vertices[i].x = positions[i].x;
+-        face.vertices[i].y = positions[i].y;
++        face.vertices[i].x = kf::render_subpixel ? positions[i].fx : positions[i].x;
++        face.vertices[i].y = kf::render_subpixel ? positions[i].fy : positions[i].y;
++        face.vertices[i].w = kf::render_perspective ? positions[i].w : 0.0f;
++        const bool world = !kf::render_camera_fixed && positions[i].cz > 0;
++        face.vertices[i].cx = world ? positions[i].cx : 0.0f;
++        face.vertices[i].cy = world ? positions[i].cy : 0.0f;
++        face.vertices[i].cz = world ? positions[i].cz : 0.0f;
+     }
+     render_face_uv_rectangle(&face, sprite->u, sprite->v,
+         sprite->u + sprite->u_span, sprite->v + sprite->v_span);
+diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
+index 254be2add3569388874377de07540d2a6cbebbc1..7fba5bc99ac7ac51273bf050517784edb0e27dd3 100644
+--- a/src/game/render_frame.cpp
++++ b/src/game/render_frame.cpp
+@@ -10,6 +10,7 @@
+ #include <kf/lib/math.h>
+ 
+ #include <array>
++#include <kf/lib/map_data.h>
+ 
+ enum {
+     HUD_GAUGE_WIDTH = 50,
+@@ -81,6 +82,15 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+ 
+     render_set_view_transform(game_graphics_runtime.render_state, position_or_null, rotation_or_null);
+     display_begin_frame(game_graphics_runtime.display_state);
++    kf::host_frame_camera(game_graphics_runtime.render_state.view_position,
++        game_graphics_runtime.render_state.view_rotation, game_graphics_runtime.render_state.projection);
++    if (kf::render_dynamic_lights && kf::render_light_occlusion) {
++        // Dynamic lighting: solid rock cells stop light (diagonal half-cells count as open).
++        static u8 solid[KF_MAP_ROWS * KF_MAP_COLUMNS];
++        for (int i = 0; i < KF_MAP_ROWS * KF_MAP_COLUMNS; ++i)
++            solid[i] = map_collision_grid.linear[i] == KF_MAP_CELL_BLOCKED ? 1 : 0;
++        kf::host_light_occluders(solid, KF_MAP_COLUMNS, KF_MAP_ROWS, static_cast<float>(KF_MAP_TILE_SIZE));
++    }
+     animation_cache_mark_stale();
+     render_map_cells();
+     poison_icon = &hud_sprites[KF_HUD_POISON_ICON];
+@@ -151,6 +161,7 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+     kf::matrix_set_rotation_xyz(spin, model);
+ 
+     game_graphics_runtime.active_render_material = game_graphics_runtime.notification_text_material;
++    kf::render_camera_fixed = true;   // notifications float in front of the camera
+     record = notification_sprites.data();
+     if (record[KF_NOTIFICATION_TEXT_SPRITE].active == KF_SPRITE_VISIBLE) {
+         render_enqueue_sprite(&record[KF_NOTIFICATION_TEXT_SPRITE].sprite, 0, KF_SPRITE_DEPTH_CUE_NORMAL, &render_light_matrices[KF_RENDER_LIGHT_NOTIFICATION], &model, game_graphics_runtime.render_state.projection);
+@@ -166,9 +177,12 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+         }
+         record++;
+     }
++    kf::render_camera_fixed = false;
+ 
+     render_entities();
++    kf::render_camera_fixed = true;   // the held weapon moves with the camera
+     render_weapon();
++    kf::render_camera_fixed = false;
+     display_present_frame(game_graphics_runtime.display_state);
+     animation_cache_release_stale();
+     // World rendering also advances floor sprites and notifications. Pace every
+diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
+index 2193de4d9d70b95ead7cc2bd7626c4bf5103a554..17c731e74b098a9f096c4e8f5b1ea1ea76c3982d 100644
+--- a/src/game/render_map_cells.cpp
++++ b/src/game/render_map_cells.cpp
+@@ -3,6 +3,9 @@
+ #include <kf/game/graphics.h>
+ #include <kf/game/render.h>
+ #include <kf/lib/map_data.h>
++#include <kf/game/player_motion.h>
++#include <kf/platform/input.h>
++#include <cstdlib>
+ 
+ enum {
+     ILLUSION_STAFF_REMAP_PHASE_MASK = 3,
+@@ -88,7 +91,86 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+     kf::render_place_model(cell_matrix, game_graphics_runtime.render_state.view_matrix, position);
+     kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, game_graphics_runtime.render_state.quadrant_matrices[orientation], cell_matrix);
+     tmd_select_object_vertices(tmd_context(), object_index);
++    const KfPreciseMapTransform precise{&game_graphics_runtime.render_state.view_matrix,
++        &game_graphics_runtime.render_state.quadrant_matrices[orientation], position};
++    render_precise_map = &precise;
+     render_enqueue_map(object_index, &game_graphics_runtime.light_quadrant_matrices[orientation], &cell_matrix, game_graphics_runtime.render_state.projection);
++    render_precise_map = nullptr;
++}
++
++// PC extension: a widescreen picture shows more to each side than the original
++// 4:3 cone, and every map cell, object, actor and effect is culled through the
++// active cell window. Each of the 16 yaw windows covers 1/16 turn, so merging a
++// window with both neighbours covers any aspect the renderer allows. The cells
++// right around the camera are always included too: looking down past the
++// original limit shows the floor beside and behind the player.
++static const KfCellWindow *render_widen_cell_window(int yaw_index)
++{
++    constexpr int overflow_capacity = 1024;
++    static struct {
++        KfCellWindow window;
++        KfCellVisibility overflow[overflow_capacity];
++    } wide;
++    static_assert(offsetof(decltype(wide), overflow) == offsetof(KfCellWindow, cells) + sizeof(KfCellWindow::cells),
++                  "merged cells must continue past the original capacity");
++    const KfCellWindow *parts[] = {
++        &render_cell_windows[(yaw_index + KF_CELL_WINDOW_YAW_COUNT - 1) % KF_CELL_WINDOW_YAW_COUNT],
++        &render_cell_windows[yaw_index],
++        &render_cell_windows[(yaw_index + 1) % KF_CELL_WINDOW_YAW_COUNT]};
++    constexpr int around_camera = 2;
++    int min_dx = -around_camera, max_dx = around_camera, min_dz = -around_camera, max_dz = around_camera;
++    for (const auto *part : parts) {
++        min_dx = std::min(min_dx, -int(part->origin_x));
++        max_dx = std::max(max_dx, int(part->width) - 1 - int(part->origin_x));
++        min_dz = std::min(min_dz, -int(part->origin_z));
++        max_dz = std::max(max_dz, int(part->height) - 1 - int(part->origin_z));
++    }
++    const int width = max_dx - min_dx + 1, height = max_dz - min_dz + 1;
++    if (width * height > KF_CELL_WINDOW_CELL_CAPACITY + overflow_capacity)
++        return &render_cell_windows[yaw_index];
++    KfCellVisibility *cells = wide.window.cells;
++    std::fill_n(cells, width * height, KF_CELL_WINDOW_HIDDEN);
++    for (const auto *part : parts) {
++        for (int row = 0; row < part->height; ++row) {
++            for (int col = 0; col < part->width; ++col) {
++                const auto value = part->cells[row * part->width + col];
++                auto &merged = cells[(row - part->origin_z - min_dz) * width + (col - part->origin_x - min_dx)];
++                // NEAR > DISTANT > HIDDEN: keep the most detailed mesh any window asks for.
++                if (kf_enum_encode<int>(value) > kf_enum_encode<int>(merged))
++                    merged = value;
++            }
++        }
++    }
++    for (int dz = -around_camera; dz <= around_camera; ++dz)
++        for (int dx = -around_camera; dx <= around_camera; ++dx)
++            cells[(dz - min_dz) * width + (dx - min_dx)] = KF_CELL_WINDOW_NEAR;
++    wide.window.width = static_cast<u16>(width);
++    wide.window.height = static_cast<u16>(height);
++    wide.window.origin_x = static_cast<u16>(-min_dx);
++    wide.window.origin_z = static_cast<u16>(-min_dz);
++    return &wide.window;
++}
++
++// PC extension: the steep-pitch window (only reachable past the original look
++// limit) draws the full-detail mesh for the 7x7 cells around the camera instead
++// of 3x3, since looking down shows those cells up close.
++static const KfCellWindow *render_steep_cell_window()
++{
++    static KfCellWindow window;
++    static bool built;
++    if (!built) {
++        window = render_fixed_cell_window;
++        for (int row = 0; row < window.height; ++row) {
++            for (int col = 0; col < window.width; ++col) {
++                auto &cell = window.cells[row * window.width + col];
++                if (cell != KF_CELL_WINDOW_HIDDEN && std::abs(row - window.origin_z) <= 3
++                    && std::abs(col - window.origin_x) <= 3)
++                    cell = KF_CELL_WINDOW_NEAR;
++            }
++        }
++        built = true;
++    }
++    return &window;
+ }
+ 
+ void render_map_cells(void)
+@@ -103,10 +185,15 @@ void render_map_cells(void)
+     if ((u16)(game_graphics_runtime.render_state.view_rotation.vx + (KF_ANGLE_EIGHTH_TURN - 1))
+         >= 2 * KF_ANGLE_EIGHTH_TURN - 1) {
+         game_graphics_runtime.active_cell_window = &render_fixed_cell_window;
++        if (kf::player_pitch_limit > KF_PLAYER_CAMERA_PITCH_LIMIT)
++            game_graphics_runtime.active_cell_window = render_steep_cell_window();
+     } else {
+-        game_graphics_runtime.active_cell_window =
+-            &render_cell_windows[KF_CELL_WINDOW_YAW_COUNT - 1
+-                - (game_graphics_runtime.render_state.view_rotation.vy >> KF_CELL_WINDOW_YAW_SHIFT)];
++        const int yaw_index = KF_CELL_WINDOW_YAW_COUNT - 1
++            - (game_graphics_runtime.render_state.view_rotation.vy >> KF_CELL_WINDOW_YAW_SHIFT);
++        game_graphics_runtime.active_cell_window = &render_cell_windows[yaw_index];
++        if (kf::host_renderer()->logical_width > kf::render_width || kf::render_smoothing
++                || kf::player_pitch_limit > KF_PLAYER_CAMERA_PITCH_LIMIT)
++            game_graphics_runtime.active_cell_window = render_widen_cell_window(yaw_index);
+     }
+ 
+     row = (u16)game_graphics_runtime.render_state.view_cell.z - game_graphics_runtime.active_cell_window->origin_z;
+diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
+index 8b9bef2c78362830972d81e1f8dd50892f8ea95a..ddc6d744954a3cffe5d913144a0258e7f7f2962a 100644
+--- a/src/game/render_scene.cpp
++++ b/src/game/render_scene.cpp
+@@ -14,6 +14,22 @@ struct RenderCellOrigin {
+     u16 z;
+ };
+ 
++// PC extension (dynamic lighting): publishes a point light at a world position,
++// converted to camera space with the current view rotation.
++void render_publish_light(s32 x, s32 y, s32 z, float radius, float r, float g, float b, float flicker)
++{
++    const auto &view = game_graphics_runtime.render_state;
++    const s32 dx = x - view.view_position.vx, dy = y - view.view_position.vy, dz = z - view.view_position.vz;
++    constexpr s32 reach = 30000;
++    if (dx < -reach || dx > reach || dy < -reach || dy > reach || dz < -reach || dz > reach)
++        return;
++    MATRIX rotation = view.view_matrix;
++    rotation.t[0] = rotation.t[1] = rotation.t[2] = 0;
++    const VECTOR camera = kf::render_transform_point(rotation, VECTOR{dx, dy, dz}.narrowed());
++    kf::host_add_light(static_cast<float>(camera.vx), static_cast<float>(camera.vy), static_cast<float>(camera.vz),
++        radius, r, g, b, flicker, static_cast<u32>(x * 73856093) ^ static_cast<u32>(z * 19349663));
++}
++
+ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin origin)
+ {
+     // Narrow before checking bounds, including cells before the window origin.
+@@ -51,19 +67,31 @@ void render_entities(void)
+ 
+     tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
+ 
+-    for (auto &object : map_object_state.objects) {
++    // PC extension: tag each moving thing's faces and report its pose, so frame
++    // smoothing can move it between updates (tags: objects 1.., actors 256..,
++    // effects 512.., events 1024..).
++    auto tag = [](int base, std::size_t index, s32 x, s32 y, s32 z, s32 yaw, int yaw_sign) {
++        kf::render_entity_tag = static_cast<u16>(base + index);
++        kf::host_report_entity(kf::render_entity_tag, x, y, z, yaw, yaw_sign);
++    };
++    for (std::size_t i = 0; i < std::size(map_object_state.objects); ++i) {
++        auto &object = map_object_state.objects[i];
+         if (object.object_id < KF_MAP_OBJECT_RENDER_ID_END
+             && render_cell_is_visible(object.cell_x, object.cell_z, origin)) {
++            tag(1, i, object.position.vx, object.position.vy, object.position.vz, object.rotation.angles.y, 1);
+             render_map_object(&object);
+         }
+     }
+ 
+-    for (auto &actor : actor_state.actors) {
++    for (std::size_t i = 0; i < std::size(actor_state.actors); ++i) {
++        auto &actor = actor_state.actors[i];
+         if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
+             && render_actor_is_visible(actor, origin)) {
++            tag(256, i, actor.position.vx, actor.position.vy, actor.position.vz, actor.rotation.angles.y, -1);
+             render_actor(&actor);
+         }
+     }
++    kf::render_entity_tag = 0;
+ 
+     game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
+     game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
+@@ -77,23 +105,33 @@ void render_entities(void)
+                 item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
+             render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
+                 render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
++            // Floor items are the torch and brazier flames; light from the flame's middle.
++            constexpr s32 flame_centre_height = 480;
++            constexpr float torch_radius = 5200.0f;
++            render_publish_light(item.position_x, item.position_y - flame_centre_height, item.position_z,
++                torch_radius, 1.0f, 0.62f, 0.3f, 1.0f);
+         }
+     }
+ 
+-    for (auto &effect : effect_state.records) {
++    for (std::size_t i = 0; i < std::size(effect_state.records); ++i) {
++        auto &effect = effect_state.records[i];
+         if (effect.type == KF_EFFECT_SLOT_FREE || effect.render_id.model == KF_EFFECT_MODEL_NONE) {
+             continue;
+         }
+         if (render_cell_is_visible(
+                 effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
++            tag(512, i, effect.position.vx, effect.position.vy, effect.position.vz, 0, 0);
+             render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
+         }
+     }
+ 
+-    for (auto &event : map_runtime_state.events) {
++    for (std::size_t i = 0; i < std::size(map_runtime_state.events); ++i) {
++        auto &event = map_runtime_state.events[i];
+         if (event.state == KF_MAP_EVENT_ACTIVE
+             && render_cell_is_visible(event.cell_x, event.cell_z, origin)) {
++            tag(1024, i, event.reference_position.vx, event.reference_position.vy, event.reference_position.vz, 0, 0);
+             render_map_event(&event, &game_graphics_runtime.map_event_light_matrix);
+         }
+     }
++    kf::render_entity_tag = 0;
+ }
+diff --git a/src/game/resources.cpp b/src/game/resources.cpp
+index 8e065707c32786785389485077f4ff96ee7e1107..aa7dc812e060471f3f53fad02eebd9adb8adf801 100644
+--- a/src/game/resources.cpp
++++ b/src/game/resources.cpp
+@@ -14,6 +14,10 @@
+ #include <cstdio>
+ #include <cstring>
+ #include <new>
++#include <kf/game/menu.h>
++#include <kf/game/menu_text.h>
++#include <kf/renderer/renderer.h>
++#include <vector>
+ 
+ enum {
+     MAP_VARIANT_ASSET_BUFFER_BYTES = 0x5a000,
+diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
+index 55e408fef91848631f997130d27684f51b73e3a4..7a63b033858c290d14ffa7458d30a97e040e263c 100644
+--- a/src/game/save_system.cpp
++++ b/src/game/save_system.cpp
+@@ -418,12 +418,11 @@ KfSaveResult save_system_read_slot(kf::SaveSlot slot) {
+     }
+     // No live game state is touched until the complete file is decoded and validated.
+     save_state_apply(state);
++    kf::automap_load(slot);
+     return KF_SAVE_RESULT_OK;
+ }
+ 
+-KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
+-    if (!save_slot_valid(slot))
+-        return save_failure(kf::SaveFileResult::Invalid, true);
++static kf::SaveFileResult save_write_record(kf::SaveSlot slot, u32 &checksum) {
+     SavedGameState state{};
+     state.player = player_state;
+     state.world = map_runtime_state.world_state;
+@@ -431,27 +430,63 @@ KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
+     for (std::size_t i = 0; i < KF_MAGIC_RECORD_COUNT; ++i)
+         state.learned[i] = effect_state.magic.entries[i].learned;
+     if (!save_state_valid(state))
+-        return save_failure(kf::SaveFileResult::Invalid, true);
++        return kf::SaveFileResult::Invalid;
+     std::array<u8, kf::save_file_capacity> data;
+     SaveCodec payload{data.data(), data.size(), save_header_bytes, SaveCodecMode::Write, true};
+     save_state_fields(payload, state);
+     if (!payload.valid)
+-        return save_failure(kf::SaveFileResult::Invalid, true);
++        return kf::SaveFileResult::Invalid;
+     std::memcpy(data.data(), save_magic.data(), save_magic.size());
+     SaveCodec header{data.data(), save_header_bytes, sizeof save_magic, SaveCodecMode::Write, true};
+     u32 version = save_version;
+     u32 payload_size = payload.position - save_header_bytes;
+-    u32 checksum = save_checksum(data.data() + save_header_bytes, payload_size);
++    checksum = save_checksum(data.data() + save_header_bytes, payload_size);
+     save_field<u32>(header, version);
+     save_field<u32>(header, payload_size);
+     save_field<u32>(header, checksum);
+-    const auto result = kf::save_file_write(slot, data.data(), payload.position);
++    return kf::save_file_write(slot, data.data(), payload.position);
++}
++
++KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
++    if (!save_slot_valid(slot))
++        return save_failure(kf::SaveFileResult::Invalid, true);
++    u32 checksum = 0;
++    const auto result = save_write_record(slot, checksum);
+     if (result != kf::SaveFileResult::Ok)
+         return save_failure(result, true);
+     save_catalog[kf_enum_encode<s16>(slot) - 1] = {true, checksum};
++    kf::automap_save(slot);
+     return KF_SAVE_RESULT_OK;
+ }
+ 
++// PC extension: quick save/load (F2/F4) through the same record format, in its
++// own file. The caller persists the current floor first and reloads it after.
++bool save_system_quick_write(void) {
++    u32 checksum = 0;
++    const auto result = save_write_record(kf::SaveSlot::Quick, checksum);
++    if (result != kf::SaveFileResult::Ok)
++        std::printf("[quicksave] save failed (%d)\n", static_cast<int>(result));
++    if (result == kf::SaveFileResult::Ok)
++        kf::automap_save(kf::SaveSlot::Quick);
++    return result == kf::SaveFileResult::Ok;
++}
++
++bool save_system_quick_read(void) {
++    SavedGameState state{};
++    u32 checksum = 0;
++    const auto result = save_read_record(kf::SaveSlot::Quick, state, checksum);
++    if (result != kf::SaveFileResult::Ok) {
++        if (result == kf::SaveFileResult::Missing)
++            std::printf("[quicksave] no quick save yet (press F2)\n");
++        else
++            std::printf("[quicksave] load failed (%d)\n", static_cast<int>(result));
++        return false;
++    }
++    save_state_apply(state);
++    kf::automap_load(kf::SaveSlot::Quick);
++    return true;
++}
++
+ void menu_play_input_sound(KfMenuSoundCue cue)
+ {
+     SoundRef sound;
