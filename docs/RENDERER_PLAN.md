@@ -91,6 +91,15 @@ All four PS1 blend modes are fixed-function blending, so no backend needs to
 read the screen back: ½B+½F (constant factor 0.5), B+F (additive), B−F
 (reverse subtract), B+¼F (constant factor 0.25).
 
+Decided 2026-10-23: Classic blends with the hardware too, into a 15-bit target
+with the source cut to 5 bits first, though the GL renderer copies the screen
+per translucent triangle to match the PS1's truncation exactly. The rest is a
+rounding difference of at most one 15-bit step, and a readback path would be
+Vulkan-only (the 3DS cannot read back) and slow. Once Classic draws, `KF_CAPTURE`
+of both builds at the same place counts the differing pixels in translucent
+scenes, fades and the opening; only a case that builds up (a fade or a
+retained frame blended repeatedly) gets its own fix.
+
 ## Carrying over Verdite's picture
 
 Most of Verdite's picture work existed to recover what the GPU packets threw
@@ -136,6 +145,11 @@ What carries over is decisions and references, not code:
    values. Batched from the start (see [RUNTIME.md](RUNTIME.md)). The GL
    renderer keeps drawing until Vulkan reaches Classic (Vulkan chosen with
    `KF_RENDERER=vulkan` until then); then GL is deleted.
+   2026-10-23: `port/renderer/vulkan/` draws Classic and the Clean options
+   but supersampling and mipmaps, offscreen-tested in `kf_vulkan_tests` on RADV
+   and llvmpipe with validation on; not yet called by the game, and no overlay.
+   It needs dynamic rendering (`VK_KHR_dynamic_rendering`); render-pass
+   objects for devices without it are not written.
 3. A second backend early, before the frontend sets in Vulkan-shaped habits.
    deko3d is the more useful second one; the 3DS is so limited it would bend
    the frontend.

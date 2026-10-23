@@ -104,3 +104,4 @@ Checks turned off in `.clang-tidy`, and why:
 | `bugprone-narrowing-conversions` | the game's math narrows on purpose (`s32` to `s16` and so on) |
 | `performance-enum-size` | enums match the game's sizes |
 | game code also: `bugprone-implicit-widening-of-multiplication-result`, `bugprone-reserved-identifier` | the decomp's arithmetic and names |
+| LeakSanitizer in the Vulkan tests (`detect_leaks=0`; ASan and UBSan stay on) | the host's Vulkan drivers keep one-time allocations, reported from modules already unloaded, so they cannot be suppressed by name; a Vulkan object we leak is still a validation error at `vkDestroyDevice`, which fails the test |

@@ -12,6 +12,7 @@
 #include <kf/renderer/frontend.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -76,6 +77,19 @@ struct FrameView {
     std::array<float, 9> camera_to_world;   // the shown camera, row-major (light occlusion)
     std::array<float, 3> camera_world;      // world units
 };
+
+// Where the picture goes in a window: letterboxed to the target's aspect, 4:3
+// stretched pixels like a TV.
+inline PresentRect letterbox(int logical_width, int window_width, int window_height) {
+    const double aspect = static_cast<double>(logical_width) / render_width * 4.0 / 3.0;
+    int width = window_width;
+    int height = static_cast<int>(std::lround(window_width / aspect));
+    if (height > window_height) {
+        height = window_height;
+        width = static_cast<int>(std::lround(window_height * aspect));
+    }
+    return {(window_width - width) / 2, (window_height - height) / 2, width, height};
+}
 
 class RenderBackend {
 public:

@@ -218,12 +218,43 @@ add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/textu
 target_link_libraries(kf_frontend PUBLIC kf_support)
 target_compile_options(kf_frontend PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+# The Vulkan backend: Vulkan 1.1 with dynamic rendering, through volk, VMA and vk-bootstrap. Its GLSL
+# shaders are compiled to SPIR-V and embedded as arrays (generated/shaders/<name>.h).
+find_package(VulkanHeaders CONFIG REQUIRED)
+find_package(volk CONFIG REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(vk-bootstrap CONFIG REQUIRED)
+find_program(KF_GLSLANG glslangValidator REQUIRED)
+set(KF_SHADER_DIR ${CMAKE_SOURCE_DIR}/port/renderer/vulkan/shaders)
+set(KF_SHADER_OUT ${CMAKE_BINARY_DIR}/generated/shaders)
+set(KF_SHADER_HEADERS)
+foreach(shader world.vert world.frag)
+  string(REPLACE "." "_" symbol ${shader})
+  add_custom_command(OUTPUT ${KF_SHADER_OUT}/${symbol}.h
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${KF_SHADER_OUT}
+    COMMAND ${KF_GLSLANG} -V --target-env vulkan1.1 --vn ${symbol} -o ${KF_SHADER_OUT}/${symbol}.h ${KF_SHADER_DIR}/${shader}
+    DEPENDS ${KF_SHADER_DIR}/${shader} ${KF_SHADER_DIR}/draw.glsl VERBATIM)
+  list(APPEND KF_SHADER_HEADERS ${KF_SHADER_OUT}/${symbol}.h)
+endforeach()
+# third-party code: built with its own warnings, not ours
+add_library(kf_vulkan_libraries STATIC port/renderer/vulkan/vulkan_libraries.cpp)
+target_compile_definitions(kf_vulkan_libraries PUBLIC VK_NO_PROTOTYPES VMA_STATIC_VULKAN_FUNCTIONS=0
+  VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
+target_link_libraries(kf_vulkan_libraries PUBLIC Vulkan::Headers volk::volk GPUOpen::VulkanMemoryAllocator
+  vk-bootstrap::vk-bootstrap)
+add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/renderer/vulkan/vulkan_device.cpp
+  port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_resources.cpp
+  port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})
+target_include_directories(kf_vulkan PUBLIC ${KF_INCLUDES} PRIVATE ${KF_SHADER_OUT})
+target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries SDL3::SDL3)
+target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp
   port/renderer/textures.cpp port/renderer/lighting.cpp port/renderer/projection.cpp
   port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES})
-target_link_libraries(kf_host PUBLIC kf_support kf_frontend SDL3::SDL3 kf_ext verdite)
+target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)
 if(WIN32)
   target_link_libraries(kf_host PUBLIC kf_glshim)
 endif()
@@ -251,4 +282,23 @@ if(doctest_FOUND)
   target_link_libraries(kf_port_tests PRIVATE kf_frontend doctest::doctest)
   target_compile_options(kf_port_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME port COMMAND kf_port_tests)
+  # The Vulkan backend on a real GPU, offscreen, validation layers on: any validation error fails it.
+  # It loads the host's Vulkan loader and drivers, as scripts/run-linux.sh does; 77: no device.
+  add_executable(kf_vulkan_tests port/tests/vulkan.cpp)
+  target_link_libraries(kf_vulkan_tests PRIVATE kf_vulkan kf_support doctest::doctest)
+  target_compile_options(kf_vulkan_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  set(KF_HOST_LIBRARY_PATH "/usr/lib64" CACHE PATH "Where the host's libvulkan.so.1 is, for the Vulkan tests")
+  foreach(device gpu llvmpipe)
+    add_test(NAME vulkan_${device} COMMAND kf_vulkan_tests)
+    # host layers that insert themselves (frame generators, overlays) stay out of the test
+    # No leak detection here (code-style.md): the host drivers' own allocations are reported from
+    # modules already unloaded. Vulkan objects we leak are validation errors, which fail the test.
+    set(environment KF_VK_VALIDATION=1 LD_LIBRARY_PATH=${KF_HOST_LIBRARY_PATH} VK_LOADER_LAYERS_DISABLE=~implicit~
+      ASAN_OPTIONS=detect_leaks=0)
+    if(device STREQUAL llvmpipe)
+      list(APPEND environment KF_VK_DEVICE=llvmpipe)
+    endif()
+    set_tests_properties(vulkan_${device} PROPERTIES ENVIRONMENT "${environment}" SKIP_RETURN_CODE 77
+      FAIL_REGULAR_EXPRESSION "\\[vulkan\\] error")
+  endforeach()
 endif()

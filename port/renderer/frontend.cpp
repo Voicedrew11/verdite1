@@ -5,7 +5,6 @@
 #include "texture_layers.h"
 #include "view_smoothing.h"
 
-#include <cmath>
 #include <cstdio>
 #include <utility>
 #include <vector>
@@ -97,15 +96,7 @@ bool renderer_set_target(int logical_width, int scale) {
 int renderer_extra_columns() { return (frontend.logical_width - render_width) / 2; }
 
 PresentRect renderer_present_rect(int window_width, int window_height) {
-    // Letterboxed to the target's aspect: 4:3 stretched pixels, like a TV.
-    const double aspect = static_cast<double>(frontend.logical_width) / render_width * 4.0 / 3.0;
-    int width = window_width;
-    int height = static_cast<int>(std::lround(window_width / aspect));
-    if (height > window_height) {
-        height = window_height;
-        width = static_cast<int>(std::lround(window_height * aspect));
-    }
-    return {(window_width - width) / 2, (window_height - height) / 2, width, height};
+    return letterbox(frontend.logical_width, window_width, window_height);
 }
 
 TextureStore &renderer_textures() { return frontend.textures; }
