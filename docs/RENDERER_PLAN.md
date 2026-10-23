@@ -95,10 +95,9 @@ Decided 2026-10-23: Classic blends with the hardware too, into a 15-bit target
 with the source cut to 5 bits first, though the GL renderer copies the screen
 per translucent triangle to match the PS1's truncation exactly. The rest is a
 rounding difference of at most one 15-bit step, and a readback path would be
-Vulkan-only (the 3DS cannot read back) and slow. Once Classic draws, `KF_CAPTURE`
-of both builds at the same place counts the differing pixels in translucent
-scenes, fades and the opening; only a case that builds up (a fade or a
-retained frame blended repeatedly) gets its own fix.
+Vulkan-only (the 3DS cannot read back) and slow. If a case shows in play (a
+fade or a retained frame blended repeatedly that settles off), it gets its own
+fix.
 
 ## Carrying over Verdite's picture
 
@@ -122,14 +121,13 @@ work is rendering, not reverse engineering.
 What carries over is decisions and references, not code:
 
 - **The judged values** (decided 2026-10-23: the starting defaults, judged
-  again side by side once Enhanced draws, since other shaders made them): the `MANUAL_PASS` verdicts on `main` and the defaults
+  again once Enhanced draws, since other shaders made them): the `MANUAL_PASS` verdicts on `main` and the defaults
   set from them (fog mode, AO strength and quality, fade band, render
   distance) become the defaults here, on by default.
 - **A faithful Classic**: with enhancements off the picture matches the PS1.
-  The recompiled builds, with RecompOne's software GPU, are the ground truth.
-- **Side by side**: drive both engines to the same save, position and angle,
-  so the user can compare quickly. An agent measures what counters can; the
-  picture is the user's to judge.
+  Decided 2026-10-23: judged by the user's eye and by playtesting, not by
+  comparing captures with the recompiled builds. The agent's checks are the
+  offscreen pixel tests of the backend's own arithmetic (`kf_vulkan_tests`).
 
 ## Order
 
@@ -140,11 +138,11 @@ What carries over is decisions and references, not code:
    displayed frame; VSync is a picture option the backend turns into a present
    mode; `renderer_capture` keeps `KF_CAPTURE` working on every backend.
    Shaders are GLSL, compiled to SPIR-V with glslang at build time.
-2. The Vulkan backend on Linux, validation layers on: reach Classic (checked
-   against the recompiled Verdite1), then Clean, then Enhanced at the judged
-   values. Batched from the start (see [RUNTIME.md](RUNTIME.md)). The GL
-   renderer keeps drawing until Vulkan reaches Classic (Vulkan chosen with
-   `KF_RENDERER=vulkan` until then); then GL is deleted.
+2. The Vulkan backend on Linux, validation layers on: reach Classic (judged
+   in play), then Clean, then Enhanced at the judged values. Batched from the
+   start (see [RUNTIME.md](RUNTIME.md)). The GL renderer keeps drawing until
+   Vulkan reaches Classic, chosen by the Renderer setting (Display, applies on
+   restart; `KF_RENDERER=gl|vulkan` overrides it); then GL is deleted.
    2026-10-23: `port/renderer/vulkan/` draws Classic and the Clean options
    but supersampling and mipmaps, offscreen-tested in `kf_vulkan_tests` on RADV
    and llvmpipe with validation on; not yet called by the game, and no overlay.

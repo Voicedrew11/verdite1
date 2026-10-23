@@ -3,6 +3,11 @@
 
 Fails if the game does not start, a command fails, the player does not move, the game does not
 exit cleanly, or a sanitizer reports anything. Usage: scripts/smoke.py BINARY [--data data/en]
+[--renderer vulkan]
+
+With --renderer vulkan it draws for real, on SDL's offscreen video driver (no window) with dummy
+audio and the validation layers on, and also fails on a validation error or a fall back to GL.
+It loads the host's Vulkan loader and drivers from --host-libraries, as scripts/run-linux.sh does.
 """
 
 import argparse
@@ -68,14 +73,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("binary")
     parser.add_argument("--data", default=str(ROOT / "data/en"))
+    parser.add_argument("--renderer", choices=["headless", "vulkan"], default="headless")
+    parser.add_argument("--host-libraries", default="/usr/lib64")
     args = parser.parse_args()
 
     env = dict(os.environ, KF_SHELL=str(PORT),
                UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
                ASAN_OPTIONS="abort_on_error=0:detect_leaks=1")
+    mode = ["--headless"]
+    if args.renderer == "vulkan":
+        mode = []
+        # The host drivers' own allocations are reported from unloaded modules (code-style.md).
+        env.update(SDL_VIDEO_DRIVER="offscreen", SDL_AUDIO_DRIVER="dummy", KF_RENDERER="vulkan",
+                   KF_VK_VALIDATION="1", KF_TEST_NO_PAUSE="1", LD_LIBRARY_PATH=args.host_libraries,
+                   VK_LOADER_LAYERS_DISABLE="~implicit~", ASAN_OPTIONS="abort_on_error=0:detect_leaks=0")
     with tempfile.TemporaryDirectory() as saves:
         game = subprocess.Popen(
-            [args.binary, "--data", args.data, "--saves", saves, "--headless", "--turbo", "--skip-intro"],
+            [args.binary, "--data", args.data, "--saves", saves, *mode, "--turbo", "--skip-intro"],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             problem = drive()
@@ -94,11 +108,14 @@ def main():
         problem = f"the game exited with {game.returncode}"
     if problem is None and sanitizer:
         problem = "a sanitizer reported:\n" + "\n".join(sanitizer)
+    vulkan = [row for row in output.splitlines() if "[vulkan] error" in row or row.startswith("[renderer]")]
+    if problem is None and vulkan:
+        problem = "Vulkan reported:\n" + "\n".join(vulkan)
     if problem:
         print(output[-4000:])
         print(f"smoke: FAILED: {problem}")
         return 1
-    print("smoke: booted, walked, quit")
+    print(f"smoke: booted, walked, quit ({args.renderer})")
     return 0
 
 

@@ -129,7 +129,7 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns) {
 }
 
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look, int window_width, int window_height,
-                      const ImDrawData *overlay) {
+                      ImDrawData *overlay) {
     if (!frontend.backend)
         return;
     const PictureOptions options = drawn_options();
@@ -147,5 +147,14 @@ std::optional<Image> renderer_capture() {
     if (!frontend.backend)
         return std::nullopt;
     return frontend.backend->capture();
+}
+
+bool renderer_restore(const Image &picture) { return frontend.backend && frontend.backend->restore(picture); }
+
+bool renderer_overlay_start() { return frontend.backend && frontend.backend->start_overlay(); }
+
+void renderer_overlay_stop() {
+    if (frontend.backend)
+        frontend.backend->stop_overlay();
 }
 } // namespace kf

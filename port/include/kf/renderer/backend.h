@@ -111,9 +111,16 @@ public:
     // strength and this frame's flicker applied. A window of size 0
     // (minimised) draws nothing.
     virtual void present(const FrameView &view, std::span<const RenderLight> lights,
-                         int window_width, int window_height, const ImDrawData *overlay) = 0;
+                         int window_width, int window_height, ImDrawData *overlay) = 0;
     // The game's picture as last drawn (renderer_capture). The null backend has none.
     virtual std::optional<Image> capture() = 0;
+    // Puts a capture back as the picture; the uploaded frame is not drawn over it
+    // until the next upload. False if it is not the target's size.
+    [[nodiscard]] virtual bool restore(const Image &picture) = 0;
+    // Dear ImGui's renderer for this API, once its context exists; present then
+    // draws the overlay it is given. Stopped before the context is destroyed.
+    [[nodiscard]] virtual bool start_overlay() = 0;
+    virtual void stop_overlay() = 0;
 };
 
 struct BackendStart {

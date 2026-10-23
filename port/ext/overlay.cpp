@@ -8,6 +8,7 @@
 #include <kf/platform/host.h>
 #include <kf/platform/language_runtime.h>
 #include <kf/platform/translation_ppf.h>
+#include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
 #include <algorithm>
 #include <cmath>
@@ -21,6 +22,7 @@ namespace {
 SDL_Window *main_window;
 bool running;
 bool imgui;   // false when headless
+OverlayRenderer overlay_renderer = OverlayRenderer::None;
 bool open;
 bool show_settings, show_mods = true, show_console, show_about;
 bool console_autoscroll = true;
@@ -256,6 +258,16 @@ void draw_settings_window() {
             changed = true;
         }
         changed |= ImGui::Checkbox("Show FPS", &s.show_fps);
+        const char *renderer_values[] = {"opengl", "vulkan"};
+        const char *renderer_labels[] = {"OpenGL", "Vulkan (in progress)"};
+        int renderer_index = s.renderer == "vulkan" ? 1 : 0;
+        if (ImGui::Combo("Renderer", &renderer_index, renderer_labels, 2)) {
+            s.renderer = renderer_values[renderer_index];
+            changed = true;
+        }
+        ImGui::SetItemTooltip("Applies when the game is restarted. Vulkan draws the original picture\nand the Clean options; dynamic lights, shadows, AO, glow and FXAA are\nnot in it yet. If Vulkan cannot start, the game draws with OpenGL.");
+        ImGui::SameLine();
+        ImGui::TextDisabled("now: %s", frontend_draws_overlay() ? "Vulkan" : "OpenGL");
         ImGui::BeginDisabled(s.classic);   // Classic mode overrides the rest
         const int rates[] = {20, 0, 60, 120, 144, 165, 240, -1};
         const char *rate_labels[] = {"20 fps (original)", "Match display refresh", "60 fps", "120 fps", "144 fps",
@@ -290,8 +302,8 @@ void draw_settings_window() {
             apply_render_settings();
             changed = true;
         }
-        const Renderer *renderer = host_renderer();
-        ImGui::TextDisabled("Rendering %dx%d", renderer->logical_width * renderer->scale, render_height * renderer->scale);
+        const RenderTarget target = applied_render_target();
+        ImGui::TextDisabled("Rendering %dx%d", target.columns * target.scale, render_height * target.scale);
         ImGui::Spacing();
         ImGui::SeparatorText("PlayStation look");
         // One switch for the whole effect; the parts stay adjustable below.
@@ -600,24 +612,27 @@ ViewRect game_view() {
     int width = 0, height = 0;
     if (main_window)
         SDL_GetWindowSizeInPixels(main_window, &width, &height);
-    const auto rect = renderer_present_rect(host_renderer(), width, height);
+    const auto rect = renderer_present_rect(width, height);
     return {static_cast<float>(rect.x), static_cast<float>(rect.y), static_cast<float>(rect.width),
             static_cast<float>(rect.height)};
 }
 
 ViewRect original_view() {
     const auto whole = game_view();
-    const Renderer *renderer = host_renderer();
-    const float column = whole.w / static_cast<float>(renderer->logical_width);
-    return {whole.x + column * static_cast<float>(renderer_extra_columns(renderer)), whole.y,
+    const int extra = renderer_extra_columns();
+    const float column = whole.w / static_cast<float>(render_width + 2 * extra);
+    return {whole.x + column * static_cast<float>(extra), whole.y,
             column * static_cast<float>(render_width), whole.h};
 }
 
-bool start(SDL_Window *handle, SDL_GLContext context) {
+bool frontend_draws_overlay() { return overlay_renderer == OverlayRenderer::Frontend; }
+
+bool start(SDL_Window *handle, OverlayRenderer renderer, SDL_GLContext context) {
     main_window = handle;
     settings_load();
-    // Headless: settings and mods, no Dear ImGui (it needs the GL context).
-    imgui = context != nullptr;
+    // Headless: settings and mods, no Dear ImGui (nothing draws it).
+    overlay_renderer = renderer;
+    imgui = renderer != OverlayRenderer::None;
     if (!imgui) {
         running = true;
         apply_audio_settings();
@@ -634,7 +649,10 @@ bool start(SDL_Window *handle, SDL_GLContext context) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     load_font();
     apply_style();
-    if (!ImGui_ImplSDL3_InitForOpenGL(handle, context) || !ImGui_ImplOpenGL3_Init("#version 300 es")) {
+    const bool started = renderer == OverlayRenderer::OpenGL
+        ? ImGui_ImplSDL3_InitForOpenGL(handle, context) && ImGui_ImplOpenGL3_Init("#version 300 es")
+        : ImGui_ImplSDL3_InitForVulkan(handle) && renderer_overlay_start();
+    if (!started) {
         std::printf("[overlay] cannot initialize Dear ImGui\n");
         return false;
     }
@@ -659,7 +677,10 @@ void shutdown() {
     running = false;
     if (!imgui)
         return;
-    ImGui_ImplOpenGL3_Shutdown();
+    if (overlay_renderer == OverlayRenderer::OpenGL)
+        ImGui_ImplOpenGL3_Shutdown();
+    else
+        renderer_overlay_stop();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 }
@@ -734,9 +755,9 @@ static void draw_message(int width, int height) {
     draw->AddText(font, size, at, IM_COL32(255, 235, 170, static_cast<int>(255 * alpha)), message_text.c_str());
 }
 
-void draw(int width, int height) {
+ImDrawData *build_overlay(int width, int height) {
     if (!running || !imgui || width <= 0 || height <= 0)
-        return;
+        return nullptr;
     ++fps_frames;
     const Uint64 now = SDL_GetTicks();
     if (now - fps_started >= 1000) {
@@ -744,7 +765,9 @@ void draw(int width, int height) {
         fps_frames = 0;
         fps_started = now;
     }
-    ImGui_ImplOpenGL3_NewFrame();
+    // The Vulkan renderer's NewFrame only checks that it was started.
+    if (overlay_renderer == OverlayRenderer::OpenGL)
+        ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     // KF_TEST_SETTINGS=<page>: opens Settings on that page, for captures.
@@ -780,6 +803,11 @@ void draw(int width, int height) {
             draw_about_window();
     }
     ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    return ImGui::GetDrawData();
+}
+
+void draw(int width, int height) {
+    if (ImDrawData *data = build_overlay(width, height))
+        ImGui_ImplOpenGL3_RenderDrawData(data);
 }
 }

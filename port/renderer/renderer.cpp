@@ -1,3 +1,4 @@
+#include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
 
 #include <GLES3/gl3.h>
@@ -843,7 +844,7 @@ bool renderer_configure(Renderer *renderer, int logical_width, int scale) {
 }
 
 void renderer_release(Renderer *renderer) {
-    texture_store_release(&renderer->textures);
+    texture_store_release(&renderer_textures());
     if (render_headless) {
         *renderer = {};
         return;
@@ -1324,7 +1325,7 @@ bool renderer_draw_faces(Renderer *renderer, const FaceList *faces, int width, i
             const bool textured = face.material.kind == SurfaceKind::Texture;
             if (textured)
                 preceding_blend = face.material.blend;
-            textures[i] = textured ? texture_store_resolve(&renderer->textures, face.material.source)
+            textures[i] = textured ? texture_store_resolve(&renderer_textures(), face.material.source)
                                    : renderer->white_texture;
             if (!textures[i]) {
                 good = false;

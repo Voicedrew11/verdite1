@@ -33,6 +33,7 @@ public:
     bool present(const SwapchainImage &image);
     VkFormat format() const { return format_; }
     VkExtent2D extent() const { return extent_; }
+    uint32_t image_count() const { return static_cast<uint32_t>(images_.size()); }
 
 private:
     void release_images();

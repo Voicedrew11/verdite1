@@ -71,6 +71,7 @@ struct Settings {
     float ui_scale = 1.0f;
     bool item_descriptions = true;  // what an item does, in the game's item menus
     std::string ui_font;        // empty: first available system font
+    std::string renderer = "opengl";   // "opengl" or "vulkan"; applies on restart
 };
 Settings &settings();
 // The settings in effect: the player's, or with Classic mode on, the player's
@@ -85,6 +86,11 @@ void apply_display_settings();
 void apply_audio_settings();
 void apply_control_settings();
 void apply_render_settings();   // also on window resize
+// The render target apply_render_settings last set: logical columns and scale.
+struct RenderTarget { int columns, scale; };
+RenderTarget applied_render_target();
+// Whether the overlay is drawn by the frontend (Vulkan) rather than GL.
+bool frontend_draws_overlay();
 
 // What an item does (effects only; the menus show equipment stats), or empty.
 std::string item_description(std::uint8_t id);

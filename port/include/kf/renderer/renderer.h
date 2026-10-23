@@ -101,7 +101,6 @@ inline constexpr int render_light_capacity = 32;
 struct Renderer {
     u32 program, vao, buffer, framebuffer, color_texture, blend_texture, depth_buffer;
     TextureId white_texture;
-    TextureStore textures;
     // PC extension: the target is logical_width x render_height logical pixels
     // (the original 320 columns centred, extra columns either side for widescreen),
     // each drawn as scale x scale physical pixels.

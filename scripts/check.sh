@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Before a commit: build, lint our code, run the tests, then the sanitizer build's tests and a
-# smoke run (boot headless, walk, quit) under ASan and UBSan. Stops at the first failure.
+# smoke run (boot headless, walk, quit; then the same drawing with Vulkan offscreen) under ASan and
+# UBSan. Stops at the first failure.
 #   scripts/check.sh [--quick] [--base REF]
 #   --quick     skip the sanitizer build
 #   --base REF  lint port/ on the lines changed since REF (default HEAD: the uncommitted ones)
@@ -34,6 +35,7 @@ python3 scripts/lint.py --base "$base"
 step "smoke"
 if [ -d data/en ]; then
     python3 scripts/smoke.py build/linux/kings-field
+    python3 scripts/smoke.py build/linux/kings-field --renderer vulkan
 else
     echo "skipped: no data/en"
 fi
@@ -50,6 +52,7 @@ ctest --preset sanitize
 step "sanitize smoke"
 if [ -d data/en ]; then
     python3 scripts/smoke.py build/sanitize/kings-field
+    python3 scripts/smoke.py build/sanitize/kings-field --renderer vulkan
 else
     echo "skipped: no data/en"
 fi

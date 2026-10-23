@@ -6,13 +6,20 @@
 #include <cstdint>
 #include <string>
 
+struct ImDrawData;
+
 namespace kf::ext {
+// Who draws Dear ImGui: nobody (headless), the GL renderer, or the renderer
+// frontend's backend (Vulkan).
+enum class OverlayRenderer : std::uint8_t { None, OpenGL, Frontend };
 // Captures stdout/stderr into the console panel. Call first thing in main.
 void console_start();
 void console_line(const std::string &line);
 
-// After the GL context and renderer exist.
-bool start(SDL_Window *window, SDL_GLContext context);
+// The Renderer setting ("opengl" or "vulkan"), read before the window exists.
+std::string renderer_preference();
+// After the window and renderer exist; context is the GL one, if GL draws.
+bool start(SDL_Window *window, OverlayRenderer renderer, SDL_GLContext context);
 void shutdown();
 
 // Returns true when the overlay consumed the event (the game must not see it).
@@ -30,8 +37,10 @@ bool wants_cursor();
 void poll();
 // Once per game-presented frame, before draw().
 void game_frame(int input_context);
-// Draws the overlay and mod HUDs over the frame about to be swapped.
+// Draws the overlay and mod HUDs over the frame about to be swapped (GL).
 void draw(int width, int height);
+// The overlay and mod HUDs for this frame, for the frontend to draw; null if none.
+ImDrawData *build_overlay(int width, int height);
 // A brief centred message, such as "Quick saved".
 void show_message(const std::string &text);
 }

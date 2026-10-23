@@ -1324,7 +1324,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..e14c22a47e9a1fb6295d5a943808873b
      animation_cache_release_stale();
      // World rendering also advances floor sprites and notifications. Pace every
 diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
-index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..317bb88f53b5546364545f3b508d50161837269b 100644
+index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb71b6aa71e 100644
 --- a/src/game/render_map_cells.cpp
 +++ b/src/game/render_map_cells.cpp
 @@ -3,6 +3,9 @@
@@ -1437,7 +1437,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..317bb88f53b5546364545f3b508d5016
 +        const int yaw_index = KF_CELL_WINDOW_YAW_COUNT - 1
 +            - (game_graphics_runtime.render_state.view_rotation.vy >> KF_CELL_WINDOW_YAW_SHIFT);
 +        game_graphics_runtime.active_cell_window = &render_cell_windows[yaw_index];
-+        if (kf::host_renderer()->logical_width > kf::render_width || kf::render_smoothing
++        if (kf::host_extra_columns() > 0 || kf::render_smoothing
 +                || kf::player_pitch_limit > KF_PLAYER_CAMERA_PITCH_LIMIT)
 +            game_graphics_runtime.active_cell_window = render_widen_cell_window(yaw_index);
      }
@@ -1541,7 +1541,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..b35231117128b2dea3de7814a2edda21
 +    kf::render_entity_tag = 0;
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..9e37473917813b6ab1b26407308327e75a6dceb6 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..aa22d1044416dd9cfa97e92d7553f3b83cee8eda 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
 @@ -2,6 +2,8 @@
@@ -1567,8 +1567,17 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..9e37473917813b6ab1b26407308327e7
  
  enum {
      MAP_VARIANT_ASSET_BUFFER_BYTES = 0x5a000,
+@@ -61,7 +65,7 @@ bool show_text_language(kf::Language language)
+         return false;
+     const auto &before = language_images[static_cast<std::size_t>(previous)];
+     const auto &after = language_images[static_cast<std::size_t>(language)];
+-    if (!kf::texture_store_translate_tim(&kf::host_renderer()->textures,
++    if (!kf::texture_store_translate_tim(&kf::host_textures(),
+             before.data(), before.size(), after.data(), after.size()))
+         kf::host_fail("Cannot replace language graphics.");
+     displayed_language = language;
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index d3474864ec0f4578414b005ecaa89eae266de167..c405d02ec9ab554ba98849fdb02ab441d2bb5604 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..ee5ea7b6559916d4af0821ec39697fdfd352c3e1 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
 @@ -454,12 +454,11 @@ KfSaveResult save_system_read_slot(kf::SaveSlot slot) {
@@ -1654,3 +1663,21 @@ index d3474864ec0f4578414b005ecaa89eae266de167..c405d02ec9ab554ba98849fdb02ab441
  void menu_play_input_sound(KfMenuSoundCue cue)
  {
      SoundRef sound;
+@@ -542,7 +577,7 @@ void screen_show_image_until_input(const char *path)
+     const auto alternate = comparison_image_read(path, game_graphics_runtime.display_state.asset_load_capacity);
+     // Transparent glyph pixels need the original backdrop when replacing a page.
+     kf::Image backdrop{};
+-    if (!alternate.empty() && !kf::renderer_capture_frame(kf::host_renderer(), backdrop))
++    if (!alternate.empty() && !kf::host_capture_frame(backdrop))
+         kf::host_fail("Cannot capture the dialogue background.");
+     bool showing_alternate = false;
+     bool reported_unavailable = false;
+@@ -552,7 +587,7 @@ void screen_show_image_until_input(const char *path)
+         const bool compare = kf::host_action_held(kf::Action::compare_language);
+         const bool show_alternate = compare && !alternate.empty();
+         if (show_alternate != showing_alternate) {
+-            if (!kf::renderer_restore_frame(kf::host_renderer(), backdrop))
++            if (!kf::host_restore_frame(backdrop))
+                 kf::host_fail("Cannot restore the dialogue background.");
+             if (show_alternate)
+                 tim_upload_images(alternate.data(), alternate.size());

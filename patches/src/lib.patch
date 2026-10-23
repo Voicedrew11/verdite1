@@ -1,3 +1,15 @@
+diff --git a/src/lib/resources.cpp b/src/lib/resources.cpp
+index 9e34bd861ab6154f12997ce11056378ecc251c79..1565099a2c249d686babd3705c6e7edb96e511c9 100644
+--- a/src/lib/resources.cpp
++++ b/src/lib/resources.cpp
+@@ -65,6 +65,6 @@ void cell_windows_load(KfResourceChunk chunk,
+ 
+ void tim_upload_images(const u8 *tim_data, std::size_t size)
+ {
+-    if (!kf::texture_store_upload_tim(&kf::host_renderer()->textures, tim_data, size))
++    if (!kf::texture_store_upload_tim(&kf::host_textures(), tim_data, size))
+         kf::host_fail("Invalid TIM resource or texture allocation failure.");
+ }
 diff --git a/src/lib/tmd.cpp b/src/lib/tmd.cpp
 index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..22b0eba83c47c68cac6f1c28fc70b4565393629d 100644
 --- a/src/lib/tmd.cpp

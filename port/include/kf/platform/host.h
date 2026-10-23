@@ -11,6 +11,9 @@ struct FaceList;
 struct DrawFace;
 struct FrameStyle;
 struct Projection;
+struct TextureStore;
+struct PictureOptions;
+struct Image;
 enum class AppMode : u8 { Opening, Gameplay, Ending };
 struct UpdatePacer {
     std::uint64_t deadline_ns;
@@ -44,6 +47,17 @@ void host_wait_frame();
 UpdatePacer host_begin_update_pacer(u32 steps_per_second);
 void host_wait_update(UpdatePacer &pacer);
 Renderer *host_renderer();
+// The texture store TIMs are uploaded into, whichever renderer draws.
+TextureStore &host_textures();
+// Widescreen columns either side of the original 320.
+int host_extra_columns();
+// The picture as drawn, to be put back after a page shown over it.
+bool host_capture_frame(Image &image);
+bool host_restore_frame(const Image &image);
+// From the settings: the render target (logical columns, pixels per logical
+// pixel) and the picture options, for whichever renderer draws.
+bool host_set_render_target(int logical_width, int scale);
+void host_set_picture_options(const PictureOptions &options);
 // Game frames handed to the host since start (for the agent's state).
 std::uint64_t host_frames_presented();
 // A short message shown over the picture for a couple of seconds (PC overlay).

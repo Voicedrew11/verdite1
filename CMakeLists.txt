@@ -182,15 +182,19 @@ endif()
 set(KF_IMGUI ${CMAKE_SOURCE_DIR}/third_party/imgui)
 file(GLOB KF_LUA_SOURCES ${CMAKE_SOURCE_DIR}/third_party/lua/l*.c)
 list(FILTER KF_LUA_SOURCES EXCLUDE REGEX "/(lua|luac|ltests|onelua)\\.c$")
+# Dear ImGui's core and its SDL platform backend; each renderer brings its own renderer backend.
+add_library(kf_imgui STATIC
+  ${KF_IMGUI}/imgui.cpp ${KF_IMGUI}/imgui_draw.cpp ${KF_IMGUI}/imgui_tables.cpp ${KF_IMGUI}/imgui_widgets.cpp
+  ${KF_IMGUI}/backends/imgui_impl_sdl3.cpp)
+target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
+target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp
-  ${KF_IMGUI}/imgui.cpp ${KF_IMGUI}/imgui_draw.cpp ${KF_IMGUI}/imgui_tables.cpp ${KF_IMGUI}/imgui_widgets.cpp
-  ${KF_IMGUI}/backends/imgui_impl_sdl3.cpp ${KF_IMGUI}/backends/imgui_impl_opengl3.cpp
+  port/ext/item_text.cpp ${KF_IMGUI}/backends/imgui_impl_opengl3.cpp
   ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1 PRIVATE IMGUI_IMPL_OPENGL_ES3)
-target_link_libraries(kf_ext PUBLIC SDL3::SDL3 ${KF_GLES_LIBRARY})
+target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 ${KF_GLES_LIBRARY})
 
 # libverdite: nothing from the game on its include path.
 find_package(Threads REQUIRED)
@@ -237,11 +241,12 @@ foreach(shader world.vert world.frag)
   list(APPEND KF_SHADER_HEADERS ${KF_SHADER_OUT}/${symbol}.h)
 endforeach()
 # third-party code: built with its own warnings, not ours
-add_library(kf_vulkan_libraries STATIC port/renderer/vulkan/vulkan_libraries.cpp)
+add_library(kf_vulkan_libraries STATIC port/renderer/vulkan/vulkan_libraries.cpp
+  ${KF_IMGUI}/backends/imgui_impl_vulkan.cpp)
 target_compile_definitions(kf_vulkan_libraries PUBLIC VK_NO_PROTOTYPES VMA_STATIC_VULKAN_FUNCTIONS=0
-  VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
+  VMA_DYNAMIC_VULKAN_FUNCTIONS=1 IMGUI_IMPL_VULKAN_USE_VOLK)
 target_link_libraries(kf_vulkan_libraries PUBLIC Vulkan::Headers volk::volk GPUOpen::VulkanMemoryAllocator
-  vk-bootstrap::vk-bootstrap)
+  vk-bootstrap::vk-bootstrap kf_imgui)
 add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/renderer/vulkan/vulkan_device.cpp
   port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_resources.cpp
   port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})

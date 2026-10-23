@@ -5,6 +5,8 @@
 #include <kf/platform/input.h>
 #include <kf/platform/controls.h>
 #include <kf/platform/agent.h>
+#include <kf/renderer/backend.h>
+#include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
 #include <kf/renderer/projection.h>
 #include <kf/lib/fixed_math.h>
@@ -21,6 +23,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <optional>
 #include <vector>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -38,6 +41,7 @@ EM_JS(void, host_browser_language, (const char *current, const char *requested, 
 #endif
 
 namespace kf {
+enum class PictureRenderer : u8 { OpenGL, Frontend };
 struct HostState {
     SDL_Window *window;
     SDL_GLContext context;
@@ -65,6 +69,10 @@ struct HostState {
     int frame_light_count;
     std::uint64_t frames_presented;
     Uint64 turbo_ns;   // the game clock under turbo
+    // Which renderer draws: the GL renderer, or the frontend and its backend
+    // (Vulkan). Chosen once at start; branches on it stay in this file.
+    PictureRenderer picture;
+    LookDelta look_consumed;   // by the game update being drawn
 };
 static HostState host;
 static HostOptions options;
@@ -85,7 +93,14 @@ static constexpr double degrees_per_turn = 360;
 static void capture_frame_if_requested(int width, int height);
 #endif
 
+static bool frontend_draws() { return host.picture == PictureRenderer::Frontend; }
+static void frontend_present(Uint64 now);
+
 static void present_retained_frame() {
+    if (frontend_draws()) {
+        frontend_present(host_clock_ns());
+        return;
+    }
     if (!host.context)
         return;
     int width = 0, height = 0;
@@ -160,6 +175,60 @@ static void open_available_gamepad() {
     SDL_free(ids);
 }
 
+// KF_RENDERER=gl|vulkan, else the Renderer setting. Headless always takes the
+// GL renderer, which draws nothing there.
+static PictureRenderer chosen_renderer() {
+    if (options.headless)
+        return PictureRenderer::OpenGL;
+    if (const char *forced = std::getenv("KF_RENDERER"))
+        return std::strcmp(forced, "vulkan") == 0 ? PictureRenderer::Frontend : PictureRenderer::OpenGL;
+#if KF_EXT
+    return ext::renderer_preference() == "vulkan" ? PictureRenderer::Frontend : PictureRenderer::OpenGL;
+#else
+    return PictureRenderer::OpenGL;
+#endif
+}
+
+// A Vulkan window and backend; false (and no window) if Vulkan cannot start.
+static bool start_frontend_window() {
+    host.window = SDL_CreateWindow("King's Field", 960, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    if (!host.window) {
+        std::fprintf(stderr, "[renderer] no Vulkan window: %s; drawing with OpenGL\n", SDL_GetError());
+        return false;
+    }
+    BackendStart started = make_vulkan_backend(host.window);
+    if (started.backend && renderer_start(std::move(started.backend)))
+        return true;
+    std::fprintf(stderr, "[renderer] %s; drawing with OpenGL\n",
+                 started.error.empty() ? "Vulkan cannot draw" : started.error.c_str());
+    renderer_stop();
+    SDL_DestroyWindow(host.window);
+    host.window = nullptr;
+    return false;
+}
+
+static bool start_gl_window() {
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    // Headless keeps a window on the dummy driver: settings and the overlay's state hang off it.
+    host.window = SDL_CreateWindow("King's Field", 960, 720, options.headless ? 0 : SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    if (host.window && !options.headless)
+        host.context = SDL_GL_CreateContext(host.window);
+    if (!host.window || (!host.context && !options.headless)) {
+        std::fprintf(stderr, "%s\n", SDL_GetError());
+        return false;
+    }
+    // All frame pacing uses the absolute clock below, not a second swap-interval wait.
+    SDL_GL_SetSwapInterval(0);
+    std::array<char, renderer_error_capacity> error{};
+    if (!renderer_init(&host.renderer, error.data(), error.size())) {
+        std::fprintf(stderr, "%s\n", error.data());
+        return false;
+    }
+    return true;
+}
+
 void host_configure(const HostOptions &chosen) {
     options = chosen;
     render_headless = options.headless;
@@ -174,23 +243,9 @@ bool host_start() {
         std::fprintf(stderr, "%s\n", SDL_GetError());
         return false;
     }
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    // Headless keeps a window on the dummy driver: settings and the overlay's state hang off it.
-    host.window = SDL_CreateWindow("King's Field", 960, 720, options.headless ? 0 : SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-    if (host.window && !options.headless)
-        host.context = SDL_GL_CreateContext(host.window);
-    if (!host.window || (!host.context && !options.headless)) {
-        std::fprintf(stderr, "%s\n", SDL_GetError());
-        host_shutdown();
-        return false;
-    }
-    // All frame pacing uses the absolute clock below, not a second swap-interval wait.
-    SDL_GL_SetSwapInterval(0);
-    std::array<char, renderer_error_capacity> error{};
-    if (!renderer_init(&host.renderer, error.data(), error.size())) {
-        std::fprintf(stderr, "%s\n", error.data());
+    host.picture = chosen_renderer() == PictureRenderer::Frontend && start_frontend_window() ? PictureRenderer::Frontend
+                                                                                          : PictureRenderer::OpenGL;
+    if (host.picture == PictureRenderer::OpenGL && !start_gl_window()) {
         host_shutdown();
         return false;
     }
@@ -203,7 +258,9 @@ bool host_start() {
         return false;
     }
 #if KF_EXT
-    ext::start(host.window, host.context);
+    const ext::OverlayRenderer overlay = options.headless ? ext::OverlayRenderer::None
+        : frontend_draws() ? ext::OverlayRenderer::Frontend : ext::OverlayRenderer::OpenGL;
+    ext::start(host.window, overlay, host.context);
 #endif
     agent_start();
     if (options.headless || options.turbo)
@@ -220,7 +277,9 @@ void host_shutdown() {
     save_storage_shutdown();
     if (host.gamepad)
         SDL_CloseGamepad(host.gamepad);
-    if (host.context || options.headless)
+    if (frontend_draws())
+        renderer_stop();
+    else if (host.context || options.headless)
         renderer_release(&host.renderer);
     if (host.context)
         SDL_GL_DestroyContext(host.context);
@@ -778,7 +837,8 @@ LookDelta host_take_look() {
     host.look_remainder_x = x - dx;
     host.look_remainder_y = y - dy;
     host.input.pending.look_x = host.input.pending.look_y = 0;
-    return {-dx, dy};
+    host.look_consumed = {-dx, dy};
+    return host.look_consumed;
 }
 
 Renderer *host_renderer() { return &host.renderer; }
@@ -1242,17 +1302,25 @@ bool smooth_wants_frames() {
 }
 }
 
-static bool smooth_frames_wanted() { return smooth_wants_frames(); }
+static bool frontend_wants_frames();
+static Uint64 frontend_next_present_ns();
+
+static bool smooth_frames_wanted() { return frontend_draws() ? frontend_wants_frames() : smooth_wants_frames(); }
 // Paused under the overlay: draw the kept world frame again so graphics option
 // changes show immediately. Returns false when there is no such frame.
 static bool smooth_redraw_paused() {
-    if (!smooth.active || !render_smoothing || smooth.count == 0)
+    if (frontend_draws() || !smooth.active || !render_smoothing || smooth.count == 0)
         return false;
     smooth_present(host_clock_ns());
     return true;
 }
-static Uint64 smooth_next_present_ns() { return smooth.next_present_ns; }
-static void smooth_present_now(Uint64 now) { smooth_present(now); }
+static Uint64 smooth_next_present_ns() { return frontend_draws() ? frontend_next_present_ns() : smooth.next_present_ns; }
+static void smooth_present_now(Uint64 now) {
+    if (frontend_draws())
+        frontend_present(now);
+    else
+        smooth_present(now);
+}
 
 void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Projection &projection) {
     host.clip_projection = projection;
@@ -1265,8 +1333,15 @@ void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Pr
 }
 
 void host_light_occluders(const u8 *solid, int columns, int rows, float tile_size) {
+    if (frontend_draws()) {
+        const auto cells = static_cast<std::size_t>(std::max(columns, 0)) * static_cast<std::size_t>(std::max(rows, 0));
+        renderer_set_occluders({solid, cells}, columns, rows, tile_size);
+        return;
+    }
     renderer_set_occluders(&host.renderer, solid, columns, rows, tile_size);
 }
+
+static void frontend_submit(const FaceList *faces);
 
 void host_present_faces(const FaceList *faces) {
     menu_preview_shown = menu_preview_building;
@@ -1274,11 +1349,198 @@ void host_present_faces(const FaceList *faces) {
 #if KF_EXT
     ext::game_frame(static_cast<int>(host.input_context));
 #endif
+    if (frontend_draws()) {
+        frontend_submit(faces);
+        smooth.frame_has_camera = false;
+        return;
+    }
     const bool smoothed = smooth_take_frame(faces);
     smooth.frame_has_camera = false;
     if (!smoothed) {
         apply_lights(host.frame_lights, host.frame_light_count);
         draw_and_swap(faces);
     }
+}
+
+// ---- The frontend renderer (Vulkan) ----
+// Chosen by the Renderer setting or KF_RENDERER. The frontend does its own
+// smoothing, near clipping and light flicker (port/renderer/frontend.cpp), so
+// the host only hands it each finished update and asks for frames between.
+namespace {
+struct FrontendOutput {
+    PictureOptions requested;          // as the settings asked
+    bool smoothing_applied = false;    // requested, and the input context allows it
+    std::optional<CameraPose> last_camera;
+    bool world_frame = false;          // the last update had a camera
+    Uint64 next_present_ns = 0;
+    std::vector<GameLight> lights;
+    std::vector<EntityPose> poses;
+};
+FrontendOutput frontend_output;
+
+// Smoothing only where the camera is the player's: not in menus or the map.
+void apply_frontend_options() {
+    PictureOptions picture = frontend_output.requested;
+    picture.smoothing = picture.smoothing &&
+                        (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted);
+    frontend_output.smoothing_applied = picture.smoothing;
+    renderer_set_options(picture);
+}
+
+// The look input the game has not taken yet, in angle units, held inside the
+// pitch limit the game will clamp it to.
+SVECTOR pending_look() {
+    if (host.input_context != InputContext::Gameplay)
+        return {0, 0, 0};
+    constexpr double angle_units_per_pixel = mouse_degrees_per_pixel * angle_units_per_turn / degrees_per_turn;
+    const double x = host.input.pending.look_x * angle_units_per_pixel + host.look_remainder_x;
+    const double y = host.input.pending.look_y * angle_units_per_pixel + host.look_remainder_y;
+    s32 pitch = static_cast<s32>(std::trunc(y));
+    const s32 yaw = -static_cast<s32>(std::trunc(x));
+    if (frontend_output.last_camera) {
+        const s32 at = frontend_output.last_camera->rotation.vx;
+        pitch = std::clamp(at + pitch, -player_pitch_limit, player_pitch_limit) - at;
+    }
+    return {static_cast<s16>(pitch), static_cast<s16>(yaw), 0};
+}
+
+// The look this update applied: what the game took, but pitch no further than
+// the camera actually tilted (the game clamps it at the limit).
+SVECTOR look_applied(const std::optional<CameraPose> &camera) {
+    if (!camera || !frontend_output.last_camera)
+        return {0, 0, 0};
+    const int tilted = angle_delta(frontend_output.last_camera->rotation.vx, camera->rotation.vx);
+    const s32 pitch = std::clamp(host.look_consumed.pitch, std::min(0, tilted), std::max(0, tilted));
+    return {static_cast<s16>(pitch), static_cast<s16>(host.look_consumed.yaw), 0};
+}
+
+#if KF_EXT
+// KF_CAPTURE=<file.bmp>: as for GL, the game's picture after KF_CAPTURE_FRAME
+// frames (default 100), at the target's size, top row first.
+void capture_picture_if_requested() {
+    static const char *path = std::getenv("KF_CAPTURE");
+    static const long target = [] {
+        const char *frame = std::getenv("KF_CAPTURE_FRAME");
+        return frame ? std::atol(frame) : 100L;
+    }();
+    static long frames;
+    if (!path || ++frames < target)
+        return;
+    const std::optional<Image> picture = renderer_capture();
+    if (!picture)
+        host_fail("Cannot capture the picture.");
+    const std::uint32_t row = picture->width * 3u + 3u & ~3u;
+    const std::uint32_t bytes = row * picture->height;
+    std::array<unsigned char, 54> header{'B', 'M'};
+    const auto put32 = [&](std::size_t at, std::uint32_t value) {
+        for (std::size_t i = 0; i < 4; ++i)
+            header[at + i] = static_cast<unsigned char>(value >> (8 * i));
+    };
+    put32(2, 54 + bytes);
+    put32(10, 54);
+    put32(14, 40);
+    put32(18, picture->width);
+    put32(22, static_cast<std::uint32_t>(-static_cast<std::int32_t>(picture->height)));   // negative: top row first
+    header[26] = 1;
+    header[28] = 24;
+    put32(34, bytes);
+    if (FILE *file = std::fopen(path, "wb")) {
+        std::fwrite(header.data(), 1, header.size(), file);
+        std::vector<unsigned char> line(row);
+        for (std::uint32_t y = 0; y < picture->height; ++y) {
+            for (std::size_t x = 0; x < picture->width; ++x) {
+                const unsigned char *pixel = &picture->rgba[(static_cast<std::size_t>(y) * picture->width + x) * 4];
+                line[x * 3] = pixel[2];
+                line[x * 3 + 1] = pixel[1];
+                line[x * 3 + 2] = pixel[0];
+            }
+            std::fwrite(line.data(), 1, row, file);
+        }
+        std::fclose(file);
+        std::printf("[capture] saved %s (%ux%u)\n", path, picture->width, picture->height);
+    }
+    host_shutdown();
+    std::exit(0);
+}
+#endif
+} // namespace
+
+static bool frontend_wants_frames() {
+    return frontend_output.world_frame && frontend_output.smoothing_applied && !host.paused;
+}
+
+static Uint64 frontend_next_present_ns() { return frontend_output.next_present_ns; }
+
+static void frontend_present(Uint64 now) {
+    int width = 0, height = 0;
+    SDL_GetWindowSizeInPixels(host.window, &width, &height);
+    ImDrawData *overlay = nullptr;
+#if KF_EXT
+    overlay = ext::build_overlay(width, height);
+#endif
+    renderer_present(now, pending_look(), width, height, overlay);
+#if KF_EXT
+    capture_picture_if_requested();
+#endif
+    frontend_output.next_present_ns = now + smooth_frame_period_ns();
+}
+
+static void frontend_submit(const FaceList *faces) {
+    if (frontend_output.smoothing_applied !=
+        (frontend_output.requested.smoothing &&
+         (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted)))
+        apply_frontend_options();
+    std::optional<CameraPose> camera;
+    if (smooth.frame_has_camera)
+        camera = CameraPose{smooth.frame.position, smooth.frame.rotation, smooth.frame.projection};
+    auto &lights = frontend_output.lights;
+    lights.clear();
+    for (int i = 0; i < host.frame_light_count; ++i) {
+        const auto &light = host.frame_lights[i];
+        lights.push_back({light.x, light.y, light.z, light.radius, light.r, light.g, light.b, light.flicker, light.seed});
+    }
+    auto &poses = frontend_output.poses;
+    poses.clear();
+    for (const auto &pose : host.frame_poses)
+        poses.push_back({pose.tag, static_cast<s32>(std::lround(pose.x)), static_cast<s32>(std::lround(pose.y)),
+                         static_cast<s32>(std::lround(pose.z)), pose.yaw, pose.yaw_sign});
+    GameFrame frame{{faces->faces, faces->count}, faces->style, camera, lights, poses, look_applied(camera)};
+    const Uint64 now = host_clock_ns();
+    renderer_submit(frame, now);
+    frontend_output.world_frame = camera.has_value();
+    if (camera)
+        frontend_output.last_camera = camera;
+    host.look_consumed = {0, 0};
+    frontend_present(now);
+}
+
+TextureStore &host_textures() { return renderer_textures(); }
+
+int host_extra_columns() { return renderer_extra_columns(); }
+
+bool host_capture_frame(Image &image) {
+    if (!frontend_draws())
+        return renderer_capture_frame(&host.renderer, image);
+    std::optional<Image> picture = renderer_capture();
+    if (!picture)
+        return false;
+    image = std::move(*picture);
+    return true;
+}
+
+bool host_restore_frame(const Image &image) {
+    return frontend_draws() ? renderer_restore(image) : renderer_restore_frame(&host.renderer, image);
+}
+
+bool host_set_render_target(int logical_width, int scale) {
+    if (!frontend_draws() && !renderer_configure(&host.renderer, logical_width, scale))
+        return false;
+    return renderer_set_target(logical_width, scale);
+}
+
+void host_set_picture_options(const PictureOptions &options) {
+    frontend_output.requested = options;
+    if (frontend_draws())
+        apply_frontend_options();
 }
 }

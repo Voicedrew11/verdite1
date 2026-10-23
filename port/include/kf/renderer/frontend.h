@@ -125,11 +125,17 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns);
 // pending_look (angle units), the look input the game has not consumed yet,
 // so looking has no update of lag.
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look,
-                      int window_width, int window_height, const ImDrawData *overlay);
+                      int window_width, int window_height, ImDrawData *overlay);
 // The game's picture as last drawn, RGBA8 with the top row first, at the
 // target's size: no letterbox and no overlay, so it can be compared pixel for
 // pixel with another build (KF_CAPTURE). None if the backend cannot read back.
 std::optional<Image> renderer_capture();
+// Puts a capture back as the picture (a page shown over the game, then taken
+// away). False if the target changed size since.
+[[nodiscard]] bool renderer_restore(const Image &picture);
+// The overlay's renderer: after Dear ImGui's context is made, before it is destroyed.
+[[nodiscard]] bool renderer_overlay_start();
+void renderer_overlay_stop();
 } // namespace kf
 
 #endif // KF_RENDERER_FRONTEND_H

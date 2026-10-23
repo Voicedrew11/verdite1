@@ -6,6 +6,7 @@
 #include <kf/platform/host.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
+#include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
 #include <algorithm>
 #include <cmath>
@@ -65,6 +66,11 @@ std::filesystem::path mods_dir() { return user_dir() / "mods"; }
 Settings &settings() { return current; }
 
 void settings_load() {
+    // Read once: the host asks for the renderer before the overlay starts.
+    static bool loaded = false;
+    if (loaded)
+        return;
+    loaded = true;
     std::ifstream file(settings_path(), std::ios::binary);
     std::stringstream text;
     if (file)
@@ -79,6 +85,7 @@ void settings_load() {
     const cJSON *display = cJSON_GetObjectItemCaseSensitive(document, "display");
     current.fullscreen = read_bool(display, "fullscreen", current.fullscreen);
     current.vsync = read_bool(display, "vsync", current.vsync);
+    current.renderer = read_string(display, "renderer", current.renderer);
     current.show_fps = read_bool(display, "show_fps", current.show_fps);
     current.aspect = read_string(display, "aspect", current.aspect);
     current.resolution = static_cast<int>(read_number(display, "resolution", current.resolution));
@@ -144,6 +151,7 @@ void settings_save_if_dirty() {
     cJSON *display = object_entry(document, "display");
     write_value(display, "fullscreen", cJSON_CreateBool(current.fullscreen));
     write_value(display, "vsync", cJSON_CreateBool(current.vsync));
+    write_value(display, "renderer", cJSON_CreateString(current.renderer.c_str()));
     write_value(display, "show_fps", cJSON_CreateBool(current.show_fps));
     write_value(display, "aspect", cJSON_CreateString(current.aspect.c_str()));
     write_value(display, "resolution", cJSON_CreateNumber(current.resolution));
@@ -242,10 +250,43 @@ const Settings &effective_settings() {
     return classic;
 }
 
+std::string renderer_preference() {
+    settings_load();
+    return current.renderer;
+}
+
+namespace {
+RenderTarget applied_target{render_width, 1};
+
+// The Display settings in the frontend's terms (frontend.h).
+PictureOptions picture_options(const Settings &e) {
+    PictureOptions options;
+    options.true_color = e.true_color;
+    options.depth_buffer = e.depth_buffer;
+    options.texture_filter = static_cast<TextureFilter>(std::clamp(e.texture_filter, 0, 2));
+    options.smoothing = e.frame_rate != 20;
+    options.supersample = render_supersample;
+    options.dynamic_lights = e.dynamic_lights;
+    options.light_strength = static_cast<float>(e.light_strength) / 100.0f;
+    options.light_occlusion = e.light_occlusion;
+    options.shadows = render_shadows;
+    options.ambient_occlusion = e.ambient_occlusion ? static_cast<float>(e.ao_strength) / 100.0f : 0.0f;
+    options.glow = render_glow;
+    options.fxaa = e.antialiasing == 1;
+    options.vsync = current.vsync;
+    return options;
+}
+} // namespace
+
+RenderTarget applied_render_target() { return applied_target; }
+
 void apply_display_settings() {
     if (SDL_Window *handle = window())
         SDL_SetWindowFullscreen(handle, current.fullscreen);
-    SDL_GL_SetSwapInterval(current.vsync ? 1 : 0);
+    if (frontend_draws_overlay())
+        host_set_picture_options(picture_options(effective_settings()));
+    else
+        SDL_GL_SetSwapInterval(current.vsync ? 1 : 0);
 }
 
 void apply_render_settings() {
@@ -266,6 +307,7 @@ void apply_render_settings() {
     render_supersample = e.antialiasing == 2 ? 2 : e.antialiasing == 3 ? 3 : 1;
     render_smoothing = e.frame_rate != 20;
     render_frame_limit = e.frame_rate == 20 ? 0 : e.frame_rate;
+    host_set_picture_options(picture_options(e));
     SDL_Window *handle = window();
     if (!handle)
         return;
@@ -281,7 +323,6 @@ void apply_render_settings() {
     else if (e.aspect == "window") aspect = static_cast<double>(width) / height;
     int columns = static_cast<int>(std::lround(render_height * aspect));
     columns = std::clamp(columns + (columns & 1), render_width, 640);
-    Renderer *renderer = host_renderer();
     int scale = e.resolution;
     if (scale <= 0) {
         // Native: enough pixels to cover the picture's height in the window.
@@ -292,12 +333,14 @@ void apply_render_settings() {
     scale = std::clamp(scale * render_supersample, 1, 16);
     if (columns * scale > 16384)
         scale = 16384 / columns;
-    if (renderer->logical_width == columns && renderer->scale == scale)
+    if (applied_target.columns == columns && applied_target.scale == scale)
         return;
-    if (renderer_configure(renderer, columns, scale))
+    if (host_set_render_target(columns, scale)) {
+        applied_target = {columns, scale};
         std::printf("[display] render target %dx%d (%d columns, %dx)\n", columns * scale, render_height * scale, columns, scale);
-    else
+    } else {
         std::printf("[display] cannot create a %dx%d render target\n", columns * scale, render_height * scale);
+    }
 }
 
 void apply_control_settings() {

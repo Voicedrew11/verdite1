@@ -12,8 +12,11 @@ public:
     void upload_layer(u8, const Image &) override {}
     void set_occluders(std::span<const u8>, int, int, float) override {}
     void upload_frame(std::span<const GpuVertex>, std::span<const DrawRun>, const FrameStyle &) override {}
-    void present(const FrameView &, std::span<const RenderLight>, int, int, const ImDrawData *) override {}
+    void present(const FrameView &, std::span<const RenderLight>, int, int, ImDrawData *) override {}
     std::optional<Image> capture() override { return std::nullopt; }
+    bool restore(const Image &) override { return true; }
+    bool start_overlay() override { return true; }
+    void stop_overlay() override {}
 };
 } // namespace
 

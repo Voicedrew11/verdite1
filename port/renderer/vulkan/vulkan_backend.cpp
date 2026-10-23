@@ -9,6 +9,8 @@
 #include "vulkan_swapchain.h"
 
 #include <SDL3/SDL_video.h>
+#include <imgui.h>
+#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -90,8 +92,11 @@ public:
     void upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs,
                       const FrameStyle &style) override;
     void present(const FrameView &view, std::span<const RenderLight> lights, int window_width, int window_height,
-                 const ImDrawData *overlay) override;
+                 ImDrawData *overlay) override;
     std::optional<Image> capture() override;
+    bool restore(const Image &picture) override;
+    bool start_overlay() override;
+    void stop_overlay() override;
 
 private:
     VkFormat wanted_color_format() const;
@@ -105,6 +110,7 @@ private:
     void draw_world(VkCommandBuffer commands, const FrameView &view, const FrameSlot &slot);
     void draw_runs(VkCommandBuffer commands, DrawConstants constants);
     void blit_to(VkCommandBuffer commands, VkImage image, VkExtent2D extent);
+    void draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, ImDrawData *overlay);
 
     std::unique_ptr<VulkanDevice> device_;
     SDL_Window *window_;
@@ -126,7 +132,8 @@ private:
     std::vector<DrawRun> runs_;
     FrameStyle style_;
     bool frame_drawn_ = false;
-    bool warned_overlay_ = false;
+    bool overlay_started_ = false;
+    VkFormat overlay_format_ = VK_FORMAT_UNDEFINED;
 };
 
 bool format_supports(VkPhysicalDevice physical, VkFormat format, VkFormatFeatureFlags features) {
@@ -139,6 +146,7 @@ VulkanBackend::VulkanBackend(std::unique_ptr<VulkanDevice> device, SDL_Window *w
     : device_(std::move(device)), window_(window) {}
 
 VulkanBackend::~VulkanBackend() {
+    stop_overlay();
     VkDevice device = device_->device();
     vkDeviceWaitIdle(device);
     for (FrameSlot &slot : slots_) {
@@ -533,16 +541,80 @@ void VulkanBackend::blit_to(VkCommandBuffer commands, VkImage image, VkExtent2D 
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                        whole || !can_smooth ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
     }
-    transition(commands, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+}
+
+// Dear ImGui over the picture, then the image goes to the window.
+void VulkanBackend::draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, ImDrawData *overlay) {
+    if (!overlay_started_ || !overlay || overlay->CmdListsCount == 0) {
+        transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        return;
+    }
+    transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfoKHR color{};
+    color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    color.imageView = image.view;
+    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfoKHR rendering{};
+    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+    rendering.renderArea = {{0, 0}, swapchain_->extent()};
+    rendering.layerCount = 1;
+    rendering.colorAttachmentCount = 1;
+    rendering.pColorAttachments = &color;
+    vkCmdBeginRenderingKHR(commands, &rendering);
+    ImGui_ImplVulkan_RenderDrawData(overlay, commands);
+    vkCmdEndRenderingKHR(commands);
+    transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 }
 
+void report_overlay_result(VkResult result) {
+    if (result != VK_SUCCESS)
+        std::fprintf(stderr, "[vulkan] overlay: VkResult %d\n", static_cast<int>(result));
+}
+
+bool VulkanBackend::start_overlay() {
+    if (!swapchain_ || overlay_started_)
+        return true;
+    int width = 0, height = 0;
+    if (!SDL_GetWindowSizeInPixels(window_, &width, &height) || width <= 0 || height <= 0)
+        return false;
+    const PresentPacing pacing = options_.vsync ? PresentPacing::Vsync : PresentPacing::Immediate;
+    if (!swapchain_->fit(static_cast<uint32_t>(width), static_cast<uint32_t>(height), pacing))
+        return false;
+    overlay_format_ = swapchain_->format();
+    ImGui_ImplVulkan_InitInfo info{};
+    info.ApiVersion = VK_API_VERSION_1_1;
+    info.Instance = device_->instance();
+    info.PhysicalDevice = device_->physical();
+    info.Device = device_->device();
+    info.QueueFamily = device_->queue_family();
+    info.Queue = device_->queue();
+    info.DescriptorPoolSize = 16;
+    info.MinImageCount = 2;
+    info.ImageCount = std::max<uint32_t>(2, swapchain_->image_count());
+    info.UseDynamicRendering = true;
+    info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+    info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &overlay_format_;
+    info.CheckVkResultFn = report_overlay_result;
+    overlay_started_ = ImGui_ImplVulkan_Init(&info);
+    return overlay_started_;
+}
+
+void VulkanBackend::stop_overlay() {
+    if (!overlay_started_)
+        return;
+    vkDeviceWaitIdle(device_->device());
+    ImGui_ImplVulkan_Shutdown();
+    overlay_started_ = false;
+}
+
 void VulkanBackend::present(const FrameView &view, std::span<const RenderLight>, int window_width, int window_height,
-                            const ImDrawData *overlay) {
-    if (overlay && !warned_overlay_) {
-        std::fprintf(stderr, "[vulkan] the overlay is not drawn yet\n");
-        warned_overlay_ = true;
-    }
+                            ImDrawData *overlay) {
     const bool to_window = swapchain_ != nullptr;
     if (to_window && (window_width <= 0 || window_height <= 0))
         return;
@@ -573,8 +645,10 @@ void VulkanBackend::present(const FrameView &view, std::span<const RenderLight>,
     if (!frame_drawn_ || (view.reproject && style_.clear == FrameClear::Clear))
         draw_world(slot.commands, view, slot);
     frame_drawn_ = true;
-    if (image)
+    if (image) {
         blit_to(slot.commands, image->image, swapchain_->extent());
+        draw_overlay(slot.commands, *image, overlay);
+    }
     if (vkEndCommandBuffer(slot.commands) != VK_SUCCESS)
         return;
     const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -635,6 +709,45 @@ std::optional<Image> VulkanBackend::capture() {
         out.rgba[i * 4 + 3] = 255;
     }
     return out;
+}
+bool VulkanBackend::restore(const Image &picture) {
+    if (!target_ || !wait_for_frames())
+        return false;
+    const ImageShape &shape = target_.shape();
+    const std::size_t texels = std::size_t{shape.width} * shape.height;
+    if (picture.width != shape.width || picture.height != shape.height || picture.rgba.size() != texels * 4)
+        return false;
+    const bool fifteen_bit = shape.format == classic_format;
+    GpuBuffer staging = GpuBuffer::create(device_->allocator(), texels * (fifteen_bit ? 2 : 4),
+                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT, BufferAccess::HostWrites);
+    if (!staging || !staging.data())
+        return false;
+    auto *bytes = static_cast<u8 *>(staging.data());
+    if (fifteen_bit) {
+        for (std::size_t i = 0; i < texels; ++i) {
+            const u8 *rgba = &picture.rgba[i * 4];
+            const uint32_t texel = 0x8000u | (uint32_t{rgba[0]} >> 3 << 10) | (uint32_t{rgba[1]} >> 3 << 5) |
+                                   (uint32_t{rgba[2]} >> 3);
+            bytes[i * 2] = static_cast<u8>(texel);
+            bytes[i * 2 + 1] = static_cast<u8>(texel >> 8);
+        }
+    } else {
+        std::memcpy(bytes, picture.rgba.data(), picture.rgba.size());
+    }
+    staging.flush();
+    const VkImageLayout layout = target_layout_;
+    const bool copied = device_->run_now([&](VkCommandBuffer commands) {
+        transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {shape.width, shape.height, 1};
+        vkCmdCopyBufferToImage(commands, staging.buffer(), target_.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    });
+    target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    frame_drawn_ = true;
+    return copied;
 }
 } // namespace
 
