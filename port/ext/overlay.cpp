@@ -265,7 +265,7 @@ void draw_settings_window() {
             s.renderer = renderer_values[renderer_index];
             changed = true;
         }
-        ImGui::SetItemTooltip("Applies when the game is restarted. Vulkan draws the original picture\nand the Clean options; dynamic lights, shadows, AO, glow and FXAA are\nnot in it yet. If Vulkan cannot start, the game draws with OpenGL.");
+        ImGui::SetItemTooltip("Applies when the game is restarted. Vulkan draws the original picture\nand the Balanced options; dynamic lights, shadows, AO, glow and FXAA are\nnot in it yet. If Vulkan cannot start, the game draws with OpenGL.");
         ImGui::SameLine();
         ImGui::TextDisabled("now: %s", frontend_draws_overlay() ? "Vulkan" : "OpenGL");
         ImGui::BeginDisabled(s.classic);   // Classic mode overrides the rest

@@ -84,7 +84,7 @@ public:
     VulkanBackend &operator=(const VulkanBackend &) = delete;
     [[nodiscard]] bool start(std::string &error);
 
-    Tier tier() const override { return Tier::Clean; }
+    Tier tier() const override { return Tier::Balanced; }
     const char *name() const override { return "Vulkan"; }
     bool set_target(int logical_width, int scale) override;
     void set_options(const PictureOptions &options) override;

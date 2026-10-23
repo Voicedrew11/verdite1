@@ -47,7 +47,7 @@ The frontend picks a tier per device:
 | tier | contents | where |
 |---|---|---|
 | **Classic** | the PS1 picture exactly: the game's own per-vertex lighting, the blend modes, palettes decoded to textures | all, 3DS included |
-| **Clean** | plus depth buffer, perspective, sub-pixel, true colour, filtering, mipmaps, widescreen, smoothing | all; on 3DS, New 3DS for speed |
+| **Balanced** | plus depth buffer, perspective, sub-pixel, true colour, filtering, mipmaps, widescreen, smoothing | all; on 3DS, New 3DS for speed |
 | **Enhanced** | plus per-pixel lighting and fog, AO, anisotropic filtering, render distance | Vulkan and deko3d |
 
 Classic is the game's own output: the decomp already computes the original
@@ -139,11 +139,11 @@ What carries over is decisions and references, not code:
    mode; `renderer_capture` keeps `KF_CAPTURE` working on every backend.
    Shaders are GLSL, compiled to SPIR-V with glslang at build time.
 2. The Vulkan backend on Linux, validation layers on: reach Classic (judged
-   in play), then Clean, then Enhanced at the judged values. Batched from the
+   in play), then Balanced, then Enhanced at the judged values. Batched from the
    start (see [RUNTIME.md](RUNTIME.md)). The GL renderer keeps drawing until
    Vulkan reaches Classic, chosen by the Renderer setting (Display, applies on
    restart; `KF_RENDERER=gl|vulkan` overrides it); then GL is deleted.
-   2026-10-23: `port/renderer/vulkan/` draws Classic and the Clean options
+   2026-10-23: `port/renderer/vulkan/` draws Classic and the Balanced options
    but mipmaps (no Display row yet), offscreen-tested in `kf_vulkan_tests` on
    RADV and llvmpipe with validation on, and the game draws with it, overlay
    included, when Renderer is Vulkan; Classic waits to be judged in play.
@@ -154,4 +154,4 @@ What carries over is decisions and references, not code:
 3. A second backend early, before the frontend sets in Vulkan-shaped habits.
    deko3d is the more useful second one; the 3DS is so limited it would bend
    the frontend.
-4. The 3DS last, as Classic and Clean.
+4. The 3DS last, as Classic and Balanced.

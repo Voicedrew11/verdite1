@@ -37,7 +37,7 @@ PictureOptions within_tier(PictureOptions options, Tier tier) {
         options.glow = off.glow;
         options.fxaa = off.fxaa;
     }
-    if (tier < Tier::Clean) {
+    if (tier < Tier::Balanced) {
         options.true_color = off.true_color;
         options.depth_buffer = off.depth_buffer;
         options.texture_filter = off.texture_filter;

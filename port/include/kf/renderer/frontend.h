@@ -26,18 +26,18 @@ class RenderBackend;
 // backend's tier is off there, whatever the settings say.
 //   Classic:  the PS1 picture: the game's per-vertex lighting, the four blend
 //             modes, dither, 15-bit colour, the game's draw order.
-//   Clean:    plus depth buffer, true colour, filtering, mipmaps, widescreen,
+//   Balanced: plus depth buffer, true colour, filtering, mipmaps, widescreen,
 //             smoothing, supersampling.
 //   Enhanced: plus dynamic lights, shadows, AO, glow, FXAA.
-// Sub-pixel and perspective are Classic-or-Clean choices the game makes while
+// Sub-pixel and perspective are Classic-or-Balanced choices the game makes while
 // projecting (render_subpixel, render_perspective in renderer.h).
-enum class Tier : u8 { Classic, Clean, Enhanced };
+enum class Tier : u8 { Classic, Balanced, Enhanced };
 
 enum class TextureFilter : u8 { Nearest, Bilinear, ThreePoint };
 
 // The Display settings, one field per row.
 struct PictureOptions {
-    // Clean
+    // Balanced
     bool true_color = false;      // 24-bit shading and blending, no dither
     bool depth_buffer = false;    // per-pixel occlusion for world faces
     TextureFilter texture_filter = TextureFilter::Nearest;

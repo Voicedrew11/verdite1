@@ -21,7 +21,7 @@ const int rgb5_max = 31;
 const float stp_alpha_threshold = 0.75;
 const int dither_offsets[16] = int[16](-4, 0, -3, 1, 2, -2, 3, -1, -3, 1, -4, 0, 3, -1, 2, -2);
 
-// Smoothed sampling for world surfaces (Clean). Taps stay inside the face's own
+// Smoothed sampling for world surfaces (Balanced). Taps stay inside the face's own
 // texel rectangle, transparent texels are left out, and transparency and STP
 // come from the nearest texel so cut-outs keep their original edge.
 vec4 filtered(vec4 nearest) {
@@ -66,7 +66,7 @@ vec3 classic_color(vec4 texel_color, uint texturing) {
     return vec3(clamp((foreground + ivec3(offset)) >> 3, ivec3(0), ivec3(rgb5_max))) / float(rgb5_max);
 }
 
-// 24-bit colour, no dither (Clean's true colour), 0..1.
+// 24-bit colour, no dither (Balanced's true colour), 0..1.
 vec3 true_color(vec4 texel_color, uint texturing) {
     vec3 shade = clamp(floor(in_shade), 0.0, rgb8_max);
     vec3 base = shade;

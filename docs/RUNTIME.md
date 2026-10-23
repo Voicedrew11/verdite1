@@ -61,7 +61,7 @@ The real 3DS limits:
 
 - **Memory**: about 64 MB for an app on the original 3DS; the disc's files are
   about 26 MB. Decode an area on entry, not everything at boot.
-- **GPU**: Classic and Clean tiers only ([RENDERER_PLAN.md](RENDERER_PLAN.md)).
+- **GPU**: Classic and Balanced tiers only ([RENDERER_PLAN.md](RENDERER_PLAN.md)).
 - **Float**: the ARM11 has a basic VFP and no SIMD; the renderer frontend's
   per-vertex float work needs profiling there. The game logic is integer fixed
   point and is fine.
