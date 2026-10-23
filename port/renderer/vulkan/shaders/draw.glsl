@@ -13,6 +13,7 @@ layout(push_constant) uniform DrawConstants {
     float cue_projection_distance;
     float fog_r, fog_g, fog_b;
     float anisotropy;           // smooth_pages' samples along the long axis, 1: none
+    float enhanced_depth;       // past this camera depth, the game's own look; 0: nowhere
 } draw;
 
 const uint draw_reproject = 1u;

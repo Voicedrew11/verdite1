@@ -383,9 +383,10 @@ int game_cued(float depth, int scale) {
     return render_fog_color(black, clear, point.fog * scale).r >> 3;
 }
 
-Image draw_fogged(const std::vector<GpuVertex> &vertices, FogMode fog) {
+Image draw_fogged(const std::vector<GpuVertex> &vertices, FogMode fog, float enhanced_depth = 0) {
     PictureOptions options;
     options.fog = fog;
+    options.enhanced_depth = enhanced_depth;
     backend->set_options(options);
     DepthCue cue;
     cue.slope = render_fog_slope(Projection{});
@@ -483,11 +484,13 @@ std::vector<GpuVertex> textured_rect(int u, float width, float height) {
 // 8 x 8 pixels from (156, 116): four texels a pixel.
 std::vector<GpuVertex> minified_square(int u) { return textured_rect(u, 8, 8); }
 
-Image draw_textured(const std::vector<GpuVertex> &vertices, bool mipmaps, TextureFilter filter, int anisotropy = 1) {
+Image draw_textured(const std::vector<GpuVertex> &vertices, bool mipmaps, TextureFilter filter, int anisotropy = 1,
+                   float enhanced_depth = 0) {
     PictureOptions options;
     options.mipmaps = mipmaps;
     options.texture_filter = filter;
     options.anisotropy = anisotropy;
+    options.enhanced_depth = enhanced_depth;
     backend->set_options(options);
     const Image picture = draw(vertices, {run_of(BlendMode::opaque, 0, vertices.size())}, cleared_to(background));
     backend->set_options({});
@@ -539,6 +542,21 @@ TEST_CASE("vulkan: anisotropic filtering keeps stripes across a face squeezed th
     const Image anisotropic = draw_textured(squeezed, true, TextureFilter::Bilinear, 16);
     CHECK(widest_step(pixel(anisotropic, 145, 120), Rgb5{0, 0, 0}) <= 2);
     CHECK(widest_step(pixel(anisotropic, 149, 120), checker_grey) <= 2);
+}
+
+TEST_CASE("vulkan: past the enhanced depth the game's look is drawn") {
+    // The wall at 14000: fogged per pixel nearer than that, the game's (black) corners past it.
+    const Image near = draw_fogged(cued_wall(8), FogMode::Distance, wall_depth + 1000);
+    CHECK(std::abs(pixel(near, 160, 120).r - game_cued(wall_depth, 2)) <= 1);
+    const Image far = draw_fogged(cued_wall(8), FogMode::Distance, wall_depth - 1000);
+    CHECK(pixel(far, 160, 120) == Rgb5{0, 0, 0});
+    // The checker at 200: averaged nearer than that, its own texels past it.
+    const std::vector<GpuVertex> checker = minified_square(checker_low);
+    const Image filtered = draw_textured(checker, true, TextureFilter::Bilinear, 1, 300);
+    CHECK(widest_step(pixel(filtered, 158, 118), Rgb5{15, 15, 15}) <= 1);
+    const Image plain = draw_textured(checker, true, TextureFilter::Bilinear, 1, 100);
+    const Rgb5 texel = pixel(plain, 158, 118);
+    CHECK((texel == checker_grey || texel == Rgb5{0, 0, 0}));
 }
 
 namespace {

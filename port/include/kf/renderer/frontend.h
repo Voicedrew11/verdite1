@@ -76,6 +76,9 @@ struct PictureOptions {
     FogMode fog = FogMode::Corners;
     int anisotropy = 1;           // samples along a slanted texture's long axis (1: none);
                                   // mipmapped bilinear filtering only
+    // Camera depth (world units) past which world faces are drawn the game's
+    // way: nearest texels, no ambient occlusion, fog at the corners. 0: nowhere.
+    float enhanced_depth = 0;
     // Presentation
     bool vsync = true;            // off: frames are shown as soon as they are drawn
 };

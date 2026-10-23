@@ -32,6 +32,11 @@ const float stp_alpha_threshold = 254.5 / 255.0;
 const float same_surface = 0.05;
 const int dither_offsets[16] = int[16](-4, 0, -3, 1, 2, -2, 3, -1, -3, 1, -4, 0, 3, -1, 2, -2);
 
+// A world fragment past the enhanced depth is drawn the game's way.
+bool plain() {
+    return draw.enhanced_depth > 0.0 && in_camera.z > draw.enhanced_depth;
+}
+
 // The face's texel rectangle at level 0: its first and last texel.
 ivec4 face_texels() {
     ivec2 low = ivec2(in_uv_bounds.xy);
@@ -125,7 +130,7 @@ vec4 world_texel(vec4 nearest, vec2 dx, vec2 dy) {
 // it that are its own surface, by bilinear weight. 1 where none are: the HUD,
 // the held weapon, translucent faces, a face drawn over a nearer one.
 float occlusion_light() {
-    if ((draw.flags & draw_occlusion) == 0u || in_camera.z <= 0.0)
+    if ((draw.flags & draw_occlusion) == 0u || in_camera.z <= 0.0 || plain())
         return 1.0;
     vec2 target = vec2(draw.view_columns.y * 2.0, 240.0) * float(draw.pixel_scale);
     ivec2 size = textureSize(occlusion, 0);
@@ -150,7 +155,8 @@ float occlusion_light() {
 // this pixel's depth or distance, and moves the clear colour that far, times
 // the face's scale, toward the fog colour, as render_fog_color does.
 vec3 shade() {
-    if ((draw.flags & (draw_fog_depth | draw_fog_distance)) == 0u || in_cue_scale == 0.0 || in_camera.z <= 0.0)
+    if ((draw.flags & (draw_fog_depth | draw_fog_distance)) == 0u || in_cue_scale == 0.0 || in_camera.z <= 0.0 ||
+        plain())
         return in_shade;
     float measured = (draw.flags & draw_fog_distance) != 0u ? length(in_camera) : in_camera.z;
     float cue = (16.0 * draw.cue_projection_distance * draw.cue_slope / measured + 5120.0) / 4096.0;
@@ -226,7 +232,7 @@ void main() {
         texel_color = textureLod(pages, vec3(in_uv, float(in_flags.x)), 0.0);
         if (texel_color.a == 0.0)
             discard;
-        if (in_flags.w != 0u)
+        if (in_flags.w != 0u && !plain())
             texel_color = world_texel(texel_color, uv_dx, uv_dy);
     }
     float light = occlusion_light();

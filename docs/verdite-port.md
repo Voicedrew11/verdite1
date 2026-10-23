@@ -259,7 +259,7 @@ branch point.
 |---|---|---|
 | Discord Rich Presence, 41 place names | `DiscordIpc.cs`, `DiscordPresence.cs`, `DiscordPlaces.cs` | IPC over the Discord socket; place table is data, carries as is; collision grid `0x80098018` is a named global in the decomp |
 | render distance + fade, models past the game's reach | `RenderDistance.cs`, `CullCone.cs` | the decomp's stencil/cell loop can be widened directly |
-| distance fog, anisotropic, mipmaps, enhance distance | `KF1_FOG`, `KF1_ANISO`, `KF1_MIPMAPS`, `KF1_ENHANCEDIST` | fog per pixel done on Vulkan (2026-10-23, `RENDERER_PLAN.md`) |
+| distance fog, anisotropic, mipmaps, enhance distance | `KF1_FOG`, `KF1_ANISO`, `KF1_MIPMAPS`, `KF1_ENHANCEDIST` | done on Vulkan (2026-10-23, `RENDERER_PLAN.md`); enhanced distance leaves dynamic lights alone |
 | analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | kf1-enhanced has one deadzone |
 | pad layout `jp`/`west` | `PadLayout.cs` | |
 | rumble, gyro aim | Verdite Core `Rumble.cs`, `GyroAim.cs` | SDL3 has both |

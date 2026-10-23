@@ -212,6 +212,15 @@ picks it, so the cap holds. `kf_vulkan_tests` checks a minified checker
 averages with nothing from the square beside it, a cut-out keeps its colour and
 edge, and 16x keeps stripes across a face squeezed 16 to 1 that 1x blurs.
 
+### Enhanced distance
+
+Verdite's `PlainDepth` (`KF1_ENHANCEDIST`): past Display > Enhanced distance
+(cells, Enhanced; 0, everywhere, by default as on `main`), `world.frag` draws
+world faces the game's way by their camera depth: the nearest level-0 texel,
+no ambient occlusion, the game's fog at the corners. A hard switch, as
+Verdite's was. Dynamic lights are not part of it yet. `kf_vulkan_tests` checks
+fog and filtering either side of the depth.
+
 What carries over is decisions and references, not code:
 
 - **The judged values** (decided 2026-10-23: the starting defaults, judged

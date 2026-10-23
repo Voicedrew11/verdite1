@@ -83,6 +83,7 @@ public:
         out.occlusion_quality = wanted.occlusion_quality;
         out.fog = wanted.fog;
         out.anisotropy = std::clamp(wanted.anisotropy, 1, static_cast<int>(device_->max_anisotropy()));
+        out.enhanced_depth = wanted.enhanced_depth;
         return out;
     }
     bool set_target(int logical_width, int scale) override;
@@ -580,6 +581,7 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
     constants.cue_projection_distance = cue_.projection_distance;
     constants.fog_color = cue_.far_color;
     constants.anisotropy = static_cast<float>(options_.anisotropy);
+    constants.enhanced_depth = options_.enhanced_depth;
     return constants;
 }
 

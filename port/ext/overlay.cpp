@@ -359,6 +359,11 @@ void draw_settings_window() {
             changed = true;
         }
         ImGui::SetItemTooltip("Where the darkness that swallows distant walls is measured.\nCorners: blended across each polygon, as on the PlayStation.\nPer pixel: smooth on large floors and walls; by distance it also\nstays put as the view turns. Vulkan only.");
+        if (slider_input("Enhanced distance", &s.enhanced_distance, 0, 16, s.enhanced_distance ? "%d cells" : "Everywhere")) {
+            apply_render_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("Past this many map cells, walls and floors are drawn the PlayStation's way:\nsharp texels, no ambient occlusion, fog at the corners. Vulkan only.");
         const char *aa_labels[] = {"Off", "FXAA (fast)", "4x SSAA (sharp, heavier)", "9x SSAA (best, heavy)"};
         if (ImGui::Combo("Anti-aliasing", &s.antialiasing, aa_labels, 4)) {
             apply_render_settings();

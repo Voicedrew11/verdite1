@@ -3,6 +3,7 @@
 #include "internal.hpp"
 #include <cJSON.h>
 #include <kf/audio/sound.h>
+#include <kf/lib/map_types.h>
 #include <kf/platform/host.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
@@ -102,6 +103,8 @@ void settings_load() {
     current.texture_filter = static_cast<int>(read_number(display, "texture_filter", current.texture_filter));
     current.mipmaps = read_bool(display, "mipmaps", current.mipmaps);
     current.anisotropy = std::clamp(static_cast<int>(read_number(display, "anisotropy", current.anisotropy)), 1, 16);
+    current.enhanced_distance =
+        std::clamp(static_cast<int>(read_number(display, "enhanced_distance", current.enhanced_distance)), 0, 16);
     current.fog = std::clamp(static_cast<int>(read_number(display, "fog", current.fog)), 0, 2);
     current.antialiasing = static_cast<int>(read_number(display, "antialiasing", current.antialiasing));
     current.flame_glow = read_bool(display, "flame_glow", current.flame_glow);
@@ -173,6 +176,7 @@ void settings_save_if_dirty() {
     write_value(display, "mipmaps", cJSON_CreateBool(current.mipmaps));
     write_value(display, "anisotropy", cJSON_CreateNumber(current.anisotropy));
     write_value(display, "fog", cJSON_CreateNumber(current.fog));
+    write_value(display, "enhanced_distance", cJSON_CreateNumber(current.enhanced_distance));
     write_value(display, "antialiasing", cJSON_CreateNumber(current.antialiasing));
     write_value(display, "flame_glow", cJSON_CreateBool(current.flame_glow));
     write_value(display, "shadows", cJSON_CreateBool(current.shadows));
@@ -288,6 +292,7 @@ PictureOptions picture_options(const Settings &e) {
     options.mipmaps = e.mipmaps;
     options.anisotropy = e.anisotropy;
     options.fog = static_cast<FogMode>(std::clamp(e.fog, 0, 2));
+    options.enhanced_depth = static_cast<float>(e.enhanced_distance * KF_MAP_TILE_SIZE);
     options.vsync = current.vsync;
     return options;
 }
