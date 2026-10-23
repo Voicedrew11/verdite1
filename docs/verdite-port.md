@@ -11,7 +11,8 @@ Nothing from `main` is merged; features are rewritten here in C/C++.
 The rendering plan (API, platforms, tiers, picture quality) is
 [RENDERER_PLAN.md](RENDERER_PLAN.md). What the port does in place of the
 console's hardware, and why it draws fewer frames than the recompilations, is
-[RUNTIME.md](RUNTIME.md).
+[RUNTIME.md](RUNTIME.md). Online play (messages, bloodstains, coop) is
+[NETWORKING_PLAN.md](NETWORKING_PLAN.md), a draft.
 
 ## Direction: every Verdite port becomes a decomp
 

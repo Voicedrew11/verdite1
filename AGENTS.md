@@ -10,7 +10,8 @@ Read `docs/verdite-port.md` first: the direction (every Verdite port becomes a
 decomp), the layout, build, the feature inventory and the order. Then, as the
 task needs: `docs/RENDERER_PLAN.md` (platforms, Vulkan, tiers, carrying the
 picture over), `docs/RUNTIME.md` (what is emulated, the 3DS budget, the
-frame-rate gap), `decomp/docs/port-notes.md` (the decomp's own notes).
+frame-rate gap), `docs/NETWORKING_PLAN.md` (online play; a draft),
+`decomp/docs/port-notes.md` (the decomp's own notes).
 
 ## The decomp is read-only
 
