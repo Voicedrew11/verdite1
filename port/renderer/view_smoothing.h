@@ -1,7 +1,7 @@
 #ifndef KF_RENDERER_VIEW_SMOOTHING_H
 #define KF_RENDERER_VIEW_SMOOTHING_H
 // Where each displayed frame shows the last game update from. The game updates
-// 20 times a second; between updates the view blends the camera and each part
+// at its tick rate (20 a second as shipped); between updates the view blends the camera and each part
 // that moved (VertexCarry) from the previous update to the last one, while
 // look input shows at once. The result is matrices a backend applies in its
 // vertex shader.

@@ -40,8 +40,15 @@ The main loop (`decomp/src/game/game.cpp`) steps the world once per
 second, the rate of the game's own frame gate (`func_800149F4` on `main`,
 `docs/GAME_INTERNALS.md` there). `frame_pacer_wait` restarts from the time it
 woke, not from the deadline, so an update that overruns slows the world rather
-than catching up. Verdite1 on `main` keeps `kf1.tickrate=15` by the user's
-choice; the gate's own rate is 20.
+than catching up. Gameplay > Tick rate (`gameplay.tick_rate`: 12, 15, 20 or
+30) sets the vblank count (`kf::world_update_vblanks`, 5 to 2). The default
+is 15, by the user's choice (2026-10-23): the gate is a ceiling, the console
+fell below 20 wherever a frame took longer than 50 ms to build, and 15 stands
+for a typical rate there (not measured). Classic mode keeps the gate's 20.
+The game counts updates, not time, so the rate is the game's speed: 15 is 25%
+slower than 20 in walking, turning, enemies and timers. Music is timed on the
+host clock and keeps its tempo. Verdite1 on `main` also defaults to
+`kf1.tickrate=15`.
 
 ## Small platforms: the 3DS
 

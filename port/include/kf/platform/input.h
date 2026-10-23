@@ -44,6 +44,9 @@ bool host_opening_quick_load();
 inline int player_run_speed = 160;
 // Run key mode: false holds to run, true toggles running on each press.
 inline bool player_run_toggle = false;
+// The world updates once every this many 60 Hz vblanks; the console's frame gate
+// waits 3 (20 updates a second); the port's default is 4 (15).
+inline int world_update_vblanks = 4;
 // Camera pitch limit in 1/4096 turns; the original is 191 (about 17 degrees).
 inline s32 player_pitch_limit = 191;
 // Fixes for original-game bugs whose branches never ran (upstream sushi-shi #50, #51).

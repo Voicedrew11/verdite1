@@ -270,7 +270,7 @@ void draw_settings_window() {
         ImGui::TextDisabled("now: %s", frontend_draws_overlay() ? "Vulkan" : "OpenGL");
         ImGui::BeginDisabled(s.classic);   // Classic mode overrides the rest
         const int rates[] = {20, 0, 60, 120, 144, 165, 240, -1};
-        const char *rate_labels[] = {"20 fps (original)", "Match display refresh", "60 fps", "120 fps", "144 fps",
+        const char *rate_labels[] = {"One per update (original)", "Match display refresh", "60 fps", "120 fps", "144 fps",
                                      "165 fps", "240 fps", "Unlimited"};
         int rate_index = 1;
         for (int i = 0; i < 8; ++i)
@@ -281,7 +281,7 @@ void draw_settings_window() {
             apply_render_settings();
             changed = true;
         }
-        ImGui::SetItemTooltip("The game still updates 20 times a second; extra frames are drawn\nfrom a camera between updates, so the view trails by one update (50 ms).\nEnemies and objects still move in 20 fps steps for now.");
+        ImGui::SetItemTooltip("The game still updates at its tick rate (Gameplay, 15 a second by default);\nextra frames are drawn between updates, so the view trails by one\nupdate (67 ms at 15).");
         ImGui::Spacing();
         const char *aspect_values[] = {"4:3", "16:9", "16:10", "21:9", "window"};
         const char *aspect_labels[] = {"4:3 (original)", "16:9", "16:10", "21:9", "Match window"};
@@ -447,6 +447,23 @@ void draw_settings_window() {
         language_settings_page(changed);
     } else if (std::strcmp(settings_page, "Gameplay") == 0) {
         ImGui::BeginDisabled(s.classic);
+        const int tick_rates[] = {30, 20, 15, 12};
+        const char *tick_rate_labels[] = {"30 a second (fast)", "20 a second (the game's limit)",
+                                          "15 a second (default)", "12 a second (slower)"};
+        int tick_rate_index = 2;
+        for (int i = 0; i < 4; ++i)
+            if (s.tick_rate == tick_rates[i])
+                tick_rate_index = i;
+        if (ImGui::Combo("Tick rate", &tick_rate_index, tick_rate_labels, 4)) {
+            s.tick_rate = tick_rates[tick_rate_index];
+            apply_control_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("How often the world updates. The PlayStation's frame gate allows at most 20 a\n"
+                              "second, and the console fell below that wherever a scene took longer to draw;\n"
+                              "15 stands for a typical rate on the console. The game counts updates,\n"
+                              "not time, so walking, turning, enemies and timers all slow down or speed up\n"
+                              "with it; the music does not.");
         if (ImGui::Checkbox("Use carried keys on locked doors and chests", &s.auto_keys)) {
             apply_control_settings();
             changed = true;

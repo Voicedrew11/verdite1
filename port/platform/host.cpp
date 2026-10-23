@@ -1084,7 +1084,7 @@ static void draw_and_swap(const FaceList *faces) {
 }
 
 // ---- Frame smoothing (PC extension) ----
-// The game updates and renders 20 times a second. Each world frame keeps its
+// The game updates and renders at its tick rate (20 a second as shipped). Each world frame keeps its
 // faces with camera-space positions; between updates the host re-projects them
 // from a camera interpolated between the last two updates, as often as the
 // display allows. Game logic and timing are untouched; the picture trails the

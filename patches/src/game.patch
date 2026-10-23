@@ -395,10 +395,18 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..33e9aff4fa21addea4e81643c71d44133a9ea896 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..3eb27e70cda87cacd07d4f474c30cfdee3ded723 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
-@@ -20,8 +20,11 @@ static std::uint64_t frame_pacer_last_tick;
+@@ -12,7 +12,6 @@
+ #include <cstring>
+ 
+ enum {
+-    FRAME_PACER_INTERVAL_TICKS = 3,
+     ENDING_MASTER_FADE_STEP_Q8 = 128
+ };
+ 
+@@ -20,8 +19,11 @@ static std::uint64_t frame_pacer_last_tick;
  
  GameResult game_result;
  
@@ -410,7 +418,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..33e9aff4fa21addea4e81643c71d4413
      kf::language_apply_pending();
      game_graphics_runtime = {};
      actor_state = {};
-@@ -40,12 +43,26 @@ void game_main_loop(void)
+@@ -40,12 +42,26 @@ void game_main_loop(void)
      common_resources_load();
      kf::host_language_status("Language ready.");
      game_initialize_session();
@@ -437,7 +445,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..33e9aff4fa21addea4e81643c71d4413
          game_apply_language();
          player_update();
          if (game_result != GameResult::Running) {
-@@ -59,6 +76,7 @@ void game_main_loop(void)
+@@ -59,6 +75,7 @@ void game_main_loop(void)
          effect_pool_update();
          map_event_pool_update();
          render_frame(&player_position_snapshot, &player_rotation_snapshot);
@@ -445,6 +453,17 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..33e9aff4fa21addea4e81643c71d4413
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
+@@ -88,7 +105,9 @@ void game_shutdown(void)
+ 
+ void frame_pacer_wait(void)
+ {
+-    kf::host_wait_until_tick(frame_pacer_last_tick + FRAME_PACER_INTERVAL_TICKS);
++    // The console's gate waits 3 vblanks (20 updates a second); the port's tick
++    // rate setting chooses the count.
++    kf::host_wait_until_tick(frame_pacer_last_tick + kf::world_update_vblanks);
+     frame_pacer_last_tick = kf::host_clock_tick();
+ }
+ 
 diff --git a/src/game/geometry_render.cpp b/src/game/geometry_render.cpp
 index f58a963c5e5f732356d11c95dce5045be497cba6..4204c2cb8606a052fb29d2afcd365edc5f65d64d 100644
 --- a/src/game/geometry_render.cpp
