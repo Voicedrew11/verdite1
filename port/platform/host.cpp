@@ -10,6 +10,7 @@
 #include <kf/renderer/renderer.h>
 #include <kf/renderer/projection.h>
 #include <kf/lib/fixed_math.h>
+#include "../renderer/vertex_carry.h"
 #include <SDL3/SDL.h>
 #if KF_EXT
 #include <kf/ext/ext.h>
@@ -859,7 +860,11 @@ void host_menu_preview_item(u8 item_id, s32 top) { menu_preview_building = {item
 
 MenuPreviewItem host_menu_preview() { return menu_preview_shown; }
 
+// Frame smoothing on the frontend: what moved since the update before.
+static VertexCarry vertex_carry;
+
 void host_begin_frame() {
+    vertex_carry.begin_update();
     menu_preview_building = {};
     host.frame_faces.clear();
     host.frame_light_count = 0;
@@ -870,6 +875,22 @@ void host_begin_frame() {
 void host_report_entity(u16 tag, s32 x, s32 y, s32 z, s32 yaw, int yaw_sign) {
     host.frame_poses.push_back({tag, static_cast<float>(x), static_cast<float>(y), static_cast<float>(z), yaw,
                                 static_cast<s8>(yaw_sign)});
+}
+
+CarriedModel host_carry_model(const MATRIX &model, std::span<const SVECTOR> vertices) {
+    if (!frontend_draws())
+        return {};
+    return vertex_carry.carry_model({render_entity_tag, render_entity_identity}, model, vertices);
+}
+
+std::span<const std::array<float, 2>> host_carry_screen(std::span<const std::array<float, 2>> points) {
+    if (!frontend_draws())
+        return {};
+    return vertex_carry.carry_screen({render_entity_tag, render_entity_identity}, points);
+}
+
+u16 host_carry_dial(float pivot_x, float pivot_y) {
+    return frontend_draws() ? vertex_carry.add_dial(pivot_x, pivot_y) : 0;
 }
 
 void host_enqueue_face(const DrawFace &face) {
@@ -1326,6 +1347,7 @@ void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Pr
     host.clip_projection = projection;
     smooth.frame = {position, rotation, projection};
     smooth.frame_has_camera = true;
+    vertex_carry.seen_from({position, rotation, projection});
     // Unsmoothed frames are drawn from this camera; smoothed ones set their own.
     set_renderer_camera(rotation, static_cast<float>(position.vx), static_cast<float>(position.vy),
         static_cast<float>(position.vz));
@@ -1374,7 +1396,6 @@ struct FrontendOutput {
     bool world_frame = false;          // the last update had a camera
     Uint64 next_present_ns = 0;
     std::vector<GameLight> lights;
-    std::vector<EntityPose> poses;
 };
 FrontendOutput frontend_output;
 
@@ -1500,12 +1521,8 @@ static void frontend_submit(const FaceList *faces) {
         const auto &light = host.frame_lights[i];
         lights.push_back({light.x, light.y, light.z, light.radius, light.r, light.g, light.b, light.flicker, light.seed});
     }
-    auto &poses = frontend_output.poses;
-    poses.clear();
-    for (const auto &pose : host.frame_poses)
-        poses.push_back({pose.tag, static_cast<s32>(std::lround(pose.x)), static_cast<s32>(std::lround(pose.y)),
-                         static_cast<s32>(std::lround(pose.z)), pose.yaw, pose.yaw_sign});
-    GameFrame frame{{faces->faces, faces->count}, faces->style, camera, lights, poses, look_applied(camera)};
+    const std::span<const PartMove> parts = camera ? vertex_carry.parts() : std::span<const PartMove>{};
+    GameFrame frame{{faces->faces, faces->count}, faces->style, camera, lights, parts, look_applied(camera)};
     const Uint64 now = host_clock_ns();
     renderer_submit(frame, now);
     frontend_output.world_frame = camera.has_value();

@@ -41,8 +41,12 @@ struct GpuVertex {
     VertexTexturing texturing;
     u8 dither;                      // 1: the PS1 dithered this face
     u8 casts_shadow;
-    u16 entity;                     // index into FrameView::motions, 0: none
+    u16 part;                       // GameFrame::parts index + 1, 0: none (FrameView::motions)
     u16 padding = 0;
+    float lx, ly, lz;               // a model part's vertex in model space
+    // The way back to the update before, scaled by FrameView::carry: model space
+    // for a model part's vertex, screen pixels (x, y) for a camera-fixed one.
+    float bx, by, bz;
 };
 
 // The fixed-function state a run of triangles shares (one pipeline in Vulkan).
@@ -61,15 +65,22 @@ struct DrawRun {
 };
 
 // How faces move from where their update drew them to where this frame shows
-// them: row-major 3 x 4 (rotation, then translation in world units), from the
-// update's camera space to the shown camera's. Vertices with cz = 0 never move.
+// them: row-major 3 x 4 (rotation, then translation in world units).
+//   [0]: world vertices of no part, from the update's camera space to the
+//        shown camera's;
+//   [n], a model: its vertices (lx, ly, lz, plus their way back) from model
+//        space to the shown camera's;
+//   [n], the dial: its vertices on screen (x, y, 0) to where they are shown.
+// Camera-fixed vertices of no part (cz = 0) stay where they are, but for
+// their way back.
 struct Motion {
     std::array<float, 12> to_shown;
 };
 
 // How the uploaded update is seen in this displayed frame.
 struct FrameView {
-    std::span<const Motion> motions;        // [0]: faces of no entity; [n]: GpuVertex::entity n
+    std::span<const Motion> motions;        // [0]: no part; [n]: GpuVertex::part n
+    float carry;                            // how much of each vertex's way back is shown, 0..1
     bool reproject;                         // false: draw x, y as the update projected them
     bool whole_pixels;                      // reprojected positions drop their fractions
     float projection_distance;

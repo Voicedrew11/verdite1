@@ -1,9 +1,14 @@
 #include "../renderer/frame_batch.h"
 #include "../renderer/texture_layers.h"
+#include "../renderer/model_transform.h"
+#include "../renderer/vertex_carry.h"
 #include "../renderer/view_smoothing.h"
+
+#include <kf/lib/fixed_math.h>
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -200,22 +205,38 @@ TEST_CASE("batch: depth test only for world faces with the depth buffer on") {
     CHECK(batch.runs[1].state.depth_write);
 }
 
-TEST_CASE("batch: entities are numbered from 1 in draw order") {
+TEST_CASE("batch: a face keeps its part, and a part the update does not have is none") {
     TextureLayers layers;
-    std::vector<DrawFace> faces = {solid_face(0), solid_face(1), solid_face(2)};
-    faces[0].entity = 7;
-    faces[1].entity = 0;
-    faces[2].entity = 900;
-    const FrameBatch batch = batch_faces(faces, {}, layers);
-    CHECK(batch.entity_tags == std::vector<u16>{900, 7});
-    CHECK(batch.vertices[0].entity == 1);
-    CHECK(batch.vertices[3].entity == 0);
-    CHECK(batch.vertices[6].entity == 2);
+    std::vector<DrawFace> faces = {solid_face(0), solid_face(1)};
+    faces[0].part = 2;
+    faces[0].vertices[0].bx = 5;
+    faces[1].part = 3;
+    BatchRules rules;
+    rules.part_count = 2;
+    const FrameBatch batch = batch_faces(faces, rules, layers);
+    CHECK(batch.vertices[0].part == 0);   // faces[1], deeper, drawn first: part 3 of 2
+    CHECK(batch.vertices[3].part == 2);
+    CHECK(batch.vertices[3].bx == 5);
+}
+
+TEST_CASE("batch: a cut face's new corners carry their share of the way back") {
+    TextureLayers layers;
+    DrawFace face = solid_face(0, 100);
+    face.vertices[0].cz = 10;   // behind the near plane (32)
+    face.vertices[0].bx = 0;
+    face.vertices[1].bx = 90;
+    face.vertices[2].bx = 90;
+    BatchRules rules;
+    rules.near_clip = Projection{};
+    const FrameBatch batch = batch_faces({&face, 1}, rules, layers);
+    REQUIRE_FALSE(batch.vertices.empty());
+    for (const GpuVertex &vertex : batch.vertices)
+        CHECK(vertex.bx == doctest::Approx(90 * (vertex.cz - 10) / 90).epsilon(1e-3));
 }
 
 TEST_CASE("smoothing: the first update is shown as drawn") {
     ViewSmoothing smoothing;
-    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, {}, 0);
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);
     const ShownView view = smoothing.view_at(25 * ms, {0, 0, 0});
     REQUIRE(view.motions.size() == 1);
     CHECK(view.motions[0].to_shown[3] == doctest::Approx(0));
@@ -224,8 +245,8 @@ TEST_CASE("smoothing: the first update is shown as drawn") {
 
 TEST_CASE("smoothing: halfway between two updates") {
     ViewSmoothing smoothing;
-    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, {}, 0);
-    smoothing.take_update(pose_at(100), {0, 0, 0}, {}, {}, 50 * ms);
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);
+    smoothing.take_update(pose_at(100), {0, 0, 0}, {}, 50 * ms);
     const ShownView view = smoothing.view_at(75 * ms, {0, 0, 0});
     // The shown camera trails the drawn one by 50: drawn points move +50 in x.
     CHECK(view.motions[0].to_shown[3] == doctest::Approx(50));
@@ -236,8 +257,8 @@ TEST_CASE("smoothing: halfway between two updates") {
 
 TEST_CASE("smoothing: look input shows without an update of lag") {
     ViewSmoothing smoothing;
-    smoothing.take_update(pose_at(0, 0), {0, 0, 0}, {}, {}, 0);
-    smoothing.take_update(pose_at(0, 200), {0, 200, 0}, {}, {}, 50 * ms);
+    smoothing.take_update(pose_at(0, 0), {0, 0, 0}, {}, 0);
+    smoothing.take_update(pose_at(0, 200), {0, 200, 0}, {}, 50 * ms);
     // All of the turn was look input: the shown view is the drawn one throughout.
     for (const std::uint64_t at : {50 * ms, 60 * ms, 99 * ms}) {
         const ShownView view = smoothing.view_at(at, {0, 0, 0});
@@ -251,22 +272,186 @@ TEST_CASE("smoothing: look input shows without an update of lag") {
 
 TEST_CASE("smoothing: a warp is not blended") {
     ViewSmoothing smoothing;
-    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, {}, 0);
-    smoothing.take_update(pose_at(9000), {0, 0, 0}, {}, {}, 50 * ms);
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);
+    smoothing.take_update(pose_at(9000), {0, 0, 0}, {}, 50 * ms);
     CHECK(smoothing.view_at(50 * ms, {0, 0, 0}).motions[0].to_shown[3] == doctest::Approx(0));
 }
 
-TEST_CASE("smoothing: a moving entity trails its last pose") {
+namespace {
+std::array<float, 12> placed_at(float x, float yaw_radians = 0) {
+    const float c = std::cos(yaw_radians), s = std::sin(yaw_radians);
+    return {c, 0, -s, x, 0, 1, 0, 0, s, 0, c, 2000};
+}
+
+float column_length(const Motion &motion, int c) {
+    const auto &m = motion.to_shown;
+    return std::sqrt(m[c] * m[c] + m[4 + c] * m[4 + c] + m[8 + c] * m[8 + c]);
+}
+} // namespace
+
+TEST_CASE("smoothing: a moving model is shown between its last two places") {
     ViewSmoothing smoothing;
-    const std::vector<u16> tags = {5};
-    const std::vector<EntityPose> before = {{5, 1000, 0, 2000, 0, 0}};
-    const std::vector<EntityPose> after = {{5, 1100, 0, 2000, 0, 0}};
-    smoothing.take_update(pose_at(0), {0, 0, 0}, before, tags, 0);
-    smoothing.take_update(pose_at(0), {0, 0, 0}, after, tags, 50 * ms);
+    const std::vector<PartMove> parts = {ModelMove{placed_at(1000), placed_at(1100)}};
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);
+    smoothing.take_update(pose_at(0), {0, 0, 0}, parts, 50 * ms);
     const ShownView view = smoothing.view_at(75 * ms, {0, 0, 0});
     REQUIRE(view.motions.size() == 2);
-    CHECK(view.motions[0].to_shown[3] == doctest::Approx(0));
-    CHECK(view.motions[1].to_shown[3] == doctest::Approx(-50));
+    CHECK(view.carry == doctest::Approx(0.5));
+    CHECK(view.motions[1].to_shown[3] == doctest::Approx(1050));
+    CHECK(view.motions[1].to_shown[11] == doctest::Approx(2000));
+    const ShownView done = smoothing.view_at(100 * ms, {0, 0, 0});
+    CHECK(done.carry == 0);
+    CHECK(done.motions[1].to_shown[3] == doctest::Approx(1100));
+}
+
+TEST_CASE("smoothing: a turning model keeps its size halfway") {
+    ViewSmoothing smoothing;
+    const std::vector<PartMove> parts = {ModelMove{placed_at(0, 0), placed_at(0, 3.14159265f / 2)}};
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);
+    smoothing.take_update(pose_at(0), {0, 0, 0}, parts, 50 * ms);
+    const Motion halfway = smoothing.view_at(75 * ms, {0, 0, 0}).motions[1];
+    CHECK(column_length(halfway, 0) == doctest::Approx(1));
+    CHECK(halfway.to_shown[0] == doctest::Approx(0.7071).epsilon(1e-3));
+}
+
+TEST_CASE("smoothing: a warp shows the update's own places, with no way back") {
+    ViewSmoothing smoothing;
+    const std::vector<PartMove> parts = {ModelMove{placed_at(1000), placed_at(1100)}};
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);
+    smoothing.take_update(pose_at(9000), {0, 0, 0}, parts, 50 * ms);
+    const ShownView view = smoothing.view_at(60 * ms, {0, 0, 0});
+    CHECK(view.carry == 0);
+    CHECK(view.motions[1].to_shown[3] == doctest::Approx(1100 - 9000));
+}
+
+TEST_CASE("smoothing: the compass needle turns with the view shown") {
+    ViewSmoothing smoothing;
+    const std::vector<PartMove> parts = {DialTurn{286, 34}};
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);
+    smoothing.take_update(pose_at(0), {0, 0, 0}, parts, 50 * ms);
+    // Pending look turns the view 512 (an eighth of a turn); the needle's angle is the negated yaw.
+    const Motion dial = smoothing.view_at(100 * ms, {0, 512, 0}).motions[1];
+    CHECK(dial.to_shown[0] == doctest::Approx(0.7071).epsilon(1e-3));
+    CHECK(dial.to_shown[4] == doctest::Approx(-0.7071).epsilon(1e-3));
+    // The pivot stays put.
+    CHECK(dial.to_shown[0] * 286 + dial.to_shown[1] * 34 + dial.to_shown[3] == doctest::Approx(286));
+    CHECK(dial.to_shown[4] * 286 + dial.to_shown[5] * 34 + dial.to_shown[7] == doctest::Approx(34));
+}
+
+namespace {
+// A model at world position x, y, z, unturned, as the game hands it seen from camera.
+MATRIX seen_model(const CameraPose &camera, s32 x, s32 y, s32 z) {
+    MATRIX view{};
+    matrix_set_rotation_xyz(camera.rotation, view);
+    MATRIX out = view;
+    const std::array<s32, 3> relative = {x - camera.position.vx, y - camera.position.vy, z - camera.position.vz};
+    for (int r = 0; r < 3; ++r)
+        out.t[r] = (view.m[r][0] * relative[0] + view.m[r][1] * relative[1] + view.m[r][2] * relative[2]) / 4096;
+    return out;
+}
+
+constexpr PartOwner actor{256, 3};
+} // namespace
+
+TEST_CASE("carry: a model drawn again carries its place and each vertex's way back") {
+    VertexCarry carry;
+    const CameraPose camera = pose_at(0);
+    const std::vector<SVECTOR> before = {{0, 0, 0}, {10, 0, 0}}, after = {{0, 0, 0}, {12, -4, 0}};
+    carry.begin_update();
+    carry.seen_from(camera);
+    CHECK(carry.carry_model(actor, seen_model(camera, 1000, 0, 2000), before).part == 0);
+    carry.begin_update();
+    carry.seen_from(camera);
+    const CarriedModel carried = carry.carry_model(actor, seen_model(camera, 1100, 0, 2000), after);
+    REQUIRE(carried.part == 1);
+    REQUIRE(carried.back.size() == 2);
+    CHECK(carried.back[1][0] == -2);
+    CHECK(carried.back[1][1] == 4);
+    REQUIRE(carry.parts().size() == 1);
+    const auto &move = std::get<ModelMove>(carry.parts()[0]);
+    CHECK(move.before[3] == doctest::Approx(1000));
+    CHECK(move.now[3] == doctest::Approx(1100));
+    CHECK(move.now[11] == doctest::Approx(2000));
+}
+
+TEST_CASE("carry: a model's place is in the world, whichever way the camera turned") {
+    VertexCarry carry;
+    const CameraPose facing = pose_at(500, 0), turned = pose_at(500, 1024);
+    const std::vector<SVECTOR> vertices = {{0, 0, 0}};
+    carry.begin_update();
+    carry.seen_from(facing);
+    (void)carry.carry_model(actor, seen_model(facing, 1000, 0, 2000), vertices);
+    carry.begin_update();
+    carry.seen_from(turned);
+    REQUIRE(carry.carry_model(actor, seen_model(turned, 1000, 0, 2000), vertices).part == 1);
+    const auto &move = std::get<ModelMove>(carry.parts()[0]);
+    for (const int i : {0, 3, 5, 10, 11})
+        CHECK(move.now[i] == doctest::Approx(move.before[i]).epsilon(1e-2));
+    CHECK(move.now[3] == doctest::Approx(1000).epsilon(1e-2));
+}
+
+TEST_CASE("carry: a new occupant, a warp or a nameless model carries nothing") {
+    VertexCarry carry;
+    const CameraPose camera = pose_at(0);
+    const std::vector<SVECTOR> vertices = {{0, 0, 0}};
+    carry.begin_update();
+    carry.seen_from(camera);
+    (void)carry.carry_model(actor, seen_model(camera, 0, 0, 2000), vertices);
+    (void)carry.carry_model({257, 3}, seen_model(camera, 0, 0, 2000), vertices);
+    (void)carry.carry_model({0, 0}, seen_model(camera, 0, 0, 2000), vertices);
+    carry.begin_update();
+    carry.seen_from(camera);
+    CHECK(carry.carry_model({256, 4}, seen_model(camera, 0, 0, 2000), vertices).part == 0);
+    CHECK(carry.carry_model({257, 3}, seen_model(camera, 2500, 0, 2000), vertices).part == 0);
+    CHECK(carry.carry_model({0, 0}, seen_model(camera, 0, 0, 2000), vertices).part == 0);
+    CHECK(carry.parts().empty());
+}
+
+TEST_CASE("carry: drawings under one tag are matched in order, past a 2D update") {
+    VertexCarry carry;
+    const CameraPose camera = pose_at(0);
+    const std::vector<SVECTOR> one = {{0, 0, 0}}, two = {{0, 0, 0}, {1, 0, 0}};
+    carry.begin_update();
+    carry.seen_from(camera);
+    (void)carry.carry_model(actor, seen_model(camera, 0, 0, 2000), one);
+    (void)carry.carry_model(actor, seen_model(camera, 0, 0, 2000), two);
+    carry.begin_update();   // a menu: nothing carried, nothing lost
+    CHECK(carry.carry_model(actor, seen_model(camera, 0, 0, 2000), one).part == 0);
+    carry.begin_update();
+    carry.seen_from(camera);
+    CHECK(carry.carry_model(actor, seen_model(camera, 0, 0, 2000), one).part == 1);
+    CHECK(carry.carry_model(actor, seen_model(camera, 0, 0, 2000), two).part == 2);
+}
+
+TEST_CASE("carry: screen points carry their way back") {
+    VertexCarry carry;
+    const std::vector<std::array<float, 2>> before = {{10, 20}, {60, 20}}, after = {{10, 20}, {50, 20}};
+    carry.begin_update();
+    carry.seen_from(pose_at(0));
+    CHECK(carry.carry_screen({1312, 0}, before).empty());
+    carry.begin_update();
+    carry.seen_from(pose_at(0));
+    const auto back = carry.carry_screen({1312, 0}, after);
+    REQUIRE(back.size() == 2);
+    CHECK(back[0][0] == 0);
+    CHECK(back[1][0] == 10);
+    CHECK(carry.add_dial(286, 34) == 1);
+}
+
+TEST_CASE("model transform: an axis scaled from nothing grows without turning the rest") {
+    const std::array<double, 12> flat = {1, 0, 0, 0, 0, 0, 0, 5, 0, 0, 1, 0};   // y scaled to 0
+    const std::array<double, 12> tall = {1, 0, 0, 0, 0, 2, 0, 5, 0, 0, 1, 0};
+    const auto halfway = blend_transforms(split_transform(flat), split_transform(tall), 0.5);
+    CHECK(halfway[0] == doctest::Approx(1));
+    CHECK(halfway[5] == doctest::Approx(1));
+    CHECK(halfway[10] == doctest::Approx(1));
+    CHECK(halfway[7] == doctest::Approx(5));
+}
+
+TEST_CASE("model transform: the turn between two rotations") {
+    const std::array<double, 12> facing = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    const std::array<double, 12> turned = {0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0};
+    CHECK(turn_between(split_transform(facing), split_transform(turned)) == doctest::Approx(3.14159265 / 2));
 }
 
 TEST_CASE("smoothing: lights move with the camera, nearest first") {

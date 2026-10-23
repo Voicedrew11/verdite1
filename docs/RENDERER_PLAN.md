@@ -111,12 +111,48 @@ work is rendering, not reverse engineering.
 |---|---|
 | true colour, no dither, sub-pixel, perspective, Z-buffer | free: float vertices with real depth; kf1-enhanced has them |
 | retained map, map cache | build each area's static cells into GPU buffers once, keyed by area. Kept 2026-10-23, knowing the cost: the game projects and lights map cells on the CPU each update, so this moves that work into the renderer. Not in the first backend, which uploads each update's faces once |
-| smoothing (view, models, HUD, item display) | interpolate game state between ticks: camera, model transforms, animation frames. kf1-enhanced re-projects from the camera only (`cx/cy/cz`); check models and HUD. Decided 2026-10-23: positions blend between the last two updates, but the view turns to the newest look input each displayed frame, so looking has no update (50 ms) of lag |
+| smoothing (view, models, HUD, item display) | done on Vulkan (2026-10-23), below. Positions blend between the last two updates, but the view turns to the newest look input each displayed frame, so looking has no update (50 ms) of lag |
 | per-pixel lighting, distance fog | port the game's own lighting and depth-cue routines, named in the decomp, into the shader with the game's parameters: the original look, evaluated per pixel |
 | AO with geometry normals | done on Vulkan (2026-10-23), below |
 | mipmaps, anisotropic, mip sharing | decode each texture page and palette to RGBA textures; watch textures the game rewrites in video memory (animated textures, palette changes), which need invalidating |
 | render distance with fade, widened cull | the cell loop and stencils as parameters; keep **render reach separate from logic reach**, so enemy activation and events do not move |
 | widescreen HUD, menus, tints | laid out at the source, not stretched afterwards |
+
+### Smoothing: what is carried between updates
+
+Verdite1 carried each system by hand (`docs/SMOOTHING.md` on `main`): the
+camera, five model tables' positions and angles, the animation clips' times,
+the arm, the HUD bars, the item display's turn, the warp column's scale. It had
+to, because it saw only the GPU packets. Here the game's own projection is at
+hand, so Vulkan carries vertices instead (`vertex_carry.h`), the same way for
+everything:
+
+- **Models in the world** (map objects, actors, effects, people): each call of
+  `tmd_project_vertices`, and each world sprite, hands over its model-to-camera
+  matrix and its posed vertices. The carry keeps the model-to-world transform
+  of both updates and each vertex's way back in model space; a displayed frame
+  turns the model along the shorter arc, blends its scale and position, and
+  blends each vertex along its way back (`model_transform.h`). The turn and
+  the scale are the game's own: a door's swing, a pickup tipping over, the warp
+  column spinning 0x200 a step and growing from height 0, which a blend of
+  positions would shrink. A pose is a linear blend of two keyframes in the
+  game, so blending the posed vertices is what the game would draw in between.
+- **Camera-fixed and 2D** (the held weapon's swing, the item display, the HUD
+  bars): each point's way back on screen.
+- **The compass needle** is not carried: it turns about its pivot by the yaw
+  the shown view has turned since the update, so it points where the shown
+  view faces, look input included.
+
+A drawing is matched to the one before by the thing's tag (`KF_RENDER_TAG_*`),
+the nth drawing under it, an identity (object id, actor definition, effect
+kind and type, person's model, the item display's queue slot) and the vertex
+count. A step over 2000 units or a turn over 0x300 in one update, as Verdite
+judged, carries nothing; a warp of the camera carries nothing at all.
+
+Not needed in the decomp, since its game logic runs once per update: the
+flipbook sprites stepping on every drawn frame, the item display's hold, tints
+and textures. The GL renderer keeps kf1-enhanced's rigid per-entity smoothing
+(`host_report_entity`).
 
 ### Ambient occlusion and the surface buffer
 

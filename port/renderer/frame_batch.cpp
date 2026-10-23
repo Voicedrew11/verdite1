@@ -48,6 +48,12 @@ Vertex mix(const Vertex &a, const Vertex &b, float t) {
     out.cx = lerp(a.cx, b.cx);
     out.cy = lerp(a.cy, b.cy);
     out.cz = lerp(a.cz, b.cz);
+    out.lx = lerp(a.lx, b.lx);
+    out.ly = lerp(a.ly, b.ly);
+    out.lz = lerp(a.lz, b.lz);
+    out.bx = lerp(a.bx, b.bx);
+    out.by = lerp(a.by, b.by);
+    out.bz = lerp(a.bz, b.bz);
     return out;
 }
 
@@ -124,10 +130,10 @@ struct FaceAttributes {
     VertexTexturing texturing;
     u8 dither;
     u8 casts_shadow;
-    u16 entity;
+    u16 part;
 };
 
-FaceAttributes face_attributes(const DrawFace &face, u8 layer, u16 entity) {
+FaceAttributes face_attributes(const DrawFace &face, u8 layer, std::size_t part_count) {
     const bool textured = face.material.kind == SurfaceKind::Texture;
     const bool modulated = face.material.color_mode == TextureColorMode::Modulated;
     float min_u = 1, min_v = 1, max_u = 0, max_v = 0;
@@ -145,7 +151,7 @@ FaceAttributes face_attributes(const DrawFace &face, u8 layer, u16 entity) {
     // The PS1 dithered modulated textures and gouraud-shaded solids.
     out.dither = (textured ? modulated : face.shading == FaceShading::Gouraud) ? 1 : 0;
     out.casts_shadow = face.casts_shadow ? 1 : 0;
-    out.entity = entity;
+    out.part = face.part <= part_count ? face.part : 0;
     return out;
 }
 
@@ -166,7 +172,13 @@ GpuVertex gpu_vertex(const Vertex &vertex, const FaceAttributes &face) {
     out.texturing = face.texturing;
     out.dither = face.dither;
     out.casts_shadow = face.casts_shadow;
-    out.entity = face.entity;
+    out.part = face.part;
+    out.lx = vertex.lx;
+    out.ly = vertex.ly;
+    out.lz = vertex.lz;
+    out.bx = vertex.bx;
+    out.by = vertex.by;
+    out.bz = vertex.bz;
     return out;
 }
 
@@ -182,27 +194,6 @@ std::vector<std::size_t> draw_order(std::span<const DrawFace> faces) {
     return order;
 }
 
-// Numbers the game's entity tags from 1 in the order they are first drawn.
-class EntityNumbers {
-public:
-    explicit EntityNumbers(std::vector<u16> &tags) : tags_(tags) {}
-    u16 number_of(u16 tag) {
-        if (tag == 0)
-            return 0;
-        if (tag >= numbers_.size())
-            numbers_.resize(static_cast<std::size_t>(tag) + 1, 0);
-        if (numbers_[tag] == 0) {
-            tags_.push_back(tag);
-            numbers_[tag] = static_cast<u16>(tags_.size());
-        }
-        return numbers_[tag];
-    }
-
-private:
-    std::vector<u16> &tags_;
-    std::vector<u16> numbers_;
-};
-
 void append_triangle(FrameBatch &batch, const Triangle &triangle, const FaceAttributes &face, DrawState state) {
     if (batch.runs.empty() || !(batch.runs.back().state == state))
         batch.runs.push_back({state, static_cast<u32>(batch.vertices.size()), 0});
@@ -215,7 +206,6 @@ void append_triangle(FrameBatch &batch, const Triangle &triangle, const FaceAttr
 FrameBatch batch_faces(std::span<const DrawFace> faces, const BatchRules &rules, TextureLayers &layers) {
     FrameBatch batch;
     batch.vertices.reserve(faces.size() * 6);
-    EntityNumbers entities(batch.entity_tags);
     // An untextured translucent face blends the way the last textured face set.
     BlendMode preceding_blend = rules.initial_blend;
     std::vector<Triangle> triangles;
@@ -232,7 +222,7 @@ FrameBatch batch_faces(std::span<const DrawFace> faces, const BatchRules &rules,
         if (!layer)
             continue;
         const BlendMode blend = face.transparency == FaceTransparency::Blend ? preceding_blend : BlendMode::opaque;
-        const FaceAttributes attributes = face_attributes(face, *layer, entities.number_of(face.entity));
+        const FaceAttributes attributes = face_attributes(face, *layer, rules.part_count);
         triangles.clear();
         split_face(face, rules, triangles);
         for (const Triangle &triangle : triangles) {

@@ -445,6 +445,38 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..33e9aff4fa21addea4e81643c71d4413
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
+diff --git a/src/game/geometry_render.cpp b/src/game/geometry_render.cpp
+index f58a963c5e5f732356d11c95dce5045be497cba6..4204c2cb8606a052fb29d2afcd365edc5f65d64d 100644
+--- a/src/game/geometry_render.cpp
++++ b/src/game/geometry_render.cpp
+@@ -106,6 +106,12 @@ void render_hud_models(const MATRIX *lights)
+                 entry->animation_clip, entry->animation_phase,
+                 object.vertex_count)) {
+             tmd_transform_vertices(tmd_context(), object.vertex_count, &model);
++            // PC extension (frame smoothing): the needle turns with the view shown.
++            if (entry == &hud_models[KF_HUD_MODEL_COMPASS]) {
++                const u16 dial = kf::host_carry_dial(float(model.t[0]), float(model.t[1]));
++                for (auto &vertex : tmd_context().projected_vertices.first(object.vertex_count))
++                    vertex.part = dial;
++            }
+             render_enqueue_tmd(0, 0, lights);
+         }
+         entry++;
+@@ -123,10 +129,14 @@ void render_hud_sprites(KfHudSprite *table)
+     }
+     do {
+         if (entry->state == KF_SPRITE_VISIBLE) {
++            // PC extension (frame smoothing): the bars fill between updates.
++            kf::render_entity_tag = static_cast<u16>(KF_RENDER_TAG_HUD_SPRITES + (entry - table));
++            kf::render_entity_identity = 0;
+             render_screen_sprite(&entry->sprite);
+         }
+         entry++;
+     } while (entry->state != KF_SPRITE_END);
++    kf::render_entity_tag = 0;
+ }
+ 
+ enum {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
 index 660386288c157b2819409141f669eb2ae4d10af9..c99764840573dfed93d85ea3c02e9df7f4aa58dd 100644
 --- a/src/game/item.cpp
@@ -1194,10 +1226,10 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..1873eb5e0a7385fb3aec720faa259d80
  
      case KF_ITEM_DRAGON_CHALICE:
 diff --git a/src/game/render.cpp b/src/game/render.cpp
-index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..ab45b5af1618536d8be42efc29a3ec3c8719b86e 100644
+index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..98e50014ee530711f8e858d4fcd163dffbacabfc 100644
 --- a/src/game/render.cpp
 +++ b/src/game/render.cpp
-@@ -201,6 +201,38 @@ void render_initialize(void)
+@@ -201,10 +201,43 @@ void render_initialize(void)
      animation_cache_reset();
  }
  
@@ -1236,7 +1268,12 @@ index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..ab45b5af1618536d8be42efc29a3ec3c
  void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &projection)
  {
      KfScreenVertex *projected;
-@@ -213,6 +245,14 @@ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &
+     const SVECTOR *vertex;
++    const s32 drawn = count;
+ 
+     projected = game_graphics_runtime.tmd_projected_vertices.data();
+     vertex = tmd_vertices(tmd_context(), count).data();
+@@ -213,9 +246,20 @@ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &
          projected->position = {point.x, point.y};
          projected->p2 = point.fog << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT;
          projected->sz = point.depth;
@@ -1251,11 +1288,17 @@ index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..ab45b5af1618536d8be42efc29a3ec3c
          projected++;
          vertex++;
      }
++    // PC extension (frame smoothing): where these vertices were in the update before.
++    tmd_carry_projected({game_graphics_runtime.tmd_projected_vertices.data(), std::size_t(drawn)},
++        tmd_vertices(tmd_context(), drawn), *model);
+ }
+ 
+ void render_reset_module_state(void)
 diff --git a/src/game/render_enqueuers.cpp b/src/game/render_enqueuers.cpp
-index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..1d355c4aa873fe303d50a7f84b8fdc2dfbe30022 100644
+index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..52c82801c43ecdf2b770723a116291bfe28af5ae 100644
 --- a/src/game/render_enqueuers.cpp
 +++ b/src/game/render_enqueuers.cpp
-@@ -477,10 +477,16 @@ void render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpriteDepthCu
+@@ -477,13 +477,21 @@ void render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpriteDepthCu
      kf::DrawFace face {};
      CVECTOR color {};
      face.shape = kf::FaceShape::Quad;
@@ -1274,8 +1317,13 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..1d355c4aa873fe303d50a7f84b8fdc2d
      }
      render_face_uv_rectangle(&face, sprite->u, sprite->v,
          sprite->u + sprite->u_span, sprite->v + sprite->v_span);
++    // PC extension (frame smoothing): spell sprites and the item display between updates.
++    render_carry_sprite(face, corners, *model);
+     if (depth_cue_mode == KF_SPRITE_DEPTH_CUE_BOOSTED) {
+         depth_cue += depth_cue >> 1;
+     }
 diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
-index 73c6900e478aa3769791136fbf65a88230b2c272..e14c22a47e9a1fb6295d5a943808873b418058f1 100644
+index 73c6900e478aa3769791136fbf65a88230b2c272..9bd78daaf0f0492ca8e7a08594bac43d7fa6a802 100644
 --- a/src/game/render_frame.cpp
 +++ b/src/game/render_frame.cpp
 @@ -11,6 +11,7 @@
@@ -1286,7 +1334,22 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..e14c22a47e9a1fb6295d5a943808873b
  
  enum {
      HUD_GAUGE_WIDTH = 50,
-@@ -83,6 +84,15 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -71,6 +72,14 @@ std::array<MATRIX, KF_RENDER_LIGHT_COUNT> render_light_matrices = {
+     },
+ };
+ 
++// PC extension (frame smoothing): names the item display's sprite about to be
++// drawn, with the item it shows, so a new item starts afresh.
++static void render_tag_notification(const KfNotificationSprite *record)
++{
++    kf::render_entity_tag = static_cast<u16>(KF_RENDER_TAG_NOTIFICATIONS + (record - notification_sprites.data()));
++    kf::render_entity_identity = game_graphics_runtime.notification_state.control.queue_tail;
++}
++
+ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_null)
+ {
+     game_update_language_comparison();
+@@ -83,6 +92,15 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
  
      render_set_view_transform(game_graphics_runtime.render_state, position_or_null, rotation_or_null);
      display_begin_frame(game_graphics_runtime.display_state);
@@ -1302,23 +1365,38 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..e14c22a47e9a1fb6295d5a943808873b
      animation_cache_mark_stale();
      render_map_cells();
      poison_icon = &hud_sprites[KF_HUD_POISON_ICON];
-@@ -153,6 +163,7 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -153,24 +171,35 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      kf::matrix_set_rotation_xyz(spin, model);
  
      game_graphics_runtime.active_render_material = game_graphics_runtime.notification_text_material;
 +    kf::render_camera_fixed = true;   // notifications float in front of the camera
      record = notification_sprites.data();
      if (record[KF_NOTIFICATION_TEXT_SPRITE].active == KF_SPRITE_VISIBLE) {
++        render_tag_notification(&record[KF_NOTIFICATION_TEXT_SPRITE]);
          render_enqueue_sprite(&record[KF_NOTIFICATION_TEXT_SPRITE].sprite, 0, KF_SPRITE_DEPTH_CUE_NORMAL, &render_light_matrices[KF_RENDER_LIGHT_NOTIFICATION], &model, game_graphics_runtime.render_state.projection);
-@@ -168,9 +179,12 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+     }
+     if (notification_sprites[KF_NOTIFICATION_GOLD_SPRITE].active == KF_SPRITE_VISIBLE) {
++        render_tag_notification(&record[KF_NOTIFICATION_GOLD_SPRITE]);
+         render_enqueue_sprite(&record[KF_NOTIFICATION_GOLD_SPRITE].sprite, 0, KF_SPRITE_DEPTH_CUE_NORMAL, &render_light_matrices[KF_RENDER_LIGHT_NOTIFICATION], &model, game_graphics_runtime.render_state.projection);
+     }
+     record += KF_NOTIFICATION_ONES_SPRITE;
+     game_graphics_runtime.active_render_material = game_graphics_runtime.notification_digit_material;
+     for (i = KF_NOTIFICATION_THOUSANDS_SPRITE - KF_NOTIFICATION_ONES_SPRITE; i != -1; i--) {
+         if (record->active == KF_SPRITE_VISIBLE) {
++            render_tag_notification(record);
+             render_enqueue_sprite(&record->sprite, 0, KF_SPRITE_DEPTH_CUE_NORMAL, &render_light_matrices[KF_RENDER_LIGHT_NOTIFICATION], &model, game_graphics_runtime.render_state.projection);
          }
          record++;
      }
++    kf::render_entity_tag = 0;
 +    kf::render_camera_fixed = false;
  
      render_entities();
 +    kf::render_camera_fixed = true;   // the held weapon moves with the camera
++    kf::render_entity_tag = KF_RENDER_TAG_WEAPON;   // PC extension (frame smoothing): its swing
++    kf::render_entity_identity = 0;
      render_weapon();
++    kf::render_entity_tag = 0;
 +    kf::render_camera_fixed = false;
      display_present_frame(game_graphics_runtime.display_state);
      animation_cache_release_stale();
@@ -1455,7 +1533,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..13b1917d4b1f804182820b430af11393
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..9b592a61362a36942ee3b1a18aa32b01baa04c67 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..a2297e2dcc9c0990b12f984c122961164c3288cc 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -14,6 +14,22 @@ struct RenderCellOrigin {
@@ -1490,23 +1568,24 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..9b592a61362a36942ee3b1a18aa32b01
  }
  
  static bool render_actor_is_visible(const KfActor &actor, RenderCellOrigin origin)
-@@ -51,19 +67,31 @@ void render_entities(void)
+@@ -51,19 +67,32 @@ void render_entities(void)
  
      tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
  
 -    for (auto &object : map_object_state.objects) {
-+    // PC extension: tag each moving thing's faces and report its pose, so frame
-+    // smoothing can move it between updates (tags: objects 1.., actors 256..,
-+    // effects 512.., events 1024..).
-+    auto tag = [](int base, std::size_t index, s32 x, s32 y, s32 z, s32 yaw, int yaw_sign) {
++    // PC extension: tag each moving thing's faces, with what occupies its slot,
++    // and report its pose, so frame smoothing can move it between updates
++    // (KF_RENDER_TAG_*).
++    auto tag = [](int base, std::size_t index, u32 identity, s32 x, s32 y, s32 z, s32 yaw, int yaw_sign) {
 +        kf::render_entity_tag = static_cast<u16>(base + index);
++        kf::render_entity_identity = identity;
 +        kf::host_report_entity(kf::render_entity_tag, x, y, z, yaw, yaw_sign);
 +    };
 +    for (std::size_t i = 0; i < std::size(map_object_state.objects); ++i) {
 +        auto &object = map_object_state.objects[i];
          if (object.object_id < KF_MAP_OBJECT_RENDER_ID_END
              && render_cell_is_visible(object.cell_x, object.cell_z, origin)) {
-+            tag(1, i, object.position.vx, object.position.vy, object.position.vz, object.rotation.vy, 1);
++            tag(KF_RENDER_TAG_MAP_OBJECTS, i, kf_enum_encode<u8>(object.object_id), object.position.vx, object.position.vy, object.position.vz, object.rotation.vy, 1);
              render_map_object(&object);
          }
      }
@@ -1516,7 +1595,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..9b592a61362a36942ee3b1a18aa32b01
 +        auto &actor = actor_state.actors[i];
          if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
              && render_actor_is_visible(actor, origin)) {
-+            tag(256, i, actor.position.vx, actor.position.vy, actor.position.vz, actor.rotation.vy, -1);
++            tag(KF_RENDER_TAG_ACTORS, i, actor.definition_id, actor.position.vx, actor.position.vy, actor.position.vz, actor.rotation.vy, -1);
              render_actor(&actor);
          }
      }
@@ -1524,7 +1603,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..9b592a61362a36942ee3b1a18aa32b01
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +105,33 @@ void render_entities(void)
+@@ -77,23 +106,33 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -1544,7 +1623,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..9b592a61362a36942ee3b1a18aa32b01
          }
          if (render_cell_is_visible(
                  effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
-+            tag(512, i, effect.position.vx, effect.position.vy, effect.position.vz, 0, 0);
++            tag(KF_RENDER_TAG_EFFECTS, i, u32(kf_enum_encode<u8>(effect.kind)) << 8 | kf_enum_encode<u8>(effect.type), effect.position.vx, effect.position.vy, effect.position.vz, 0, 0);
              render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
          }
      }
@@ -1554,11 +1633,24 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..9b592a61362a36942ee3b1a18aa32b01
 +        auto &event = map_runtime_state.events[i];
          if (event.state == KF_MAP_EVENT_ACTIVE
              && render_cell_is_visible(event.cell_x, event.cell_z, origin)) {
-+            tag(1024, i, event.reference_position.vx, event.reference_position.vy, event.reference_position.vz, 0, 0);
++            tag(KF_RENDER_TAG_MAP_EVENTS, i, event.model_index, event.reference_position.vx, event.reference_position.vy, event.reference_position.vz, 0, 0);
              render_map_event(&event, &game_graphics_runtime.map_event_light_matrix);
          }
      }
 +    kf::render_entity_tag = 0;
+ }
+diff --git a/src/game/render_sprite.cpp b/src/game/render_sprite.cpp
+index 55e9edcbc4495d8cc7075c10334d57e8863d727d..f02ffdf13e557f83b720bb2c9acc01d63bc4e684 100644
+--- a/src/game/render_sprite.cpp
++++ b/src/game/render_sprite.cpp
+@@ -13,6 +13,8 @@ void render_screen_sprite(KfSpriteQuad *sprite)
+         sprite->x + sprite->w, sprite->y + sprite->h);
+     render_face_uv_rectangle(&face, sprite->u, sprite->v,
+         sprite->u + sprite->u_span, sprite->v + sprite->v_span);
++    // PC extension (frame smoothing): the HUD bars between updates.
++    render_carry_screen_face(face);
+     render_face_submit(&face, {&game_graphics_runtime.active_render_color, 1},
+         kf::FaceShading::Flat, HUD_SPRITE_OT_DEPTH);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
 index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..aa22d1044416dd9cfa97e92d7553f3b83cee8eda 100644

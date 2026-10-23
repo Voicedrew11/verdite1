@@ -1,11 +1,18 @@
 diff --git a/include/kf/lib/render_face.h b/include/kf/lib/render_face.h
-index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..a73df60743df66ac1fc5d2aba151b5e8d6404035 100644
+index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..96919d6416adb9651e609548587ca3ecac1d4cb8 100644
 --- a/include/kf/lib/render_face.h
 +++ b/include/kf/lib/render_face.h
-@@ -26,9 +26,41 @@ std::optional<KfProjectedFace> render_projected_triangle(
+@@ -25,10 +25,48 @@ std::optional<KfProjectedFace> render_projected_triangle(
+     std::span<const KfScreenVertex, KF_PROJECTED_VERTEX_CAPACITY> vertices,
      u16 first, u16 second, u16 third);
  void render_face_uvs(kf::DrawFace &face, std::initializer_list<u16> texcoords);
- 
++// PC extension (frame smoothing): carries a face for the thing
++// kf::render_entity_tag names. A sprite built from corners and placed by
++// model (its model-to-camera transform), or a 2D or camera-fixed face on
++// screen as it stands.
++void render_carry_sprite(kf::DrawFace &face, std::span<const SVECTOR, 4> corners, const MATRIX &model);
++void render_carry_screen_face(kf::DrawFace &face);
++
 +// PC extension: faces that reach behind the camera, or whose corners project past
 +// the screen-coordinate range, get saturated coordinates that no longer show
 +// which way they face (the PlayStation dropped them; widescreen and steep looks
@@ -24,7 +31,7 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..a73df60743df66ac1fc5d2aba151b5e8
 +    }
 +    return false;
 +}
-+
+ 
  inline std::int64_t render_face_winding(const KfScreenVertex *a,
      const KfScreenVertex *b, const KfScreenVertex *c)
  {
@@ -44,7 +51,7 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..a73df60743df66ac1fc5d2aba151b5e8
      // Retail tests the projected coordinates, including their saturation.
      const std::int64_t ab_x = b->position.vx - a->position.vx;
      const std::int64_t ab_y = b->position.vy - a->position.vy;
-@@ -54,8 +86,22 @@ inline kf::FaceMaterial render_texture_material(u16 page, u16 palette)
+@@ -54,8 +92,30 @@ inline kf::FaceMaterial render_texture_material(u16 page, u16 palette)
  
  inline void render_face_vertex(kf::DrawFace *face, unsigned index, const KfScreenVertex *vertex)
  {
@@ -66,14 +73,22 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..a73df60743df66ac1fc5d2aba151b5e8
 +    out.cx = world ? vertex->cx : 0.0f;
 +    out.cy = world ? vertex->cy : 0.0f;
 +    out.cz = world ? (vertex->cz == 0.0f ? -0.001f : vertex->cz) : 0.0f;
++    // PC extension (frame smoothing): the vertex as carried (tmd_carry_projected).
++    out.lx = vertex->lx;
++    out.ly = vertex->ly;
++    out.lz = vertex->lz;
++    out.bx = vertex->bx;
++    out.by = vertex->by;
++    out.bz = vertex->bz;
++    face->part = vertex->part;
  }
  
  inline void render_face_uv(kf::DrawFace *face, unsigned index, u16 uv)
 diff --git a/include/kf/lib/tmd.h b/include/kf/lib/tmd.h
-index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..2450c5f3b1f488f9cfb798ee347e30a8047773df 100644
+index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..80f695ac622264d6c7c2f5563fc6259957f89837 100644
 --- a/include/kf/lib/tmd.h
 +++ b/include/kf/lib/tmd.h
-@@ -126,6 +126,10 @@ typedef struct KfScreenVertex {
+@@ -126,6 +126,16 @@ typedef struct KfScreenVertex {
      DVECTOR position;
      s16 sz;
      s16 p2;
@@ -81,6 +96,25 @@ index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..2450c5f3b1f488f9cfb798ee347e30a8
 +    // w = 0 marks orthographic vertices, which are drawn without perspective.
 +    float fx, fy, w;
 +    float cx, cy, cz;   // camera space (frame smoothing); cz = 0: not re-projectable
++    // PC extension (frame smoothing, kf::host_carry_model): the vertex in model
++    // space, its way back to the update before (model space, or screen pixels
++    // when camera-fixed or orthographic) and the part it was drawn as.
++    float lx = 0, ly = 0, lz = 0;
++    float bx = 0, by = 0, bz = 0;
++    u16 part = 0;
  } KfScreenVertex;
  
  struct KfTmdContext {
+@@ -150,6 +160,12 @@ extern void tmd_release_last_allocation(KfTmdContext context, KfMemoryArena &are
+ extern void tmd_select(KfTmdContext context, KfTmdSlot slot);
+ extern void tmd_select_object_vertices(KfTmdContext context, u16 object_index);
+ extern std::span<const SVECTOR> tmd_vertices(KfTmdContext context, s32 count);
++// PC extension (frame smoothing): carries the vertices just projected from
++// vertices for the thing kf::render_entity_tag names: by the model transform
++// in the world, on screen when camera-fixed or orthographic. Each vertex not
++// carried has no part and no way back.
++extern void tmd_carry_projected(std::span<KfScreenVertex> projected, std::span<const SVECTOR> vertices,
++    const MATRIX &model);
+ 
+ extern void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_shift,
+     const MATRIX *model, const kf::Projection &projection);

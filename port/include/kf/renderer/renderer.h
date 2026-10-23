@@ -19,12 +19,20 @@ struct Vertex {
     // the last game update from an in-between camera. cz = 0 marks vertices
     // that stay where they are (2D, HUD, camera-attached models).
     float cx = 0, cy = 0, cz = 0;
+    // PC extension (frame smoothing, VertexCarry): a model part's vertex in
+    // model space, and its way back to the update before: model space for a
+    // model part, screen pixels (x, y) for camera-fixed and 2D vertices.
+    float lx = 0, ly = 0, lz = 0;
+    float bx = 0, by = 0, bz = 0;
 };
 // PC extensions, set from the Display settings.
 // Camera-space depth where faces reaching behind the camera are clipped (PC extension).
 inline constexpr float render_near_depth = 32.0f;
-// Entity whose faces are being enqueued (PC extension; see DrawFace::entity).
+// Entity whose faces are being enqueued (PC extension; see DrawFace::entity),
+// and what occupies its slot, so frame smoothing never blends one occupant
+// into the next (PartOwner).
 inline u16 render_entity_tag = 0;
+inline u32 render_entity_identity = 0;
 inline bool render_subpixel = true;     // keep projected positions' fractions
 inline bool render_perspective = true;  // perspective-correct textures and shading
 inline bool render_depth_buffer = false; // per-pixel occlusion for 3D faces (experimental)
@@ -81,6 +89,8 @@ struct DrawFace {
     // PC extension: the moving entity this face belongs to (0: none), so frame
     // smoothing can move it between its last two poses.
     u16 entity = 0;
+    // PC extension: the part it was drawn as (GameFrame::parts index + 1, 0: none).
+    u16 part = 0;
 };
 struct FaceList {
     const DrawFace *faces;

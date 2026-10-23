@@ -3,7 +3,9 @@
 
 #include <kf/lib/types.h>
 #include <kf/lib/geometry_types.h>
+#include <array>
 #include <cstddef>
+#include <span>
 
 namespace kf {
 struct Renderer;
@@ -14,6 +16,7 @@ struct Projection;
 struct TextureStore;
 struct PictureOptions;
 struct Image;
+struct CarriedModel;
 enum class AppMode : u8 { Opening, Gameplay, Ending };
 struct UpdatePacer {
     std::uint64_t deadline_ns;
@@ -43,6 +46,17 @@ void host_light_occluders(const u8 *solid, int columns, int rows, float tile_siz
 // smoothing. yaw_sign: +1 or -1 for how its model applies the yaw, 0 to move it
 // without turning.
 void host_report_entity(u16 tag, s32 x, s32 y, s32 z, s32 yaw, int yaw_sign);
+// PC extension (frame smoothing, VertexCarry in port/renderer): where what the
+// game is drawing for render_entity_tag (and render_entity_identity) was in
+// the update before. A model drawn in the world: model is its model-to-camera
+// transform as projected, vertices its posed vertices (frontend.h:
+// CarriedModel). Camera-fixed or 2D points, in screen pixels: each one's way
+// back, empty when not carried. Both views stay valid until the next call.
+CarriedModel host_carry_model(const MATRIX &model, std::span<const SVECTOR> vertices);
+std::span<const std::array<float, 2>> host_carry_screen(std::span<const std::array<float, 2>> points);
+// PC extension (frame smoothing): the compass needle, drawn in screen space
+// about this point, turns with the shown view. Returns its DrawFace::part.
+u16 host_carry_dial(float pivot_x, float pivot_y);
 void host_wait_frame();
 UpdatePacer host_begin_update_pacer(u32 steps_per_second);
 void host_wait_update(UpdatePacer &pacer);

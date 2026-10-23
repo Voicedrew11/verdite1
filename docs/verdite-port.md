@@ -244,7 +244,7 @@ branch point.
 | Verdite1 | kf1-enhanced | to check |
 |---|---|---|
 | widescreen, HUD/menu/tints widened, cull cone | aspect setting | the widened cull, tints at the edge |
-| frame pacing, view/model/HUD smoothing | frame smoothing | what is carried between ticks (models? HUD needle?) |
+| frame pacing, view/model/HUD smoothing | frame smoothing | carried on Vulkan: models, poses, the arm, HUD bars, item display, compass (`RENDERER_PLAN.md`) |
 | no dither, true colour, perspective, sub-pixel | `true_color`, `perspective`, `subpixel` | |
 | Z-buffer | `depth_buffer` | |
 | AO, per-pixel lighting | dynamic lights, AO, shadows, flame glow | different designs: judge, do not merge blindly |

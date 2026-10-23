@@ -15,8 +15,6 @@ namespace kf {
 struct FrameBatch {
     std::vector<GpuVertex> vertices;
     std::vector<DrawRun> runs;
-    // GpuVertex::entity n (from 1) is the game's entity tag entity_tags[n - 1].
-    std::vector<u16> entity_tags;
 };
 
 struct BatchRules {
@@ -26,6 +24,7 @@ struct BatchRules {
     // plane and their new corners projected with this. None: 2D frames.
     std::optional<Projection> near_clip;
     bool subpixel = true;   // new corners keep their fractions
+    std::size_t part_count = 0;   // GameFrame::parts; a face of a part past them has none
 };
 
 // Faces are drawn farthest first by the game's sort depth, later submissions

@@ -20,8 +20,9 @@ struct DrawConstants {
     uint32_t flags;                      // draw_* below
     uint32_t pixel_scale;
     uint32_t blend;
+    float carry;                         // FrameView::carry
 };
-static_assert(sizeof(DrawConstants) == 32);
+static_assert(sizeof(DrawConstants) == 36);
 constexpr uint32_t draw_reproject = 1, draw_whole_pixels = 2, draw_true_color = 4, draw_subtract_stp_pass = 8,
                    draw_filter_bilinear = 16, draw_filter_three_point = 32, draw_occlusion = 64,
                    draw_surface_pass = 128;

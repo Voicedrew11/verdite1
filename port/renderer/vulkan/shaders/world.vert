@@ -10,7 +10,9 @@ layout(location = 2) in vec2 in_uv;
 layout(location = 3) in uvec4 in_uv_bounds;
 layout(location = 4) in uvec4 in_color;
 layout(location = 5) in uvec4 in_flags;     // layer, texturing, dither, casts_shadow
-layout(location = 6) in uvec2 in_entity;
+layout(location = 6) in uvec2 in_part;      // GameFrame::parts index + 1, 0: none
+layout(location = 7) in vec3 in_local;      // a model part's vertex, model space
+layout(location = 8) in vec3 in_back;       // way back: model space, or screen x, y when camera-fixed
 
 layout(set = 0, binding = 1) readonly buffer Motions {
     vec4 rows[];                            // three per motion: row-major 3 x 4
@@ -35,10 +37,10 @@ vec4 to_clip(vec2 screen, float w) {
     return vec4(ndc * w, z, w);
 }
 
-vec3 moved(vec3 camera, uint entity) {
-    uint row = entity * 3u;
-    vec4 c = vec4(camera, 1.0);
-    return vec3(dot(motions.rows[row], c), dot(motions.rows[row + 1u], c), dot(motions.rows[row + 2u], c));
+vec3 moved(vec3 position, uint motion) {
+    uint row = motion * 3u;
+    vec4 p = vec4(position, 1.0);
+    return vec3(dot(motions.rows[row], p), dot(motions.rows[row + 1u], p), dot(motions.rows[row + 2u], p));
 }
 
 void main() {
@@ -46,8 +48,15 @@ void main() {
     float w = in_screen.z;
     bool fixed_to_camera = in_camera.z == 0.0;
     vec3 camera = in_camera;
-    if ((draw.flags & draw_reproject) != 0u && !fixed_to_camera) {
-        camera = moved(in_camera, in_entity.x);
+    uint part = in_part.x;
+    if ((draw.flags & draw_reproject) != 0u && fixed_to_camera) {
+        screen += in_back.xy * draw.carry;
+        if (part != 0u)
+            screen = moved(vec3(screen, 0.0), part).xy;
+        if ((draw.flags & draw_whole_pixels) != 0u)
+            screen = floor(screen);
+    } else if ((draw.flags & draw_reproject) != 0u) {
+        camera = part != 0u ? moved(in_local + in_back * draw.carry, part) : moved(in_camera, 0u);
         float depth = max(camera.z, near_w);
         screen = camera.xy * draw.projection_distance / depth + draw.center;
         if ((draw.flags & draw_whole_pixels) != 0u)

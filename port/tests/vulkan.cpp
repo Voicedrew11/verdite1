@@ -85,7 +85,7 @@ FrameStyle cleared_to(Rgb5 color) {
 }
 
 FrameView unmoved_view(const std::vector<Motion> &motions) {
-    return {motions, false, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}};
+    return {motions, 0, false, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}};
 }
 
 // Presents the uploaded frame again and returns the picture.
@@ -345,6 +345,73 @@ TEST_CASE("vulkan: ambient occlusion leaves 2D faces over the world alone") {
     set_occlusion(0);
     CHECK(pixel(occluded, 160, 170) == pixel(plain, 160, 170));
     CHECK(brightness(pixel(occluded, 60, 168)) < brightness(pixel(plain, 60, 168)));
+}
+
+namespace {
+// Presents the uploaded frame through motions, each vertex carrying this much of its way back.
+Image present_moved(const std::vector<Motion> &motions, float carry) {
+    const FrameView view{motions, carry, true, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}};
+    backend->present(view, {}, 0, 0, nullptr);
+    std::optional<Image> picture = backend->capture();
+    if (!picture) {
+        FAIL("nothing captured");
+        return {};
+    }
+    return std::move(*picture);
+}
+
+const Motion unmoved{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+constexpr std::array<u8, 4> white = {255, 255, 255, 255};
+
+// A model part's 40 x 40 square about its origin, each corner's way back +40 in model x.
+std::vector<GpuVertex> part_square() {
+    std::vector<GpuVertex> vertices;
+    add_rect(vertices, 0, 0, 1, 1, VertexTexturing::Solid, white);
+    const std::array<std::array<float, 2>, 6> corners = {{{-20, -20}, {20, -20}, {-20, 20}, {20, -20}, {20, 20}, {-20, 20}}};
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        GpuVertex &vertex = vertices[i];
+        vertex.w = vertex.cz = 200;
+        vertex.lx = corners[i][0];
+        vertex.ly = corners[i][1];
+        vertex.bx = 40;
+        vertex.part = 1;
+    }
+    return vertices;
+}
+} // namespace
+
+TEST_CASE("vulkan: a model part is drawn where its motion and its way back put it") {
+    const std::vector<GpuVertex> vertices = part_square();
+    const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
+    backend->upload_frame(vertices, runs, cleared_to(background));
+    // Model space to camera: 200 ahead, where a unit is a pixel.
+    const std::vector<Motion> motions = {unmoved, Motion{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 200}}};
+    const Image drawn = present_moved(motions, 0);
+    CHECK(pixel(drawn, 150, 120) == Rgb5{31, 31, 31});
+    CHECK(pixel(drawn, 190, 120) == background);
+    const Image halfway = present_moved(motions, 0.5f);
+    CHECK(pixel(halfway, 150, 120) == background);
+    CHECK(pixel(halfway, 190, 120) == Rgb5{31, 31, 31});
+}
+
+TEST_CASE("vulkan: camera-fixed faces move along their way back on screen, the dial about its pivot") {
+    std::vector<GpuVertex> vertices;
+    add_rect(vertices, 100, 40, 40, 20, VertexTexturing::Solid, white);   // a HUD bar
+    for (GpuVertex &vertex : vertices)
+        vertex.bx = 40;
+    const std::size_t bar = vertices.size();
+    add_rect(vertices, 170, 115, 20, 10, VertexTexturing::Solid, white);   // the needle
+    for (std::size_t i = bar; i < vertices.size(); ++i)
+        vertices[i].part = 1;
+    const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
+    backend->upload_frame(vertices, runs, cleared_to(background));
+    // Half a turn about (160, 120).
+    const std::vector<Motion> motions = {unmoved, Motion{{-1, 0, 0, 320, 0, -1, 0, 240, 0, 0, 1, 0}}};
+    const Image shown = present_moved(motions, 0.5f);
+    CHECK(pixel(shown, 110, 50) == background);
+    CHECK(pixel(shown, 150, 50) == Rgb5{31, 31, 31});
+    CHECK(pixel(shown, 180, 120) == background);
+    CHECK(pixel(shown, 140, 120) == Rgb5{31, 31, 31});
 }
 
 int main(int argc, char **argv) {

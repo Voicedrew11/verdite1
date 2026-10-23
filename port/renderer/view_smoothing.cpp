@@ -14,9 +14,8 @@ constexpr std::uint64_t interval_max_ns = 100 * ns_per_ms;
 constexpr std::uint64_t interval_default_ns = 50 * ns_per_ms;
 constexpr s32 snap_distance = 4000;          // two map tiles in one update: a warp
 constexpr int snap_angle = 1024;             // a quarter turn in one update
-constexpr float entity_snap_distance = 3000; // farther in one update: a new occupant or a warp
 constexpr float fixed_one = 4096.0f;
-constexpr float radians_per_angle_unit = 6.28318531f / 4096.0f;
+constexpr double radians_per_angle_unit = 6.28318530717958647692 / 4096.0;
 // Game lights ignore their immediate surroundings as shadow casters.
 constexpr float game_light_shadow_near = 1200.0f;
 
@@ -64,12 +63,6 @@ Vector3 add(const Vector3 &a, const Vector3 &b) { return {a[0] + b[0], a[1] + b[
 Vector3 subtract(const Vector3 &a, const Vector3 &b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
 Vector3 scaled(const Vector3 &v, float s) { return {v[0] * s, v[1] * s, v[2] * s}; }
 
-// R_y(t) as matrix_set_rotation_y builds it.
-Matrix3 yaw_rotation(float radians) {
-    const float c = std::cos(radians), s = std::sin(radians);
-    return {{{c, 0, -s}, {0, 1, 0}, {s, 0, c}}};
-}
-
 Motion motion_of(const Matrix3 &rotation, const Vector3 &translation) {
     Motion out{};
     for (std::size_t r = 0; r < 3; ++r) {
@@ -100,13 +93,6 @@ s16 blended_angle(s16 from, s16 to, double alpha, s16 look_applied, s16 pending)
     return static_cast<s16>(from + static_cast<int>(std::lround(turn)));
 }
 
-const EntityPose *pose_of(const std::vector<std::optional<EntityPose>> &poses, u16 tag) {
-    if (tag >= poses.size())
-        return nullptr;
-    const std::optional<EntityPose> &pose = poses[tag];
-    return pose ? &*pose : nullptr;
-}
-
 void fill_camera(ShownView &view, const Projection &projection, const Matrix3 &rotation, const Vector3 &position) {
     view.projection_distance = projection.distance;
     view.center_x = static_cast<float>(projection.center_x);
@@ -117,51 +103,60 @@ void fill_camera(ShownView &view, const Projection &projection, const Matrix3 &r
             view.camera_to_world[r * 3 + c] = to_world[r][c];
     view.camera_world = position;
 }
+
+// A model part placed by to_world (model to world), from model space to the shown camera's.
+Motion model_motion(const std::array<double, 12> &to_world, const Matrix3 &shown_view, const Vector3 &shown_position) {
+    Matrix3 linear{};
+    Vector3 position{};
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c)
+            linear[r][c] = static_cast<float>(to_world[r * 4 + c]);
+        position[r] = static_cast<float>(to_world[r * 4 + 3]);
+    }
+    return motion_of(multiply(shown_view, linear), transform(shown_view, subtract(position, shown_position)));
+}
+
+// The compass needle turned about its pivot on screen by turn (angle units),
+// as the game turns it: its angle is the view's negated yaw.
+Motion dial_motion(const DialTurn &dial, int turn) {
+    const double angle = -turn * radians_per_angle_unit;
+    const auto c = static_cast<float>(std::cos(angle)), s = static_cast<float>(std::sin(angle));
+    const float x = dial.pivot_x, y = dial.pivot_y;
+    return motion_of({{{c, -s, 0}, {s, c, 0}, {0, 0, 1}}}, {x - c * x + s * y, y - s * x - c * y, 0});
+}
 } // namespace
 
 void ViewSmoothing::take_update(const std::optional<CameraPose> &camera, SVECTOR look_applied,
-                                std::span<const EntityPose> poses, std::span<const u16> entity_tags,
-                                std::uint64_t at_ns) {
+                                std::span<const PartMove> parts, std::uint64_t at_ns) {
     const bool jump = !camera || !current_ || at_ns - current_ns_ > interval_max_ns || is_jump(*current_, *camera);
     interval_ns_ = jump ? interval_default_ns : std::clamp(at_ns - current_ns_, interval_min_ns, interval_max_ns);
     previous_ = jump ? camera : current_;
     current_ = camera;
     look_applied_ = jump ? SVECTOR{0, 0, 0} : look_applied;
     current_ns_ = at_ns;
+    blending_ = !jump;
 
-    std::vector<std::optional<EntityPose>> poses_by_tag;
-    for (const EntityPose &pose : poses) {
-        if (pose.tag >= poses_by_tag.size())
-            poses_by_tag.resize(static_cast<std::size_t>(pose.tag) + 1);
-        poses_by_tag[pose.tag] = pose;
-    }
-    steps_.assign(entity_tags.size() + 1, {});
-    for (std::size_t n = 0; n < entity_tags.size(); ++n) {
-        const u16 tag = entity_tags[n];
-        const EntityPose *now_pose = pose_of(poses_by_tag, tag);
-        const EntityPose *before_pose = pose_of(last_poses_, tag);
-        if (jump || !now_pose || !before_pose)
+    parts_.clear();
+    parts_.reserve(parts.size());
+    for (const PartMove &part : parts) {
+        if (const auto *dial = std::get_if<DialTurn>(&part)) {
+            parts_.emplace_back(*dial);
             continue;
-        const EntityPose &now = *now_pose;
-        const EntityPose &before = *before_pose;
-        const Vector3 back = {static_cast<float>(before.x - now.x), static_cast<float>(before.y - now.y),
-                              static_cast<float>(before.z - now.z)};
-        if (std::abs(back[0]) > entity_snap_distance || std::abs(back[1]) > entity_snap_distance ||
-            std::abs(back[2]) > entity_snap_distance)
-            continue;
-        const int turn = now.yaw_sign ? angle_delta(now.yaw, before.yaw) : 0;
-        steps_[n + 1] = {true,
-                         {static_cast<float>(now.x), static_cast<float>(now.y), static_cast<float>(now.z)},
-                         back,
-                         static_cast<float>(turn) * radians_per_angle_unit,
-                         now.yaw_sign};
+        }
+        const auto &model = std::get<ModelMove>(part);
+        ModelStep step;
+        std::array<double, 12> before{};
+        std::copy(model.before.begin(), model.before.end(), before.begin());
+        std::copy(model.now.begin(), model.now.end(), step.drawn.begin());
+        step.before = split_transform(before);
+        step.now = split_transform(step.drawn);
+        parts_.emplace_back(step);
     }
-    last_poses_ = std::move(poses_by_tag);
 }
 
 ShownView ViewSmoothing::view_as_drawn() const {
     ShownView view;
-    view.motions.assign(std::max<std::size_t>(steps_.size(), 1), identity_motion);
+    view.motions.assign(parts_.size() + 1, identity_motion);
     if (current_)
         fill_camera(view, current_->projection, view_rotation(current_->rotation), position_of(current_->position));
     return view;
@@ -173,7 +168,6 @@ ShownView ViewSmoothing::view_at(std::uint64_t now_ns, SVECTOR pending_look) con
     const CameraPose &a = *previous_, &b = *current_;
     const double alpha =
         std::clamp(static_cast<double>(now_ns - std::min(now_ns, current_ns_)) / static_cast<double>(interval_ns_), 0.0, 1.0);
-    const auto back = static_cast<float>(1.0 - alpha);
     const Vector3 drawn_position = position_of(b.position);
     const Vector3 shown_position = add(position_of(a.position), scaled(subtract(drawn_position, position_of(a.position)),
                                                                        static_cast<float>(alpha)));
@@ -188,22 +182,20 @@ ShownView ViewSmoothing::view_at(std::uint64_t now_ns, SVECTOR pending_look) con
 
     ShownView view;
     view.reproject = true;
+    const bool blends = blending_ && alpha < 1.0;
+    view.carry = blends ? static_cast<float>(1.0 - alpha) : 0.0f;
     fill_camera(view, b.projection, shown_view, shown_position);
-    view.motions.reserve(std::max<std::size_t>(steps_.size(), 1));
-    const Motion camera_change = motion_of(multiply(shown_view, to_world), transform(shown_view, offset));
-    view.motions.push_back(camera_change);
-    for (std::size_t n = 1; n < steps_.size(); ++n) {
-        const EntityStep &step = steps_[n];
-        if (!step.moves) {
-            view.motions.push_back(camera_change);
+    view.motions.reserve(parts_.size() + 1);
+    view.motions.push_back(motion_of(multiply(shown_view, to_world), transform(shown_view, offset)));
+    const int turned = angle_delta(b.rotation.vy, shown_rotation.vy);
+    for (const PartStep &part : parts_) {
+        if (const auto *dial = std::get_if<DialTurn>(&part)) {
+            view.motions.push_back(dial_motion(*dial, turned));
             continue;
         }
-        // w' = O + R_y(turn) (w - O) + back_offset, with w and O relative to the shown camera.
-        const Vector3 origin = subtract(step.origin, shown_position);
-        const Matrix3 turn = yaw_rotation(step.back_yaw * back * static_cast<float>(step.yaw_sign));
-        const Vector3 world_shift =
-            add(add(transform(turn, subtract(offset, origin)), origin), scaled(step.back, back));
-        view.motions.push_back(motion_of(multiply(shown_view, multiply(turn, to_world)), transform(shown_view, world_shift)));
+        const auto &model = std::get<ModelStep>(part);
+        const std::array<double, 12> shown = blends ? blend_transforms(model.before, model.now, alpha) : model.drawn;
+        view.motions.push_back(model_motion(shown, shown_view, shown_position));
     }
     return view;
 }

@@ -1,3 +1,58 @@
+diff --git a/src/lib/render_face.cpp b/src/lib/render_face.cpp
+index 73127858d0c2cdbbcd38f21439991faa7fa502d9..8bca61a71c7db66571d850e10fed63d1cc7e3cf9 100644
+--- a/src/lib/render_face.cpp
++++ b/src/lib/render_face.cpp
+@@ -1,5 +1,6 @@
+ #include <kf/platform/prelude.h>
+ #include <kf/lib/render_face.h>
++#include <kf/renderer/frontend.h>
+ 
+ std::optional<KfProjectedFace> render_projected_triangle(
+     std::span<const KfScreenVertex, KF_PROJECTED_VERTEX_CAPACITY> vertices,
+@@ -51,3 +52,43 @@ void render_face_uvs(kf::DrawFace &face, std::initializer_list<u16> texcoords)
+     for (const auto uv : texcoords)
+         render_face_uv(&face, corner++, uv);
+ }
++
++void render_carry_screen_face(kf::DrawFace &face)
++{
++    if (kf::render_entity_tag == 0)
++        return;
++    const auto count = static_cast<std::size_t>(face.shape);
++    std::array<std::array<float, 2>, 4> points {};
++    for (std::size_t i = 0; i < count; ++i)
++        points[i] = {face.vertices[i].x, face.vertices[i].y};
++    const auto back = kf::host_carry_screen(std::span(points).first(count));
++    for (std::size_t i = 0; i < back.size() && i < count; ++i) {
++        face.vertices[i].bx = back[i][0];
++        face.vertices[i].by = back[i][1];
++    }
++}
++
++void render_carry_sprite(kf::DrawFace &face, std::span<const SVECTOR, 4> corners, const MATRIX &model)
++{
++    if (kf::render_entity_tag == 0)
++        return;
++    if (kf::render_camera_fixed) {
++        render_carry_screen_face(face);
++        return;
++    }
++    // A corner behind the camera is drawn camera-fixed (cz = 0) and cannot move with the rest.
++    for (const auto &vertex : face.vertices)
++        if (vertex.cz <= 0.0f)
++            return;
++    const kf::CarriedModel carried = kf::host_carry_model(model, corners);
++    for (std::size_t i = 0; i < carried.back.size() && i < corners.size(); ++i) {
++        auto &out = face.vertices[i];
++        out.lx = corners[i].vx;
++        out.ly = corners[i].vy;
++        out.lz = corners[i].vz;
++        out.bx = carried.back[i][0];
++        out.by = carried.back[i][1];
++        out.bz = carried.back[i][2];
++        face.part = carried.part;
++    }
++}
 diff --git a/src/lib/resources.cpp b/src/lib/resources.cpp
 index 9e34bd861ab6154f12997ce11056378ecc251c79..1565099a2c249d686babd3705c6e7edb96e511c9 100644
 --- a/src/lib/resources.cpp
@@ -11,10 +66,65 @@ index 9e34bd861ab6154f12997ce11056378ecc251c79..1565099a2c249d686babd3705c6e7edb
          kf::host_fail("Invalid TIM resource or texture allocation failure.");
  }
 diff --git a/src/lib/tmd.cpp b/src/lib/tmd.cpp
-index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..22b0eba83c47c68cac6f1c28fc70b4565393629d 100644
+index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..0d701c09859edc2d6cd17a8f63daede4c2af7cbb 100644
 --- a/src/lib/tmd.cpp
 +++ b/src/lib/tmd.cpp
-@@ -227,6 +227,12 @@ void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_
+@@ -2,6 +2,9 @@
+ #include <kf/lib/graphics.h>
+ #include <kf/lib/memory.h>
+ #include <kf/lib/tmd.h>
++#include <kf/renderer/frontend.h>
++#include <kf/renderer/renderer.h>
++#include <vector>
+ 
+ static KfTmdResource &tmd_slot(KfTmdContext context, KfTmdSlot slot)
+ {
+@@ -215,8 +218,44 @@ void tmd_release_last_allocation(KfTmdContext context, KfMemoryArena &arena, KfT
+     memory_release_last(arena);
+ }
+ 
++void tmd_carry_projected(std::span<KfScreenVertex> projected, std::span<const SVECTOR> vertices,
++    const MATRIX &model)
++{
++    for (auto &vertex : projected) {
++        vertex.part = 0;
++        vertex.bx = vertex.by = vertex.bz = 0;
++    }
++    if (kf::render_entity_tag == 0 || projected.empty() || vertices.size() < projected.size())
++        return;
++    if (kf::render_camera_fixed || projected[0].w == 0.0f) {
++        std::vector<std::array<float, 2>> points(projected.size());
++        for (std::size_t i = 0; i < projected.size(); ++i) {
++            points[i] = kf::render_subpixel
++                ? std::array<float, 2>{projected[i].fx, projected[i].fy}
++                : std::array<float, 2>{float(projected[i].position.vx), float(projected[i].position.vy)};
++        }
++        const auto back = kf::host_carry_screen(points);
++        for (std::size_t i = 0; i < back.size() && i < projected.size(); ++i) {
++            projected[i].bx = back[i][0];
++            projected[i].by = back[i][1];
++        }
++        return;
++    }
++    const kf::CarriedModel carried = kf::host_carry_model(model, vertices.first(projected.size()));
++    for (std::size_t i = 0; i < carried.back.size() && i < projected.size(); ++i) {
++        projected[i].part = carried.part;
++        projected[i].lx = vertices[i].vx;
++        projected[i].ly = vertices[i].vy;
++        projected[i].lz = vertices[i].vz;
++        projected[i].bx = carried.back[i][0];
++        projected[i].by = carried.back[i][1];
++        projected[i].bz = carried.back[i][2];
++    }
++}
++
+ void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_shift, const MATRIX *model, const kf::Projection &projection)
+ {
++    const s32 drawn = count;
+     KfScreenVertex *projected;
+     const SVECTOR *vertex;
+ 
+@@ -227,13 +266,22 @@ void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_
          projected->position = {point.x, point.y};
          projected->p2 = point.fog << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT;
          projected->sz = point.depth >> depth_shift;
@@ -27,7 +137,17 @@ index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..22b0eba83c47c68cac6f1c28fc70b456
          projected++;
          vertex++;
      }
-@@ -247,6 +253,10 @@ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model
++    // PC extension (frame smoothing): the held weapon's swing.
++    tmd_carry_projected({context.projected_vertices.data(), std::size_t(drawn)}, tmd_vertices(context, drawn), *model);
+ }
+ 
+ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model)
+ {
++    const s32 drawn = count;
+     KfScreenVertex *projected;
+     const SVECTOR *vertex;
+     VECTOR transformed;
+@@ -247,7 +295,13 @@ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model
          projected->position.vy = transformed.vy;
          projected->p2 = transformed.vz;
          projected->sz = transformed.vz;
@@ -38,3 +158,6 @@ index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..22b0eba83c47c68cac6f1c28fc70b456
          projected++;
          vertex++;
      }
++    // PC extension (frame smoothing): orthographic HUD models carry on screen.
++    tmd_carry_projected({context.projected_vertices.data(), std::size_t(drawn)}, tmd_vertices(context, drawn), *model);
+ }

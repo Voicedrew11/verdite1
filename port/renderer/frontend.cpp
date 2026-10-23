@@ -98,11 +98,12 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns) {
     if (frame.camera)
         rules.near_clip = frame.camera->projection;
     rules.subpixel = render_subpixel;
+    rules.part_count = frame.parts.size();
     frontend.layers.begin_update();
     const FrameBatch batch = batch_faces(frame.faces, rules, frontend.layers);
     upload_new_layers();
     frontend.backend->upload_frame(batch.vertices, batch.runs, frame.style);
-    frontend.smoothing.take_update(frame.camera, frame.look_applied, frame.entities, batch.entity_tags, at_ns);
+    frontend.smoothing.take_update(frame.camera, frame.look_applied, frame.parts, at_ns);
     frontend.lights.assign(frame.lights.begin(), frame.lights.end());
 }
 
@@ -116,8 +117,8 @@ void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look, int win
     std::vector<RenderLight> lights;
     if (options.dynamic_lights)
         lights = shown_lights(frontend.lights, options.light_strength, shown.motions.front(), now_ns);
-    const FrameView view{shown.motions,     shown.reproject, !render_subpixel, shown.projection_distance,
-                         shown.center_x,    shown.center_y,  shown.camera_to_world, shown.camera_world};
+    const FrameView view{shown.motions,  shown.carry,    shown.reproject,       !render_subpixel, shown.projection_distance,
+                         shown.center_x, shown.center_y, shown.camera_to_world, shown.camera_world};
     frontend.backend->present(view, lights, window_width, window_height, overlay);
 }
 

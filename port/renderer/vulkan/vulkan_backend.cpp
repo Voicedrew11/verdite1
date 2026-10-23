@@ -500,6 +500,7 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
                       (options_.texture_filter == TextureFilter::ThreePoint ? draw_filter_three_point : 0) |
                       (occlusion_ready_ ? draw_occlusion : 0);
     constants.pixel_scale = static_cast<uint32_t>(scale_);
+    constants.carry = view.carry;
     return constants;
 }
 

@@ -7,6 +7,7 @@ layout(push_constant) uniform DrawConstants {
     uint flags;                 // draw_* below
     uint pixel_scale;
     uint blend;                 // blend_* below
+    float carry;                // how much of each vertex's way back is shown
 } draw;
 
 const uint draw_reproject = 1u;

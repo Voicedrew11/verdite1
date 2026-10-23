@@ -12,10 +12,12 @@
 #include <kf/renderer/projection.h>
 #include <kf/renderer/renderer.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
+#include <variant>
 
 struct ImDrawData;
 
@@ -72,14 +74,30 @@ struct CameraPose {
     Projection projection;
 };
 
-// A moving entity's pose this update, so smoothing can move its faces
-// (DrawFace::entity) between its last two poses. yaw_sign: +1 or -1 for how
-// its model applies the yaw, 0 to move it without turning.
-struct EntityPose {
-    u16 tag;
-    s32 x, y, z;
-    s32 yaw;
-    int yaw_sign;
+// How one part of an update's picture moved since the update before
+// (VertexCarry, the game's own transforms), so a smoothed frame can show it in
+// between. GpuVertex::part n is GameFrame::parts[n - 1].
+//
+// A model drawn in the world: its model-to-world transform at both updates,
+// row-major 3 x 4 (world units). In between, its rotation turns, its scale and
+// position blend, and each posed vertex blends along its own way back.
+struct ModelMove {
+    std::array<float, 12> before, now;
+};
+// The compass needle, drawn in screen space: it turns about its pivot (screen
+// pixels) by the yaw the shown view has turned from the update, so it points
+// where the view shown faces.
+struct DialTurn {
+    float pivot_x, pivot_y;
+};
+using PartMove = std::variant<ModelMove, DialTurn>;
+
+// A model the game drew, as carried from the update before: its part
+// (DrawFace::part; 0: not carried) and each vertex's way back in model space
+// (empty: not carried).
+struct CarriedModel {
+    u16 part = 0;
+    std::span<const std::array<float, 3>> back;
 };
 
 // A light the game placed this update, in camera space at the update's camera
@@ -99,7 +117,7 @@ struct GameFrame {
     FrameStyle style;
     std::optional<CameraPose> camera;   // none: a 2D frame (menus, the opening), never smoothed
     std::span<const GameLight> lights;
-    std::span<const EntityPose> entities;
+    std::span<const PartMove> parts;   // what moved since the update before
     // The look input this update added to camera->rotation (angle units), so a
     // smoothed view keeps showing it while blending towards this update.
     SVECTOR look_applied{0, 0, 0};
