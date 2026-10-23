@@ -13,6 +13,7 @@ struct FaceList;
 struct DrawFace;
 struct FrameStyle;
 struct Projection;
+struct LightColor;
 struct TextureStore;
 struct PictureOptions;
 struct Image;
@@ -35,8 +36,10 @@ void host_poll();
 std::uint64_t host_clock_ns();
 std::uint64_t host_clock_tick();
 void host_wait_until_tick(std::uint64_t deadline);
-// PC extension: the camera of the world frame being built (frame smoothing).
-void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Projection &projection);
+// PC extension: the camera of the world frame being built (frame smoothing),
+// and the colour its depth cue tends to (fog drawn per pixel).
+void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Projection &projection,
+    const LightColor &fog_color);
 // PC extension: a point light for the frame being built, in camera space.
 // flicker: 0 steady .. 1 strong; seed varies the flicker phase per light.
 void host_add_light(float x, float y, float z, float radius, float r, float g, float b, float flicker, u32 seed);

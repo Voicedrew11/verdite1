@@ -47,6 +47,18 @@ struct GpuVertex {
     // The way back to the update before, scaled by FrameView::carry: model space
     // for a model part's vertex, screen pixels (x, y) for a camera-fixed one.
     float bx, by, bz;
+    std::array<u8, 3> clear_color;  // colour before the game's depth cue
+    u8 cue_scale_quarters;          // DrawFace::depth_cue_scale x 4; 0: colour is drawn as given
+};
+
+// The game's depth cue for one update, for fog drawn per pixel: a point at
+// depth z (or distance) gets the cue (16 H slope / z + 5120) / 4096, held to
+// 0..1, times its face's scale, and its clear colour moves that far toward
+// far_color (render_fog_color's arithmetic, without its rounding).
+struct DepthCue {
+    float slope = 0;                     // render_fog_slope
+    float projection_distance = 200;     // H
+    std::array<float, 3> far_color{};    // in the vertex colours' units
 };
 
 // The fixed-function state a run of triangles shares (one pipeline in Vulkan).
@@ -112,6 +124,7 @@ inline PictureOptions within_tier(PictureOptions options, Tier tier) {
         options.ambient_occlusion = off.ambient_occlusion;
         options.glow = off.glow;
         options.fxaa = off.fxaa;
+        options.fog = off.fog;
     }
     if (tier < Tier::Balanced) {
         options.true_color = off.true_color;
@@ -141,7 +154,7 @@ public:
 
     // A game update's geometry, drawn by every present until the next upload.
     virtual void upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs,
-                              const FrameStyle &style) = 0;
+                              const FrameStyle &style, const DepthCue &cue) = 0;
     // Draws the uploaded frame from view, then the overlay (may be null), and
     // presents. lights: in the shown camera's space, nearest first, with
     // strength and this frame's flicker applied. A window of size 0

@@ -24,6 +24,9 @@ struct Vertex {
     // model part, screen pixels (x, y) for camera-fixed and 2D vertices.
     float lx = 0, ly = 0, lz = 0;
     float bx = 0, by = 0, bz = 0;
+    // PC extension (fog drawn per pixel): the colour before the game's depth
+    // cue, in the units of r, g, b (DrawFace::depth_cue_scale).
+    float clear_r = 0, clear_g = 0, clear_b = 0;
 };
 // PC extensions, set from the Display settings.
 // Camera-space depth where faces reaching behind the camera are clipped (PC extension).
@@ -91,6 +94,11 @@ struct DrawFace {
     u16 entity = 0;
     // PC extension: the part it was drawn as (GameFrame::parts index + 1, 0: none).
     u16 part = 0;
+    // PC extension (fog drawn per pixel): the game cued this face's colours by
+    // this many times the depth cue of a point (projection.h): 2 for the map
+    // and models, 1 for sprites, 1.5 for floor items. 0: not cued, so its
+    // colours are drawn as given.
+    float depth_cue_scale = 0;
 };
 struct FaceList {
     const DrawFace *faces;

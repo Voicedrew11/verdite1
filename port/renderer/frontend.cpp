@@ -28,6 +28,18 @@ Frontend frontend;
 
 PictureOptions drawn_options() { return frontend.backend->drawable(frontend.options); }
 
+// The depth cue of a world update; a 2D one has none to apply.
+DepthCue depth_cue(const std::optional<CameraPose> &camera) {
+    DepthCue cue;
+    if (!camera)
+        return cue;
+    cue.slope = static_cast<float>(render_fog_slope(camera->projection));
+    cue.projection_distance = static_cast<float>(camera->projection.distance);
+    const LightColor &fog = camera->fog_color;
+    cue.far_color = {static_cast<float>(fog.r), static_cast<float>(fog.g), static_cast<float>(fog.b)};
+    return cue;
+}
+
 void upload_new_layers() {
     for (const LayerUpload &upload : frontend.layers.take_uploads()) {
         Image texels{};
@@ -102,7 +114,7 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns) {
     frontend.layers.begin_update();
     const FrameBatch batch = batch_faces(frame.faces, rules, frontend.layers);
     upload_new_layers();
-    frontend.backend->upload_frame(batch.vertices, batch.runs, frame.style);
+    frontend.backend->upload_frame(batch.vertices, batch.runs, frame.style, depth_cue(frame.camera));
     frontend.smoothing.take_update(frame.camera, frame.look_applied, frame.parts, at_ns);
     frontend.lights.assign(frame.lights.begin(), frame.lights.end());
 }

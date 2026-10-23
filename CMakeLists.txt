@@ -218,7 +218,8 @@ endif()
 
 # The renderer frontend's API-free parts: batching, texture layers, smoothing. Tested on their own.
 add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/texture_layers.cpp
-  port/renderer/view_smoothing.cpp port/renderer/vertex_carry.cpp port/renderer/model_transform.cpp)
+  port/renderer/view_smoothing.cpp port/renderer/vertex_carry.cpp port/renderer/model_transform.cpp
+  port/renderer/lighting.cpp port/renderer/projection.cpp)
 target_link_libraries(kf_frontend PUBLIC kf_support)
 target_compile_options(kf_frontend PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
@@ -258,8 +259,7 @@ target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp
-  port/renderer/textures.cpp port/renderer/lighting.cpp port/renderer/projection.cpp
-  port/renderer/frontend.cpp port/renderer/null_backend.cpp)
+  port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES})
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)
 if(WIN32)
@@ -292,7 +292,7 @@ if(doctest_FOUND)
   # The Vulkan backend on a real GPU, offscreen, validation layers on: any validation error fails it.
   # It loads the host's Vulkan loader and drivers, as scripts/run-linux.sh does; 77: no device.
   add_executable(kf_vulkan_tests port/tests/vulkan.cpp)
-  target_link_libraries(kf_vulkan_tests PRIVATE kf_vulkan kf_support doctest::doctest)
+  target_link_libraries(kf_vulkan_tests PRIVATE kf_vulkan kf_frontend kf_support doctest::doctest)
   target_include_directories(kf_vulkan_tests PRIVATE port/renderer/vulkan)
   target_compile_options(kf_vulkan_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   set(KF_HOST_LIBRARY_PATH "/usr/lib64" CACHE PATH "Where the host's libvulkan.so.1 is, for the Vulkan tests")

@@ -338,6 +338,12 @@ void draw_settings_window() {
             changed = true;
         }
         ImGui::SetItemTooltip("Smooths blocky textures on walls, floors and models.\nThe HUD and menus stay pixel-sharp.");
+        const char *fog_labels[] = {"Corners (original)", "Per pixel, by depth", "Per pixel, by distance"};
+        if (ImGui::Combo("Fog", &s.fog, fog_labels, 3)) {
+            apply_render_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("Where the darkness that swallows distant walls is measured.\nCorners: blended across each polygon, as on the PlayStation.\nPer pixel: smooth on large floors and walls; by distance it also\nstays put as the view turns. Vulkan only.");
         const char *aa_labels[] = {"Off", "FXAA (fast)", "4x SSAA (sharp, heavier)", "9x SSAA (best, heavy)"};
         if (ImGui::Combo("Anti-aliasing", &s.antialiasing, aa_labels, 4)) {
             apply_render_settings();

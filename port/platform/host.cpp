@@ -1097,6 +1097,7 @@ struct SmoothCamera {
 };
 struct FrameSmoothing {
     SmoothCamera frame{};            // camera of the world frame being built
+    LightColor frame_fog_color{};
     bool frame_has_camera = false;
     SmoothCamera previous{}, current{};
     bool have_current = false;
@@ -1343,9 +1344,11 @@ static void smooth_present_now(Uint64 now) {
         smooth_present(now);
 }
 
-void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Projection &projection) {
+void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Projection &projection,
+                       const LightColor &fog_color) {
     host.clip_projection = projection;
     smooth.frame = {position, rotation, projection};
+    smooth.frame_fog_color = fog_color;
     smooth.frame_has_camera = true;
     vertex_carry.seen_from({position, rotation, projection});
     // Unsmoothed frames are drawn from this camera; smoothed ones set their own.
@@ -1514,7 +1517,8 @@ static void frontend_submit(const FaceList *faces) {
         apply_frontend_options();
     std::optional<CameraPose> camera;
     if (smooth.frame_has_camera)
-        camera = CameraPose{smooth.frame.position, smooth.frame.rotation, smooth.frame.projection};
+        camera = CameraPose{smooth.frame.position, smooth.frame.rotation, smooth.frame.projection,
+                            smooth.frame_fog_color};
     auto &lights = frontend_output.lights;
     lights.clear();
     for (int i = 0; i < host.frame_light_count; ++i) {

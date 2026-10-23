@@ -234,6 +234,24 @@ TEST_CASE("batch: a cut face's new corners carry their share of the way back") {
         CHECK(vertex.bx == doctest::Approx(90 * (vertex.cz - 10) / 90).epsilon(1e-3));
 }
 
+TEST_CASE("batch: a cued face carries its clear colour and cue scale, a cut corner its share") {
+    TextureLayers layers;
+    DrawFace face = solid_face(0, 100);
+    face.depth_cue_scale = 1.5f;
+    face.vertices[0].cz = 10;   // behind the near plane (32)
+    face.vertices[0].clear_r = 0;
+    face.vertices[1].clear_r = 90.0f / 255;
+    face.vertices[2].clear_r = 90.0f / 255;
+    BatchRules rules;
+    rules.near_clip = Projection{};
+    const FrameBatch batch = batch_faces({&face, 1}, rules, layers);
+    REQUIRE_FALSE(batch.vertices.empty());
+    for (const GpuVertex &vertex : batch.vertices) {
+        CHECK(vertex.cue_scale_quarters == 6);
+        CHECK(std::abs(vertex.clear_color[0] - (vertex.cz - 10)) <= 1.0f);   // 90 over the 90 units from z 10 to 100
+    }
+}
+
 TEST_CASE("smoothing: the first update is shown as drawn") {
     ViewSmoothing smoothing;
     smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 0);

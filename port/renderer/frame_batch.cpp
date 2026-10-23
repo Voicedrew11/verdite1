@@ -54,6 +54,9 @@ Vertex mix(const Vertex &a, const Vertex &b, float t) {
     out.bx = lerp(a.bx, b.bx);
     out.by = lerp(a.by, b.by);
     out.bz = lerp(a.bz, b.bz);
+    out.clear_r = lerp(a.clear_r, b.clear_r);
+    out.clear_g = lerp(a.clear_g, b.clear_g);
+    out.clear_b = lerp(a.clear_b, b.clear_b);
     return out;
 }
 
@@ -131,6 +134,7 @@ struct FaceAttributes {
     u8 dither;
     u8 casts_shadow;
     u16 part;
+    u8 cue_scale_quarters;
 };
 
 FaceAttributes face_attributes(const DrawFace &face, u8 layer, std::size_t part_count) {
@@ -152,6 +156,7 @@ FaceAttributes face_attributes(const DrawFace &face, u8 layer, std::size_t part_
     out.dither = (textured ? modulated : face.shading == FaceShading::Gouraud) ? 1 : 0;
     out.casts_shadow = face.casts_shadow ? 1 : 0;
     out.part = face.part <= part_count ? face.part : 0;
+    out.cue_scale_quarters = static_cast<u8>(std::clamp(std::lround(face.depth_cue_scale * 4), 0L, 255L));
     return out;
 }
 
@@ -179,6 +184,9 @@ GpuVertex gpu_vertex(const Vertex &vertex, const FaceAttributes &face) {
     out.bx = vertex.bx;
     out.by = vertex.by;
     out.bz = vertex.bz;
+    out.clear_color = {color_byte(vertex.clear_r, face.color_unity), color_byte(vertex.clear_g, face.color_unity),
+                       color_byte(vertex.clear_b, face.color_unity)};
+    out.cue_scale_quarters = face.cue_scale_quarters;
     return out;
 }
 

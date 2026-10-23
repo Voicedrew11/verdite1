@@ -1,8 +1,19 @@
 diff --git a/include/kf/lib/render_face.h b/include/kf/lib/render_face.h
-index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..96919d6416adb9651e609548587ca3ecac1d4cb8 100644
+index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..c4837469554e3d99b806c5fa26fd84e8ce6c7f26 100644
 --- a/include/kf/lib/render_face.h
 +++ b/include/kf/lib/render_face.h
-@@ -25,10 +25,48 @@ std::optional<KfProjectedFace> render_projected_triangle(
+@@ -3,8 +3,10 @@
+ 
+ #include <kf/lib/tmd.h>
+ #include <kf/platform/host.h>
++#include <kf/renderer/lighting.h>
+ #include <kf/renderer/renderer.h>
+ 
++#include <algorithm>
+ #include <array>
+ #include <initializer_list>
+ #include <optional>
+@@ -25,10 +27,48 @@ std::optional<KfProjectedFace> render_projected_triangle(
      std::span<const KfScreenVertex, KF_PROJECTED_VERTEX_CAPACITY> vertices,
      u16 first, u16 second, u16 third);
  void render_face_uvs(kf::DrawFace &face, std::initializer_list<u16> texcoords);
@@ -51,7 +62,7 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..96919d6416adb9651e609548587ca3ec
      // Retail tests the projected coordinates, including their saturation.
      const std::int64_t ab_x = b->position.vx - a->position.vx;
      const std::int64_t ab_y = b->position.vy - a->position.vy;
-@@ -54,8 +92,30 @@ inline kf::FaceMaterial render_texture_material(u16 page, u16 palette)
+@@ -54,8 +94,30 @@ inline kf::FaceMaterial render_texture_material(u16 page, u16 palette)
  
  inline void render_face_vertex(kf::DrawFace *face, unsigned index, const KfScreenVertex *vertex)
  {
@@ -84,6 +95,34 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..96919d6416adb9651e609548587ca3ec
  }
  
  inline void render_face_uv(kf::DrawFace *face, unsigned index, u16 uv)
+@@ -80,6 +142,27 @@ inline void render_face_submit(kf::DrawFace *face, std::span<const CVECTOR> colo
+     kf::host_enqueue_face(*face);
+ }
+ 
++// PC extension (fog drawn per pixel): as above, with each colour also before the
++// depth cue. The projected corners carry the cue doubled (p2 = fog << shift),
++// which is the scale unless the writer cued by another.
++inline void render_face_submit(kf::DrawFace *face, std::span<const kf::DepthCuedColor> colors,
++    kf::FaceShading shading, s32 depth, float depth_cue_scale = 1 << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT)
++{
++    const float divisor = face->material.kind == kf::SurfaceKind::Texture ? kf::texture_color_unity : kf::color8_scale;
++    for (std::size_t i = 0; i < static_cast<unsigned>(face->shape); ++i) {
++        const auto &clear = colors[shading == kf::FaceShading::Flat ? 0 : i].clear;
++        face->vertices[i].clear_r = clear.r / divisor;
++        face->vertices[i].clear_g = clear.g / divisor;
++        face->vertices[i].clear_b = clear.b / divisor;
++    }
++    std::array<CVECTOR, 4> cued {};
++    const std::size_t count = std::min(colors.size(), cued.size());
++    for (std::size_t i = 0; i < count; ++i)
++        cued[i] = colors[i].cued;
++    face->depth_cue_scale = depth_cue_scale;
++    render_face_submit(face, std::span<const CVECTOR>(cued.data(), count), shading, depth);
++}
++
+ inline void render_face_rectangle(kf::DrawFace *face, s16 x, s16 y, s16 right, s16 bottom)
+ {
+     face->shape = kf::FaceShape::Quad;
 diff --git a/include/kf/lib/tmd.h b/include/kf/lib/tmd.h
 index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..80f695ac622264d6c7c2f5563fc6259957f89837 100644
 --- a/include/kf/lib/tmd.h

@@ -175,6 +175,23 @@ where the fragment's depth matches the measured surface, so the HUD, the held
 weapon and translucent faces are left alone without a mask. Verdite's
 floor-plan term (`AoWorld`) is not carried over: judged not worth having.
 
+### Fog per pixel
+
+The game fogs on the CPU: each corner's depth cue (`render_project_point`,
+the GTE's DQA/DQB) moves its lit colour toward the fog colour, and the GPU
+blends the result across the face. The writers do not all cue alike: map cells
+and models use twice the corner's cue (`p2 = fog << 1`), sprites the cue
+itself, floor items half as much again. Display > Fog (Enhanced; Vulkan
+draws it at Balanced) keeps that: each writer hands the colour before its cue
+too (`DepthCuedColor`, `lighting.h`) and the face's scale
+(`DrawFace::depth_cue_scale`), and `world.frag` evaluates the same curve at
+the pixel's camera depth (`Depth`) or its distance to the eye (`Distance`,
+Verdite's judged default), with the update's fog colour and start. `Corners`
+draws the game's own colours, so Classic is unchanged. The opening's writers
+hand no clear colour and stay at their corners. `kf_vulkan_tests` checks the
+curve against the game's arithmetic at a corner's depth, off the view's
+centre, at a sprite's scale and for an uncued face.
+
 What carries over is decisions and references, not code:
 
 - **The judged values** (decided 2026-10-23: the starting defaults, judged

@@ -4,12 +4,15 @@
 #include <doctest/doctest.h>
 
 #include <kf/renderer/backend.h>
+#include <kf/renderer/lighting.h>
+#include <kf/renderer/projection.h>
 
 #include "vulkan_device.h"
 #include "vulkan_downsample.h"
 #include "vulkan_resources.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -103,7 +106,7 @@ Image present_and_capture() {
 
 // Draws one frame and returns the picture.
 Image draw(const std::vector<GpuVertex> &vertices, const std::vector<DrawRun> &runs, const FrameStyle &style) {
-    backend->upload_frame(vertices, runs, style);
+    backend->upload_frame(vertices, runs, style, {});
     return present_and_capture();
 }
 
@@ -348,6 +351,86 @@ TEST_CASE("vulkan: ambient occlusion leaves 2D faces over the world alone") {
 }
 
 namespace {
+constexpr float wall_depth = 14000;
+constexpr u8 wall_clear = 200;
+
+// A wall across the view at wall_depth, cued by the game at scale (the map's
+// 2), its cued colour black so a pixel drawn with it shows.
+std::vector<GpuVertex> cued_wall(u8 scale_quarters) {
+    const float half_width = 30000, half_height = 20000;
+    std::vector<GpuVertex> out;
+    const GpuVertex corners[4] = {
+        world_corner(-half_width, -half_height, wall_depth), world_corner(half_width, -half_height, wall_depth),
+        world_corner(-half_width, half_height, wall_depth), world_corner(half_width, half_height, wall_depth)};
+    out.insert(out.end(), {corners[0], corners[1], corners[2], corners[1], corners[3], corners[2]});
+    for (GpuVertex &vertex : out) {
+        vertex.color = {0, 0, 0, 255};
+        vertex.clear_color = {wall_clear, wall_clear, wall_clear};
+        vertex.cue_scale_quarters = scale_quarters;
+    }
+    return out;
+}
+
+// The game's cued grey for a point straight ahead at this depth, as a corner
+// there would get it, in 5 bits.
+int game_cued(float depth, int scale) {
+    MATRIX identity{};
+    identity.m[0][0] = identity.m[1][1] = identity.m[2][2] = 4096;
+    const SVECTOR ahead{0, 0, static_cast<s16>(depth), 0};
+    const ProjectedPoint point = render_project_point(identity, Projection{}, ahead);
+    const LightingEnvironment black{};
+    const CVECTOR clear{wall_clear, wall_clear, wall_clear, 0};
+    return render_fog_color(black, clear, point.fog * scale).r >> 3;
+}
+
+Image draw_fogged(const std::vector<GpuVertex> &vertices, FogMode fog) {
+    PictureOptions options;
+    options.fog = fog;
+    backend->set_options(options);
+    DepthCue cue;
+    cue.slope = render_fog_slope(Projection{});
+    const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
+    backend->upload_frame(vertices, runs, cleared_to(background), cue);
+    Image picture = present_and_capture();
+    backend->set_options({});
+    return picture;
+}
+} // namespace
+
+TEST_CASE("vulkan: fog per pixel by depth is the game's cue at the corners' depth") {
+    const Image picture = draw_fogged(cued_wall(8), FogMode::Depth);
+    const int expected = game_cued(wall_depth, 2);
+    REQUIRE(expected > 0);
+    REQUIRE(expected < wall_clear >> 3);
+    for (const int x : {20, 160, 300}) {
+        CAPTURE(x);
+        CHECK(std::abs(pixel(picture, x, 120).r - expected) <= 1);
+        CHECK(pixel(picture, x, 120) == pixel(picture, x, 30));
+    }
+}
+
+TEST_CASE("vulkan: fog per pixel by distance deepens off the view's centre") {
+    const Image picture = draw_fogged(cued_wall(8), FogMode::Distance);
+    CHECK(std::abs(pixel(picture, 160, 120).r - game_cued(wall_depth, 2)) <= 1);
+    // 140 columns right of the centre: 140 x 14000 / 200 = 9800 units across.
+    const float off_centre = std::hypot(9800.0f, wall_depth);
+    CHECK(std::abs(pixel(picture, 300, 120).r - game_cued(off_centre, 2)) <= 1);
+    CHECK(pixel(picture, 300, 120).r < pixel(picture, 160, 120).r);
+}
+
+TEST_CASE("vulkan: fog keeps each face's strength, and faces the game did not cue keep their colour") {
+    const Image sprite = draw_fogged(cued_wall(4), FogMode::Depth);
+    CHECK(std::abs(pixel(sprite, 160, 120).r - game_cued(wall_depth, 1)) <= 1);
+    const Image uncued = draw_fogged(cued_wall(0), FogMode::Distance);
+    CHECK(pixel(uncued, 160, 120) == Rgb5{0, 0, 0});
+}
+
+TEST_CASE("vulkan: fog at the corners draws the game's own colours") {
+    const Image picture = draw_fogged(cued_wall(8), FogMode::Corners);
+    CHECK(pixel(picture, 160, 120) == Rgb5{0, 0, 0});
+}
+
+namespace {
 // Presents the uploaded frame through motions, each vertex carrying this much of its way back.
 Image present_moved(const std::vector<Motion> &motions, float carry) {
     const FrameView view{motions, carry, true, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}};
@@ -383,7 +466,7 @@ std::vector<GpuVertex> part_square() {
 TEST_CASE("vulkan: a model part is drawn where its motion and its way back put it") {
     const std::vector<GpuVertex> vertices = part_square();
     const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
-    backend->upload_frame(vertices, runs, cleared_to(background));
+    backend->upload_frame(vertices, runs, cleared_to(background), {});
     // Model space to camera: 200 ahead, where a unit is a pixel.
     const std::vector<Motion> motions = {unmoved, Motion{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 200}}};
     const Image drawn = present_moved(motions, 0);
@@ -404,7 +487,7 @@ TEST_CASE("vulkan: camera-fixed faces move along their way back on screen, the d
     for (std::size_t i = bar; i < vertices.size(); ++i)
         vertices[i].part = 1;
     const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
-    backend->upload_frame(vertices, runs, cleared_to(background));
+    backend->upload_frame(vertices, runs, cleared_to(background), {});
     // Half a turn about (160, 120).
     const std::vector<Motion> motions = {unmoved, Motion{{-1, 0, 0, 320, 0, -1, 0, 240, 0, 0, 1, 0}}};
     const Image shown = present_moved(motions, 0.5f);

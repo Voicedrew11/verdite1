@@ -62,4 +62,14 @@ CVECTOR render_light_normal(const LightingEnvironment &environment, const MATRIX
     }
     return {color[0], color[1], color[2], base.cd};
 }
+
+DepthCuedColor render_light_normal_cued(const LightingEnvironment &environment, const MATRIX &lights,
+    const SVECTOR &normal, CVECTOR base, s32 depth_cue) {
+    return {render_light_normal(environment, lights, normal, base, depth_cue),
+        render_light_normal(environment, lights, normal, base, 0)};
+}
+
+DepthCuedColor render_fog_color_cued(const LightingEnvironment &environment, CVECTOR color, s32 depth_cue) {
+    return {render_fog_color(environment, color, depth_cue), color};
+}
 }

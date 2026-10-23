@@ -13,6 +13,7 @@ layout(location = 5) in uvec4 in_flags;     // layer, texturing, dither, casts_s
 layout(location = 6) in uvec2 in_part;      // GameFrame::parts index + 1, 0: none
 layout(location = 7) in vec3 in_local;      // a model part's vertex, model space
 layout(location = 8) in vec3 in_back;       // way back: model space, or screen x, y when camera-fixed
+layout(location = 9) in uvec4 in_clear;     // colour before the depth cue, cue scale in quarters
 
 layout(set = 0, binding = 1) readonly buffer Motions {
     vec4 rows[];                            // three per motion: row-major 3 x 4
@@ -23,6 +24,8 @@ layout(location = 1) out vec3 out_shade;    // the game's colour bytes
 layout(location = 2) flat out uvec4 out_uv_bounds;
 layout(location = 3) flat out uvec4 out_flags;   // layer, texturing, dither, world
 layout(location = 4) out vec3 out_camera;        // position in the shown camera's space; z = 0: not world
+layout(location = 5) out vec3 out_clear;         // the colour bytes before the depth cue
+layout(location = 6) flat out float out_cue_scale;   // 0: not cued
 
 // Perspective depth for the depth test: 0 at the near plane, 1 at the far one.
 const float near_w = 16.0, far_w = 65536.0;
@@ -71,6 +74,8 @@ void main() {
     out_camera = fixed_to_camera ? vec3(0.0) : camera;
     out_uv = in_uv;
     out_shade = vec3(in_color.rgb);
+    out_clear = vec3(in_clear.rgb);
+    out_cue_scale = float(in_clear.a) / 4.0;
     out_uv_bounds = in_uv_bounds;
     // Only world surfaces (perspective, in front of the camera) are filtered.
     out_flags = uvec4(in_flags.xyz, in_screen.z > 0.0 && in_camera.z > 0.0 ? 1u : 0u);

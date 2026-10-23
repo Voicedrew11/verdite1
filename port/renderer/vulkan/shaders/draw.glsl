@@ -8,6 +8,10 @@ layout(push_constant) uniform DrawConstants {
     uint pixel_scale;
     uint blend;                 // blend_* below
     float carry;                // how much of each vertex's way back is shown
+    // The update's depth cue, for fog drawn per pixel (DepthCue in backend.h).
+    float cue_slope;
+    float cue_projection_distance;
+    float fog_r, fog_g, fog_b;
 } draw;
 
 const uint draw_reproject = 1u;
@@ -21,6 +25,9 @@ const uint draw_filter_three_point = 32u;
 const uint draw_occlusion = 64u;
 // The surface pass (vulkan_surfaces.h): every world face in perspective.
 const uint draw_surface_pass = 128u;
+// The world's fog at each pixel from its camera depth, or its distance to the eye.
+const uint draw_fog_depth = 256u;
+const uint draw_fog_distance = 512u;
 
 const uint blend_opaque = 0u;
 const uint blend_average = 1u;

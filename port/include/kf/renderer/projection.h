@@ -29,6 +29,11 @@ VECTOR render_transform_point(const MATRIX &model, const SVECTOR &point);
 void render_place_model(MATRIX &model, const MATRIX &view, const SVECTOR &position);
 ProjectedPoint render_project_point(const MATRIX &model, const Projection &projection,
     const SVECTOR &point);
+// The depth cue's slope (the GTE's DQA) for a fog start distance: a point at
+// depth z gets the cue ((H / z in Q16) x slope + depth_cue_bias) >> 12, held
+// to 0..4096.
+inline constexpr s32 depth_cue_bias = 0x1400000;
+s16 render_fog_slope(const Projection &projection);
 }
 
 #endif // KF_RENDERER_PROJECTION_H

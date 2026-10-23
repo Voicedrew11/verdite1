@@ -25,7 +25,6 @@ constexpr u32 reciprocal_refinement_rounding = 0x80;
 constexpr u32 reciprocal_correction_bias = 0x2000080;
 constexpr u32 projection_rounding_q16 = 0x8000;
 constexpr u32 fog_distance_coefficient = 320u;
-constexpr s32 fog_accumulator_bias = 0x1400000;
 }
 
 static u32 projection_scale_q16(u16 distance, u16 depth)
@@ -72,6 +71,14 @@ void render_place_model(MATRIX &model, const MATRIX &view, const SVECTOR &positi
     model.t[2] = transformed.vz;
 }
 
+s16 render_fog_slope(const Projection &projection)
+{
+    // Preserve the original wrapped numerator, signed division and 16-bit
+    // coefficient; the caller applies the same Q16 scale used for screen X/Y.
+    const s32 fog_numerator = static_cast<s32>(static_cast<u32>(projection.fog_near) * (0u - fog_distance_coefficient));
+    return static_cast<s16>(fog_numerator / Projection::fog_reference_distance);
+}
+
 ProjectedPoint render_project_point(const MATRIX &model, const Projection &projection,
     const SVECTOR &point)
 {
@@ -84,11 +91,7 @@ ProjectedPoint render_project_point(const MATRIX &model, const Projection &proje
             std::int64_t(std::clamp(value, camera_component_min, camera_component_max)) * scale + offset_q16;
         return static_cast<s16>(std::clamp<std::int64_t>(position_q16 >> projection_fraction_bits, screen_coordinate_min, screen_coordinate_max));
     };
-    // Preserve the original wrapped numerator, signed division and 16-bit
-    // coefficient before applying the same Q16 scale used for screen X/Y.
-    const s32 fog_numerator = static_cast<s32>(static_cast<u32>(projection.fog_near) * (0u - fog_distance_coefficient));
-    const s16 fog_slope = static_cast<s16>(fog_numerator / Projection::fog_reference_distance);
-    const std::int64_t fog_q12 = (std::int64_t(scale) * fog_slope + fog_accumulator_bias) >> depth_cue_fraction_bits;
+    const std::int64_t fog_q12 = (std::int64_t(scale) * render_fog_slope(projection) + depth_cue_bias) >> depth_cue_fraction_bits;
     // The drawn (sub-pixel) position keeps the fraction the integer transform
     // drops: each vertex rounding on its own made neighbouring vertices of a
     // model jitter against each other as the camera moved, so thin faces of

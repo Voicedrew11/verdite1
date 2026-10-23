@@ -16,6 +16,8 @@ layout(location = 1) in vec3 in_shade;
 layout(location = 2) flat in uvec4 in_uv_bounds;
 layout(location = 3) flat in uvec4 in_flags;   // layer, texturing, dither, world
 layout(location = 4) in vec3 in_camera;        // z = 0: not world
+layout(location = 5) in vec3 in_clear;         // the colour before the depth cue
+layout(location = 6) flat in float in_cue_scale;   // 0: not cued
 
 layout(location = 0) out vec4 out_color;
 
@@ -78,10 +80,23 @@ float occlusion_light() {
     return total > 0.0 ? sum / total : 1.0;
 }
 
+// The game's colour bytes at this fragment. Fog drawn per pixel takes the depth
+// cue render_project_point gives a corner (in floats, without its rounding) at
+// this pixel's depth or distance, and moves the clear colour that far, times
+// the face's scale, toward the fog colour, as render_fog_color does.
+vec3 shade() {
+    if ((draw.flags & (draw_fog_depth | draw_fog_distance)) == 0u || in_cue_scale == 0.0 || in_camera.z <= 0.0)
+        return in_shade;
+    float measured = (draw.flags & draw_fog_distance) != 0u ? length(in_camera) : in_camera.z;
+    float cue = (16.0 * draw.cue_projection_distance * draw.cue_slope / measured + 5120.0) / 4096.0;
+    vec3 fog = vec3(draw.fog_r, draw.fog_g, draw.fog_b);
+    return in_clear + (fog - in_clear) * clamp(cue, 0.0, 1.0) * in_cue_scale;
+}
+
 // The PS1's 15-bit colour: 5-bit channels, dithered on the original pixel grid.
 // Returns 0..1 in steps of 1/31. light: what ambient occlusion leaves, 0..1.
-vec3 classic_color(vec4 texel_color, uint texturing, float light) {
-    ivec3 shade = ivec3(clamp(floor(in_shade), 0.0, rgb8_max));
+vec3 classic_color(vec3 game_shade, vec4 texel_color, uint texturing, float light) {
+    ivec3 shade = ivec3(clamp(floor(game_shade), 0.0, rgb8_max));
     ivec3 texel = ivec3(floor(texel_color.rgb * float(rgb5_max) + 0.5));
     ivec3 foreground = shade;
     if (texturing == texturing_modulated)
@@ -98,8 +113,8 @@ vec3 classic_color(vec4 texel_color, uint texturing, float light) {
 }
 
 // 24-bit colour, no dither (Balanced's true colour), 0..1.
-vec3 true_color(vec4 texel_color, uint texturing, float light) {
-    vec3 shade = clamp(floor(in_shade), 0.0, rgb8_max);
+vec3 true_color(vec3 game_shade, vec4 texel_color, uint texturing, float light) {
+    vec3 shade = clamp(floor(game_shade), 0.0, rgb8_max);
     vec3 base = shade;
     if (texturing == texturing_modulated)
         base = texel_color.rgb * float(rgb5_max) * shade / 16.0;
@@ -148,8 +163,9 @@ void main() {
             texel_color = filtered(texel_color);
     }
     float light = occlusion_light();
-    vec3 color = (draw.flags & draw_true_color) != 0u ? true_color(texel_color, texturing, light)
-                                                      : classic_color(texel_color, texturing, light);
+    vec3 game_shade = shade();
+    vec3 color = (draw.flags & draw_true_color) != 0u ? true_color(game_shade, texel_color, texturing, light)
+                                                      : classic_color(game_shade, texel_color, texturing, light);
     // A textured face blends only its STP texels; an untextured one blends whole.
     bool stp = texturing == texturing_solid || texel_color.a < stp_alpha_threshold;
     out_color = blend_output(color, stp);

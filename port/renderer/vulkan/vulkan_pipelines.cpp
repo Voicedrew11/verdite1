@@ -12,13 +12,13 @@
 
 namespace kf {
 namespace {
-static_assert(sizeof(GpuVertex) == 76);
+static_assert(sizeof(GpuVertex) == 80);
 static_assert(offsetof(GpuVertex, cx) == 12 && offsetof(GpuVertex, u) == 24 && offsetof(GpuVertex, uv_bounds) == 32 &&
               offsetof(GpuVertex, color) == 40 && offsetof(GpuVertex, layer) == 44 && offsetof(GpuVertex, part) == 48 &&
-              offsetof(GpuVertex, lx) == 52 && offsetof(GpuVertex, bx) == 64);
+              offsetof(GpuVertex, lx) == 52 && offsetof(GpuVertex, bx) == 64 && offsetof(GpuVertex, clear_color) == 76);
 
 // world.vert's inputs, in GpuVertex.
-constexpr std::array<VkVertexInputAttributeDescription, 9> vertex_attributes = {{
+constexpr std::array<VkVertexInputAttributeDescription, 10> vertex_attributes = {{
     {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, x)},
     {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, cx)},
     {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(GpuVertex, u)},
@@ -28,6 +28,7 @@ constexpr std::array<VkVertexInputAttributeDescription, 9> vertex_attributes = {
     {6, 0, VK_FORMAT_R16G16_UINT, offsetof(GpuVertex, part)},
     {7, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, lx)},
     {8, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, bx)},
+    {9, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(GpuVertex, clear_color)},
 }};
 constexpr VkVertexInputBindingDescription vertex_binding{0, sizeof(GpuVertex), VK_VERTEX_INPUT_RATE_VERTEX};
 

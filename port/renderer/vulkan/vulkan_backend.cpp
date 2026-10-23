@@ -79,14 +79,15 @@ public:
         PictureOptions out = within_tier(wanted, Tier::Balanced);
         out.ambient_occlusion = wanted.ambient_occlusion;
         out.occlusion_quality = wanted.occlusion_quality;
+        out.fog = wanted.fog;
         return out;
     }
     bool set_target(int logical_width, int scale) override;
     void set_options(const PictureOptions &options) override;
     void upload_layer(u8 layer, const Image &texels) override;
     void set_occluders(std::span<const u8>, int, int, float) override {}
-    void upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs,
-                      const FrameStyle &style) override;
+    void upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs, const FrameStyle &style,
+                      const DepthCue &cue) override;
     void present(const FrameView &view, std::span<const RenderLight> lights, int window_width, int window_height,
                  ImDrawData *overlay) override;
     std::optional<Image> capture() override;
@@ -137,6 +138,7 @@ private:
     GpuBuffer vertices_;
     std::vector<DrawRun> runs_;
     FrameStyle style_;
+    DepthCue cue_;
     bool frame_drawn_ = false;
     bool overlay_started_ = false;
     VkFormat overlay_format_ = VK_FORMAT_UNDEFINED;
@@ -429,7 +431,7 @@ bool VulkanBackend::flush_layers() {
 }
 
 void VulkanBackend::upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs,
-                                 const FrameStyle &style) {
+                                 const FrameStyle &style, const DepthCue &cue) {
     if (!wait_for_frames())
         return;
     const VkDeviceSize bytes = std::max<VkDeviceSize>(vertices.size_bytes(), sizeof(GpuVertex));
@@ -446,6 +448,7 @@ void VulkanBackend::upload_frame(std::span<const GpuVertex> vertices, std::span<
     vertices_.flush();
     runs_.assign(runs.begin(), runs.end());
     style_ = style;
+    cue_ = cue;
     frame_drawn_ = false;
 }
 
@@ -498,9 +501,13 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
                       (options_.true_color ? draw_true_color : 0) |
                       (options_.texture_filter == TextureFilter::Bilinear ? draw_filter_bilinear : 0) |
                       (options_.texture_filter == TextureFilter::ThreePoint ? draw_filter_three_point : 0) |
-                      (occlusion_ready_ ? draw_occlusion : 0);
+                      (occlusion_ready_ ? draw_occlusion : 0) | (options_.fog == FogMode::Depth ? draw_fog_depth : 0) |
+                      (options_.fog == FogMode::Distance ? draw_fog_distance : 0);
     constants.pixel_scale = static_cast<uint32_t>(scale_);
     constants.carry = view.carry;
+    constants.cue_slope = cue_.slope;
+    constants.cue_projection_distance = cue_.projection_distance;
+    constants.fog_color = cue_.far_color;
     return constants;
 }
 

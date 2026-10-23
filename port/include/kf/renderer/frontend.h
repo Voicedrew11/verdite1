@@ -9,6 +9,7 @@
 // frame then redraws them from a camera between the last two updates, in the
 // vertex shader, so frame smoothing costs nothing on the CPU.
 #include <kf/lib/geometry_types.h>
+#include <kf/renderer/lighting.h>
 #include <kf/renderer/projection.h>
 #include <kf/renderer/renderer.h>
 
@@ -31,7 +32,7 @@ class RenderBackend;
 //             modes, dither, 15-bit colour, the game's draw order.
 //   Balanced: plus depth buffer, true colour, filtering, mipmaps, widescreen,
 //             smoothing, supersampling.
-//   Enhanced: plus dynamic lights, shadows, AO, glow, FXAA.
+//   Enhanced: plus dynamic lights, shadows, AO, glow, FXAA, fog per pixel.
 // Sub-pixel and perspective are Classic-or-Balanced choices the game makes while
 // projecting (render_subpixel, render_perspective in renderer.h).
 enum class Tier : u8 { Classic, Balanced, Enhanced };
@@ -44,6 +45,14 @@ enum class TextureFilter : u8 { Nearest, Bilinear, ThreePoint };
 //   Medium: 2 x 2 per game pixel, 16 samples
 //   High:   the target's scale, 16 samples
 enum class OcclusionQuality : u8 { Low, Medium, High };
+
+// Where the game's depth cue (its fog) is measured.
+//   Corners:  at each corner, colours blended across the face: the PS1's
+//   Depth:    at each pixel, from its camera depth, as the game measures a corner
+//   Distance: at each pixel, from its distance to the eye, so it does not
+//             shift as the view turns
+// Per pixel, each face keeps the strength the game cued it with.
+enum class FogMode : u8 { Corners, Depth, Distance };
 
 // The Display settings, one field per row.
 struct PictureOptions {
@@ -63,6 +72,7 @@ struct PictureOptions {
     OcclusionQuality occlusion_quality = OcclusionQuality::Medium;
     float glow = 0.0f;            // halo around light sources (0: off)
     bool fxaa = false;
+    FogMode fog = FogMode::Corners;
     // Presentation
     bool vsync = true;            // off: frames are shown as soon as they are drawn
 };
@@ -72,6 +82,7 @@ struct CameraPose {
     VECTOR position;              // world units
     SVECTOR rotation;             // the game's angles, 4096 to a turn
     Projection projection;
+    LightColor fog_color{};       // what the depth cue tends to, 0..255
 };
 
 // How one part of an update's picture moved since the update before
