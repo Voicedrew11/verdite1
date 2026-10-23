@@ -154,6 +154,21 @@ flipbook sprites stepping on every drawn frame, the item display's hold, tints
 and textures. The GL renderer keeps kf1-enhanced's rigid per-entity smoothing
 (`host_report_entity`).
 
+### The exact view rotation
+
+The game's view matrix is `matrix_set_rotation_xyz` in 12-bit fixed point: the
+sine table is exact to half a unit, but the truncating shifts leave entries up
+to about 6/4096 off a rotation, and off differently at each angle. Corners then
+move against each other as the view turns, by up to 0.1 px at 320x240 (about
+1 px at 4K), which reads as a residual texture warble even with perspective
+and sub-pixel on. Smoothing used to undo the matrix with its transpose, which
+is not its inverse, and redo it with the same flawed matrix. Vulkan now undoes
+it with its true inverse and sees the world through the exact rotation for the
+same angles (`view_rotation.h`), for the map, models and lights alike; with
+smoothing off, sub-pixel pictures are reprojected the same way
+(`ViewSmoothing::view_exact`), and whole-pixel (Classic) ones keep the game's
+matrix. The GL renderer still draws with the game's matrix.
+
 ### Ambient occlusion and the surface buffer
 
 Vulkan draws the opaque world faces a second time each frame, with a depth

@@ -39,8 +39,16 @@ public:
     // The last update seen at now_ns, turned further by pending_look (angle
     // units). As drawn when the update has no camera.
     ShownView view_at(std::uint64_t now_ns, SVECTOR pending_look) const;
+    // The last update from its own camera, seen through the exact rotation for
+    // its angles rather than the game's 12-bit one (view_rotation.h). As drawn
+    // when the update has no camera.
+    ShownView view_exact() const;
 
 private:
+    // The update drawn from b, seen from the shown camera, alpha of the way from the update before.
+    ShownView seen_from(const CameraPose &b, const std::array<float, 3> &shown_position, const SVECTOR &shown_rotation,
+                        double alpha) const;
+
     struct ModelStep {
         ModelTransform before, now;
         std::array<double, 12> drawn{};   // the update's own transform, shown once blending is done

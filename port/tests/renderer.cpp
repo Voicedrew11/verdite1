@@ -3,6 +3,7 @@
 #include "../renderer/texture_mips.h"
 #include "../renderer/model_transform.h"
 #include "../renderer/vertex_carry.h"
+#include "../renderer/view_rotation.h"
 #include "../renderer/view_smoothing.h"
 
 #include <kf/lib/fixed_math.h>
@@ -287,6 +288,61 @@ TEST_CASE("batch: a cued face carries its clear colour and cue scale, a cut corn
     for (const GpuVertex &vertex : batch.vertices) {
         CHECK(vertex.cue_scale_quarters == 6);
         CHECK(std::abs(vertex.clear_color[0] - (vertex.cz - 10)) <= 1.0f);   // 90 over the 90 units from z 10 to 100
+    }
+}
+
+namespace {
+// Views up, down and at odd angles, where the game's 12-bit matrix is furthest off.
+const std::vector<SVECTOR> odd_views = {{0, 0, 0}, {-300, 700, 0}, {150, 1365, 0}, {-100, 3001, 0}, {200, 2222, 41}};
+} // namespace
+
+TEST_CASE("view rotation: the game's matrix is undone exactly, and the exact one is a rotation near it") {
+    for (const SVECTOR &angles : odd_views) {
+        MATRIX fixed{};
+        matrix_set_rotation_xyz(angles, fixed);
+        const Rotation3 inverse = game_view_inverse(angles);
+        const Rotation3 exact = exact_view_rotation(angles);
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                double undone = 0, square = 0;
+                for (int k = 0; k < 3; ++k) {
+                    undone += inverse[r][k] * fixed.m[k][c] / 4096.0;
+                    square += exact[r][k] * exact[c][k];
+                }
+                CHECK(undone == doctest::Approx(r == c ? 1 : 0).epsilon(1e-12));
+                CHECK(square == doctest::Approx(r == c ? 1 : 0).epsilon(1e-12));
+                // The game's truncating shifts add up to a few 4096ths; a different order would be far off.
+                CHECK(std::abs(exact[r][c] - fixed.m[r][c] / 4096.0) < 8 / 4096.0);
+            }
+        }
+    }
+}
+
+TEST_CASE("smoothing: a still view moves what the game projected to where the exact rotation puts it") {
+    for (const SVECTOR &angles : odd_views) {
+        CameraPose camera = pose_at(0);
+        camera.rotation = angles;
+        ViewSmoothing smoothing;
+        smoothing.take_update(camera, {0, 0, 0}, {}, 0);
+        const ShownView view = smoothing.view_exact();
+        REQUIRE(view.reproject);
+        CHECK(view.carry == 0);
+        MATRIX fixed{};
+        matrix_set_rotation_xyz(angles, fixed);
+        const Rotation3 exact = exact_view_rotation(angles);
+        const std::array<double, 3> world = {-800, 200, 1500};
+        const auto &m = view.motions[0].to_shown;
+        for (int r = 0; r < 3; ++r) {
+            double shown = m[r * 4 + 3], wanted = 0;
+            for (int k = 0; k < 3; ++k) {
+                double game = 0;
+                for (int j = 0; j < 3; ++j)
+                    game += fixed.m[k][j] / 4096.0 * world[j];
+                shown += m[r * 4 + k] * game;
+                wanted += exact[r][k] * world[k];
+            }
+            CHECK(shown == doctest::Approx(wanted).epsilon(1e-5));
+        }
     }
 }
 

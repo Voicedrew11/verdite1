@@ -1,6 +1,6 @@
 #include "view_smoothing.h"
 
-#include <kf/lib/fixed_math.h>
+#include "view_rotation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +14,6 @@ constexpr std::uint64_t interval_max_ns = 100 * ns_per_ms;
 constexpr std::uint64_t interval_default_ns = 50 * ns_per_ms;
 constexpr s32 snap_distance = 4000;          // two map tiles in one update: a warp
 constexpr int snap_angle = 1024;             // a quarter turn in one update
-constexpr float fixed_one = 4096.0f;
 constexpr double radians_per_angle_unit = 6.28318530717958647692 / 4096.0;
 // Game lights ignore their immediate surroundings as shadow casters.
 constexpr float game_light_shadow_near = 1200.0f;
@@ -27,14 +26,11 @@ int angle_delta(int from, int to) {
     return ((to - from + half_turn) & wrap_mask) - half_turn;
 }
 
-// The game's view rotation: world to camera.
-Matrix3 view_rotation(const SVECTOR &angles) {
-    MATRIX fixed{};
-    matrix_set_rotation_xyz(angles, fixed);
+Matrix3 to_float(const Rotation3 &m) {
     Matrix3 out{};
     for (int row = 0; row < 3; ++row)
         for (int col = 0; col < 3; ++col)
-            out[row][col] = fixed.m[row][col] / fixed_one;
+            out[row][col] = static_cast<float>(m[row][col]);
     return out;
 }
 
@@ -158,7 +154,8 @@ ShownView ViewSmoothing::view_as_drawn() const {
     ShownView view;
     view.motions.assign(parts_.size() + 1, identity_motion);
     if (current_)
-        fill_camera(view, current_->projection, view_rotation(current_->rotation), position_of(current_->position));
+        fill_camera(view, current_->projection, to_float(exact_view_rotation(current_->rotation)),
+                    position_of(current_->position));
     return view;
 }
 
@@ -174,11 +171,21 @@ ShownView ViewSmoothing::view_at(std::uint64_t now_ns, SVECTOR pending_look) con
     const SVECTOR shown_rotation{blended_angle(a.rotation.vx, b.rotation.vx, alpha, look_applied_.vx, pending_look.vx),
                                  blended_angle(a.rotation.vy, b.rotation.vy, alpha, look_applied_.vy, pending_look.vy),
                                  blended_angle(a.rotation.vz, b.rotation.vz, alpha, look_applied_.vz, pending_look.vz)};
-    const Matrix3 drawn_view = view_rotation(b.rotation);
-    const Matrix3 shown_view = view_rotation(shown_rotation);
-    // Update camera space to world relative to the shown camera: V_b^T c + (P_b - P_s).
-    const Matrix3 to_world = transposed(drawn_view);
-    const Vector3 offset = subtract(drawn_position, shown_position);
+    return seen_from(b, shown_position, shown_rotation, alpha);
+}
+
+ShownView ViewSmoothing::view_exact() const {
+    if (!current_)
+        return view_as_drawn();
+    return seen_from(*current_, position_of(current_->position), current_->rotation, 1.0);
+}
+
+ShownView ViewSmoothing::seen_from(const CameraPose &b, const std::array<float, 3> &shown_position,
+                                   const SVECTOR &shown_rotation, double alpha) const {
+    const Matrix3 shown_view = to_float(exact_view_rotation(shown_rotation));
+    // Update camera space to world relative to the shown camera: V_b^-1 c + (P_b - P_s).
+    const Matrix3 to_world = to_float(game_view_inverse(b.rotation));
+    const Vector3 offset = subtract(position_of(b.position), shown_position);
 
     ShownView view;
     view.reproject = true;

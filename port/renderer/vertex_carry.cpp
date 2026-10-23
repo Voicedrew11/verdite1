@@ -1,8 +1,7 @@
 #include "vertex_carry.h"
 
 #include "model_transform.h"
-
-#include <kf/lib/fixed_math.h>
+#include "view_rotation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,10 +15,9 @@ constexpr double turn_limit = 0x300 * 6.28318530717958647692 / 4096;   // angle 
 constexpr double fixed_one = 4096;
 
 // The model-to-world transform of a model the game projects with model (its
-// model-to-camera transform) from camera: the view's transpose applied to it.
+// model-to-camera transform) from camera: the inverse of the game's view applied to it.
 std::array<double, 12> model_to_world(const CameraPose &camera, const MATRIX &model) {
-    MATRIX view{};
-    matrix_set_rotation_xyz(camera.rotation, view);
+    const Rotation3 to_world = game_view_inverse(camera.rotation);
     const std::array<double, 3> eye = {static_cast<double>(camera.position.vx), static_cast<double>(camera.position.vy),
                                        static_cast<double>(camera.position.vz)};
     std::array<double, 12> out{};
@@ -27,13 +25,13 @@ std::array<double, 12> model_to_world(const CameraPose &camera, const MATRIX &mo
         for (int c = 0; c < 3; ++c) {
             double sum = 0;
             for (int k = 0; k < 3; ++k)
-                sum += view.m[k][r] * static_cast<double>(model.m[k][c]);
-            out[r * 4 + c] = sum / (fixed_one * fixed_one);
+                sum += to_world[r][k] * static_cast<double>(model.m[k][c]);
+            out[r * 4 + c] = sum / fixed_one;
         }
         double moved = 0;
         for (int k = 0; k < 3; ++k)
-            moved += view.m[k][r] * static_cast<double>(model.t[k]);
-        out[r * 4 + 3] = moved / fixed_one + eye[r];
+            moved += to_world[r][k] * static_cast<double>(model.t[k]);
+        out[r * 4 + 3] = moved + eye[r];
     }
     return out;
 }

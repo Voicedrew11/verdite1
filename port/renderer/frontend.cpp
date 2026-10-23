@@ -40,6 +40,16 @@ DepthCue depth_cue(const std::optional<CameraPose> &camera) {
     return cue;
 }
 
+// Sub-pixel pictures see the world through the exact view rotation; whole-pixel
+// ones keep the game's own, as drawn, unless smoothing reprojects them anyway.
+ShownView shown_view(const PictureOptions &options, std::uint64_t now_ns, const SVECTOR &pending_look) {
+    if (options.smoothing)
+        return frontend.smoothing.view_at(now_ns, pending_look);
+    if (render_subpixel)
+        return frontend.smoothing.view_exact();
+    return frontend.smoothing.view_as_drawn();
+}
+
 void upload_new_layers() {
     for (const LayerUpload &upload : frontend.layers.take_uploads()) {
         Image texels{};
@@ -124,8 +134,7 @@ void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look, int win
     if (!frontend.backend)
         return;
     const PictureOptions options = drawn_options();
-    const ShownView shown = options.smoothing ? frontend.smoothing.view_at(now_ns, pending_look)
-                                              : frontend.smoothing.view_as_drawn();
+    const ShownView shown = shown_view(options, now_ns, pending_look);
     std::vector<RenderLight> lights;
     if (options.dynamic_lights)
         lights = shown_lights(frontend.lights, options.light_strength, shown.motions.front(), now_ns);
