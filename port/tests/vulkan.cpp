@@ -537,11 +537,30 @@ TEST_CASE("vulkan: anisotropic filtering keeps stripes across a face squeezed th
     }
     // 32 x 2 pixels from (144, 119): a texel a pixel across, 16 a pixel down.
     const std::vector<GpuVertex> squeezed = textured_rect(stripes_low, 32, 2);
-    const Image isotropic = draw_textured(squeezed, true, TextureFilter::Bilinear, 1);
-    CHECK(widest_step(pixel(isotropic, 145, 120), pixel(isotropic, 149, 120)) <= 2);
-    const Image anisotropic = draw_textured(squeezed, true, TextureFilter::Bilinear, 16);
-    CHECK(widest_step(pixel(anisotropic, 145, 120), Rgb5{0, 0, 0}) <= 2);
-    CHECK(widest_step(pixel(anisotropic, 149, 120), checker_grey) <= 2);
+    for (const TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Bilinear}) {
+        CAPTURE(static_cast<int>(filter));
+        const Image isotropic = draw_textured(squeezed, true, filter, 1);
+        CHECK(widest_step(pixel(isotropic, 145, 120), pixel(isotropic, 149, 120)) <= 2);
+        const Image anisotropic = draw_textured(squeezed, true, filter, 16);
+        CHECK(widest_step(pixel(anisotropic, 145, 120), Rgb5{0, 0, 0}) <= 2);
+        CHECK(widest_step(pixel(anisotropic, 149, 120), checker_grey) <= 2);
+    }
+}
+
+TEST_CASE("vulkan: nearest mipmaps leave texels that cover a pixel or more as they were") {
+    for (const float extent : {32.0f, 48.0f, 64.0f}) {
+        CAPTURE(extent);
+        const std::vector<GpuVertex> face = textured_rect(checker_low, extent, extent);
+        const Image plain = draw_textured(face, false, TextureFilter::Nearest);
+        const Image mipped = draw_textured(face, true, TextureFilter::Nearest, 16);
+        const int low_x = 160 - static_cast<int>(extent) / 2, low_y = 120 - static_cast<int>(extent) / 2;
+        int differing = 0;
+        for (int y = low_y; y < low_y + static_cast<int>(extent); ++y) {
+            for (int x = low_x; x < low_x + static_cast<int>(extent); ++x)
+                differing += pixel(plain, x, y) == pixel(mipped, x, y) ? 0 : 1;
+        }
+        CHECK(differing == 0);
+    }
 }
 
 TEST_CASE("vulkan: past the enhanced depth the game's look is drawn") {

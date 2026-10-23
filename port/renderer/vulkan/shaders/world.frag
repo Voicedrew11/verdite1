@@ -65,14 +65,6 @@ vec4 uncovered(vec4 texel, vec4 nearest) {
     return texel.a > 0.0 ? vec4(texel.rgb / texel.a, nearest.a) : nearest;
 }
 
-// The texel at a level nearest the fragment, inside the face's rectangle.
-vec4 nearest_at(vec4 nearest, int level) {
-    ivec4 rect = face_texels() >> level;
-    vec2 size = vec2(textureSize(pages, level).xy);
-    ivec2 texel = clamp(ivec2(floor(in_uv * size)), rect.xy, rect.zw);
-    return uncovered(texelFetch(pages, ivec3(texel, int(in_flags.x)), level), nearest);
-}
-
 // Smoothed sampling for world surfaces (Balanced) at a level: bilinear or
 // three-point taps inside the face's rectangle, weighted by their coverage.
 vec4 filtered(vec4 nearest, int level) {
@@ -95,15 +87,21 @@ vec4 filtered(vec4 nearest, int level) {
     return uncovered(sum, nearest);
 }
 
+// Texels a fragment's footprint spans at level 0: the short axis, or the long
+// one over the anisotropy, as the hardware picks its level.
+float anisotropic_footprint(vec2 dx, vec2 dy) {
+    vec2 size = vec2(textureSize(pages, 0).xy);
+    float x_axis = length(dx * size), y_axis = length(dy * size);
+    return max(min(x_axis, y_axis), max(x_axis, y_axis) / draw.anisotropy);
+}
+
 // Bilinear filtering from the mip chain by the hardware, trilinear and
-// anisotropic. The footprint (the short axis, or the long one over the
-// anisotropy, as the hardware picks its level) is held inside the face's
-// square, and the centre inside its rectangle.
+// anisotropic. The footprint is held inside the face's square, and the centre
+// inside its rectangle.
 vec4 trilinear(vec4 nearest, vec2 dx, vec2 dy) {
     vec2 size = vec2(textureSize(pages, 0).xy);
     ivec4 rect = face_texels();
-    float x_axis = length(dx * size), y_axis = length(dy * size);
-    float footprint = max(min(x_axis, y_axis), max(x_axis, y_axis) / draw.anisotropy);
+    float footprint = anisotropic_footprint(dx, dy);
     float limit = exp2(float(square_levels(rect)));
     float scale = footprint > limit ? limit / footprint : 1.0;
     // Half a texel of the coarser level blended, so its taps stay in the rectangle.
@@ -114,16 +112,23 @@ vec4 trilinear(vec4 nearest, vec2 dx, vec2 dy) {
     return uncovered(textureGrad(smooth_pages, vec3(uv, float(in_flags.x)), dx * scale, dy * scale), nearest);
 }
 
+// Nearest filtering with mipmaps: the original texel while it covers a pixel or
+// more, fading into trilinear as it shrinks to half a pixel, where nearest only
+// shimmers.
+vec4 minified_nearest(vec4 nearest, vec2 dx, vec2 dy) {
+    float fade = clamp(log2(max(anisotropic_footprint(dx, dy), 1e-6)), 0.0, 1.0);
+    return fade > 0.0 ? mix(nearest, trilinear(nearest, dx, dy), fade) : nearest;
+}
+
 // A world surface's texel, as the filter and mipmap options draw it.
 vec4 world_texel(vec4 nearest, vec2 dx, vec2 dy) {
     bool mipmapped = (draw.flags & draw_mipmaps) != 0u;
     bool smoothed = (draw.flags & (draw_filter_bilinear | draw_filter_three_point)) != 0u;
+    if (!smoothed)
+        return mipmapped ? minified_nearest(nearest, dx, dy) : nearest;
     if (mipmapped && (draw.flags & draw_filter_bilinear) != 0u)
         return trilinear(nearest, dx, dy);
-    int level = mipmapped ? mip_level(dx, dy) : 0;
-    if (smoothed)
-        return filtered(nearest, level);
-    return level > 0 ? nearest_at(nearest, level) : nearest;
+    return filtered(nearest, mipmapped ? mip_level(dx, dy) : 0);
 }
 
 // The light ambient occlusion leaves this fragment: the measured texels around

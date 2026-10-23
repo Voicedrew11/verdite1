@@ -352,7 +352,7 @@ void draw_settings_window() {
             apply_render_settings();
             changed = true;
         }
-        ImGui::SetItemTooltip("Keeps floors and walls seen at a slant sharp into the distance.\nNeeds bilinear filtering and mipmaps. Vulkan only.");
+        ImGui::SetItemTooltip("Keeps floors and walls seen at a slant sharp into the distance.\nNeeds mipmaps; not with 3-point filtering. Vulkan only.");
         const char *fog_labels[] = {"Corners (original)", "Per pixel, by depth", "Per pixel, by distance"};
         if (ImGui::Combo("Fog", &s.fog, fog_labels, 3)) {
             apply_render_settings();
