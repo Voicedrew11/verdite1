@@ -63,6 +63,15 @@ VECTOR render_transform_point(const MATRIX &model, const SVECTOR &point)
     return result;
 }
 
+std::array<double, 3> render_transform_point_exact(const MATRIX &model, const SVECTOR &point)
+{
+    std::array<double, 3> exact{};
+    for (unsigned row = 0; row < 3; ++row)
+        exact[row] = (double(model.m[row][0]) * point.vx + double(model.m[row][1]) * point.vy + double(model.m[row][2]) * point.vz)
+            / 4096.0 + model.t[row];
+    return exact;
+}
+
 void render_place_model(MATRIX &model, const MATRIX &view, const SVECTOR &position)
 {
     const VECTOR transformed = render_transform_point(view, position);
@@ -96,10 +105,7 @@ ProjectedPoint render_project_point(const MATRIX &model, const Projection &proje
     // drops: each vertex rounding on its own made neighbouring vertices of a
     // model jitter against each other as the camera moved, so thin faces of
     // distant models flickered. Integer results for game logic are unchanged.
-    double exact[3];
-    for (unsigned row = 0; row < 3; ++row)
-        exact[row] = (double(model.m[row][0]) * point.vx + double(model.m[row][1]) * point.vy + double(model.m[row][2]) * point.vz)
-            / 4096.0 + model.t[row];
+    const std::array<double, 3> exact = render_transform_point_exact(model, point);
     // Depths near zero belong to faces the host clips at its near plane; the
     // floor keeps their interpolation weights finite.
     constexpr double minimum_perspective_depth = 16;

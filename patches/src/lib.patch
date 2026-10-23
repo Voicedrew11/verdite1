@@ -66,7 +66,7 @@ index 9e34bd861ab6154f12997ce11056378ecc251c79..1565099a2c249d686babd3705c6e7edb
          kf::host_fail("Invalid TIM resource or texture allocation failure.");
  }
 diff --git a/src/lib/tmd.cpp b/src/lib/tmd.cpp
-index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..0d701c09859edc2d6cd17a8f63daede4c2af7cbb 100644
+index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..52377e9796e6b5f0da67946a267359089d8a913c 100644
 --- a/src/lib/tmd.cpp
 +++ b/src/lib/tmd.cpp
 @@ -2,6 +2,9 @@
@@ -147,12 +147,16 @@ index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..0d701c09859edc2d6cd17a8f63daede4
      KfScreenVertex *projected;
      const SVECTOR *vertex;
      VECTOR transformed;
-@@ -247,7 +295,13 @@ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model
+@@ -247,7 +295,17 @@ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model
          projected->position.vy = transformed.vy;
          projected->p2 = transformed.vz;
          projected->sz = transformed.vz;
-+        projected->fx = projected->position.vx;
-+        projected->fy = projected->position.vy;
++        // PC extension (sub-pixel vertices): drawn corners keep the fraction
++        // the fixed-point rotation drops, so the turning compass needle does
++        // not wobble.
++        const auto exact = kf::render_transform_point_exact(*model, *vertex);
++        projected->fx = static_cast<float>(exact[0]);
++        projected->fy = static_cast<float>(exact[1]);
 +        projected->w = 0;
 +        projected->cx = projected->cy = projected->cz = 0;
          projected++;

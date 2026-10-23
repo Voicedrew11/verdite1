@@ -6,6 +6,8 @@
 #include "../renderer/view_rotation.h"
 #include "../renderer/view_smoothing.h"
 
+#include <kf/renderer/projection.h>
+
 #include <kf/lib/fixed_math.h>
 
 #include <doctest/doctest.h>
@@ -144,6 +146,25 @@ TEST_CASE("mips: a texel half covered keeps its colour over its coverage") {
     const u8 *below = texel(levels[1], 0, 0);
     CHECK(below[3] == 128);
     CHECK(below[0] * 255 / below[3] == doctest::Approx(200).epsilon(0.01));
+}
+
+TEST_CASE("transform: the exact point keeps the fraction the fixed-point rotation drops") {
+    // A HUD model turned by 30 degrees about z: its corners land between pixels.
+    MATRIX model{};
+    model.m[0][0] = model.m[1][1] = 3547;
+    model.m[0][1] = -2048;
+    model.m[1][0] = 2048;
+    model.m[2][2] = 4096;
+    model.t[0] = 40;
+    model.t[1] = 200;
+    const SVECTOR point{7, 3, 0};
+    const VECTOR whole = render_transform_point(model, point);
+    const auto exact = render_transform_point_exact(model, point);
+    CHECK(exact[0] == doctest::Approx(40 + (3547.0 * 7 - 2048.0 * 3) / 4096));
+    CHECK(exact[1] == doctest::Approx(200 + (2048.0 * 7 + 3547.0 * 3) / 4096));
+    CHECK(std::abs(exact[0] - whole.vx) < 1);
+    CHECK(std::abs(exact[1] - whole.vy) < 1);
+    CHECK(exact[0] != whole.vx);
 }
 
 TEST_CASE("batch: farthest first, later submissions first among equals") {

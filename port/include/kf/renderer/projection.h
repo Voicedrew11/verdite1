@@ -3,6 +3,8 @@
 
 #include <kf/lib/geometry_types.h>
 
+#include <array>
+
 namespace kf {
 struct Projection {
     // Original fog setters always use this reference, even for weapon views.
@@ -26,6 +28,9 @@ struct ProjectedPoint {
 };
 
 VECTOR render_transform_point(const MATRIX &model, const SVECTOR &point);
+// PC extension: the same point with the fraction the fixed-point rotation
+// drops, for drawn vertices only.
+std::array<double, 3> render_transform_point_exact(const MATRIX &model, const SVECTOR &point);
 void render_place_model(MATRIX &model, const MATRIX &view, const SVECTOR &position);
 ProjectedPoint render_project_point(const MATRIX &model, const Projection &projection,
     const SVECTOR &point);
