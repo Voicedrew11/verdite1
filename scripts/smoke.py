@@ -52,7 +52,8 @@ def drive():
                 return "the command channel never opened"
             time.sleep(0.2)
     with channel, channel.makefile("r") as reader:
-        while not state(channel, reader).get("inGame"):
+        # The arrival is scripted for 54 updates; walking waits for the player to have control.
+        while state(channel, reader).get("context") != "gameplay":
             if time.monotonic() > deadline:
                 return "the game never reached gameplay"
             time.sleep(0.2)
