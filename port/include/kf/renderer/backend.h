@@ -112,7 +112,7 @@ public:
     // (minimised) draws nothing.
     virtual void present(const FrameView &view, std::span<const RenderLight> lights,
                          int window_width, int window_height, const ImDrawData *overlay) = 0;
-    // The last presented image, RGBA8, top row first. The null backend has none.
+    // The game's picture as last drawn (renderer_capture). The null backend has none.
     virtual std::optional<Image> capture() = 0;
 };
 

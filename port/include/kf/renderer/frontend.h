@@ -126,8 +126,9 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns);
 // so looking has no update of lag.
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look,
                       int window_width, int window_height, const ImDrawData *overlay);
-// The window as last presented, overlay included, RGBA8 with the top row first
-// (KF_CAPTURE). None if nothing has been presented or the backend cannot read back.
+// The game's picture as last drawn, RGBA8 with the top row first, at the
+// target's size: no letterbox and no overlay, so it can be compared pixel for
+// pixel with another build (KF_CAPTURE). None if the backend cannot read back.
 std::optional<Image> renderer_capture();
 } // namespace kf
 
