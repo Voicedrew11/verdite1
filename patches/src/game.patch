@@ -1715,10 +1715,10 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..561e7d10cdac807440e06d09547a4a36
      animation_cache_release_stale();
      // World rendering also advances floor sprites and notifications. Pace every
 diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
-index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcde791e786 100644
+index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b616aaa71 100644
 --- a/src/game/render_map_cells.cpp
 +++ b/src/game/render_map_cells.cpp
-@@ -3,6 +3,10 @@
+@@ -3,6 +3,11 @@
  #include <kf/game/graphics.h>
  #include <kf/game/render.h>
  #include <kf/lib/map_data.h>
@@ -1726,10 +1726,11 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcd
 +#include <kf/platform/input.h>
 +#include <array>
 +#include <cstdlib>
++#include <span>
  
  enum {
      ILLUSION_STAFF_REMAP_PHASE_MASK = 3,
-@@ -68,7 +72,9 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+@@ -68,7 +73,9 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
          return;
      }
      orientation = kf_enum_encode<u8>(map_cell_orientation_grid.cells[row][col]) - 1;
@@ -1740,7 +1741,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcd
          object_index += KF_MAP_MESHES_PER_BANK;
      }
      position = VECTOR{
-@@ -88,7 +94,90 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+@@ -88,7 +95,93 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
      kf::render_place_model(cell_matrix, game_graphics_runtime.render_state.view_matrix, position);
      kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, game_graphics_runtime.render_state.quadrant_matrices[orientation], cell_matrix);
      tmd_select_object_vertices(tmd_context(), object_index);
@@ -1765,18 +1766,21 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcd
 +// PC extension: a widescreen picture shows more to each side than the original
 +// 4:3 cone, and every map cell, object, actor and effect is culled through the
 +// active cell window. Each of the 16 yaw windows covers 1/16 turn, so merging a
-+// window with both neighbours covers any aspect the renderer allows. The cells
-+// right around the camera are always included too: looking down past the
-+// original limit shows the floor beside and behind the player.
-+static const KfCellWindow *render_widen_cell_window(int yaw_index)
++// window with reach neighbours each side covers any aspect the renderer allows
++// (reach 1). Smoothing turns the shown view by look input the game has not
++// taken yet, as far as the player spins before the next update, so it merges
++// every window. The cells right around the camera are always included too:
++// looking down past the original limit shows the floor beside and behind the
++// player.
++static const KfCellWindow *render_widen_cell_window(int yaw_index, int reach)
 +{
-+    const KfCellWindow *parts[] = {
-+        &render_cell_windows[(yaw_index + KF_CELL_WINDOW_YAW_COUNT - 1) % KF_CELL_WINDOW_YAW_COUNT],
-+        &render_cell_windows[yaw_index],
-+        &render_cell_windows[(yaw_index + 1) % KF_CELL_WINDOW_YAW_COUNT]};
++    std::array<const KfCellWindow *, KF_CELL_WINDOW_YAW_COUNT> parts;
++    const int part_count = std::min(2 * reach + 1, int(KF_CELL_WINDOW_YAW_COUNT));
++    for (int i = 0; i < part_count; ++i)
++        parts[i] = &render_cell_windows[(yaw_index - reach + i + KF_CELL_WINDOW_YAW_COUNT) % KF_CELL_WINDOW_YAW_COUNT];
 +    constexpr int around_camera = 2;
 +    int min_dx = -around_camera, max_dx = around_camera, min_dz = -around_camera, max_dz = around_camera;
-+    for (const auto *part : parts) {
++    for (const auto *part : std::span(parts.data(), part_count)) {
 +        min_dx = std::min(min_dx, -int(part->origin_x));
 +        max_dx = std::max(max_dx, int(part->width) - 1 - int(part->origin_x));
 +        min_dz = std::min(min_dz, -int(part->origin_z));
@@ -1787,7 +1791,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcd
 +        return &render_cell_windows[yaw_index];
 +    KfCellVisibility *cells = render_wide_cells.data();
 +    std::fill_n(cells, width * height, KF_CELL_WINDOW_HIDDEN);
-+    for (const auto *part : parts) {
++    for (const auto *part : std::span(parts.data(), part_count)) {
 +        for (int row = 0; row < part->height; ++row) {
 +            for (int col = 0; col < part->width; ++col) {
 +                const auto value = part->cells[row * part->width + col];
@@ -1831,7 +1835,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcd
  }
  
  void render_map_cells(void)
-@@ -103,15 +192,20 @@ void render_map_cells(void)
+@@ -103,15 +196,21 @@ void render_map_cells(void)
      if ((u16)(game_graphics_runtime.render_state.view_rotation.vx + (KF_ANGLE_EIGHTH_TURN - 1))
          >= 2 * KF_ANGLE_EIGHTH_TURN - 1) {
          game_graphics_runtime.active_cell_window = &render_fixed_cell_window;
@@ -1844,9 +1848,10 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..267a1d2b58e6de2080bca7cfd17ffbcd
 +        const int yaw_index = KF_CELL_WINDOW_YAW_COUNT - 1
 +            - (game_graphics_runtime.render_state.view_rotation.vy >> KF_CELL_WINDOW_YAW_SHIFT);
 +        game_graphics_runtime.active_cell_window = &render_cell_windows[yaw_index];
-+        if (kf::host_extra_columns() > 0 || kf::render_smoothing
-+                || kf::player_pitch_limit > KF_PLAYER_CAMERA_PITCH_LIMIT)
-+            game_graphics_runtime.active_cell_window = render_widen_cell_window(yaw_index);
++        if (kf::render_smoothing)
++            game_graphics_runtime.active_cell_window = render_widen_cell_window(yaw_index, KF_CELL_WINDOW_YAW_COUNT / 2);
++        else if (kf::host_extra_columns() > 0 || kf::player_pitch_limit > KF_PLAYER_CAMERA_PITCH_LIMIT)
++            game_graphics_runtime.active_cell_window = render_widen_cell_window(yaw_index, 1);
      }
  
      row = (u16)game_graphics_runtime.render_state.view_cell.z - game_graphics_runtime.active_cell_window->origin_z;
