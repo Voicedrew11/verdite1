@@ -1,5 +1,9 @@
 # AGENTS.md
 
+**Writing C++?** Follow `docs/cpp-reference.md` (the good/bad rules, and its "Before finishing"
+list before calling it done) and `docs/code-style.md` (how this repo's modules look). Both are for
+our code (`libverdite/`, `port/`); patches to the decomp's game code follow the decomp's style.
+
 Branch `decomp` of Verdite1: King's Field (JP, `SLPS-00017`) as native C/C++
 from sushi-shi's decompilation, with Verdite1's features being carried over.
 It shares nothing with `main` (the RecompOne recompilation); `main`'s

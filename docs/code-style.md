@@ -2,7 +2,8 @@
 
 How Verdite's own C++ is written: `libverdite/` and `port/`. The patches to the decomp's game
 code follow the decomp instead (last section). The checks that hold the mechanical part are in
-`scripts/check.sh`; the rest is judgement, and this is what to judge by.
+`scripts/check.sh`; the rest is judgement, and this is what to judge by. The language rules (ownership, lifetimes, casts, UB) are in
+[cpp-reference.md](cpp-reference.md).
 
 ## Models
 
