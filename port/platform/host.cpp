@@ -1387,16 +1387,17 @@ void apply_frontend_options() {
     renderer_set_options(picture);
 }
 
-// The look input the game has not taken yet, in angle units, held inside the
-// pitch limit the game will clamp it to.
+// The look input not yet in a drawn update, in angle units, held inside the
+// pitch limit the game will clamp it to: what the game has not taken, plus what
+// the update in progress took (it waits for the next tick before submitting).
 SVECTOR pending_look() {
     if (host.input_context != InputContext::Gameplay)
         return {0, 0, 0};
     constexpr double angle_units_per_pixel = mouse_degrees_per_pixel * angle_units_per_turn / degrees_per_turn;
     const double x = host.input.pending.look_x * angle_units_per_pixel + host.look_remainder_x;
     const double y = host.input.pending.look_y * angle_units_per_pixel + host.look_remainder_y;
-    s32 pitch = static_cast<s32>(std::trunc(y));
-    const s32 yaw = -static_cast<s32>(std::trunc(x));
+    s32 pitch = static_cast<s32>(std::trunc(y)) + host.look_consumed.pitch;
+    const s32 yaw = -static_cast<s32>(std::trunc(x)) + host.look_consumed.yaw;
     if (frontend_output.last_camera) {
         const s32 at = frontend_output.last_camera->rotation.vx;
         pitch = std::clamp(at + pitch, -player_pitch_limit, player_pitch_limit) - at;
