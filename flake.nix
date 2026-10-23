@@ -30,7 +30,8 @@
       '';
     in {
       devShells.${system}.default = (pkgs.mkShell.override { stdenv = pkgs.clangStdenv; }) {
-        packages = with pkgs; [ cmake ninja pkg-config clang python3 git sdl3 libGL libglvnd ];
+        # clang-tools first: its clang-tidy is wrapped to find the standard headers
+        packages = with pkgs; [ clang-tools cmake ninja pkg-config clang python3 git sdl3 libGL libglvnd doctest ];
         KF_ENGLISH_PATCH = "${englishDelta}";
       };
     };

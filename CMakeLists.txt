@@ -11,6 +11,8 @@ project(kings_field VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# compile_commands.json, for clang-tidy (scripts/lint.py)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
 option(KF_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
 if(KF_SANITIZE)
@@ -199,6 +201,16 @@ if(WIN32)
   target_link_libraries(verdite PUBLIC ws2_32)
 endif()
 target_compile_options(verdite PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+# libverdite's tests, built when doctest is installed (the nix shell has it): ctest --preset linux
+find_package(doctest CONFIG QUIET)
+if(doctest_FOUND)
+  enable_testing()
+  add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp)
+  target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
+  target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME verdite COMMAND verdite_tests)
+endif()
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp

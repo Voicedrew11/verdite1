@@ -34,6 +34,14 @@ frame-rate gap), `docs/NETWORKING_PLAN.md` (online play; a draft),
 - Nothing goes upstream to sushi-shi or acranon: no pull requests, no issues.
   A fix to the reconstruction is a patch here.
 
+## Code quality
+
+- Write new C++ by `docs/code-style.md`; patches to game code follow the decomp's style.
+- Run `scripts/check.sh` before committing (`--quick` skips the sanitizer build). It builds, runs
+  libverdite's tests, lints our code (`scripts/lint.py`: all of `libverdite/`, the changed lines
+  of `port/`, the lines the patches add) and boots the game headless, plain and under ASan/UBSan.
+- A finding is fixed, not suppressed; a check turned off goes in the table in `code-style.md`.
+
 ## Build and run
 
 - `git submodule update --init decomp` after cloning.
