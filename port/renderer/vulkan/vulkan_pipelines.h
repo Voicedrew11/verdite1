@@ -31,7 +31,8 @@ struct DrawConstants {
 static_assert(sizeof(DrawConstants) == 64);
 constexpr uint32_t draw_reproject = 1, draw_whole_pixels = 2, draw_true_color = 4, draw_subtract_stp_pass = 8,
                    draw_filter_bilinear = 16, draw_filter_three_point = 32, draw_occlusion = 64,
-                   draw_surface_pass = 128, draw_fog_depth = 256, draw_fog_distance = 512, draw_mipmaps = 1024;
+                   draw_surface_pass = 128, draw_fog_depth = 256, draw_fog_distance = 512, draw_mipmaps = 1024,
+                   draw_filter_sharp = 2048;
 
 // The fixed blend equations world.frag's outputs are written for.
 enum class BlendEquation : std::uint8_t {

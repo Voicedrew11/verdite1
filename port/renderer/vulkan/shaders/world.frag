@@ -67,10 +67,16 @@ vec4 uncovered(vec4 texel, vec4 nearest) {
 
 // Smoothed sampling for world surfaces (Balanced) at a level: bilinear or
 // three-point taps inside the face's rectangle, weighted by their coverage.
-vec4 filtered(vec4 nearest, int level) {
+// Sharp keeps each texel flat and blends only the screen pixel its edge
+// crosses, so magnified texels come out evenly sized.
+vec4 filtered(vec4 nearest, int level, vec2 dx, vec2 dy) {
     vec2 size = vec2(textureSize(pages, level).xy);
     vec2 position = in_uv * size - 0.5;
     vec2 f = fract(position);
+    if ((draw.flags & draw_filter_sharp) != 0u) {
+        vec2 texels_per_pixel = (abs(dx) + abs(dy)) * size;
+        f = clamp((f - 0.5) / clamp(texels_per_pixel, 1e-6, 1.0) + 0.5, 0.0, 1.0);
+    }
     ivec2 base = ivec2(floor(position));
     ivec4 rect = face_texels() >> level;
     int layer = int(in_flags.x);
@@ -112,9 +118,9 @@ vec4 trilinear(vec4 nearest, vec2 dx, vec2 dy) {
     return uncovered(textureGrad(smooth_pages, vec3(uv, float(in_flags.x)), dx * scale, dy * scale), nearest);
 }
 
-// Nearest filtering with mipmaps: the original texel while it covers a pixel or
-// more, fading into trilinear as it shrinks to half a pixel, where nearest only
-// shimmers.
+// Nearest (or sharp) filtering with mipmaps: the original texel while it covers
+// a pixel or more, fading into trilinear as it shrinks to half a pixel, where
+// nearest only shimmers.
 vec4 minified_nearest(vec4 nearest, vec2 dx, vec2 dy) {
     float fade = clamp(log2(max(anisotropic_footprint(dx, dy), 1e-6)), 0.0, 1.0);
     return fade > 0.0 ? mix(nearest, trilinear(nearest, dx, dy), fade) : nearest;
@@ -123,12 +129,16 @@ vec4 minified_nearest(vec4 nearest, vec2 dx, vec2 dy) {
 // A world surface's texel, as the filter and mipmap options draw it.
 vec4 world_texel(vec4 nearest, vec2 dx, vec2 dy) {
     bool mipmapped = (draw.flags & draw_mipmaps) != 0u;
+    if ((draw.flags & draw_filter_sharp) != 0u) {
+        vec4 sharp = filtered(nearest, 0, dx, dy);
+        return mipmapped ? minified_nearest(sharp, dx, dy) : sharp;
+    }
     bool smoothed = (draw.flags & (draw_filter_bilinear | draw_filter_three_point)) != 0u;
     if (!smoothed)
         return mipmapped ? minified_nearest(nearest, dx, dy) : nearest;
     if (mipmapped && (draw.flags & draw_filter_bilinear) != 0u)
         return trilinear(nearest, dx, dy);
-    return filtered(nearest, mipmapped ? mip_level(dx, dy) : 0);
+    return filtered(nearest, mipmapped ? mip_level(dx, dy) : 0, dx, dy);
 }
 
 // The light ambient occlusion leaves this fragment: the measured texels around

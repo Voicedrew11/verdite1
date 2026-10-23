@@ -284,7 +284,7 @@ PictureOptions picture_options(const Settings &e) {
     PictureOptions options;
     options.true_color = e.true_color;
     options.depth_buffer = e.depth_buffer;
-    options.texture_filter = static_cast<TextureFilter>(std::clamp(e.texture_filter, 0, 2));
+    options.texture_filter = static_cast<TextureFilter>(std::clamp(e.texture_filter, 0, 3));
     options.smoothing = e.frame_rate != 20;
     options.supersample = render_supersample;
     options.dynamic_lights = e.dynamic_lights;

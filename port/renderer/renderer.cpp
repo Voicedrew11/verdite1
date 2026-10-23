@@ -445,7 +445,7 @@ uniform int dither_enabled;
 uniform int blend_mode;
 uniform int pixel_scale;
 uniform int true_color;
-uniform int texture_filter;   // 0 nearest (original), 1 bilinear, 2 three-point (N64)
+uniform int texture_filter;   // 0 nearest (original), 1 bilinear, 2 three-point (N64), 3 sharp
 uniform vec4 uv_bounds;       // uv rectangle this face samples: min.xy, max.xy
 const int light_capacity=32;
 uniform int light_count;
@@ -612,10 +612,13 @@ const int dither_offsets[dither_period*dither_period]=int[dither_period*dither_p
 // the face's own texel rectangle (texture pages pack unrelated images side by
 // side), transparent texels are left out of the average, and transparency and
 // the STP flag come from the nearest texel so cut-outs keep their original edge.
-vec4 filtered_texture(vec2 coordinate, vec4 nearest) {
+vec4 filtered_texture(vec2 coordinate, vec4 nearest, vec2 texels_per_pixel) {
     vec2 size=vec2(textureSize(image,0));
     vec2 position=coordinate*size-0.5;
     vec2 f=fract(position);
+    // Sharp: each texel flat, its edge blended across one screen pixel.
+    if(texture_filter==3)
+        f=clamp((f-0.5)/clamp(texels_per_pixel,1e-6,1.0)+0.5,0.0,1.0);
     ivec2 base=ivec2(floor(position));
     ivec2 low=ivec2(floor(uv_bounds.xy*size+0.001));
     ivec2 high=max(low,ivec2(ceil(uv_bounds.zw*size-0.001))-1);
@@ -637,10 +640,11 @@ vec4 filtered_texture(vec2 coordinate, vec4 nearest) {
 }
 
 void main() {
+    vec2 texels_per_pixel=fwidth(uv)*vec2(textureSize(image,0));   // before any discard
     vec4 sample_color=texture(image,uv);
     if(sample_color.a==0.0) discard;
     if(texture_filter!=0 && texture_mode!=texture_solid && world_surface>0.5)
-        sample_color=filtered_texture(uv,sample_color);
+        sample_color=filtered_texture(uv,sample_color,texels_per_pixel);
     // Alpha: 1 world surface, 0.5 flat 2D (HUD, menus), 0 nothing drawn.
     view_depth=world_surface>0.5 ? pack_depth(view_position.z) : vec4(0.0,0.0,0.0,0.5);
     ivec3 shade=ivec3(clamp(floor(tint.rgb),0.0,rgb8_max));
@@ -947,7 +951,7 @@ static void renderer_draw(Renderer *renderer, const DrawList *draws, int width, 
                 static_cast<float>(renderer->logical_width) / 2.0f);
     glUniform1i(glGetUniformLocation(renderer->program, "pixel_scale"), scale);
     glUniform1i(glGetUniformLocation(renderer->program, "true_color"), render_true_color ? 1 : 0);
-    glUniform1i(glGetUniformLocation(renderer->program, "texture_filter"), std::clamp(render_texture_filter, 0, 2));
+    glUniform1i(glGetUniformLocation(renderer->program, "texture_filter"), std::clamp(render_texture_filter, 0, 3));
     const auto uv_bounds = glGetUniformLocation(renderer->program, "uv_bounds");
     {
         float positions[render_light_capacity * 4], colors[render_light_capacity * 4];

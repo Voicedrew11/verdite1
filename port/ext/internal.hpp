@@ -43,7 +43,7 @@ struct Settings {
     bool ambient_occlusion = true;
     int ao_strength = 100;      // percent; 100 is Verdite's judged look
     int ao_quality = 1;         // 0 low, 1 medium, 2 high (OcclusionQuality)
-    int texture_filter = 0;     // 0 nearest (original), 1 bilinear, 2 three-point
+    int texture_filter = 3;     // 0 nearest (original), 1 bilinear, 2 three-point, 3 sharp
     bool mipmaps = true;        // distant textures averaged instead of shimmering
     bool detailed_map = true;   // distant map cells keep their detailed meshes
     int anisotropy = 16;        // 1 (off), 2, 4, 8 or 16 samples along slanted textures

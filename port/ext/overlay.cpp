@@ -332,12 +332,13 @@ void draw_settings_window() {
             changed = true;
         }
         ImGui::SetItemTooltip("Full colour precision: smooth gradients in shadows and fog.\nOff: the PlayStation's 15-bit colour and its dither pattern.");
-        const char *filter_labels[] = {"Nearest (original)", "Bilinear (smooth)", "3-point (N64 style)"};
-        if (ImGui::Combo("Texture filtering", &s.texture_filter, filter_labels, 3)) {
+        const char *filter_labels[] = {"Nearest (original)", "Bilinear (smooth)", "3-point (N64 style)",
+                                       "Sharp (even texels)"};
+        if (ImGui::Combo("Texture filtering", &s.texture_filter, filter_labels, 4)) {
             apply_render_settings();
             changed = true;
         }
-        ImGui::SetItemTooltip("Smooths blocky textures on walls, floors and models.\nThe HUD and menus stay pixel-sharp.");
+        ImGui::SetItemTooltip("Textures on walls, floors and models.\nSharp keeps the original blocky texels, all drawn the same size.\nThe HUD and menus stay pixel-sharp.");
         if (ImGui::Checkbox("Mipmaps", &s.mipmaps)) {
             apply_render_settings();
             changed = true;

@@ -243,6 +243,20 @@ with nothing from the square beside it, a cut-out keeps its colour and edge,
 and bilinear, and nearest draws a face whose texels cover a pixel or more as it
 does without mipmaps.
 
+Sharp filtering (Texture filtering > Sharp, the default; GL and Vulkan) is
+nearest without its uneven texels. A texel magnified to a fraction of a pixel
+per texel, say 2.4, comes out 2 or 3 pixels wide under nearest, and the wide
+ones read as chunky clumps. Sharp takes the bilinear taps but keeps each weight flat
+inside the texel, blending only across the one screen pixel its edge crosses,
+so every texel has the same weight. Past one texel a pixel it is bilinear, and
+with mipmaps it fades into trilinear as nearest does. Transparency still comes
+from the nearest texel, so cut-out edges stay hard. `kf_vulkan_tests` checks
+stripes drawn 9, 9 and 10 pixels wide by nearest each weigh 9.375 pixels under
+sharp, and sharp is nearest away from a texel's edge. It was made for textures
+looking chunkier once the camera stops than while it moves, and did not cure
+that: once the camera stops the frames are identical, so what changes is not
+in the picture.
+
 ### Enhanced distance
 
 Verdite's `PlainDepth` (`KF1_ENHANCEDIST`): past Display > Enhanced distance

@@ -46,7 +46,7 @@ inline float render_light_strength = 1.0f;
 inline bool render_light_occlusion = false; // walls (solid map cells) block dynamic light
 inline bool render_ambient_occlusion = false; // screen-space AO applied at presentation
 inline float render_ao_strength = 1.0f;
-inline int render_texture_filter = 0;     // world textures: 0 nearest, 1 bilinear, 2 three-point
+inline int render_texture_filter = 0;     // world textures: 0 nearest, 1 bilinear, 2 three-point, 3 sharp
 inline bool render_fxaa = false;           // edge smoothing on world pixels at presentation
 inline int render_supersample = 1;         // render N x N pixels per output pixel and average
 inline float render_glow = 0.0f;           // soft halo around light sources (0 = off)

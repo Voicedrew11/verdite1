@@ -502,7 +502,8 @@ TEST_CASE("vulkan: mipmaps average a minified face, with no texel from beside it
     const std::vector<GpuVertex> checker = minified_square(checker_low);
     const Image plain = draw_textured(checker, false, TextureFilter::Nearest);
     CHECK(widest_step(pixel(plain, 158, 118), checker_grey) * widest_step(pixel(plain, 158, 118), Rgb5{}) == 0);
-    for (const TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Bilinear, TextureFilter::ThreePoint}) {
+    for (const TextureFilter filter :
+         {TextureFilter::Nearest, TextureFilter::Bilinear, TextureFilter::ThreePoint, TextureFilter::Sharp}) {
         CAPTURE(static_cast<int>(filter));
         const Image mipped = draw_textured(checker, true, filter);
         for (int y = 116; y < 124; ++y) {
@@ -517,7 +518,7 @@ TEST_CASE("vulkan: mipmaps average a minified face, with no texel from beside it
 
 TEST_CASE("vulkan: a mipmapped cut-out keeps its colour and its edge") {
     const std::vector<GpuVertex> cutout = minified_square(cutout_low);
-    for (const TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Bilinear}) {
+    for (const TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Bilinear, TextureFilter::Sharp}) {
         CAPTURE(static_cast<int>(filter));
         const Image mipped = draw_textured(cutout, true, filter);
         for (int x = 156; x < 164; ++x) {
@@ -560,6 +561,40 @@ TEST_CASE("vulkan: nearest mipmaps leave texels that cover a pixel or more as th
                 differing += pixel(plain, x, y) == pixel(mipped, x, y) ? 0 : 1;
         }
         CHECK(differing == 0);
+    }
+}
+
+TEST_CASE("vulkan: sharp filtering draws magnified texels evenly sized, nearest inside them") {
+    // 75 pixels from x 122.5, 2.34 a texel: nearest draws the 9.375-pixel grey
+    // stripes 9, 9 and 10 pixels wide.
+    constexpr float extent = 75, low_x = 160 - extent / 2, stripe_width = extent / 8;
+    constexpr int row = 120;
+    const std::vector<GpuVertex> face = textured_rect(stripes_low, extent, extent);
+    const Image nearest = draw_textured(face, false, TextureFilter::Nearest);
+    const Image sharp = draw_textured(face, false, TextureFilter::Sharp);
+    // A grey stripe inside the face and the black pixel either side of it.
+    const auto grey_weight = [&](const Image &picture, int stripe) {
+        const float start = low_x + stripe_width * static_cast<float>(2 * stripe + 1);
+        float sum = 0;
+        for (int x = static_cast<int>(start) - 1; x <= static_cast<int>(start + stripe_width) + 1; ++x)
+            sum += static_cast<float>(pixel(picture, x, row).r) / static_cast<float>(checker_grey.r);
+        return sum;
+    };
+    float nearest_low = 1e9f, nearest_high = 0;
+    for (int stripe = 0; stripe < 3; ++stripe) {
+        CAPTURE(stripe);
+        nearest_low = std::min(nearest_low, grey_weight(nearest, stripe));
+        nearest_high = std::max(nearest_high, grey_weight(nearest, stripe));
+        CHECK(std::abs(grey_weight(sharp, stripe) - stripe_width) <= 0.2f);
+    }
+    CHECK(nearest_high - nearest_low >= 1.0f);
+    // Away from a texel's edge, sharp is the texel itself.
+    for (int x = static_cast<int>(low_x) + 2; x < static_cast<int>(low_x + extent) - 1; ++x) {
+        CAPTURE(x);
+        const bool edge = pixel(nearest, x - 1, row) != pixel(nearest, x, row) ||
+                          pixel(nearest, x + 1, row) != pixel(nearest, x, row);
+        if (!edge)
+            CHECK(pixel(sharp, x, row) == pixel(nearest, x, row));
     }
 }
 

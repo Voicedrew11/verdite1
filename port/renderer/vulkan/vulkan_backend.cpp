@@ -572,6 +572,7 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
                       (options_.true_color ? draw_true_color : 0) |
                       (options_.texture_filter == TextureFilter::Bilinear ? draw_filter_bilinear : 0) |
                       (options_.texture_filter == TextureFilter::ThreePoint ? draw_filter_three_point : 0) |
+                      (options_.texture_filter == TextureFilter::Sharp ? draw_filter_sharp : 0) |
                       (occlusion_ready_ ? draw_occlusion : 0) | (options_.fog == FogMode::Depth ? draw_fog_depth : 0) |
                       (options_.fog == FogMode::Distance ? draw_fog_distance : 0) |
                       (options_.mipmaps ? draw_mipmaps : 0);

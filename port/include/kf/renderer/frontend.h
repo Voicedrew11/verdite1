@@ -38,7 +38,8 @@ class RenderBackend;
 // projecting (render_subpixel, render_perspective in renderer.h).
 enum class Tier : u8 { Classic, Balanced, Enhanced };
 
-enum class TextureFilter : u8 { Nearest, Bilinear, ThreePoint };
+// Sharp: nearest texels, evenly sized at any magnification.
+enum class TextureFilter : u8 { Nearest, Bilinear, ThreePoint, Sharp };
 
 // Verdite's ambient occlusion tiers: where the occlusion is measured, and with
 // how many samples.
