@@ -102,8 +102,8 @@ work is rendering, not reverse engineering.
 | Verdite feature | in the decomp |
 |---|---|
 | true colour, no dither, sub-pixel, perspective, Z-buffer | free: float vertices with real depth; kf1-enhanced has them |
-| retained map, map cache | build each area's static cells into GPU buffers once, keyed by area |
-| smoothing (view, models, HUD, item display) | interpolate game state between ticks: camera, model transforms, animation frames. kf1-enhanced re-projects from the camera only (`cx/cy/cz`); check models and HUD |
+| retained map, map cache | build each area's static cells into GPU buffers once, keyed by area. Kept 2026-10-23, knowing the cost: the game projects and lights map cells on the CPU each update, so this moves that work into the renderer. Not in the first backend, which uploads each update's faces once |
+| smoothing (view, models, HUD, item display) | interpolate game state between ticks: camera, model transforms, animation frames. kf1-enhanced re-projects from the camera only (`cx/cy/cz`); check models and HUD. Decided 2026-10-23: positions blend between the last two updates, but the view turns to the newest look input each displayed frame, so looking has no update (50 ms) of lag |
 | per-pixel lighting, distance fog | port the game's own lighting and depth-cue routines, named in the decomp, into the shader with the game's parameters: the original look, evaluated per pixel |
 | AO with geometry normals | depth and normals in a G-buffer, available directly; kf1-enhanced's AO is a different design, compare the two |
 | mipmaps, anisotropic, mip sharing | decode each texture page and palette to RGBA textures; watch textures the game rewrites in video memory (animated textures, palette changes), which need invalidating |
@@ -112,7 +112,8 @@ work is rendering, not reverse engineering.
 
 What carries over is decisions and references, not code:
 
-- **The judged values**: the `MANUAL_PASS` verdicts on `main` and the defaults
+- **The judged values** (decided 2026-10-23: the starting defaults, judged
+  again side by side once Enhanced draws, since other shaders made them): the `MANUAL_PASS` verdicts on `main` and the defaults
   set from them (fog mode, AO strength and quality, fade band, render
   distance) become the defaults here, on by default.
 - **A faithful Classic**: with enhancements off the picture matches the PS1.
@@ -123,10 +124,18 @@ What carries over is decisions and references, not code:
 
 ## Order
 
-1. Define the frontend interface and the tiers.
+1. Define the frontend interface and the tiers: `port/include/kf/renderer/frontend.h`
+   (what the game and host call) and `backend.h` (what an API implements).
+   A tier is what a backend can draw; options above it are off there.
+   Agreed 2026-10-23. Lights are handed over unflickered and flicker on every
+   displayed frame; VSync is a picture option the backend turns into a present
+   mode; `renderer_capture` keeps `KF_CAPTURE` working on every backend.
+   Shaders are GLSL, compiled to SPIR-V with glslang at build time.
 2. The Vulkan backend on Linux, validation layers on: reach Classic (checked
    against the recompiled Verdite1), then Clean, then Enhanced at the judged
-   values. Batched from the start (see [RUNTIME.md](RUNTIME.md)).
+   values. Batched from the start (see [RUNTIME.md](RUNTIME.md)). The GL
+   renderer keeps drawing until Vulkan reaches Classic (Vulkan chosen with
+   `KF_RENDERER=vulkan` until then); then GL is deleted.
 3. A second backend early, before the frontend sets in Vulkan-shaped habits.
    deko3d is the more useful second one; the 3DS is so limited it would bend
    the frontend.
