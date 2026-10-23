@@ -8,6 +8,72 @@ which is built on [sushi-shi/kings-field-decomp](https://github.com/sushi-shi/ki
 `main` is the RecompOne recompilation and shares no history with this branch.
 Nothing from `main` is merged; features are rewritten here in C/C++.
 
+The rendering plan (API, platforms, tiers, picture quality) is
+[RENDERER_PLAN.md](RENDERER_PLAN.md). What the port does in place of the
+console's hardware, and why it draws fewer frames than the recompilations, is
+[RUNTIME.md](RUNTIME.md).
+
+## Direction: every Verdite port becomes a decomp
+
+Decided 2026-10-22: in the long run every Verdite port is built on a
+decompilation, not on RecompOne, because a source port has the least overhead.
+There is nothing to emulate and nothing to recover from a packet stream, and
+each new platform costs only a renderer backend, an audio output and a
+platform layer.
+
+A matching decomp is half of what a port needs. The other half is the source
+port, which replaces the GTE, GPU packets, ordering tables and libgpu with a
+real renderer and platform layer. sushi-shi did that for KF1 (`port`).
+
+| port | game | decomp (2026-10-22) | port layer | state |
+|---|---|---|---|---|
+| Verdite1 | KF1 JP `SLPS-00017` | sushi-shi, 98.7% matching | yes (`port`, kf1-enhanced) | **move now** (this branch) |
+| Verdite2 | KF2 US `SLUS-00158` | sushi-shi's JP `SLPS-00069`; our US fork (`../kings-field-2-decomp`, `us-port`) in progress | none: matching branches and `docs/port-plan` only | finish the US decomp, then write a port layer |
+| Verdite3 | KF3 US `SLUS-00255` | **none exists** | none | start a decomp (decomp.wtf can import the disc and run helper agents) |
+| kfiv | KF4 PS2 `SLUS-20318` | ours (`../kfiv-decomp`): the image matches byte for byte; the game code is still assembly | none | long way off |
+
+Until a game's decomp and port layer exist, its recompiled Verdite stays the
+shipping build. RecompOne goes into maintenance, not retirement.
+
+### A C++ Verdite Core
+
+The C# Verdite Core and the RecompOne fork are replaced by a **shared,
+game-agnostic C++ library** kept as a subtree, under the same rules as now:
+nothing game-specific in it, its edits in their own commits, and no change to
+it may move another game. It holds:
+
+- platform: SDL3 window and input, analog tuning, rumble, gyro, focus pause,
+  crash reports, hang watchdog;
+- settings and the F1 overlay, Discord IPC, state beacon and command channel,
+  the fuzz harness, the profiler;
+- the renderer frontend and its backends ([RENDERER_PLAN.md](RENDERER_PLAN.md)).
+
+Each game supplies an adapter: its decomp, plus "here is the camera, the map
+cells, the models." KF1-KF3 share one evolving engine (TMD models, map-cell
+grids, the same lighting), so the renderer interface should hold for all three.
+It is first built inside Verdite1, then extracted into the subtree.
+
+### Things to plan for
+
+- **Faithfulness risk changes shape.** A recompilation runs the original
+  instructions; a source port is rewritten C++ and can diverge, and
+  `docs/port-notes.md` already lists deliberate deviations. Keep the recompiled
+  build as an **oracle**: replay one input recording on both and compare game
+  RAM (Verdite Core's `Differential.cs` is the idea). The fuzzer then also
+  checks the two engines against each other.
+- **Region.** The decomps are JP; Verdite2 and Verdite3 are US releases. Each
+  needs its US relink adapted (as the KF2 fork does), with its text encoding
+  and fonts.
+- **Saves.** Players coming from a Verdite build want their saves. kf1-enhanced
+  writes the game's own format (`.kfs`), so a memory-card importer is cheap.
+- **Following upstream.** sushi-shi moves fast and regenerates source. Keep
+  Verdite features behind the core and small hooks rather than edits spread
+  through the decomp's files, the same discipline as the fork patches.
+- **Agent tooling first.** The beacon, command channel, headless/turbo mode and
+  fuzzer are what let an agent measure without the user, so they come before
+  the visual features.
+- **Licensing is simpler.** The decomps are CC0; nothing from the disc ships.
+
 ## Remotes
 
 | remote | repo | branch we follow |
@@ -110,16 +176,23 @@ Everything that measures or replaces recompiled code: `Literal`, `GpuWorld`,
 - Merge `sushi-shi/port` (37 commits, incl. readability pass and typed menu
   outcomes) into this branch before porting, or stay on `enhanced` and follow
   acranon? Merging later gets harder as our changes grow.
-- Target: Linux first (where it is run here), Windows via the `windows` preset
-  as kf1-enhanced ships?
 - Whether `decomp` eventually replaces `main` or lives beside it.
+
+Decided 2026-10-22: the platforms are Windows, Linux, macOS, Android, Switch
+and 3DS, with Vulkan as the main renderer ([RENDERER_PLAN.md](RENDERER_PLAN.md)).
+The branch is pushed to `origin/decomp`.
 
 ## Order
 
 1. ~~Build and boot on Linux from the user's disc.~~ Done 2026-10-22. The
    user plays the baseline to judge it by eye.
-2. Decide the questions above.
+2. Merge `sushi-shi/port` (recommended, while the branch has few changes).
 3. Infrastructure the rest leans on: headless/turbo, state beacon + command
    channel, then the fuzzer.
-4. User-facing features, cheapest first: Discord, pad layout, analog tuning,
+4. The renderer frontend and the Vulkan backend, in the order of
+   [RENDERER_PLAN.md](RENDERER_PLAN.md). That also fixes the frame-rate gap
+   ([RUNTIME.md](RUNTIME.md)).
+5. User-facing features, cheapest first: Discord, pad layout, analog tuning,
    debug mod, render distance, picture options.
+6. Extract the shared parts into the C++ core subtree. Then KF2 on the same
+   core once its US decomp and port layer exist; KF3's decomp starts.
