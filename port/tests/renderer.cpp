@@ -204,11 +204,12 @@ TEST_CASE("batch: dither and colour scale follow the PS1") {
     CHECK(batch.vertices[6].dither == 1);                               // gouraud solid
 }
 
-TEST_CASE("batch: faces crossing the near plane are cut and re-projected") {
+TEST_CASE("batch: affine faces crossing the near plane are cut and re-projected") {
     TextureLayers layers;
     DrawFace face = solid_face(0, 100);
     face.vertices[2].cz = 4;   // behind the near plane
-    face.vertices[2].w = 4;
+    for (Vertex &vertex : face.vertices)
+        vertex.w = 0;          // affine: the GPU cannot clip it
     BatchRules rules;
     rules.near_clip = Projection{};
     const std::vector<DrawFace> faces = {face};
@@ -218,6 +219,25 @@ TEST_CASE("batch: faces crossing the near plane are cut and re-projected") {
         CHECK(v.cz >= render_near_depth);
         CHECK(v.x == doctest::Approx(v.cx * 200 / v.cz + 160));
     }
+}
+
+TEST_CASE("batch: perspective faces reaching behind the camera are left whole for the GPU") {
+    // Cut at the update's camera, the part behind it stayed missing while
+    // smoothing turned the shown view toward it.
+    TextureLayers layers;
+    DrawFace face = solid_face(0, 100, FaceShape::Quad);
+    face.vertices[2].cz = -500;
+    face.vertices[3].cz = -500;
+    face.vertices[2].x = 2000;   // saturated as the game projected it
+    BatchRules rules;
+    rules.near_clip = Projection{};
+    rules.depth_buffer = true;
+    const std::vector<DrawFace> faces = {face};
+    const FrameBatch batch = batch_faces(faces, rules, layers);
+    REQUIRE(batch.vertices.size() == 6);
+    CHECK(batch.vertices[2].cz == -500);
+    REQUIRE(batch.runs.size() == 1);
+    CHECK(batch.runs[0].state.depth_test);
 }
 
 TEST_CASE("batch: oversized 2D triangles are rejected, world ones kept") {

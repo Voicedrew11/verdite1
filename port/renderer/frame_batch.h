@@ -20,8 +20,9 @@ struct FrameBatch {
 struct BatchRules {
     BlendMode initial_blend = BlendMode::average;
     bool depth_buffer = false;
-    // World frames: faces that reach behind the camera are cut at the near
-    // plane and their new corners projected with this. None: 2D frames.
+    // World frames: affine faces that reach behind the camera are cut at the
+    // near plane and their new corners projected with this; perspective ones
+    // are left whole for the GPU to clip. None: 2D frames.
     std::optional<Projection> near_clip;
     bool subpixel = true;   // new corners keep their fractions
     std::size_t part_count = 0;   // GameFrame::parts; a face of a part past them has none

@@ -19,7 +19,20 @@ struct Triangle {
     std::array<Vertex, 3> corners;
 };
 
-bool is_world(const Vertex &vertex) { return vertex.w > 0 && vertex.cz > 0; }
+// cz < 0: behind the camera, for faces the GPU clips.
+bool is_world(const Vertex &vertex) { return vertex.w > 0 && vertex.cz != 0; }
+
+// Perspective world faces are clipped by the GPU at the shown camera's near
+// plane: cut here at the update's, a face behind it stayed missing while
+// smoothing turned the view toward it.
+bool gpu_clips(const DrawFace &face) {
+    const auto count = static_cast<unsigned>(face.shape);
+    for (unsigned i = 0; i < count; ++i) {
+        if (!is_world(face.vertices[i]))
+            return false;
+    }
+    return true;
+}
 
 // Camera-fixed vertices (cz = 0: menus, the held weapon) are never clipped.
 bool crosses_near(const DrawFace &face) {
@@ -96,7 +109,7 @@ void clip_at_near(const DrawFace &face, const Projection &projection, bool subpi
 }
 
 void split_face(const DrawFace &face, const BatchRules &rules, std::vector<Triangle> &out) {
-    if (rules.near_clip && crosses_near(face)) {
+    if (rules.near_clip && !gpu_clips(face) && crosses_near(face)) {
         clip_at_near(face, *rules.near_clip, rules.subpixel, out);
         return;
     }
@@ -106,10 +119,12 @@ void split_face(const DrawFace &face, const BatchRules &rules, std::vector<Trian
         out.push_back({{v[1], v[3], v[2]}});
 }
 
-// World triangles are exempt: they were clipped at the near plane, so a large
-// one is a near floor or wall, not a saturated coordinate.
+// World triangles are exempt: they were clipped at the near plane, or the GPU
+// clips them, so a large one is a near floor or wall, not a saturated coordinate.
 bool rejected_by_size(const Triangle &triangle) {
     const auto &[a, b, c] = triangle.corners;
+    if (is_world(a) && is_world(b) && is_world(c))
+        return false;
     if (a.cz >= render_near_depth && b.cz >= render_near_depth && c.cz >= render_near_depth)
         return false;
     const float width = std::max({a.x, b.x, c.x}) - std::min({a.x, b.x, c.x});

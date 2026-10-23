@@ -645,6 +645,32 @@ TEST_CASE("vulkan: camera-fixed faces move along their way back on screen, the d
     CHECK(pixel(shown, 140, 120) == Rgb5{31, 31, 31});
 }
 
+TEST_CASE("vulkan: a floor reaching behind the camera is clipped at the shown camera's near plane") {
+    // A floor 50 below the camera, from 1000 behind it to 2000 ahead: below
+    // the horizon (y = 120 + 50 * 200 / 2000 = 125) it fills the picture.
+    std::vector<GpuVertex> vertices;
+    add_rect(vertices, 0, 0, 1, 1, VertexTexturing::Solid, white);
+    const std::array<std::array<float, 2>, 6> corners = {{{-5000, -1000}, {5000, -1000}, {-5000, 2000},
+                                                          {5000, -1000}, {5000, 2000}, {-5000, 2000}}};
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        GpuVertex &vertex = vertices[i];
+        vertex.cx = corners[i][0];
+        vertex.cy = 50;
+        vertex.cz = corners[i][1];
+        vertex.w = std::max(vertex.cz, 16.0f);
+        vertex.x = 2000;   // as the game saturated it
+        vertex.y = 2000;
+    }
+    const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
+    backend->upload_frame(vertices, runs, cleared_to(background), {});
+    const Image shown = present_moved({unmoved}, 0);
+    CHECK(pixel(shown, 10, 239) == Rgb5{31, 31, 31});
+    CHECK(pixel(shown, 160, 130) == Rgb5{31, 31, 31});
+    CHECK(pixel(shown, 310, 239) == Rgb5{31, 31, 31});
+    CHECK(pixel(shown, 160, 120) == background);
+    CHECK(pixel(shown, 10, 10) == background);
+}
+
 int main(int argc, char **argv) {
     BackendStart started = make_vulkan_backend(nullptr);
     if (!started.backend) {

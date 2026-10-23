@@ -40,6 +40,20 @@ vec4 to_clip(vec2 screen, float w) {
     return vec4(ndc * w, z, w);
 }
 
+// to_clip of the camera-space point's projection, multiplied out so it stays
+// linear in the point: the rasterizer then clips the face at the near plane,
+// including corners behind the camera.
+vec4 clip_of_camera(vec3 camera) {
+    vec2 xy = vec2((camera.x * draw.projection_distance + (draw.center.x + draw.view_columns.x) * camera.z) / draw.view_columns.y,
+                   (camera.y * draw.projection_distance + draw.center.y * camera.z) / 120.0) - camera.z;
+    float z = far_w / (far_w - near_w) * camera.z - far_w * near_w / (far_w - near_w);
+    return vec4(xy, z, camera.z);
+}
+
+bool saturated(vec2 screen) {
+    return screen.x <= -1024.0 || screen.x >= 1023.0 || screen.y <= -1024.0 || screen.y >= 1023.0;
+}
+
 vec3 moved(vec3 position, uint motion) {
     uint row = motion * 3u;
     vec4 p = vec4(position, 1.0);
@@ -68,15 +82,24 @@ void main() {
             w = depth;
     }
     // Surfaces are measured in perspective even where the picture is affine.
-    if ((draw.flags & draw_surface_pass) != 0u && camera.z > 0.0)
+    bool surface = (draw.flags & draw_surface_pass) != 0u;
+    if (surface && camera.z > 0.0)
         w = max(camera.z, near_w);
-    gl_Position = to_clip(screen, w);
+    // Perspective world corners the batch left unclipped (frame_batch.cpp):
+    // whole pixels keep the floored screen position where it is on screen.
+    bool reprojected = (draw.flags & draw_reproject) != 0u;
+    bool whole_pixels = (draw.flags & draw_whole_pixels) != 0u;
+    bool perspective_world = !fixed_to_camera && (in_screen.z > 0.0 || surface);
+    if (perspective_world && ((reprojected && !whole_pixels) || camera.z < near_w || saturated(in_screen.xy)))
+        gl_Position = clip_of_camera(camera);
+    else
+        gl_Position = to_clip(screen, w);
     out_camera = fixed_to_camera ? vec3(0.0) : camera;
     out_uv = in_uv;
     out_shade = vec3(in_color.rgb);
     out_clear = vec3(in_clear.rgb);
     out_cue_scale = float(in_clear.a) / 4.0;
     out_uv_bounds = in_uv_bounds;
-    // Only world surfaces (perspective, in front of the camera) are filtered.
-    out_flags = uvec4(in_flags.xyz, in_screen.z > 0.0 && in_camera.z > 0.0 ? 1u : 0u);
+    // Only world surfaces (perspective) are filtered.
+    out_flags = uvec4(in_flags.xyz, in_screen.z > 0.0 && !fixed_to_camera ? 1u : 0u);
 }
