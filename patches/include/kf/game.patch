@@ -71,7 +71,7 @@ index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..fe73137f90e2f17a22f60d9af5369a9c
  extern void player_death_begin(void);
  extern void player_death_restart(void);
 diff --git a/include/kf/game/render.h b/include/kf/game/render.h
-index 2f6842c54f2849a443d80daf631199b876b6cd04..26d1e531ca44d58b979206086b1a740c5716e697 100644
+index 2f6842c54f2849a443d80daf631199b876b6cd04..3ab49b677091f6789aea624ba997bef59f0c2b96 100644
 --- a/include/kf/game/render.h
 +++ b/include/kf/game/render.h
 @@ -113,6 +113,7 @@ typedef struct KfTmdState {
@@ -82,7 +82,16 @@ index 2f6842c54f2849a443d80daf631199b876b6cd04..26d1e531ca44d58b979206086b1a740c
  extern std::array<KfSpriteQuad, KF_EFFECT_BILLBOARD_SPRITE_COUNT> effect_billboard_sprites;
  extern std::array<KfHudModel, KF_HUD_MODEL_TABLE_ROWS> hud_models;
  extern std::array<KfHudSprite, KF_HUD_TABLE_ROWS> hud_sprites;
-@@ -153,5 +154,15 @@ extern void render_weapon(void);
+@@ -146,6 +147,8 @@ extern void render_initialize(void);
+ extern void render_map_cell(
+     s32 col, s32 row, KfCellVisibility visibility);
+ extern void render_map_cells(void);
++// PC extension: the active cell window's cells, wherever the window keeps them.
++extern const KfCellVisibility *render_active_cells(void);
+ extern void render_map_event(KfMapEvent *event, const MATRIX *lights);
+ extern void render_map_object(KfMapObject *object);
+ extern void render_screen_sprite(KfSpriteQuad *sprite);
+@@ -153,5 +156,15 @@ extern void render_weapon(void);
  extern void screen_show_image_until_input(const char *path);
  
  extern void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &projection);

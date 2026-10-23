@@ -1324,20 +1324,21 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..e14c22a47e9a1fb6295d5a943808873b
      animation_cache_release_stale();
      // World rendering also advances floor sprites and notifications. Pace every
 diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
-index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb71b6aa71e 100644
+index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..13b1917d4b1f804182820b430af11393a4b8ee76 100644
 --- a/src/game/render_map_cells.cpp
 +++ b/src/game/render_map_cells.cpp
-@@ -3,6 +3,9 @@
+@@ -3,6 +3,10 @@
  #include <kf/game/graphics.h>
  #include <kf/game/render.h>
  #include <kf/lib/map_data.h>
 +#include <kf/game/player_motion.h>
 +#include <kf/platform/input.h>
++#include <array>
 +#include <cstdlib>
  
  enum {
      ILLUSION_STAFF_REMAP_PHASE_MASK = 3,
-@@ -88,7 +91,86 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+@@ -88,7 +92,90 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
      kf::render_place_model(cell_matrix, game_graphics_runtime.render_state.view_matrix, position);
      kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, game_graphics_runtime.render_state.quadrant_matrices[orientation], cell_matrix);
      tmd_select_object_vertices(tmd_context(), object_index);
@@ -1348,6 +1349,17 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb7
 +    render_precise_map = nullptr;
 +}
 +
++// The merged cells outgrow KfCellWindow::cells, so they are kept beside the
++// window, and readers find them through render_active_cells.
++static KfCellWindow render_wide_cell_window;
++static std::array<KfCellVisibility, KF_CELL_WINDOW_CELL_CAPACITY + 1024> render_wide_cells;
++
++const KfCellVisibility *render_active_cells(void)
++{
++    const KfCellWindow *window = game_graphics_runtime.active_cell_window;
++    return window == &render_wide_cell_window ? render_wide_cells.data() : window->cells;
++}
++
 +// PC extension: a widescreen picture shows more to each side than the original
 +// 4:3 cone, and every map cell, object, actor and effect is culled through the
 +// active cell window. Each of the 16 yaw windows covers 1/16 turn, so merging a
@@ -1356,13 +1368,6 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb7
 +// original limit shows the floor beside and behind the player.
 +static const KfCellWindow *render_widen_cell_window(int yaw_index)
 +{
-+    constexpr int overflow_capacity = 1024;
-+    static struct {
-+        KfCellWindow window;
-+        KfCellVisibility overflow[overflow_capacity];
-+    } wide;
-+    static_assert(offsetof(decltype(wide), overflow) == offsetof(KfCellWindow, cells) + sizeof(KfCellWindow::cells),
-+                  "merged cells must continue past the original capacity");
 +    const KfCellWindow *parts[] = {
 +        &render_cell_windows[(yaw_index + KF_CELL_WINDOW_YAW_COUNT - 1) % KF_CELL_WINDOW_YAW_COUNT],
 +        &render_cell_windows[yaw_index],
@@ -1376,9 +1381,9 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb7
 +        max_dz = std::max(max_dz, int(part->height) - 1 - int(part->origin_z));
 +    }
 +    const int width = max_dx - min_dx + 1, height = max_dz - min_dz + 1;
-+    if (width * height > KF_CELL_WINDOW_CELL_CAPACITY + overflow_capacity)
++    if (std::size_t(width) * std::size_t(height) > render_wide_cells.size())
 +        return &render_cell_windows[yaw_index];
-+    KfCellVisibility *cells = wide.window.cells;
++    KfCellVisibility *cells = render_wide_cells.data();
 +    std::fill_n(cells, width * height, KF_CELL_WINDOW_HIDDEN);
 +    for (const auto *part : parts) {
 +        for (int row = 0; row < part->height; ++row) {
@@ -1394,11 +1399,11 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb7
 +    for (int dz = -around_camera; dz <= around_camera; ++dz)
 +        for (int dx = -around_camera; dx <= around_camera; ++dx)
 +            cells[(dz - min_dz) * width + (dx - min_dx)] = KF_CELL_WINDOW_NEAR;
-+    wide.window.width = static_cast<u16>(width);
-+    wide.window.height = static_cast<u16>(height);
-+    wide.window.origin_x = static_cast<u16>(-min_dx);
-+    wide.window.origin_z = static_cast<u16>(-min_dz);
-+    return &wide.window;
++    render_wide_cell_window.width = static_cast<u16>(width);
++    render_wide_cell_window.height = static_cast<u16>(height);
++    render_wide_cell_window.origin_x = static_cast<u16>(-min_dx);
++    render_wide_cell_window.origin_z = static_cast<u16>(-min_dz);
++    return &render_wide_cell_window;
 +}
 +
 +// PC extension: the steep-pitch window (only reachable past the original look
@@ -1424,7 +1429,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb7
  }
  
  void render_map_cells(void)
-@@ -103,10 +185,15 @@ void render_map_cells(void)
+@@ -103,15 +190,20 @@ void render_map_cells(void)
      if ((u16)(game_graphics_runtime.render_state.view_rotation.vx + (KF_ANGLE_EIGHTH_TURN - 1))
          >= 2 * KF_ANGLE_EIGHTH_TURN - 1) {
          game_graphics_runtime.active_cell_window = &render_fixed_cell_window;
@@ -1443,8 +1448,14 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..820452363f939410cba1cb3976c93fb7
      }
  
      row = (u16)game_graphics_runtime.render_state.view_cell.z - game_graphics_runtime.active_cell_window->origin_z;
+     col_base = (u16)game_graphics_runtime.render_state.view_cell.x - game_graphics_runtime.active_cell_window->origin_x;
+-    cell = game_graphics_runtime.active_cell_window->cells;
++    cell = render_active_cells();
+     tmd_select(tmd_context(), KF_TMD_SLOT_MAP);
+ 
+     rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..b35231117128b2dea3de7814a2edda21d228d28d 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..9b592a61362a36942ee3b1a18aa32b01baa04c67 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -14,6 +14,22 @@ struct RenderCellOrigin {
@@ -1470,6 +1481,15 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..b35231117128b2dea3de7814a2edda21
  static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin origin)
  {
      // Narrow before checking bounds, including cells before the window origin.
+@@ -23,7 +39,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
+         return false;
+     }
+     const u16 col = cell_x - origin.x;
+-    return col < grid->width && grid->cells[row * grid->width + col] != KF_CELL_WINDOW_HIDDEN;
++    return col < grid->width && render_active_cells()[row * grid->width + col] != KF_CELL_WINDOW_HIDDEN;
+ }
+ 
+ static bool render_actor_is_visible(const KfActor &actor, RenderCellOrigin origin)
 @@ -51,19 +67,31 @@ void render_entities(void)
  
      tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
