@@ -13,5 +13,8 @@ here is its own commit.
 |---|---|
 | `include/verdite/agent.h`, `src/agent.cpp` | the state beacon (a JSON line a second on stdout) and the command channel (TCP on 127.0.0.1, one request per line, one JSON line back, run on the game thread) |
 
+Tests are in `tests/` (doctest), built as `verdite_tests` when doctest is installed (the nix
+shell has it) and run with `ctest --preset linux`. New logic here comes with tests.
+
 Built as the `verdite` CMake target (`libverdite.a`); it needs only the C++
 standard library and the platform's sockets.
