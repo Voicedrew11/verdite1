@@ -6,7 +6,10 @@
 // texels with the STP bit (see blend_output).
 #include "draw.glsl"
 
+// The pages with their mip chains (texture_mips.h): colour weighted by
+// coverage, which is alpha. pages is nearest, smooth_pages trilinear.
 layout(set = 0, binding = 0) uniform sampler2DArray pages;
+layout(set = 0, binding = 2) uniform sampler2DArray smooth_pages;
 // Light left by ambient occlusion and the camera depth it was measured at
 // (vulkan_ambient_occlusion.h).
 layout(set = 1, binding = 0) uniform sampler2D occlusion;
@@ -23,37 +26,96 @@ layout(location = 0) out vec4 out_color;
 
 const float rgb8_max = 255.0;
 const int rgb5_max = 31;
-// Decoded texels mark STP with alpha 128 and opaque texels with 255.
-const float stp_alpha_threshold = 0.75;
+// Level 0 marks transparent texels with alpha 0, STP with 254, opaque with 255.
+const float stp_alpha_threshold = 254.5 / 255.0;
 // Depths this far apart, relative to the nearer, are different surfaces.
 const float same_surface = 0.05;
 const int dither_offsets[16] = int[16](-4, 0, -3, 1, 2, -2, 3, -1, -3, 1, -4, 0, 3, -1, 2, -2);
 
-// Smoothed sampling for world surfaces (Balanced). Taps stay inside the face's own
-// texel rectangle, transparent texels are left out, and transparency and STP
-// come from the nearest texel so cut-outs keep their original edge.
-vec4 filtered(vec4 nearest) {
+// The face's texel rectangle at level 0: its first and last texel.
+ivec4 face_texels() {
+    ivec2 low = ivec2(in_uv_bounds.xy);
+    return ivec4(low, max(low, ivec2(in_uv_bounds.zw) - 1));
+}
+
+// The mip levels whose texels stay inside the smallest aligned square that
+// holds the face's rectangle, so a face never takes in a far neighbour's texels.
+int square_levels(ivec4 rect) {
+    ivec2 spread = rect.xy ^ rect.zw;
+    return findMSB(spread.x | spread.y) + 1;
+}
+
+// The level a fragment's footprint (dx, dy: in_uv's derivatives) is nearest to,
+// held inside the face's square.
+int mip_level(vec2 dx, vec2 dy) {
     vec2 size = vec2(textureSize(pages, 0).xy);
+    float footprint = max(length(dx * size), length(dy * size));
+    int level = int(floor(log2(max(footprint, 1e-6)) + 0.5));
+    return clamp(level, 0, square_levels(face_texels()));
+}
+
+// A mipmapped texel as its covered texels' colour, nearest's transparency and
+// STP kept, so cut-outs keep their original edge. Nothing covered: nearest.
+vec4 uncovered(vec4 texel, vec4 nearest) {
+    return texel.a > 0.0 ? vec4(texel.rgb / texel.a, nearest.a) : nearest;
+}
+
+// The texel at a level nearest the fragment, inside the face's rectangle.
+vec4 nearest_at(vec4 nearest, int level) {
+    ivec4 rect = face_texels() >> level;
+    vec2 size = vec2(textureSize(pages, level).xy);
+    ivec2 texel = clamp(ivec2(floor(in_uv * size)), rect.xy, rect.zw);
+    return uncovered(texelFetch(pages, ivec3(texel, int(in_flags.x)), level), nearest);
+}
+
+// Smoothed sampling for world surfaces (Balanced) at a level: bilinear or
+// three-point taps inside the face's rectangle, weighted by their coverage.
+vec4 filtered(vec4 nearest, int level) {
+    vec2 size = vec2(textureSize(pages, level).xy);
     vec2 position = in_uv * size - 0.5;
     vec2 f = fract(position);
     ivec2 base = ivec2(floor(position));
-    ivec2 low = ivec2(in_uv_bounds.xy);
-    ivec2 high = max(low, ivec2(in_uv_bounds.zw) - 1);
+    ivec4 rect = face_texels() >> level;
     int layer = int(in_flags.x);
-    vec4 t00 = texelFetch(pages, ivec3(clamp(base, low, high), layer), 0);
-    vec4 t10 = texelFetch(pages, ivec3(clamp(base + ivec2(1, 0), low, high), layer), 0);
-    vec4 t01 = texelFetch(pages, ivec3(clamp(base + ivec2(0, 1), low, high), layer), 0);
-    vec4 t11 = texelFetch(pages, ivec3(clamp(base + ivec2(1, 1), low, high), layer), 0);
+    vec4 t00 = texelFetch(pages, ivec3(clamp(base, rect.xy, rect.zw), layer), level);
+    vec4 t10 = texelFetch(pages, ivec3(clamp(base + ivec2(1, 0), rect.xy, rect.zw), layer), level);
+    vec4 t01 = texelFetch(pages, ivec3(clamp(base + ivec2(0, 1), rect.xy, rect.zw), layer), level);
+    vec4 t11 = texelFetch(pages, ivec3(clamp(base + ivec2(1, 1), rect.xy, rect.zw), layer), level);
     vec4 w;
     if ((draw.flags & draw_filter_three_point) != 0u)
         w = f.x + f.y < 1.0 ? vec4(1.0 - f.x - f.y, f.x, f.y, 0.0) : vec4(0.0, 1.0 - f.y, 1.0 - f.x, f.x + f.y - 1.0);
     else
         w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
-    w *= vec4(t00.a > 0.0 ? 1.0 : 0.0, t10.a > 0.0 ? 1.0 : 0.0, t01.a > 0.0 ? 1.0 : 0.0, t11.a > 0.0 ? 1.0 : 0.0);
-    float total = w.x + w.y + w.z + w.w;
-    if (total <= 0.0)
-        return nearest;
-    return vec4((t00.rgb * w.x + t10.rgb * w.y + t01.rgb * w.z + t11.rgb * w.w) / total, nearest.a);
+    vec4 sum = t00 * w.x + t10 * w.y + t01 * w.z + t11 * w.w;
+    return uncovered(sum, nearest);
+}
+
+// Bilinear filtering from the mip chain by the hardware, trilinear. The
+// footprint is held inside the face's square, and the centre inside its rectangle.
+vec4 trilinear(vec4 nearest, vec2 dx, vec2 dy) {
+    vec2 size = vec2(textureSize(pages, 0).xy);
+    ivec4 rect = face_texels();
+    float footprint = max(length(dx * size), length(dy * size));
+    float limit = exp2(float(square_levels(rect)));
+    float scale = footprint > limit ? limit / footprint : 1.0;
+    // Half a texel of the coarser level blended, so its taps stay in the rectangle.
+    float inset = 0.5 * exp2(ceil(max(log2(max(footprint * scale, 1e-6)), 0.0)));
+    vec2 centre = vec2(rect.xy + rect.zw + 1) * 0.5;
+    vec2 low = min(vec2(rect.xy) + inset, centre), high = max(vec2(rect.zw + 1) - inset, centre);
+    vec2 uv = clamp(in_uv * size, low, high) / size;
+    return uncovered(textureGrad(smooth_pages, vec3(uv, float(in_flags.x)), dx * scale, dy * scale), nearest);
+}
+
+// A world surface's texel, as the filter and mipmap options draw it.
+vec4 world_texel(vec4 nearest, vec2 dx, vec2 dy) {
+    bool mipmapped = (draw.flags & draw_mipmaps) != 0u;
+    bool smoothed = (draw.flags & (draw_filter_bilinear | draw_filter_three_point)) != 0u;
+    if (mipmapped && (draw.flags & draw_filter_bilinear) != 0u)
+        return trilinear(nearest, dx, dy);
+    int level = mipmapped ? mip_level(dx, dy) : 0;
+    if (smoothed)
+        return filtered(nearest, level);
+    return level > 0 ? nearest_at(nearest, level) : nearest;
 }
 
 // The light ambient occlusion leaves this fragment: the measured texels around
@@ -153,14 +215,16 @@ vec4 blend_output(vec3 color, bool stp) {
 }
 
 void main() {
+    // Taken before any fragment discards.
+    vec2 uv_dx = dFdx(in_uv), uv_dy = dFdy(in_uv);
     uint texturing = in_flags.y;
     vec4 texel_color = vec4(1.0);
     if (texturing != texturing_solid) {
-        texel_color = texture(pages, vec3(in_uv, float(in_flags.x)));
+        texel_color = textureLod(pages, vec3(in_uv, float(in_flags.x)), 0.0);
         if (texel_color.a == 0.0)
             discard;
-        if ((draw.flags & (draw_filter_bilinear | draw_filter_three_point)) != 0u && in_flags.w != 0u)
-            texel_color = filtered(texel_color);
+        if (in_flags.w != 0u)
+            texel_color = world_texel(texel_color, uv_dx, uv_dy);
     }
     float light = occlusion_light();
     vec3 game_shade = shade();

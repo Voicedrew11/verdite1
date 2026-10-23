@@ -18,7 +18,7 @@ void main() {
     vec3 normal = cross(dFdx(in_camera), dFdy(in_camera));
     if (in_camera.z <= 0.0)
         discard;
-    if (in_flags.y != texturing_solid && texture(pages, vec3(in_uv, float(in_flags.x))).a == 0.0)
+    if (in_flags.y != texturing_solid && textureLod(pages, vec3(in_uv, float(in_flags.x)), 0.0).a == 0.0)
         discard;
     // An edge-on face has no plane to speak of: its depth, no normal.
     if (dot(normal, normal) < 1e-12) {

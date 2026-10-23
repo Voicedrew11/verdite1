@@ -59,7 +59,7 @@ GpuImage GpuImage::create(VkDevice device, VmaAllocator allocator, const ImageSh
     info.imageType = VK_IMAGE_TYPE_2D;
     info.format = shape.format;
     info.extent = {shape.width, shape.height, 1};
-    info.mipLevels = 1;
+    info.mipLevels = shape.mip_levels;
     info.arrayLayers = shape.layers;
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -79,7 +79,7 @@ GpuImage GpuImage::create(VkDevice device, VmaAllocator allocator, const ImageSh
     view.image = out.image_;
     view.viewType = shape.layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     view.format = shape.format;
-    view.subresourceRange = {shape.aspect, 0, 1, 0, shape.layers};
+    view.subresourceRange = {shape.aspect, 0, shape.mip_levels, 0, shape.layers};
     if (vkCreateImageView(device, &view, nullptr, &out.view_) != VK_SUCCESS)
         return {};
     return out;

@@ -10,6 +10,7 @@
 #include "vulkan_resources.h"
 #include "vulkan_surfaces.h"
 #include "vulkan_swapchain.h"
+#include "../texture_mips.h"
 
 #include <SDL3/SDL_video.h>
 #include <imgui.h>
@@ -24,7 +25,8 @@
 namespace kf {
 namespace {
 constexpr int frames_in_flight = 2;
-constexpr VkDeviceSize layer_bytes = VkDeviceSize{texture_page_extent} * texture_page_extent * 4;
+// 256 x 256 down to 1 x 1.
+constexpr uint32_t page_mip_levels = 9;
 constexpr VkDeviceSize motion_bytes = sizeof(Motion);
 // The target is cleared and drawn at the original 15-bit precision when it can be.
 constexpr VkFormat classic_format = VK_FORMAT_A1R5G5B5_UNORM_PACK16;
@@ -130,7 +132,12 @@ private:
     VkImageLayout target_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     GpuImage pages_;
     VkSampler nearest_ = VK_NULL_HANDLE;
-    std::vector<std::pair<u8, std::vector<u8>>> pending_layers_;
+    VkSampler smooth_ = VK_NULL_HANDLE;   // trilinear, for mipmapped bilinear filtering
+    struct PendingLayer {
+        u8 layer;
+        std::vector<Image> levels;   // texture_mip_chain
+    };
+    std::vector<PendingLayer> pending_layers_;
     VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     std::array<FrameSlot, frames_in_flight> slots_;
@@ -172,6 +179,8 @@ VulkanBackend::~VulkanBackend() {
         vkDestroyDescriptorSetLayout(device, set_layout_, nullptr);
     if (nearest_)
         vkDestroySampler(device, nearest_, nullptr);
+    if (smooth_)
+        vkDestroySampler(device, smooth_, nullptr);
 }
 
 bool VulkanBackend::start(std::string &error) {
@@ -281,10 +290,16 @@ void VulkanBackend::fit_occlusion() {
         std::fprintf(stderr, "[vulkan] cannot make the ambient occlusion buffers\n");
 }
 
-// One RGBA8 layer per texture page and palette, sampled as the PS1 did.
+// One RGBA8 layer per texture page and palette, with its mip chain (texture_mips.h):
+// sampled as the PS1 did through nearest_, filtered through smooth_.
 bool VulkanBackend::make_pages() {
-    ImageShape shape{texture_page_extent, texture_page_extent, texture_layer_capacity, VK_FORMAT_R8G8B8A8_UNORM,
-                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    ImageShape shape{texture_page_extent,
+                     texture_page_extent,
+                     texture_layer_capacity,
+                     VK_FORMAT_R8G8B8A8_UNORM,
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT,
+                     page_mip_levels};
     pages_ = GpuImage::create(device_->device(), device_->allocator(), shape);
     if (!pages_)
         return false;
@@ -298,6 +313,12 @@ bool VulkanBackend::make_pages() {
     sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     if (vkCreateSampler(device_->device(), &sampler, nullptr, &nearest_) != VK_SUCCESS)
         return false;
+    sampler.magFilter = VK_FILTER_LINEAR;
+    sampler.minFilter = VK_FILTER_LINEAR;
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler.maxLod = VK_LOD_CLAMP_NONE;
+    if (vkCreateSampler(device_->device(), &sampler, nullptr, &smooth_) != VK_SUCCESS)
+        return false;
     return device_->run_now([&](VkCommandBuffer commands) {
         transition(commands, pages_.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -306,7 +327,7 @@ bool VulkanBackend::make_pages() {
 
 bool VulkanBackend::make_frame_slots() {
     const std::array<VkDescriptorPoolSize, 2> sizes = {{
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, frames_in_flight},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * frames_in_flight},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, frames_in_flight},
     }};
     VkDescriptorPoolCreateInfo pool{};
@@ -341,15 +362,20 @@ bool VulkanBackend::make_frame_slots() {
             vkCreateSemaphore(device, &semaphore, nullptr, &slot.acquired) != VK_SUCCESS ||
             vkAllocateDescriptorSets(device, &set, &slot.descriptors) != VK_SUCCESS)
             return false;
-        VkDescriptorImageInfo image{nearest_, pages_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = slot.descriptors;
-        write.dstBinding = 0;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.pImageInfo = &image;
-        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        const std::array<VkDescriptorImageInfo, 2> images = {{
+            {nearest_, pages_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {smooth_, pages_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        }};
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (std::size_t i = 0; i < writes.size(); ++i) {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = slot.descriptors;
+            writes[i].dstBinding = i == 0 ? world_binding_pages : world_binding_smooth_pages;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[i].pImageInfo = &images[i];
+        }
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         if (!write_motions(slot, {}))
             return false;
     }
@@ -396,27 +422,37 @@ void VulkanBackend::set_options(const PictureOptions &options) {
 }
 
 void VulkanBackend::upload_layer(u8 layer, const Image &texels) {
-    if (texels.width != texture_page_extent || texels.height != texture_page_extent || texels.rgba.size() != layer_bytes)
+    std::vector<Image> levels = texture_mip_chain(texels);
+    if (levels.size() != page_mip_levels)
         return;
-    pending_layers_.emplace_back(layer, texels.rgba);
+    pending_layers_.push_back({layer, std::move(levels)});
 }
 
-// Copies the layers uploaded since the last present into the texture array.
+// Copies the layers uploaded since the last present, every mip level, into the texture array.
 bool VulkanBackend::flush_layers() {
     if (pending_layers_.empty())
         return true;
-    GpuBuffer staging = GpuBuffer::create(device_->allocator(), layer_bytes * pending_layers_.size(),
-                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT, BufferAccess::HostWrites);
+    VkDeviceSize bytes = 0;
+    for (const PendingLayer &pending : pending_layers_)
+        for (const Image &level : pending.levels)
+            bytes += level.rgba.size();
+    GpuBuffer staging = GpuBuffer::create(device_->allocator(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                          BufferAccess::HostWrites);
     if (!staging || !staging.data())
         return false;
     std::vector<VkBufferImageCopy> copies;
-    for (std::size_t i = 0; i < pending_layers_.size(); ++i) {
-        std::memcpy(static_cast<u8 *>(staging.data()) + i * layer_bytes, pending_layers_[i].second.data(), layer_bytes);
-        VkBufferImageCopy copy{};
-        copy.bufferOffset = i * layer_bytes;
-        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, pending_layers_[i].first, 1};
-        copy.imageExtent = {texture_page_extent, texture_page_extent, 1};
-        copies.push_back(copy);
+    VkDeviceSize offset = 0;
+    for (const PendingLayer &pending : pending_layers_) {
+        for (uint32_t level = 0; level < pending.levels.size(); ++level) {
+            const Image &texels = pending.levels[level];
+            std::memcpy(static_cast<u8 *>(staging.data()) + offset, texels.rgba.data(), texels.rgba.size());
+            VkBufferImageCopy copy{};
+            copy.bufferOffset = offset;
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, pending.layer, 1};
+            copy.imageExtent = {texels.width, texels.height, 1};
+            copies.push_back(copy);
+            offset += texels.rgba.size();
+        }
     }
     staging.flush();
     pending_layers_.clear();
@@ -463,7 +499,7 @@ bool VulkanBackend::write_motions(FrameSlot &slot, std::span<const Motion> motio
         VkWriteDescriptorSet write{};
         write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         write.dstSet = slot.descriptors;
-        write.dstBinding = 1;
+        write.dstBinding = world_binding_motions;
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         write.pBufferInfo = &buffer;
@@ -502,7 +538,8 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
                       (options_.texture_filter == TextureFilter::Bilinear ? draw_filter_bilinear : 0) |
                       (options_.texture_filter == TextureFilter::ThreePoint ? draw_filter_three_point : 0) |
                       (occlusion_ready_ ? draw_occlusion : 0) | (options_.fog == FogMode::Depth ? draw_fog_depth : 0) |
-                      (options_.fog == FogMode::Distance ? draw_fog_distance : 0);
+                      (options_.fog == FogMode::Distance ? draw_fog_distance : 0) |
+                      (options_.mipmaps ? draw_mipmaps : 0);
     constants.pixel_scale = static_cast<uint32_t>(scale_);
     constants.carry = view.carry;
     constants.cue_slope = cue_.slope;

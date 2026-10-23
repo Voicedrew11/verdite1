@@ -219,7 +219,7 @@ endif()
 # The renderer frontend's API-free parts: batching, texture layers, smoothing. Tested on their own.
 add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/texture_layers.cpp
   port/renderer/view_smoothing.cpp port/renderer/vertex_carry.cpp port/renderer/model_transform.cpp
-  port/renderer/lighting.cpp port/renderer/projection.cpp)
+  port/renderer/lighting.cpp port/renderer/projection.cpp port/renderer/texture_mips.cpp)
 target_link_libraries(kf_frontend PUBLIC kf_support)
 target_compile_options(kf_frontend PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
@@ -254,7 +254,7 @@ add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/render
   port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_surfaces.cpp
   port/renderer/vulkan/vulkan_resources.cpp port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})
 target_include_directories(kf_vulkan PUBLIC ${KF_INCLUDES} PRIVATE ${KF_SHADER_OUT})
-target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries SDL3::SDL3)
+target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL3)
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp

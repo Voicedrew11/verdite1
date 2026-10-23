@@ -100,6 +100,7 @@ void settings_load() {
     current.ao_strength = static_cast<int>(read_number(display, "ao_strength", current.ao_strength));
     current.ao_quality = std::clamp(static_cast<int>(read_number(display, "ao_quality", current.ao_quality)), 0, 2);
     current.texture_filter = static_cast<int>(read_number(display, "texture_filter", current.texture_filter));
+    current.mipmaps = read_bool(display, "mipmaps", current.mipmaps);
     current.fog = std::clamp(static_cast<int>(read_number(display, "fog", current.fog)), 0, 2);
     current.antialiasing = static_cast<int>(read_number(display, "antialiasing", current.antialiasing));
     current.flame_glow = read_bool(display, "flame_glow", current.flame_glow);
@@ -168,6 +169,7 @@ void settings_save_if_dirty() {
     write_value(display, "ao_strength", cJSON_CreateNumber(current.ao_strength));
     write_value(display, "ao_quality", cJSON_CreateNumber(current.ao_quality));
     write_value(display, "texture_filter", cJSON_CreateNumber(current.texture_filter));
+    write_value(display, "mipmaps", cJSON_CreateBool(current.mipmaps));
     write_value(display, "fog", cJSON_CreateNumber(current.fog));
     write_value(display, "antialiasing", cJSON_CreateNumber(current.antialiasing));
     write_value(display, "flame_glow", cJSON_CreateBool(current.flame_glow));
@@ -240,6 +242,7 @@ const Settings &effective_settings() {
     classic.dynamic_lights = false;
     classic.ambient_occlusion = false;
     classic.texture_filter = 0;
+    classic.mipmaps = false;
     classic.fog = 0;
     classic.antialiasing = 0;
     classic.flame_glow = false;
@@ -279,6 +282,7 @@ PictureOptions picture_options(const Settings &e) {
     options.occlusion_quality = static_cast<OcclusionQuality>(std::clamp(e.ao_quality, 0, 2));
     options.glow = render_glow;
     options.fxaa = e.antialiasing == 1;
+    options.mipmaps = e.mipmaps;
     options.fog = static_cast<FogMode>(std::clamp(e.fog, 0, 2));
     options.vsync = current.vsync;
     return options;

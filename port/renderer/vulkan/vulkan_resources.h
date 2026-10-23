@@ -46,12 +46,14 @@ struct ImageShape {
     VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
     VkImageUsageFlags usage = 0;
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    uint32_t mip_levels = 1;
 };
 
 class GpuImage {
 public:
     GpuImage() = default;
-    // Null on failure. The view covers every layer (a 2D array if layers > 1).
+    // Null on failure. The view covers every layer (a 2D array if layers > 1)
+    // and every mip level.
     [[nodiscard]] static GpuImage create(VkDevice device, VmaAllocator allocator, const ImageShape &shape);
     ~GpuImage() { release(); }
     GpuImage(GpuImage &&other) noexcept { *this = std::move(other); }

@@ -29,7 +29,7 @@ struct DrawConstants {
 static_assert(sizeof(DrawConstants) == 56);
 constexpr uint32_t draw_reproject = 1, draw_whole_pixels = 2, draw_true_color = 4, draw_subtract_stp_pass = 8,
                    draw_filter_bilinear = 16, draw_filter_three_point = 32, draw_occlusion = 64,
-                   draw_surface_pass = 128, draw_fog_depth = 256, draw_fog_distance = 512;
+                   draw_surface_pass = 128, draw_fog_depth = 256, draw_fog_distance = 512, draw_mipmaps = 1024;
 
 // The fixed blend equations world.frag's outputs are written for.
 enum class BlendEquation : std::uint8_t {
@@ -61,8 +61,10 @@ VkSampler create_sampler(VkDevice device, VkFilter filter);
 VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, std::span<const uint32_t> fragment,
                                       VkFormat format);
 
-// Set 0 of every pipeline that draws faces: binding 0 the texture pages,
-// binding 1 the motions. The caller owns it and keeps it past every pipeline.
+// Set 0 of every pipeline that draws faces: the texture pages through a
+// nearest sampler, the motions, and the pages again through a trilinear one.
+// The caller owns it and keeps it past every pipeline.
+constexpr uint32_t world_binding_pages = 0, world_binding_motions = 1, world_binding_smooth_pages = 2;
 VkDescriptorSetLayout create_world_set_layout(VkDevice device);
 // A pipeline layout over these sets with DrawConstants pushed to both stages.
 VkPipelineLayout create_face_pipeline_layout(VkDevice device, std::span<const VkDescriptorSetLayout> sets);

@@ -192,6 +192,22 @@ hand no clear colour and stay at their corners. `kf_vulkan_tests` checks the
 curve against the game's arithmetic at a corner's depth, off the view's
 centre, at a sprite's scale and for an uncued face.
 
+### Mipmaps
+
+A layer is a whole 256 x 256 page with its palette, holding many faces'
+rectangles side by side, so a plain mip chain would bleed neighbours into a
+face. Verdite gave each rectangle (later each aligned square holding it,
+`MipShare`) its own atlas entry. Here each layer keeps one chain
+(`texture_mips.h`): colour weighted by coverage (transparent texels are
+black), so a cut-out's edge keeps its colour, and STP moved to alpha 254 so
+coverage stays near 1. `world.frag` caps a face's level at the smallest aligned
+square holding its rectangle, which is what `MipShare`'s entries held, and
+keeps a filtered sample's taps inside the rectangle. Transparency and STP come
+from the nearest level-0 texel. Nearest and three-point filtering pick the
+nearest level by hand; bilinear is the hardware's trilinear. `kf_vulkan_tests`
+checks a minified checker averages with nothing from the square beside it,
+and a cut-out keeps its colour and edge.
+
 What carries over is decisions and references, not code:
 
 - **The judged values** (decided 2026-10-23: the starting defaults, judged
@@ -217,8 +233,7 @@ What carries over is decisions and references, not code:
    start (see [RUNTIME.md](RUNTIME.md)). The GL renderer keeps drawing until
    Vulkan reaches Classic, chosen by the Renderer setting (Display, applies on
    restart; `KF_RENDERER=gl|vulkan` overrides it); then GL is deleted.
-   2026-10-23: `port/renderer/vulkan/` draws Classic and the Balanced options
-   but mipmaps (no Display row yet), offscreen-tested in `kf_vulkan_tests` on
+   2026-10-23: `port/renderer/vulkan/` draws Classic and the Balanced options, offscreen-tested in `kf_vulkan_tests` on
    RADV and llvmpipe with validation on, and the game draws with it, overlay
    included, when Renderer is Vulkan; Classic waits to be judged in play.
    Supersampling draws the target N times larger and averages each N x N block

@@ -148,7 +148,8 @@ public:
 
     [[nodiscard]] virtual bool set_target(int logical_width, int scale) = 0;
     virtual void set_options(const PictureOptions &options) = 0;
-    // texels: 256 x 256 RGBA8. The backend builds mipmaps if they are on.
+    // texels: 256 x 256 RGBA8, as texture_decode marks alpha. The backend keeps
+    // its mip chain too, for when mipmaps are on.
     virtual void upload_layer(u8 layer, const Image &texels) = 0;
     virtual void set_occluders(std::span<const u8> solid, int columns, int rows, float tile_size) = 0;
 

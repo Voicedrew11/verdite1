@@ -44,6 +44,7 @@ struct Settings {
     int ao_strength = 100;      // percent; 100 is Verdite's judged look
     int ao_quality = 1;         // 0 low, 1 medium, 2 high (OcclusionQuality)
     int texture_filter = 0;     // 0 nearest (original), 1 bilinear, 2 three-point
+    bool mipmaps = true;        // distant textures averaged instead of shimmering
     int fog = 2;                // 0 at the corners (original), 1 per pixel by depth, 2 by distance (FogMode)
     int antialiasing = 1;       // 0 off, 1 FXAA, 2 4x SSAA, 3 9x SSAA
     bool flame_glow = true;

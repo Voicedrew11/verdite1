@@ -1,5 +1,6 @@
 #include "../renderer/frame_batch.h"
 #include "../renderer/texture_layers.h"
+#include "../renderer/texture_mips.h"
 #include "../renderer/model_transform.h"
 #include "../renderer/vertex_carry.h"
 #include "../renderer/view_smoothing.h"
@@ -105,6 +106,43 @@ TEST_CASE("texture layers: invalidate uploads again") {
     layers.begin_update();
     layers.layer_for(page(0));
     CHECK(layers.take_uploads().size() == 1);
+}
+
+namespace {
+Image blank_page() {
+    return {texture_page_extent, texture_page_extent,
+            ByteBuffer(std::size_t{texture_page_extent} * texture_page_extent * 4, 0)};
+}
+
+u8 *texel(Image &image, u32 x, u32 y) { return &image.rgba[(std::size_t{y} * image.width + x) * 4]; }
+} // namespace
+
+TEST_CASE("mips: every level down to one texel, STP next to opaque at level 0") {
+    Image page = blank_page();
+    texel(page, 0, 0)[3] = texture_alpha_opaque_marker;
+    texel(page, 1, 0)[3] = texture_alpha_semitransparent_marker;
+    std::vector<Image> levels = texture_mip_chain(page);
+    REQUIRE(levels.size() == 9);
+    CHECK(levels.back().width == 1);
+    CHECK(levels.back().height == 1);
+    CHECK(texel(levels[0], 0, 0)[3] == 255);
+    CHECK(texel(levels[0], 1, 0)[3] == texture_mip_stp_alpha);
+    CHECK(texel(levels[0], 2, 0)[3] == 0);
+    CHECK(texture_mip_chain(Image{16, 16, ByteBuffer(std::size_t{16} * 16 * 4, 0)}).empty());
+}
+
+TEST_CASE("mips: a texel half covered keeps its colour over its coverage") {
+    Image page = blank_page();
+    for (const u32 x : {0u, 1u}) {
+        u8 *covered = texel(page, x, 0);
+        covered[0] = 200;
+        covered[3] = texture_alpha_opaque_marker;
+    }
+    std::vector<Image> levels = texture_mip_chain(page);
+    REQUIRE(levels.size() > 1);
+    const u8 *below = texel(levels[1], 0, 0);
+    CHECK(below[3] == 128);
+    CHECK(below[0] * 255 / below[3] == doctest::Approx(200).epsilon(0.01));
 }
 
 TEST_CASE("batch: farthest first, later submissions first among equals") {

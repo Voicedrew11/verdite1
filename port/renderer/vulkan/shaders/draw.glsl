@@ -28,6 +28,8 @@ const uint draw_surface_pass = 128u;
 // The world's fog at each pixel from its camera depth, or its distance to the eye.
 const uint draw_fog_depth = 256u;
 const uint draw_fog_distance = 512u;
+// World textures are filtered from their mip chain (texture_mips.h).
+const uint draw_mipmaps = 1024u;
 
 const uint blend_opaque = 0u;
 const uint blend_average = 1u;

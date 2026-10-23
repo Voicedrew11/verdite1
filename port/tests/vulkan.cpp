@@ -431,6 +431,95 @@ TEST_CASE("vulkan: fog at the corners draws the game's own colours") {
 }
 
 namespace {
+// Layer 1: a one-texel checker of black and grey 30 in the aligned square
+// 64..95, red 96..127 beside it, and white over the left half of 128..159
+// with the right half transparent.
+constexpr u8 mip_layer = 1;
+constexpr int checker_low = 64, square_size = 32, red_low = 96, cutout_low = 128;
+constexpr Rgb5 checker_grey{30, 30, 30};
+
+Image mip_test_page() {
+    Image page{texture_page_extent, texture_page_extent, {}};
+    page.rgba.assign(std::size_t{texture_page_extent} * texture_page_extent * 4, 0);
+    const auto put = [&](int x, int y, Rgb5 c) {
+        u8 *texel = &page.rgba[(std::size_t{static_cast<unsigned>(y)} * texture_page_extent + x) * 4];
+        texel[0] = expand5(c.r);
+        texel[1] = expand5(c.g);
+        texel[2] = expand5(c.b);
+        texel[3] = 255;
+    };
+    for (int y = 0; y < texture_page_extent; ++y) {
+        for (int x = 0; x < square_size; ++x) {
+            put(checker_low + x, y, (x + y) % 2 ? checker_grey : Rgb5{0, 0, 0});
+            put(red_low + x, y, Rgb5{31, 0, 0});
+            if (x < square_size / 2)
+                put(cutout_low + x, y, Rgb5{31, 31, 31});
+        }
+    }
+    return page;
+}
+
+// A world face 200 units ahead filling 8 x 8 pixels from (156, 116), showing
+// the 32 x 32 texels from (u, 0): four texels a pixel.
+std::vector<GpuVertex> minified_square(int u) {
+    std::vector<GpuVertex> out;
+    GpuVertex corners[4] = {world_corner(-4, -4, 200), world_corner(4, -4, 200), world_corner(-4, 4, 200),
+                            world_corner(4, 4, 200)};
+    const float uvs[4][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
+    for (int i = 0; i < 4; ++i) {
+        GpuVertex &corner = corners[i];
+        corner.u = static_cast<float>(u + uvs[i][0] * square_size) / texture_page_extent;
+        corner.v = uvs[i][1] * square_size / texture_page_extent;
+        corner.uv_bounds = {static_cast<u16>(u), 0, static_cast<u16>(u + square_size), square_size};
+        corner.texturing = VertexTexturing::Raw;
+        corner.layer = mip_layer;
+    }
+    out.insert(out.end(), {corners[0], corners[1], corners[2], corners[1], corners[3], corners[2]});
+    return out;
+}
+
+Image draw_textured(const std::vector<GpuVertex> &vertices, bool mipmaps, TextureFilter filter) {
+    PictureOptions options;
+    options.mipmaps = mipmaps;
+    options.texture_filter = filter;
+    backend->set_options(options);
+    const Image picture = draw(vertices, {run_of(BlendMode::opaque, 0, vertices.size())}, cleared_to(background));
+    backend->set_options({});
+    return picture;
+}
+} // namespace
+
+TEST_CASE("vulkan: mipmaps average a minified face, with no texel from beside its square") {
+    const std::vector<GpuVertex> checker = minified_square(checker_low);
+    const Image plain = draw_textured(checker, false, TextureFilter::Nearest);
+    CHECK(widest_step(pixel(plain, 158, 118), checker_grey) * widest_step(pixel(plain, 158, 118), Rgb5{}) == 0);
+    for (const TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Bilinear, TextureFilter::ThreePoint}) {
+        CAPTURE(static_cast<int>(filter));
+        const Image mipped = draw_textured(checker, true, filter);
+        for (int y = 116; y < 124; ++y) {
+            for (int x = 156; x < 164; ++x) {
+                CAPTURE(x);
+                CAPTURE(y);
+                CHECK(widest_step(pixel(mipped, x, y), Rgb5{15, 15, 15}) <= 1);
+            }
+        }
+    }
+}
+
+TEST_CASE("vulkan: a mipmapped cut-out keeps its colour and its edge") {
+    const std::vector<GpuVertex> cutout = minified_square(cutout_low);
+    for (const TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Bilinear}) {
+        CAPTURE(static_cast<int>(filter));
+        const Image mipped = draw_textured(cutout, true, filter);
+        for (int x = 156; x < 164; ++x) {
+            CAPTURE(x);
+            // The face's left half is the white texels, its right half transparent.
+            CHECK(pixel(mipped, x, 120) == (x < 160 ? Rgb5{31, 31, 31} : background));
+        }
+    }
+}
+
+namespace {
 // Presents the uploaded frame through motions, each vertex carrying this much of its way back.
 Image present_moved(const std::vector<Motion> &motions, float carry) {
     const FrameView view{motions, carry, true, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}};
@@ -507,6 +596,7 @@ int main(int argc, char **argv) {
     if (!backend->set_target(320, 1))
         return 1;
     backend->upload_layer(0, test_page());
+    backend->upload_layer(mip_layer, mip_test_page());
     doctest::Context context(argc, argv);
     const int result = context.run();
     started.backend.reset();
