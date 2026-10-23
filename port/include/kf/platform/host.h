@@ -17,6 +17,12 @@ struct UpdatePacer {
     u32 steps_per_second;
     u32 fractional_ns;
 };
+// Before host_start. headless: no window or GL, dummy video and audio drivers,
+// nothing drawn. turbo: the game clock jumps to each wait's deadline instead of
+// waiting, so the game runs as fast as the CPU allows. Game time no longer
+// depends on how long a frame took, only on what the game waited for.
+struct HostOptions { bool headless = false; bool turbo = false; };
+void host_configure(const HostOptions &options);
 bool host_start();
 void host_shutdown();
 void host_poll();
@@ -38,6 +44,8 @@ void host_wait_frame();
 UpdatePacer host_begin_update_pacer(u32 steps_per_second);
 void host_wait_update(UpdatePacer &pacer);
 Renderer *host_renderer();
+// Game frames handed to the host since start (for the agent's state).
+std::uint64_t host_frames_presented();
 // A short message shown over the picture for a couple of seconds (PC overlay).
 void host_show_message(const char *text);
 // PC extension: the item in the menu's preview panel for the frame being built,

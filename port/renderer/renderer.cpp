@@ -399,6 +399,8 @@ static int render_shadow_maps(Renderer *renderer, const DrawList *draws) {
 }
 
 bool renderer_init(Renderer *renderer, char *error, std::size_t size) try {
+    if (render_headless)
+        return renderer_configure(renderer, render_width, 1);
     const auto vertex = shader(GL_VERTEX_SHADER, R"(#version 300 es
 layout(location=0) in vec2 position;
 layout(location=1) in vec2 texcoord;
@@ -758,6 +760,11 @@ static GLuint create_target_texture(int width, int height) {
 bool renderer_configure(Renderer *renderer, int logical_width, int scale) {
     logical_width = std::max(render_width, logical_width + (logical_width & 1));
     scale = std::clamp(scale, 1, 16);
+    if (render_headless) {
+        renderer->logical_width = logical_width;
+        renderer->scale = scale;
+        return true;
+    }
     if (renderer->framebuffer && logical_width == renderer->logical_width && scale == renderer->scale)
         return true;
     const int width = logical_width * scale, height = render_height * scale;
@@ -837,6 +844,10 @@ bool renderer_configure(Renderer *renderer, int logical_width, int scale) {
 
 void renderer_release(Renderer *renderer) {
     texture_store_release(&renderer->textures);
+    if (render_headless) {
+        *renderer = {};
+        return;
+    }
     renderer_delete_texture(renderer->white_texture);
     glDeleteProgram(renderer->program);
     glDeleteBuffers(1, &renderer->buffer);
@@ -860,6 +871,8 @@ void renderer_release(Renderer *renderer) {
     *renderer = {};
 }
 TextureId renderer_upload(const Image *image) {
+    if (render_headless)
+        return 1;
     GLuint texture = 0;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -877,6 +890,8 @@ TextureId renderer_upload(const Image *image) {
     return texture;
 }
 void renderer_delete_texture(TextureId texture) {
+    if (render_headless)
+        return;
     glDeleteTextures(1, &texture);
 }
 static float clear_channel(float value) {
@@ -1031,7 +1046,7 @@ static void renderer_draw(Renderer *renderer, const DrawList *draws, int width, 
 }
 
 void renderer_present_retained(const Renderer *renderer, int width, int height) {
-    if (width <= 0 || height <= 0)
+    if (render_headless || width <= 0 || height <= 0)
         return;
     glDisable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -1127,6 +1142,8 @@ void renderer_set_occluders(Renderer *renderer, const u8 *solid, int columns, in
     static std::vector<u8> uploaded;
     const std::size_t size = static_cast<std::size_t>(columns) * rows;
     renderer->occluder_tile = tile_size;
+    if (render_headless)
+        return;
     if (renderer->occluder_texture && columns == renderer->occluder_columns && rows == renderer->occluder_rows &&
         uploaded.size() == size && std::equal(uploaded.begin(), uploaded.end(), solid))
         return;
@@ -1184,6 +1201,8 @@ bool renderer_capture_frame(const Renderer *renderer, Image &image) {
     }
     image.width = width;
     image.height = height;
+    if (render_headless)
+        return true;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, renderer->framebuffer);
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
     return glGetError() == GL_NO_ERROR;
@@ -1194,6 +1213,8 @@ bool renderer_restore_frame(const Renderer *renderer, const Image &image) {
     if (static_cast<int>(image.width) != width || static_cast<int>(image.height) != height ||
         image.rgba.size() != static_cast<std::size_t>(width) * height * 4)
         return false;
+    if (render_headless)
+        return true;
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, renderer->color_texture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
@@ -1270,6 +1291,8 @@ static void dump_faces(const FaceList *faces) {
 }
 
 bool renderer_draw_faces(Renderer *renderer, const FaceList *faces, int width, int height) try {
+    if (render_headless)
+        return true;
     dump_faces(faces);
     const auto count = faces->count;
     if ((count && !faces->faces) || count > std::numeric_limits<u32>::max() ||

@@ -20,6 +20,7 @@ namespace kf::ext {
 namespace {
 SDL_Window *main_window;
 bool running;
+bool imgui;   // false when headless
 bool open;
 bool show_settings, show_mods = true, show_console, show_about;
 bool console_autoscroll = true;
@@ -615,6 +616,16 @@ ViewRect original_view() {
 bool start(SDL_Window *handle, SDL_GLContext context) {
     main_window = handle;
     settings_load();
+    // Headless: settings and mods, no Dear ImGui (it needs the GL context).
+    imgui = context != nullptr;
+    if (!imgui) {
+        running = true;
+        apply_audio_settings();
+        apply_control_settings();
+        apply_render_settings();
+        mods_start();
+        return true;
+    }
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -645,14 +656,16 @@ void shutdown() {
     mods_shutdown();
     settings_mark_dirty();
     settings_save_if_dirty();
+    running = false;
+    if (!imgui)
+        return;
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
-    running = false;
 }
 
 bool process_event(const SDL_Event &event) {
-    if (!running)
+    if (!running || !imgui)
         return false;
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
         const bool alt_enter = event.key.key == SDLK_RETURN && (event.key.mod & SDL_KMOD_ALT);
@@ -722,7 +735,7 @@ static void draw_message(int width, int height) {
 }
 
 void draw(int width, int height) {
-    if (!running || width <= 0 || height <= 0)
+    if (!running || !imgui || width <= 0 || height <= 0)
         return;
     ++fps_frames;
     const Uint64 now = SDL_GetTicks();

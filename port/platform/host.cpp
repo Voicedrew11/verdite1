@@ -4,6 +4,7 @@
 #include <kf/audio/sound.h>
 #include <kf/platform/input.h>
 #include <kf/platform/controls.h>
+#include <kf/platform/agent.h>
 #include <kf/renderer/renderer.h>
 #include <kf/renderer/projection.h>
 #include <kf/lib/fixed_math.h>
@@ -62,8 +63,11 @@ struct HostState {
         u32 seed;
     } frame_lights[render_light_capacity];
     int frame_light_count;
+    std::uint64_t frames_presented;
+    Uint64 turbo_ns;   // the game clock under turbo
 };
 static HostState host;
+static HostOptions options;
 static constexpr Uint64 ns_per_second = 1000000000;
 static constexpr Uint64 ns_per_millisecond = 1000000;
 static constexpr Uint64 clock_ticks_per_second = 60;
@@ -82,6 +86,8 @@ static void capture_frame_if_requested(int width, int height);
 #endif
 
 static void present_retained_frame() {
+    if (!host.context)
+        return;
     int width = 0, height = 0;
     SDL_GetWindowSizeInPixels(host.window, &width, &height);
     if (width > 0 && height > 0) {
@@ -154,7 +160,16 @@ static void open_available_gamepad() {
     SDL_free(ids);
 }
 
+void host_configure(const HostOptions &chosen) {
+    options = chosen;
+    render_headless = options.headless;
+}
+
 bool host_start() {
+    if (options.headless) {
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+        SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+    }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "%s\n", SDL_GetError());
         return false;
@@ -162,10 +177,11 @@ bool host_start() {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    host.window = SDL_CreateWindow("King's Field", 960, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-    if (host.window)
+    // Headless keeps a window on the dummy driver: settings and the overlay's state hang off it.
+    host.window = SDL_CreateWindow("King's Field", 960, 720, options.headless ? 0 : SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    if (host.window && !options.headless)
         host.context = SDL_GL_CreateContext(host.window);
-    if (!host.window || !host.context) {
+    if (!host.window || (!host.context && !options.headless)) {
         std::fprintf(stderr, "%s\n", SDL_GetError());
         host_shutdown();
         return false;
@@ -189,6 +205,9 @@ bool host_start() {
 #if KF_EXT
     ext::start(host.window, host.context);
 #endif
+    agent_start();
+    if (options.headless || options.turbo)
+        std::printf("Host:%s%s\n", options.headless ? " headless" : "", options.turbo ? " turbo" : "");
     return true;
 }
 
@@ -201,10 +220,10 @@ void host_shutdown() {
     save_storage_shutdown();
     if (host.gamepad)
         SDL_CloseGamepad(host.gamepad);
-    if (host.context) {
+    if (host.context || options.headless)
         renderer_release(&host.renderer);
+    if (host.context)
         SDL_GL_DestroyContext(host.context);
-    }
     if (host.window)
         SDL_DestroyWindow(host.window);
     host = {};
@@ -225,7 +244,7 @@ void host_language_status(const char *message) {
 #ifdef __EMSCRIPTEN__
     host_browser_status(message);
 #else
-    if (host.window) {
+    if (host.window && !options.headless) {
         SDL_SetWindowRelativeMouseMode(host.window, false);
         sound_set_paused(true);
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "King's Field — Error", message, host.window);
@@ -487,6 +506,7 @@ void host_poll() {
         while (SDL_PollEvent(&event))
             process_event(event);
         refresh_mouse_capture();
+        agent_poll();
         sound_poll();
 #if KF_EXT
         ext::poll();
@@ -507,6 +527,8 @@ void host_poll() {
 }
 
 std::uint64_t host_clock_ns() {
+    if (options.turbo)
+        return host.turbo_ns;
     const auto now = host.paused ? host.pause_start : SDL_GetTicksNS();
     return now - host.epoch - host.paused_ns;
 }
@@ -521,6 +543,12 @@ static Uint64 smooth_next_present_ns();
 static void smooth_present_now(Uint64 now);
 
 static void wait_until_ns(std::uint64_t target) {
+    if (options.turbo) {
+        // Paused (overlay, unfocused): host_poll holds here, and the clock with it.
+        host_poll();
+        host.turbo_ns = std::max<Uint64>(host.turbo_ns, target);
+        return;
+    }
     for (;;) {
         host_poll();
         const auto now = host_clock_ns();
@@ -645,7 +673,7 @@ u32 host_read_buttons() {
         buttons |= button_mask(host.input_context == InputContext::Menu ? Button::Back : Button::Start);
     if (actions & action_bit(Action::pause_or_back))
         buttons |= button_mask(host.input_context == InputContext::Menu ? Button::Back : Button::Select);
-    return buttons;
+    return buttons | agent_buttons();
 }
 
 bool host_run_held() {
@@ -733,6 +761,8 @@ InputContext host_set_input_context(InputContext context) {
     return previous;
 }
 
+InputContext host_input_context() { return host.input_context; }
+
 LookDelta host_take_look() {
     constexpr double angle_units_per_pixel = mouse_degrees_per_pixel * angle_units_per_turn / degrees_per_turn;
     // KF_TEST_SPIN=<pixels per update>: steady mouse turn for automated tests.
@@ -752,6 +782,8 @@ LookDelta host_take_look() {
 }
 
 Renderer *host_renderer() { return &host.renderer; }
+
+std::uint64_t host_frames_presented() { return host.frames_presented; }
 
 void host_show_message(const char *text) {
     std::printf("[quicksave] %s\n", text);
@@ -905,6 +937,8 @@ static void clip_face_near(const DrawFace &face, std::vector<DrawFace> &out) {
 }
 
 static void draw_and_swap(const FaceList *faces) {
+    if (!host.context)
+        return;
     int width = 0, height = 0;
     SDL_GetWindowSizeInPixels(host.window, &width, &height);
     // A minimized window can have no drawable pixels. Still update the logical
@@ -1034,7 +1068,7 @@ void set_renderer_camera(const SVECTOR &rotation, float x, float y, float z) {
 }
 
 bool smoothing_applies() {
-    return render_smoothing && (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted);
+    return render_smoothing && !options.headless && (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted);
 }
 
 Uint64 smooth_frame_period_ns() {
@@ -1236,6 +1270,7 @@ void host_light_occluders(const u8 *solid, int columns, int rows, float tile_siz
 
 void host_present_faces(const FaceList *faces) {
     menu_preview_shown = menu_preview_building;
+    ++host.frames_presented;
 #if KF_EXT
     ext::game_frame(static_cast<int>(host.input_context));
 #endif

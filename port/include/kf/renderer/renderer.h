@@ -43,6 +43,8 @@ inline constexpr int render_shadow_lights = 4;   // nearest lights that cast sha
 inline constexpr int render_shadow_face_size = 1024;
 inline bool render_smoothing = false;    // draw extra frames between game updates
 inline int render_frame_limit = 0;       // smoothing frame cap: 0 = display refresh, < 0 = none
+// Headless (--headless): no GL context; the renderer keeps its state but draws nothing.
+inline bool render_headless = false;
 // Set by the game around camera-attached 3D (held weapon, notifications): those
 // faces must not move with the in-between camera.
 inline bool render_camera_fixed = false;

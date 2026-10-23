@@ -29,6 +29,7 @@ bool host_action_held(Action action);
 void host_wait_buttons_released(u32 mask = ~u32(0));
 void host_wait_button_press();
 InputContext host_set_input_context(InputContext context);
+InputContext host_input_context();
 LookDelta host_take_look();
 // Run is a port addition with no PlayStation button, so it stays out of the button mask.
 bool host_run_held();

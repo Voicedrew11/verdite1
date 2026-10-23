@@ -27,6 +27,8 @@ frame-rate gap), `docs/NETWORKING_PLAN.md` (online play; a draft),
 - Move the pin with `python3 tools/patches.py upgrade <commit>`, then update
   the `rev` and `hash` in `flake.nix`. The decomp has no `symbol_addrs.txt`,
   so renames come up as conflicts or compile errors.
+- `libverdite/` is the game-agnostic C++ library the Verdite ports will share
+  (the successor to the C# Verdite Core), kept in this repo for now: no `kf/` or decomp include in it, and its changes in their own commits.
 - `port/` (platform, renderer, overlay, settings, mods) and `third_party/` are
   ordinary source, edited in place.
 - Nothing goes upstream to sushi-shi or acranon: no pull requests, no issues.

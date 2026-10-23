@@ -267,6 +267,7 @@ int main(int argc, char **argv) {
     std::vector<const char *> language_data;
     bool extract_only = false;
     bool skip_intro = false;
+    kf::HostOptions host_options;
     bool language_selected = false;
     kf::Language language = kf::Language::English;
     const char *dropped = nullptr;
@@ -292,6 +293,10 @@ int main(int argc, char **argv) {
             saves = argv[++i];
         else if (std::strcmp(argv[i], "--skip-intro") == 0)
             skip_intro = true;
+        else if (std::strcmp(argv[i], "--headless") == 0)
+            host_options.headless = true;
+        else if (std::strcmp(argv[i], "--turbo") == 0)
+            host_options.turbo = true;
 #if defined(_WIN32)
         // A disc image or the English patch dropped onto the executable.
         else if (!dropped && argv[i][0] != '-' &&
@@ -301,7 +306,7 @@ int main(int argc, char **argv) {
         else {
             std::fprintf(stderr, "Usage: kings-field [--data DIRECTORY] [--data-ja DIRECTORY] [--data-en DIRECTORY] "
                                  "[--language ja|en] [--english-patch FILE|download] "
-                                 "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro]\n");
+                                 "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro] [--headless] [--turbo]\n");
             return 1;
         }
     }
@@ -353,6 +358,7 @@ int main(int argc, char **argv) {
     if (root.empty() || !kf::data_files_set_root(root.c_str()))
         return 1;
     // Create browser audio within the launch gesture, before asynchronous storage.
+    kf::host_configure(host_options);
     if (!kf::host_start())
         return 1;
     // Settings are loaded now: honour the player's language unless one was given.

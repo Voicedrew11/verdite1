@@ -4,6 +4,7 @@ project(kings_field VERSION 0.1.0 LANGUAGES C CXX)
 #   decomp/       sushi-shi's source port (our fork), a submodule pinned on `port`; never edited
 #   patches/      Verdite's edits to its game code, one diff per copied directory (tools/patches.py)
 #   port/         the platform layer, renderer and PC extensions: Verdite's own, edited in place
+#   libverdite/   the game-agnostic C++ library the Verdite ports share, to become a subtree; knows no game
 #   third_party/  imgui, lua, cjson, the GLES headers and loader
 # At configure time the decomp's game code (KF_COPIED) is copied, the patches are applied to the
 # copy, and the copy (build/<preset>/decomp_src/) is compiled with port/.
@@ -189,11 +190,21 @@ target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1 PRIVATE IMGUI_IMPL_OPENGL_ES3)
 target_link_libraries(kf_ext PUBLIC SDL3::SDL3 ${KF_GLES_LIBRARY})
 
-add_library(kf_host STATIC port/platform/host.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
+# libverdite: nothing from the game on its include path.
+find_package(Threads REQUIRED)
+add_library(verdite STATIC libverdite/src/agent.cpp)
+target_include_directories(verdite PUBLIC libverdite/include)
+target_link_libraries(verdite PUBLIC Threads::Threads)
+if(WIN32)
+  target_link_libraries(verdite PUBLIC ws2_32)
+endif()
+target_compile_options(verdite PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp
   port/renderer/textures.cpp port/renderer/lighting.cpp port/renderer/projection.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES})
-target_link_libraries(kf_host PUBLIC kf_support SDL3::SDL3 kf_ext)
+target_link_libraries(kf_host PUBLIC kf_support SDL3::SDL3 kf_ext verdite)
 if(WIN32)
   target_link_libraries(kf_host PUBLIC kf_glshim)
 endif()

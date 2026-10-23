@@ -36,7 +36,7 @@ real renderer and platform layer. sushi-shi did that for KF1 (`port`).
 Until a game's decomp and port layer exist, its recompiled Verdite stays the
 shipping build. RecompOne goes into maintenance, not retirement.
 
-### A C++ Verdite Core
+### libverdite: the C++ core
 
 The C# Verdite Core and the RecompOne fork are replaced by a **shared,
 game-agnostic C++ library** kept as a subtree, under the same rules as now:
@@ -53,6 +53,14 @@ Each game supplies an adapter: its decomp, plus "here is the camera, the map
 cells, the models." KF1-KF3 share one evolving engine (TMD models, map-cell
 grids, the same lighting), so the renderer interface should hold for all three.
 It is first built inside Verdite1, then extracted into the subtree.
+
+It is named **libverdite**, so that it is not confused with the C# Verdite
+Core (`Voicedrew11/verdite-core`), which stays with the recompiled builds for
+as long as they ship. It lives in this repo, in `libverdite/` (started
+2026-10-23), until a second game uses it; then it becomes
+`Voicedrew11/libverdite`. Nothing in `libverdite/` includes a `kf/` or decomp
+header: the game hands in its tag, port, state and commands. The first tenant
+is the agent channel; its KF1 half is `port/platform/agent.cpp`.
 
 ### Things to plan for
 
@@ -83,6 +91,7 @@ Holyland's (`../holyland`, `docs/port/README.md` there), set up 2026-10-22:
 decomp/        submodule: Voicedrew11/kings-field-decomp (our fork of sushi-shi), pinned on `port`
 patches/       Verdite's edits to the decomp's game code, one diff per copied directory
 port/          platform layer, renderer, overlay, settings, mods: ours, edited in place
+libverdite/    the game-agnostic C++ library the ports share (agent channel so far): ours, knows no game
 third_party/   Dear ImGui, Lua, cJSON, the GLES headers and loader (kf1-enhanced's vendor/)
 tools/         patches.py, from holyland
 work/          (gitignored) the editable copy patches.py makes
@@ -171,6 +180,44 @@ target, overlay ready, "Starting King's Field (English v1.0)". User files go
 to `~/.local/share/KingsField/SLPS00017/`. The `offscreen` SDL driver finds no
 EGL device even so, so there is no headless run yet.
 
+## Driving the game
+
+For an agent or a script, without a person or a screen:
+
+- **`--headless`**: SDL's dummy video and audio drivers, no GL context; the
+  renderer keeps its state (texture store, target size) but draws nothing, the
+  overlay loads settings and mods without Dear ImGui, frame smoothing is off.
+  Runs inside `nix develop`, since nothing needs the host's EGL.
+- **`--turbo`**: the game clock jumps to each wait's deadline instead of
+  sleeping, so the game runs as fast as the CPU allows: about 100 game seconds
+  per second headless (1,400 frames a second). Sound follows the game clock.
+  With a window it also works, and draws every game frame.
+- **`KF_AGENT=1`**: the beacon, `[KF1-AGENT] {...}` on stdout about once a
+  real second: `context` (opening, gameplay, menu, scripted), `inGame`,
+  `clockMs` (game clock), `frames`, and in game `hp`, `maxHp`, `mp`, `maxMp`,
+  `area` (floor 1-5), `level`, `gold`, `pos` (camera position), `pitch`, `yaw`.
+  The names follow `main`'s beacon.
+- **`KF_SHELL=1`** (or a port): the command channel on `127.0.0.1:27901`, one
+  request a line, one JSON line back, run on the game thread at the next host
+  poll (a reply times out after 5 s if the game is not polling). `help`,
+  `state`, `press <button>[+<button>...] [holdMs]` (the game's buttons: up,
+  down, left, right, strafe_left, strafe_right, look_up, look_down, attack,
+  magic, confirm, back, start, select; held for game-clock milliseconds, so a
+  hold means the same under turbo), `release`, `quit`.
+
+```bash
+KF_AGENT=1 KF_SHELL=1 nix develop -c build/linux/kings-field --data data/en \
+  --saves /tmp/kf-saves --headless --turbo --skip-intro
+```
+
+`--skip-intro` starts a new game straight away (area 1, HP 30/30, at
+(31000, -11500, 4000)). Checked 2026-10-23: `press up 5000` walks to z 22302,
+`press right 1000` turns, `quit` exits. Use a separate `--saves` folder; the
+settings file is the player's, and is saved on exit.
+
+Not yet: `main`'s `peek`/`poke`/`dump` (there is no guest RAM; the decomp's
+named globals take their place, command by command), `warp`, `stick`, `view`.
+
 ## What changes in kind
 
 - **No recompiler.** The game is native C/C++ from the decomp. Everything on
@@ -231,9 +278,8 @@ Everything that measures or replaces recompiled code: `Literal`, `GpuWorld`,
 
 ## Open questions
 
-- Merge `sushi-shi/port` (37 commits, incl. readability pass and typed menu
-  outcomes) into this branch before porting, or stay on `enhanced` and follow
-  acranon? Merging later gets harder as our changes grow.
+- ~~Merge `sushi-shi/port` before porting, or stay on `enhanced`?~~ Merged:
+  the pin moved to `sushi-shi/port`'s head on 2026-10-23.
 - Whether `decomp` eventually replaces `main` or lives beside it.
 
 Decided 2026-10-22: the platforms are Windows, Linux, macOS, Android, Switch
@@ -247,8 +293,8 @@ The branch is pushed to `origin/decomp`.
 2. ~~The holyland layout.~~ Done 2026-10-22. ~~Move the pin to
    `sushi-shi/port`'s head and bring `port/` up to its interfaces.~~ Done
    2026-10-23 (`7bd4567c`, 37 commits with the readability pass).
-3. Infrastructure the rest leans on: headless/turbo, state beacon + command
-   channel, then the fuzzer.
+3. Infrastructure the rest leans on: ~~headless/turbo, state beacon + command
+   channel~~ (done 2026-10-23, "Driving the game" above), then the fuzzer.
 4. The renderer frontend and the Vulkan backend, in the order of
    [RENDERER_PLAN.md](RENDERER_PLAN.md). That also fixes the frame-rate gap
    ([RUNTIME.md](RUNTIME.md)).
