@@ -120,9 +120,12 @@ vec4 trilinear(vec4 nearest, vec2 dx, vec2 dy) {
 
 // Nearest (or sharp) filtering with mipmaps: the original texel while it covers
 // a pixel or more, fading into trilinear as it shrinks to half a pixel, where
-// nearest only shimmers.
+// nearest only shimmers. Measured along the footprint's long axis: nearest takes
+// one tap, so a slanted face skips texels along it whatever the anisotropy.
 vec4 minified_nearest(vec4 nearest, vec2 dx, vec2 dy) {
-    float fade = clamp(log2(max(anisotropic_footprint(dx, dy), 1e-6)), 0.0, 1.0);
+    vec2 size = vec2(textureSize(pages, 0).xy);
+    float long_axis = max(length(dx * size), length(dy * size));
+    float fade = clamp(log2(max(long_axis, 1e-6)), 0.0, 1.0);
     return fade > 0.0 ? mix(nearest, trilinear(nearest, dx, dy), fade) : nearest;
 }
 

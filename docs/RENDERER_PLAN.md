@@ -236,12 +236,18 @@ the hardware picks it, so the cap holds. Nearest keeps the original texel while
 it covers a pixel or more and fades into that trilinear sample as it shrinks to
 half a pixel: picking one level by hand drew a hard line across slanted floors
 and ceilings where level 0 gave way to level 1, and took that level from the
-footprint's long axis, so the line came close. Three-point filtering picks the
+footprint's long axis, so the line came close. The fade is measured along the
+footprint's long axis, not the anisotropic footprint the hardware's level comes
+from: nearest takes one tap, so on a ceiling seen at a low angle, a texel a
+pixel across and six down, it skipped five texels in six while 16x anisotropy
+held the footprint under one texel, and the ceiling stayed frozen speckle that
+only motion averaged out. Three-point filtering picks the
 nearest level by hand. `kf_vulkan_tests` checks a minified checker averages
 with nothing from the square beside it, a cut-out keeps its colour and edge,
 16x keeps stripes across a face squeezed 16 to 1 that 1x blurs, with nearest
-and bilinear, and nearest draws a face whose texels cover a pixel or more as it
-does without mipmaps.
+and bilinear, a checker squeezed 16 to 1 averages to grey under nearest and
+sharp, and nearest draws a face whose texels cover a pixel or more as it does
+without mipmaps.
 
 Sharp filtering (Texture filtering > Sharp, the default; GL and Vulkan) is
 nearest without its uneven texels. A texel magnified to a fraction of a pixel
@@ -252,10 +258,7 @@ so every texel has the same weight. Past one texel a pixel it is bilinear, and
 with mipmaps it fades into trilinear as nearest does. Transparency still comes
 from the nearest texel, so cut-out edges stay hard. `kf_vulkan_tests` checks
 stripes drawn 9, 9 and 10 pixels wide by nearest each weigh 9.375 pixels under
-sharp, and sharp is nearest away from a texel's edge. It was made for textures
-looking chunkier once the camera stops than while it moves, and did not cure
-that: once the camera stops the frames are identical, so what changes is not
-in the picture.
+sharp, and sharp is nearest away from a texel's edge.
 
 ### Enhanced distance
 

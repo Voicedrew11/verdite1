@@ -548,6 +548,26 @@ TEST_CASE("vulkan: anisotropic filtering keeps stripes across a face squeezed th
     }
 }
 
+TEST_CASE("vulkan: nearest mipmaps average a slanted face's texels along its long axis") {
+    PictureOptions wanted;
+    wanted.anisotropy = 16;
+    if (backend->drawable(wanted).anisotropy < 16) {
+        MESSAGE("skipped: the device has no 16x anisotropic filtering");
+        return;
+    }
+    // 32 x 2 pixels: a texel a pixel across, 16 a pixel down, as a ceiling seen
+    // at a low angle. One tap a pixel would pick a black or grey texel.
+    const std::vector<GpuVertex> squeezed = textured_rect(checker_low, 32, 2);
+    for (const TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Sharp}) {
+        CAPTURE(static_cast<int>(filter));
+        const Image mipped = draw_textured(squeezed, true, filter, 16);
+        for (int x = 146; x < 174; ++x) {
+            CAPTURE(x);
+            CHECK(widest_step(pixel(mipped, x, 120), Rgb5{15, 15, 15}) <= 2);
+        }
+    }
+}
+
 TEST_CASE("vulkan: nearest mipmaps leave texels that cover a pixel or more as they were") {
     for (const float extent : {32.0f, 48.0f, 64.0f}) {
         CAPTURE(extent);
