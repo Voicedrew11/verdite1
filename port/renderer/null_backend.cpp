@@ -7,6 +7,7 @@ class NullBackend final : public RenderBackend {
 public:
     Tier tier() const override { return Tier::Enhanced; }
     const char *name() const override { return "null"; }
+    PictureOptions drawable(const PictureOptions &wanted) const override { return wanted; }
     bool set_target(int, int) override { return true; }
     void set_options(const PictureOptions &) override {}
     void upload_layer(u8, const Image &) override {}

@@ -113,10 +113,31 @@ work is rendering, not reverse engineering.
 | retained map, map cache | build each area's static cells into GPU buffers once, keyed by area. Kept 2026-10-23, knowing the cost: the game projects and lights map cells on the CPU each update, so this moves that work into the renderer. Not in the first backend, which uploads each update's faces once |
 | smoothing (view, models, HUD, item display) | interpolate game state between ticks: camera, model transforms, animation frames. kf1-enhanced re-projects from the camera only (`cx/cy/cz`); check models and HUD. Decided 2026-10-23: positions blend between the last two updates, but the view turns to the newest look input each displayed frame, so looking has no update (50 ms) of lag |
 | per-pixel lighting, distance fog | port the game's own lighting and depth-cue routines, named in the decomp, into the shader with the game's parameters: the original look, evaluated per pixel |
-| AO with geometry normals | depth and normals in a G-buffer, available directly; kf1-enhanced's AO is a different design, compare the two |
+| AO with geometry normals | done on Vulkan (2026-10-23), below |
 | mipmaps, anisotropic, mip sharing | decode each texture page and palette to RGBA textures; watch textures the game rewrites in video memory (animated textures, palette changes), which need invalidating |
 | render distance with fade, widened cull | the cell loop and stencils as parameters; keep **render reach separate from logic reach**, so enemy activation and events do not move |
 | widescreen HUD, menus, tints | laid out at the source, not stretched afterwards |
+
+### Ambient occlusion and the surface buffer
+
+Vulkan draws the opaque world faces a second time each frame, with a depth
+test, into a surface buffer (`vulkan_surfaces.h`): camera depth and each face's
+own normal, from the derivatives of its camera position. Verdite had to take
+the visible surface from painter's order and, until 0058, normals from depth
+differences; here the faces are at hand, so the buffer holds the nearest
+surface even where the game's ordering is wrong. Anything else that needs the
+world's shape on screen (per-pixel lights, fog by distance, glow's covering
+test, FXAA's world mask) reads this buffer rather than measuring again.
+
+AO (`vulkan_ambient_occlusion.h`) is Verdite's: the spiral with a 4x4
+interleaved rotation, the 4x4 depth-aware box that cancels it, radius 512,
+strength 0.8 at 100%, bias 0.08, nothing past depth 24000, and its tiers
+(Low: game pixels and 8 samples, Medium: 2x2 per game pixel, High: the target's
+scale, both 16). Unlike Verdite it is not multiplied over the finished picture:
+`world.frag` darkens a fragment's shading before the 15-bit step, and only
+where the fragment's depth matches the measured surface, so the HUD, the held
+weapon and translucent faces are left alone without a mask. Verdite's
+floor-plan term (`AoWorld`) is not carried over: judged not worth having.
 
 What carries over is decisions and references, not code:
 

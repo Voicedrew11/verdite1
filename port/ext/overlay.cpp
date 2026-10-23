@@ -265,7 +265,7 @@ void draw_settings_window() {
             s.renderer = renderer_values[renderer_index];
             changed = true;
         }
-        ImGui::SetItemTooltip("Applies when the game is restarted. Vulkan draws the original picture\nand the Balanced options; dynamic lights, shadows, AO, glow and FXAA are\nnot in it yet. If Vulkan cannot start, the game draws with OpenGL.");
+        ImGui::SetItemTooltip("Applies when the game is restarted. Vulkan draws the original picture\nthe Balanced options and ambient occlusion; dynamic lights, shadows,\nglow and FXAA are not in it yet. If Vulkan cannot start, the game draws with OpenGL.");
         ImGui::SameLine();
         ImGui::TextDisabled("now: %s", frontend_draws_overlay() ? "Vulkan" : "OpenGL");
         ImGui::BeginDisabled(s.classic);   // Classic mode overrides the rest
@@ -389,6 +389,13 @@ void draw_settings_window() {
             apply_render_settings();
             changed = true;
         }
+        static const char *const ao_quality_labels[] = {"Low", "Medium", "High"};
+        if (s.ambient_occlusion && ImGui::Combo("Occlusion quality", &s.ao_quality, ao_quality_labels, 3)) {
+            apply_render_settings();
+            changed = true;
+        }
+        if (s.ambient_occlusion)
+            ImGui::SetItemTooltip("Low measures at the game's own pixels, Medium at twice that,\nHigh at the full resolution. Vulkan only.");
         ImGui::SeparatorText("Accuracy");
         if (ImGui::Checkbox("Depth buffer (experimental)", &s.depth_buffer)) {
             apply_render_settings();

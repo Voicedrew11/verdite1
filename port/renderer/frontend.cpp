@@ -15,7 +15,7 @@ constexpr int maximum_scale = 16;
 
 struct Frontend {
     std::unique_ptr<RenderBackend> backend;
-    PictureOptions options;            // as the settings asked; within_tier() is what draws
+    PictureOptions options;            // as the settings asked; drawn_options() is what draws
     TextureStore textures;
     TextureLayers layers;
     std::uint64_t textures_seen = 0;   // TextureStore::generation the layers were decoded from
@@ -26,29 +26,7 @@ struct Frontend {
 };
 Frontend frontend;
 
-// Options above the backend's tier are off there.
-PictureOptions within_tier(PictureOptions options, Tier tier) {
-    const PictureOptions off{};
-    if (tier < Tier::Enhanced) {
-        options.dynamic_lights = off.dynamic_lights;
-        options.light_occlusion = off.light_occlusion;
-        options.shadows = off.shadows;
-        options.ambient_occlusion = off.ambient_occlusion;
-        options.glow = off.glow;
-        options.fxaa = off.fxaa;
-    }
-    if (tier < Tier::Balanced) {
-        options.true_color = off.true_color;
-        options.depth_buffer = off.depth_buffer;
-        options.texture_filter = off.texture_filter;
-        options.mipmaps = off.mipmaps;
-        options.smoothing = off.smoothing;
-        options.supersample = off.supersample;
-    }
-    return options;
-}
-
-PictureOptions drawn_options() { return within_tier(frontend.options, frontend.backend->tier()); }
+PictureOptions drawn_options() { return frontend.backend->drawable(frontend.options); }
 
 void upload_new_layers() {
     for (const LayerUpload &upload : frontend.layers.take_uploads()) {

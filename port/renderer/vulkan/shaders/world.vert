@@ -20,6 +20,7 @@ layout(location = 0) out vec2 out_uv;
 layout(location = 1) out vec3 out_shade;    // the game's colour bytes
 layout(location = 2) flat out uvec4 out_uv_bounds;
 layout(location = 3) flat out uvec4 out_flags;   // layer, texturing, dither, world
+layout(location = 4) out vec3 out_camera;        // position in the shown camera's space; z = 0: not world
 
 // Perspective depth for the depth test: 0 at the near plane, 1 at the far one.
 const float near_w = 16.0, far_w = 65536.0;
@@ -44,16 +45,21 @@ void main() {
     vec2 screen = in_screen.xy;
     float w = in_screen.z;
     bool fixed_to_camera = in_camera.z == 0.0;
+    vec3 camera = in_camera;
     if ((draw.flags & draw_reproject) != 0u && !fixed_to_camera) {
-        vec3 shown = moved(in_camera, in_entity.x);
-        float depth = max(shown.z, near_w);
-        screen = shown.xy * draw.projection_distance / depth + draw.center;
+        camera = moved(in_camera, in_entity.x);
+        float depth = max(camera.z, near_w);
+        screen = camera.xy * draw.projection_distance / depth + draw.center;
         if ((draw.flags & draw_whole_pixels) != 0u)
             screen = floor(screen);
         if (w > 0.0)
             w = depth;
     }
+    // Surfaces are measured in perspective even where the picture is affine.
+    if ((draw.flags & draw_surface_pass) != 0u && camera.z > 0.0)
+        w = max(camera.z, near_w);
     gl_Position = to_clip(screen, w);
+    out_camera = fixed_to_camera ? vec3(0.0) : camera;
     out_uv = in_uv;
     out_shade = vec3(in_color.rgb);
     out_uv_bounds = in_uv_bounds;

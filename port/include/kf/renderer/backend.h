@@ -91,11 +91,36 @@ inline PresentRect letterbox(int logical_width, int window_width, int window_hei
     return {(window_width - width) / 2, (window_height - height) / 2, width, height};
 }
 
+// The options of a tier: those above it turned off.
+inline PictureOptions within_tier(PictureOptions options, Tier tier) {
+    const PictureOptions off{};
+    if (tier < Tier::Enhanced) {
+        options.dynamic_lights = off.dynamic_lights;
+        options.light_occlusion = off.light_occlusion;
+        options.shadows = off.shadows;
+        options.ambient_occlusion = off.ambient_occlusion;
+        options.glow = off.glow;
+        options.fxaa = off.fxaa;
+    }
+    if (tier < Tier::Balanced) {
+        options.true_color = off.true_color;
+        options.depth_buffer = off.depth_buffer;
+        options.texture_filter = off.texture_filter;
+        options.mipmaps = off.mipmaps;
+        options.smoothing = off.smoothing;
+        options.supersample = off.supersample;
+    }
+    return options;
+}
+
 class RenderBackend {
 public:
     virtual ~RenderBackend() = default;
     virtual Tier tier() const = 0;
     virtual const char *name() const = 0;
+    // What it draws of the options wanted: those within its tier, and any above
+    // it the backend already has.
+    virtual PictureOptions drawable(const PictureOptions &wanted) const = 0;
 
     [[nodiscard]] virtual bool set_target(int logical_width, int scale) = 0;
     virtual void set_options(const PictureOptions &options) = 0;

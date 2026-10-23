@@ -272,6 +272,81 @@ TEST_CASE("vulkan: a retained frame is drawn over once, not on every present") {
     CHECK(pixel(present_and_capture(), 10, 10) == Rgb5{24, 24, 24});
 }
 
+namespace {
+constexpr float test_projection = 200;
+
+// A world corner in camera space, projected as the game does (distance 200,
+// centre 160, 120), flat-shaded grey.
+GpuVertex world_corner(float cx, float cy, float cz) {
+    GpuVertex out{};
+    out.x = cx * test_projection / cz + 160;
+    out.y = cy * test_projection / cz + 120;
+    out.w = cz;
+    out.cx = cx;
+    out.cy = cy;
+    out.cz = cz;
+    out.color = {200, 200, 200, 255};
+    out.texturing = VertexTexturing::Solid;
+    return out;
+}
+
+// A wall facing the camera 2000 units away, and a floor 500 below the eye
+// running up to its foot: the crease is on row 170.
+std::vector<GpuVertex> wall_and_floor() {
+    const GpuVertex wall[4] = {world_corner(-2000, -2000, 2000), world_corner(2000, -2000, 2000),
+                               world_corner(-2000, 500, 2000), world_corner(2000, 500, 2000)};
+    const GpuVertex floor[4] = {world_corner(-2000, 500, 2000), world_corner(2000, 500, 2000),
+                                world_corner(-2000, 500, 600), world_corner(2000, 500, 600)};
+    std::vector<GpuVertex> out;
+    for (const GpuVertex *q : {wall, floor})
+        out.insert(out.end(), {q[0], q[1], q[2], q[1], q[3], q[2]});
+    return out;
+}
+
+void set_occlusion(float strength) {
+    PictureOptions options;
+    options.ambient_occlusion = strength;
+    options.occlusion_quality = OcclusionQuality::High;
+    backend->set_options(options);
+}
+
+int brightness(Rgb5 c) { return c.r + c.g + c.b; }
+} // namespace
+
+TEST_CASE("vulkan: ambient occlusion darkens the crease and nothing far from it") {
+    const std::vector<GpuVertex> vertices = wall_and_floor();
+    const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
+    set_occlusion(0);
+    const Image plain = draw(vertices, runs, cleared_to(background));
+    set_occlusion(1);
+    const Image occluded = draw(vertices, runs, cleared_to(background));
+    set_occlusion(0);
+    for (const int x : {60, 160, 260}) {
+        CAPTURE(x);
+        // Wall just above the crease and floor just below it: darker.
+        CHECK(brightness(pixel(occluded, x, 166)) < brightness(pixel(plain, x, 166)));
+        CHECK(brightness(pixel(occluded, x, 174)) < brightness(pixel(plain, x, 174)));
+        // Wall 1300 units above the floor and floor 1000 out from the wall: out of reach.
+        CHECK(pixel(occluded, x, 40) == pixel(plain, x, 40));
+        CHECK(pixel(occluded, x, 235) == pixel(plain, x, 235));
+    }
+}
+
+TEST_CASE("vulkan: ambient occlusion leaves 2D faces over the world alone") {
+    std::vector<GpuVertex> vertices = wall_and_floor();
+    const std::size_t world = vertices.size();
+    add_rect(vertices, 100, 150, 120, 40, VertexTexturing::Solid, {200, 200, 200, 255});
+    const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, world),
+                                       run_of(BlendMode::opaque, world, vertices.size() - world)};
+    set_occlusion(0);
+    const Image plain = draw(vertices, runs, cleared_to(background));
+    set_occlusion(2);
+    const Image occluded = draw(vertices, runs, cleared_to(background));
+    set_occlusion(0);
+    CHECK(pixel(occluded, 160, 170) == pixel(plain, 160, 170));
+    CHECK(brightness(pixel(occluded, 60, 168)) < brightness(pixel(plain, 60, 168)));
+}
+
 int main(int argc, char **argv) {
     BackendStart started = make_vulkan_backend(nullptr);
     if (!started.backend) {

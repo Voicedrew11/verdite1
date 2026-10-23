@@ -22,8 +22,9 @@ struct ImDrawData;
 namespace kf {
 class RenderBackend;
 
-// Feature levels. A backend draws up to one of them; an option above the
-// backend's tier is off there, whatever the settings say.
+// Feature levels. A backend draws up to one of them, and an option above the
+// backend's tier is off there, whatever the settings say, unless the backend
+// already draws that option (RenderBackend::drawable).
 //   Classic:  the PS1 picture: the game's per-vertex lighting, the four blend
 //             modes, dither, 15-bit colour, the game's draw order.
 //   Balanced: plus depth buffer, true colour, filtering, mipmaps, widescreen,
@@ -34,6 +35,13 @@ class RenderBackend;
 enum class Tier : u8 { Classic, Balanced, Enhanced };
 
 enum class TextureFilter : u8 { Nearest, Bilinear, ThreePoint };
+
+// Verdite's ambient occlusion tiers: where the occlusion is measured, and with
+// how many samples.
+//   Low:    the game's own pixels, 8 samples
+//   Medium: 2 x 2 per game pixel, 16 samples
+//   High:   the target's scale, 16 samples
+enum class OcclusionQuality : u8 { Low, Medium, High };
 
 // The Display settings, one field per row.
 struct PictureOptions {
@@ -49,7 +57,8 @@ struct PictureOptions {
     float light_strength = 1.0f;
     bool light_occlusion = false; // solid map cells block dynamic light
     float shadows = 0.0f;         // how much a shadow removes of a light (0: off)
-    float ambient_occlusion = 0.0f;
+    float ambient_occlusion = 0.0f;   // strength, 1: Verdite's judged look (0: off)
+    OcclusionQuality occlusion_quality = OcclusionQuality::Medium;
     float glow = 0.0f;            // halo around light sources (0: off)
     bool fxaa = false;
     // Presentation

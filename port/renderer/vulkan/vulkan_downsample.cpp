@@ -3,9 +3,6 @@
 #include "vulkan_pipelines.h"
 
 #include <downsample_frag.h>
-#include <downsample_vert.h>
-
-#include <array>
 
 namespace kf {
 namespace {
@@ -18,91 +15,13 @@ struct DownsampleConstants {
     uint32_t factor;
 };
 static_assert(sizeof(DownsampleConstants) == 4);
-
-VkSampler create_nearest_sampler(VkDevice device) {
-    VkSamplerCreateInfo info{};
-    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    info.magFilter = VK_FILTER_NEAREST;
-    info.minFilter = VK_FILTER_NEAREST;
-    info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    VkSampler sampler = VK_NULL_HANDLE;
-    if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS)
-        return VK_NULL_HANDLE;
-    return sampler;
-}
-
-VkPipeline create_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModule vertex, VkShaderModule fragment) {
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertex;
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragment;
-    stages[1].pName = "main";
-    VkPipelineVertexInputStateCreateInfo vertex_input{};
-    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    VkPipelineInputAssemblyStateCreateInfo assembly{};
-    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    VkPipelineViewportStateCreateInfo viewport{};
-    viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewport.viewportCount = 1;
-    viewport.scissorCount = 1;
-    VkPipelineRasterizationStateCreateInfo raster{};
-    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    raster.polygonMode = VK_POLYGON_MODE_FILL;
-    raster.cullMode = VK_CULL_MODE_NONE;
-    raster.lineWidth = 1.0f;
-    VkPipelineMultisampleStateCreateInfo multisample{};
-    multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    VkPipelineColorBlendAttachmentState attachment{};
-    attachment.colorWriteMask =
-        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    VkPipelineColorBlendStateCreateInfo blend{};
-    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blend.attachmentCount = 1;
-    blend.pAttachments = &attachment;
-    const std::array<VkDynamicState, 2> dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dynamic{};
-    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
-    dynamic.pDynamicStates = dynamic_states.data();
-    VkPipelineRenderingCreateInfoKHR rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachmentFormats = &picture_format;
-
-    VkGraphicsPipelineCreateInfo info{};
-    info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    info.pNext = &rendering;
-    info.stageCount = static_cast<uint32_t>(stages.size());
-    info.pStages = stages.data();
-    info.pVertexInputState = &vertex_input;
-    info.pInputAssemblyState = &assembly;
-    info.pViewportState = &viewport;
-    info.pRasterizationState = &raster;
-    info.pMultisampleState = &multisample;
-    info.pColorBlendState = &blend;
-    info.pDynamicState = &dynamic;
-    info.layout = layout;
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
-        return VK_NULL_HANDLE;
-    return pipeline;
-}
 } // namespace
 
 std::unique_ptr<Downsample> Downsample::create(const VulkanDevice &device) {
     VkDevice handle = device.device();
     auto out = std::make_unique<Downsample>(Key{}, handle);
     out->allocator_ = device.allocator();
-    out->sampler_ = create_nearest_sampler(handle);
+    out->sampler_ = create_sampler(handle, VK_FILTER_NEAREST);
     if (!out->sampler_)
         return nullptr;
 
@@ -142,14 +61,7 @@ std::unique_ptr<Downsample> Downsample::create(const VulkanDevice &device) {
     layout.pPushConstantRanges = &constants;
     if (vkCreatePipelineLayout(handle, &layout, nullptr, &out->layout_) != VK_SUCCESS)
         return nullptr;
-    VkShaderModule vertex = create_shader_module(handle, downsample_vert);
-    VkShaderModule fragment = create_shader_module(handle, downsample_frag);
-    if (vertex && fragment)
-        out->pipeline_ = create_pipeline(handle, out->layout_, vertex, fragment);
-    if (vertex)
-        vkDestroyShaderModule(handle, vertex, nullptr);
-    if (fragment)
-        vkDestroyShaderModule(handle, fragment, nullptr);
+    out->pipeline_ = create_fullscreen_pipeline(handle, out->layout_, downsample_frag, picture_format);
     if (!out->pipeline_)
         return nullptr;
     return out;

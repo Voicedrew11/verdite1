@@ -2,6 +2,7 @@
 
 #include <kf/renderer/backend.h>
 
+#include <fullscreen_vert.h>
 #include <world_frag.h>
 #include <world_vert.h>
 
@@ -11,9 +12,6 @@
 
 namespace kf {
 namespace {
-// The push constants of shaders/draw.glsl.
-constexpr uint32_t draw_constants_size = 32;
-
 static_assert(sizeof(GpuVertex) == 52);
 static_assert(offsetof(GpuVertex, cx) == 12 && offsetof(GpuVertex, u) == 24 && offsetof(GpuVertex, uv_bounds) == 32 &&
               offsetof(GpuVertex, color) == 40 && offsetof(GpuVertex, layer) == 44 && offsetof(GpuVertex, entity) == 48);
@@ -28,6 +26,7 @@ constexpr std::array<VkVertexInputAttributeDescription, 7> vertex_attributes = {
     {5, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(GpuVertex, layer)},
     {6, 0, VK_FORMAT_R16G16_UINT, offsetof(GpuVertex, entity)},
 }};
+constexpr VkVertexInputBindingDescription vertex_binding{0, sizeof(GpuVertex), VK_VERTEX_INPUT_RATE_VERTEX};
 
 VkPipelineColorBlendAttachmentState blend_state(BlendEquation equation) {
     VkPipelineColorBlendAttachmentState out{};
@@ -74,6 +73,117 @@ VkShaderModule create_shader_module(VkDevice device, std::span<const uint32_t> c
     return module;
 }
 
+VkPipelineVertexInputStateCreateInfo face_vertex_input() {
+    VkPipelineVertexInputStateCreateInfo out{};
+    out.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    out.vertexBindingDescriptionCount = 1;
+    out.pVertexBindingDescriptions = &vertex_binding;
+    out.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertex_attributes.size());
+    out.pVertexAttributeDescriptions = vertex_attributes.data();
+    return out;
+}
+
+VkSampler create_sampler(VkDevice device, VkFilter filter) {
+    VkSamplerCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = filter;
+    info.minFilter = filter;
+    info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    return sampler;
+}
+
+VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, std::span<const uint32_t> fragment,
+                                      VkFormat format) {
+    VkShaderModule vertex_module = create_shader_module(device, fullscreen_vert);
+    VkShaderModule fragment_module = create_shader_module(device, fragment);
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (vertex_module && fragment_module) {
+        std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vertex_module;
+        stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = fragment_module;
+        stages[1].pName = "main";
+        VkPipelineVertexInputStateCreateInfo vertex_input{};
+        vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        VkPipelineInputAssemblyStateCreateInfo assembly{};
+        assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo viewport{};
+        viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport.viewportCount = 1;
+        viewport.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo raster{};
+        raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        raster.polygonMode = VK_POLYGON_MODE_FILL;
+        raster.cullMode = VK_CULL_MODE_NONE;
+        raster.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo multisample{};
+        multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState attachment{};
+        attachment.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo blend{};
+        blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        blend.attachmentCount = 1;
+        blend.pAttachments = &attachment;
+        const std::array<VkDynamicState, 2> dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic{};
+        dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+        dynamic.pDynamicStates = dynamic_states.data();
+        VkPipelineRenderingCreateInfoKHR rendering{};
+        rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachmentFormats = &format;
+        VkGraphicsPipelineCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        info.pNext = &rendering;
+        info.stageCount = static_cast<uint32_t>(stages.size());
+        info.pStages = stages.data();
+        info.pVertexInputState = &vertex_input;
+        info.pInputAssemblyState = &assembly;
+        info.pViewportState = &viewport;
+        info.pRasterizationState = &raster;
+        info.pMultisampleState = &multisample;
+        info.pColorBlendState = &blend;
+        info.pDynamicState = &dynamic;
+        info.layout = layout;
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
+            pipeline = VK_NULL_HANDLE;
+    }
+    if (vertex_module)
+        vkDestroyShaderModule(device, vertex_module, nullptr);
+    if (fragment_module)
+        vkDestroyShaderModule(device, fragment_module, nullptr);
+    return pipeline;
+}
+
+VkPipelineLayout create_face_pipeline_layout(VkDevice device, std::span<const VkDescriptorSetLayout> sets) {
+    const VkPushConstantRange constants{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                        sizeof(DrawConstants)};
+    VkPipelineLayoutCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    info.setLayoutCount = static_cast<uint32_t>(sets.size());
+    info.pSetLayouts = sets.data();
+    info.pushConstantRangeCount = 1;
+    info.pPushConstantRanges = &constants;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    if (vkCreatePipelineLayout(device, &info, nullptr, &layout) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    return layout;
+}
+
 VkDescriptorSetLayout create_world_set_layout(VkDevice device) {
     std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
     bindings[0].binding = 0;
@@ -94,19 +204,13 @@ VkDescriptorSetLayout create_world_set_layout(VkDevice device) {
     return layout;
 }
 
-std::unique_ptr<WorldPipelines> WorldPipelines::create(VkDevice device, VkDescriptorSetLayout set_layout,
+std::unique_ptr<WorldPipelines> WorldPipelines::create(VkDevice device, std::span<const VkDescriptorSetLayout> sets,
                                                        VkFormat color, VkFormat depth) {
     auto out = std::make_unique<WorldPipelines>(Key{}, device);
     out->color_ = color;
     out->depth_ = depth;
-    VkPushConstantRange constants{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, draw_constants_size};
-    VkPipelineLayoutCreateInfo layout_info{};
-    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &set_layout;
-    layout_info.pushConstantRangeCount = 1;
-    layout_info.pPushConstantRanges = &constants;
-    if (vkCreatePipelineLayout(device, &layout_info, nullptr, &out->layout_) != VK_SUCCESS)
+    out->layout_ = create_face_pipeline_layout(device, sets);
+    if (!out->layout_)
         return nullptr;
     out->vertex_ = create_shader_module(device, world_vert);
     out->fragment_ = create_shader_module(device, world_frag);
@@ -147,13 +251,7 @@ VkPipeline WorldPipelines::build(PipelineKey key) const {
     stages[1].module = fragment_;
     stages[1].pName = "main";
 
-    VkVertexInputBindingDescription binding{0, sizeof(GpuVertex), VK_VERTEX_INPUT_RATE_VERTEX};
-    VkPipelineVertexInputStateCreateInfo vertex_input{};
-    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input.vertexBindingDescriptionCount = 1;
-    vertex_input.pVertexBindingDescriptions = &binding;
-    vertex_input.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertex_attributes.size());
-    vertex_input.pVertexAttributeDescriptions = vertex_attributes.data();
+    const VkPipelineVertexInputStateCreateInfo vertex_input = face_vertex_input();
 
     VkPipelineInputAssemblyStateCreateInfo assembly{};
     assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;

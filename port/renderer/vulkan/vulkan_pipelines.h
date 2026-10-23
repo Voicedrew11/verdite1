@@ -1,15 +1,31 @@
 #ifndef KF_RENDERER_VULKAN_PIPELINES_H
 #define KF_RENDERER_VULKAN_PIPELINES_H
 // The pipelines that draw a game update's faces: one per blend equation and
-// depth state, made when first needed, for one colour and depth format.
+// depth state, made when first needed, for one colour and depth format. Also
+// what the backend's other pipelines share with them.
 #include "vulkan_device.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>
 
 namespace kf {
+// The push constants of shaders/draw.glsl.
+struct DrawConstants {
+    std::array<float, 2> view_columns;   // columns left of the original 320, half the logical width
+    std::array<float, 2> center;         // projection centre in the original 320 columns
+    float projection_distance;
+    uint32_t flags;                      // draw_* below
+    uint32_t pixel_scale;
+    uint32_t blend;
+};
+static_assert(sizeof(DrawConstants) == 32);
+constexpr uint32_t draw_reproject = 1, draw_whole_pixels = 2, draw_true_color = 4, draw_subtract_stp_pass = 8,
+                   draw_filter_bilinear = 16, draw_filter_three_point = 32, draw_occlusion = 64,
+                   draw_surface_pass = 128;
+
 // The fixed blend equations world.frag's outputs are written for.
 enum class BlendEquation : std::uint8_t {
     None,              // src
@@ -28,9 +44,23 @@ struct PipelineKey {
 // SPIR-V as glslang embeds it (generated/shaders/<name>.h). VK_NULL_HANDLE on failure.
 VkShaderModule create_shader_module(VkDevice device, std::span<const uint32_t> code);
 
-// The descriptor set every world pipeline uses: binding 0 the texture pages,
+// How GpuVertex reaches world.vert, for every pipeline that draws faces.
+VkPipelineVertexInputStateCreateInfo face_vertex_input();
+
+// Clamped to the edge, mipmaps unused. VK_NULL_HANDLE on failure.
+VkSampler create_sampler(VkDevice device, VkFilter filter);
+
+// One triangle over the whole of a target of this format (fullscreen.vert),
+// drawn with fragment and no blending; viewport and scissor are dynamic.
+// VK_NULL_HANDLE on failure.
+VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, std::span<const uint32_t> fragment,
+                                      VkFormat format);
+
+// Set 0 of every pipeline that draws faces: binding 0 the texture pages,
 // binding 1 the motions. The caller owns it and keeps it past every pipeline.
 VkDescriptorSetLayout create_world_set_layout(VkDevice device);
+// A pipeline layout over these sets with DrawConstants pushed to both stages.
+VkPipelineLayout create_face_pipeline_layout(VkDevice device, std::span<const VkDescriptorSetLayout> sets);
 
 class WorldPipelines {
     struct Key {
@@ -39,9 +69,10 @@ class WorldPipelines {
 
 public:
     WorldPipelines(Key, VkDevice device) : device_(device) {}
+    // sets: the world set, then the occlusion set (vulkan_ambient_occlusion.h).
     // Null on failure.
-    static std::unique_ptr<WorldPipelines> create(VkDevice device, VkDescriptorSetLayout set_layout, VkFormat color,
-                                                  VkFormat depth);
+    static std::unique_ptr<WorldPipelines> create(VkDevice device, std::span<const VkDescriptorSetLayout> sets,
+                                                  VkFormat color, VkFormat depth);
     ~WorldPipelines();
     WorldPipelines(const WorldPipelines &) = delete;
     WorldPipelines &operator=(const WorldPipelines &) = delete;

@@ -3,10 +3,12 @@
 // Without a window it draws the target only (tests, headless captures).
 #include <kf/renderer/backend.h>
 
+#include "vulkan_ambient_occlusion.h"
 #include "vulkan_device.h"
 #include "vulkan_downsample.h"
 #include "vulkan_pipelines.h"
 #include "vulkan_resources.h"
+#include "vulkan_surfaces.h"
 #include "vulkan_swapchain.h"
 
 #include <SDL3/SDL_video.h>
@@ -27,19 +29,6 @@ constexpr VkDeviceSize motion_bytes = sizeof(Motion);
 // The target is cleared and drawn at the original 15-bit precision when it can be.
 constexpr VkFormat classic_format = VK_FORMAT_A1R5G5B5_UNORM_PACK16;
 constexpr VkFormat true_color_format = VK_FORMAT_R8G8B8A8_UNORM;
-
-// The push constants of shaders/draw.glsl.
-struct DrawConstants {
-    std::array<float, 2> view_columns;
-    std::array<float, 2> center;
-    float projection_distance;
-    uint32_t flags;
-    uint32_t pixel_scale;
-    uint32_t blend;
-};
-static_assert(sizeof(DrawConstants) == 32);
-constexpr uint32_t draw_reproject = 1, draw_whole_pixels = 2, draw_true_color = 4, draw_subtract_stp_pass = 8,
-                   draw_filter_bilinear = 16, draw_filter_three_point = 32;
 
 // The fixed equations each blend mode is drawn with, in order.
 struct BlendPass {
@@ -86,6 +75,12 @@ public:
 
     Tier tier() const override { return Tier::Balanced; }
     const char *name() const override { return "Vulkan"; }
+    PictureOptions drawable(const PictureOptions &wanted) const override {
+        PictureOptions out = within_tier(wanted, Tier::Balanced);
+        out.ambient_occlusion = wanted.ambient_occlusion;
+        out.occlusion_quality = wanted.occlusion_quality;
+        return out;
+    }
     bool set_target(int logical_width, int scale) override;
     void set_options(const PictureOptions &options) override;
     void upload_layer(u8 layer, const Image &texels) override;
@@ -105,12 +100,15 @@ private:
     bool make_pages();
     bool make_frame_slots();
     void fit_downsample();
+    void fit_occlusion();
     bool flush_layers();
     bool wait_for_frames();
     bool write_motions(FrameSlot &slot, std::span<const Motion> motions);
     VkRect2D clip_rect() const;
+    DrawConstants draw_constants(const FrameView &view) const;
+    void measure_occlusion(VkCommandBuffer commands, const DrawConstants &constants, const FrameSlot &slot);
     void draw_world(VkCommandBuffer commands, const FrameView &view, const FrameSlot &slot);
-    void draw_runs(VkCommandBuffer commands, DrawConstants constants);
+    void draw_runs(VkCommandBuffer commands, DrawConstants constants, const FrameSlot &slot);
     const GpuImage &shown_picture(VkCommandBuffer commands);
     void blit_to(VkCommandBuffer commands, const GpuImage &source, VkImage image, VkExtent2D extent);
     void draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, ImDrawData *overlay);
@@ -124,6 +122,9 @@ private:
     std::unique_ptr<WorldPipelines> pipelines_;
     std::unique_ptr<Downsample> downsample_;   // window only
     bool downsampled_ = false;                 // the window shows downsample_'s picture
+    std::unique_ptr<SurfaceBuffer> surfaces_;
+    std::unique_ptr<AmbientOcclusion> occlusion_;
+    bool occlusion_ready_ = false;             // surfaces_ and occlusion_ fit the target
     GpuImage target_, depth_;
     VkImageLayout target_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     GpuImage pages_;
@@ -161,6 +162,8 @@ VulkanBackend::~VulkanBackend() {
             vkDestroySemaphore(device, slot.acquired, nullptr);
     }
     pipelines_.reset();
+    occlusion_.reset();
+    surfaces_.reset();
     if (descriptor_pool_)
         vkDestroyDescriptorPool(device, descriptor_pool_, nullptr);
     if (set_layout_)
@@ -183,6 +186,12 @@ bool VulkanBackend::start(std::string &error) {
     }
     if (!make_pages() || !make_frame_slots()) {
         error = "texture or frame resources";
+        return false;
+    }
+    surfaces_ = SurfaceBuffer::create(*device_, set_layout_, depth_format_);
+    occlusion_ = AmbientOcclusion::create(*device_);
+    if (!surfaces_ || !occlusion_) {
+        error = "ambient occlusion pipelines";
         return false;
     }
     if (!make_target()) {
@@ -222,7 +231,8 @@ bool VulkanBackend::make_target() {
     if (!new_target || !new_depth)
         return false;
     if (!pipelines_ || pipelines_->color_format() != format) {
-        auto made = WorldPipelines::create(device_->device(), set_layout_, format, depth_format_);
+        const std::array<VkDescriptorSetLayout, 2> sets = {set_layout_, occlusion_->set_layout()};
+        auto made = WorldPipelines::create(device_->device(), sets, format, depth_format_);
         if (!made)
             return false;
         pipelines_ = std::move(made);
@@ -243,6 +253,7 @@ bool VulkanBackend::make_target() {
     target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     frame_drawn_ = false;
     fit_downsample();
+    fit_occlusion();
     return true;
 }
 
@@ -252,6 +263,20 @@ bool VulkanBackend::make_target() {
 void VulkanBackend::fit_downsample() {
     const auto factor = static_cast<uint32_t>(std::max(options_.supersample, 1));
     downsampled_ = downsample_ && target_ && factor > 1 && downsample_->fit(target_, factor);
+}
+
+// Occlusion is measured once per shown pixel: the target's, or the averaged
+// picture's when supersampling. The frames in flight are done with the old buffers.
+void VulkanBackend::fit_occlusion() {
+    occlusion_ready_ = false;
+    if (options_.ambient_occlusion <= 0.0f || !target_)
+        return;
+    const uint32_t factor = downsampled_ ? static_cast<uint32_t>(options_.supersample) : 1;
+    const ImageShape &shape = target_.shape();
+    occlusion_ready_ = surfaces_->fit(shape.width / factor, shape.height / factor) &&
+                       occlusion_->fit(surfaces_->surfaces(), logical_width_, scale_, options_.occlusion_quality);
+    if (!occlusion_ready_)
+        std::fprintf(stderr, "[vulkan] cannot make the ambient occlusion buffers\n");
 }
 
 // One RGBA8 layer per texture page and palette, sampled as the PS1 did.
@@ -354,11 +379,18 @@ bool VulkanBackend::set_target(int logical_width, int scale) {
 void VulkanBackend::set_options(const PictureOptions &options) {
     const bool precision_changed = options.true_color != options_.true_color;
     const bool supersample_changed = options.supersample != options_.supersample;
+    const bool occlusion_changed = (options.ambient_occlusion > 0.0f) != (options_.ambient_occlusion > 0.0f) ||
+                                   options.occlusion_quality != options_.occlusion_quality;
     options_ = options;
-    if (precision_changed && target_ && !make_target())
-        std::fprintf(stderr, "[vulkan] cannot remake the render target\n");
-    else if (supersample_changed && wait_for_frames())
+    if (precision_changed && target_) {
+        if (!make_target())
+            std::fprintf(stderr, "[vulkan] cannot remake the render target\n");
+        return;
+    }
+    if ((supersample_changed || occlusion_changed) && wait_for_frames()) {
         fit_downsample();
+        fit_occlusion();
+    }
 }
 
 void VulkanBackend::upload_layer(u8 layer, const Image &texels) {
@@ -456,7 +488,32 @@ VkRect2D VulkanBackend::clip_rect() const {
             {static_cast<uint32_t>((right - left) * scale_), static_cast<uint32_t>((bottom - top) * scale_)}};
 }
 
+DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
+    DrawConstants constants{};
+    const int extra_columns = (logical_width_ - render_width) / 2;
+    constants.view_columns = {static_cast<float>(extra_columns), static_cast<float>(logical_width_) / 2.0f};
+    constants.center = {view.center_x, view.center_y};
+    constants.projection_distance = view.projection_distance;
+    constants.flags = (view.reproject ? draw_reproject : 0) | (view.whole_pixels ? draw_whole_pixels : 0) |
+                      (options_.true_color ? draw_true_color : 0) |
+                      (options_.texture_filter == TextureFilter::Bilinear ? draw_filter_bilinear : 0) |
+                      (options_.texture_filter == TextureFilter::ThreePoint ? draw_filter_three_point : 0) |
+                      (occlusion_ready_ ? draw_occlusion : 0);
+    constants.pixel_scale = static_cast<uint32_t>(scale_);
+    return constants;
+}
+
+// The surfaces as this frame shows them, and the occlusion measured over them.
+void VulkanBackend::measure_occlusion(VkCommandBuffer commands, const DrawConstants &constants, const FrameSlot &slot) {
+    const SurfaceFrame frame{vertices_ ? vertices_.buffer() : VK_NULL_HANDLE, runs_, slot.descriptors, constants};
+    surfaces_->record(commands, frame);
+    occlusion_->record(commands, constants, options_.ambient_occlusion);
+}
+
 void VulkanBackend::draw_world(VkCommandBuffer commands, const FrameView &view, const FrameSlot &slot) {
+    const DrawConstants constants = draw_constants(view);
+    if (occlusion_ready_)
+        measure_occlusion(commands, constants, slot);
     transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, target_layout_,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     transition(commands, depth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -497,29 +554,18 @@ void VulkanBackend::draw_world(VkCommandBuffer commands, const FrameView &view, 
         const VkClearRect rect{clip, 0, 1};
         vkCmdClearAttachments(commands, 1, &clear, 1, &rect);
     }
-    if (!runs_.empty() && vertices_) {
-        const VkDeviceSize offset = 0;
-        VkBuffer buffer = vertices_.buffer();
-        vkCmdBindVertexBuffers(commands, 0, 1, &buffer, &offset);
-        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_->layout(), 0, 1,
-                                &slot.descriptors, 0, nullptr);
-        DrawConstants constants{};
-        const int extra_columns = (logical_width_ - render_width) / 2;
-        constants.view_columns = {static_cast<float>(extra_columns),
-                                  static_cast<float>(logical_width_) / 2.0f};
-        constants.center = {view.center_x, view.center_y};
-        constants.projection_distance = view.projection_distance;
-        constants.flags = (view.reproject ? draw_reproject : 0) | (view.whole_pixels ? draw_whole_pixels : 0) |
-                          (options_.true_color ? draw_true_color : 0) |
-                          (options_.texture_filter == TextureFilter::Bilinear ? draw_filter_bilinear : 0) |
-                          (options_.texture_filter == TextureFilter::ThreePoint ? draw_filter_three_point : 0);
-        constants.pixel_scale = static_cast<uint32_t>(scale_);
-        draw_runs(commands, constants);
-    }
+    if (!runs_.empty() && vertices_)
+        draw_runs(commands, constants, slot);
     vkCmdEndRenderingKHR(commands);
 }
 
-void VulkanBackend::draw_runs(VkCommandBuffer commands, DrawConstants constants) {
+void VulkanBackend::draw_runs(VkCommandBuffer commands, DrawConstants constants, const FrameSlot &slot) {
+    const VkDeviceSize offset = 0;
+    VkBuffer buffer = vertices_.buffer();
+    vkCmdBindVertexBuffers(commands, 0, 1, &buffer, &offset);
+    const std::array<VkDescriptorSet, 2> sets = {slot.descriptors, occlusion_->occlusion_set()};
+    vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_->layout(), 0,
+                            static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
     const uint32_t base_flags = constants.flags;
     for (const DrawRun &run : runs_) {
         constants.blend = static_cast<uint32_t>(run.state.blend);

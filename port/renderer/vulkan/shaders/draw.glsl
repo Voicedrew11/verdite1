@@ -16,6 +16,10 @@ const uint draw_true_color = 4u;
 const uint draw_subtract_stp_pass = 8u;
 const uint draw_filter_bilinear = 16u;
 const uint draw_filter_three_point = 32u;
+// The world pass darkens its faces by the ambient occlusion (world.frag).
+const uint draw_occlusion = 64u;
+// The surface pass (vulkan_surfaces.h): every world face in perspective.
+const uint draw_surface_pass = 128u;
 
 const uint blend_opaque = 0u;
 const uint blend_average = 1u;

@@ -232,7 +232,8 @@ find_program(KF_GLSLANG glslangValidator REQUIRED)
 set(KF_SHADER_DIR ${CMAKE_SOURCE_DIR}/port/renderer/vulkan/shaders)
 set(KF_SHADER_OUT ${CMAKE_BINARY_DIR}/generated/shaders)
 set(KF_SHADER_HEADERS)
-foreach(shader world.vert world.frag downsample.vert downsample.frag)
+foreach(shader world.vert world.frag surface.frag fullscreen.vert downsample.frag occlusion.frag
+    occlusion_blur.frag)
   string(REPLACE "." "_" symbol ${shader})
   add_custom_command(OUTPUT ${KF_SHADER_OUT}/${symbol}.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${KF_SHADER_OUT}
@@ -248,7 +249,8 @@ target_compile_definitions(kf_vulkan_libraries PUBLIC VK_NO_PROTOTYPES VMA_STATI
 target_link_libraries(kf_vulkan_libraries PUBLIC Vulkan::Headers volk::volk GPUOpen::VulkanMemoryAllocator
   vk-bootstrap::vk-bootstrap kf_imgui)
 add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/renderer/vulkan/vulkan_device.cpp
-  port/renderer/vulkan/vulkan_downsample.cpp port/renderer/vulkan/vulkan_pipelines.cpp
+  port/renderer/vulkan/vulkan_ambient_occlusion.cpp port/renderer/vulkan/vulkan_downsample.cpp
+  port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_surfaces.cpp
   port/renderer/vulkan/vulkan_resources.cpp port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})
 target_include_directories(kf_vulkan PUBLIC ${KF_INCLUDES} PRIVATE ${KF_SHADER_OUT})
 target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries SDL3::SDL3)

@@ -7,11 +7,15 @@
 #include "draw.glsl"
 
 layout(set = 0, binding = 0) uniform sampler2DArray pages;
+// Light left by ambient occlusion and the camera depth it was measured at
+// (vulkan_ambient_occlusion.h).
+layout(set = 1, binding = 0) uniform sampler2D occlusion;
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 1) in vec3 in_shade;
 layout(location = 2) flat in uvec4 in_uv_bounds;
 layout(location = 3) flat in uvec4 in_flags;   // layer, texturing, dither, world
+layout(location = 4) in vec3 in_camera;        // z = 0: not world
 
 layout(location = 0) out vec4 out_color;
 
@@ -19,6 +23,8 @@ const float rgb8_max = 255.0;
 const int rgb5_max = 31;
 // Decoded texels mark STP with alpha 128 and opaque texels with 255.
 const float stp_alpha_threshold = 0.75;
+// Depths this far apart, relative to the nearer, are different surfaces.
+const float same_surface = 0.05;
 const int dither_offsets[16] = int[16](-4, 0, -3, 1, 2, -2, 3, -1, -3, 1, -4, 0, 3, -1, 2, -2);
 
 // Smoothed sampling for world surfaces (Balanced). Taps stay inside the face's own
@@ -48,9 +54,33 @@ vec4 filtered(vec4 nearest) {
     return vec4((t00.rgb * w.x + t10.rgb * w.y + t01.rgb * w.z + t11.rgb * w.w) / total, nearest.a);
 }
 
+// The light ambient occlusion leaves this fragment: the measured texels around
+// it that are its own surface, by bilinear weight. 1 where none are: the HUD,
+// the held weapon, translucent faces, a face drawn over a nearer one.
+float occlusion_light() {
+    if ((draw.flags & draw_occlusion) == 0u || in_camera.z <= 0.0)
+        return 1.0;
+    vec2 target = vec2(draw.view_columns.y * 2.0, 240.0) * float(draw.pixel_scale);
+    ivec2 size = textureSize(occlusion, 0);
+    vec2 position = gl_FragCoord.xy / target * vec2(size) - 0.5;
+    ivec2 base = ivec2(floor(position));
+    vec2 f = fract(position);
+    float sum = 0.0, total = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        ivec2 offset = ivec2(i & 1, i >> 1);
+        vec2 texel = texelFetch(occlusion, clamp(base + offset, ivec2(0), size - 1), 0).rg;
+        if (abs(texel.g - in_camera.z) > same_surface * in_camera.z)
+            continue;
+        float weight = max((offset.x == 1 ? f.x : 1.0 - f.x) * (offset.y == 1 ? f.y : 1.0 - f.y), 1e-3);
+        sum += texel.r * weight;
+        total += weight;
+    }
+    return total > 0.0 ? sum / total : 1.0;
+}
+
 // The PS1's 15-bit colour: 5-bit channels, dithered on the original pixel grid.
-// Returns 0..1 in steps of 1/31.
-vec3 classic_color(vec4 texel_color, uint texturing) {
+// Returns 0..1 in steps of 1/31. light: what ambient occlusion leaves, 0..1.
+vec3 classic_color(vec4 texel_color, uint texturing, float light) {
     ivec3 shade = ivec3(clamp(floor(in_shade), 0.0, rgb8_max));
     ivec3 texel = ivec3(floor(texel_color.rgb * float(rgb5_max) + 0.5));
     ivec3 foreground = shade;
@@ -58,6 +88,7 @@ vec3 classic_color(vec4 texel_color, uint texturing) {
         foreground = (texel * shade) >> 4;
     if (texturing == texturing_raw)
         foreground = texel << 3;
+    foreground = ivec3(floor(vec3(foreground) * light + 0.5));
     int offset = 0;
     if (in_flags.z != 0u) {
         ivec2 logical = ivec2(gl_FragCoord.xy) / int(draw.pixel_scale);
@@ -67,14 +98,14 @@ vec3 classic_color(vec4 texel_color, uint texturing) {
 }
 
 // 24-bit colour, no dither (Balanced's true colour), 0..1.
-vec3 true_color(vec4 texel_color, uint texturing) {
+vec3 true_color(vec4 texel_color, uint texturing, float light) {
     vec3 shade = clamp(floor(in_shade), 0.0, rgb8_max);
     vec3 base = shade;
     if (texturing == texturing_modulated)
         base = texel_color.rgb * float(rgb5_max) * shade / 16.0;
     if (texturing == texturing_raw)
         base = texel_color.rgb * float(rgb5_max << 3);
-    return clamp(base, 0.0, rgb8_max) / rgb8_max;
+    return clamp(base * light, 0.0, rgb8_max) / rgb8_max;
 }
 
 // A quarter of the colour, truncated to 15 bits as the PS1 did unless in true colour.
@@ -116,8 +147,9 @@ void main() {
         if ((draw.flags & (draw_filter_bilinear | draw_filter_three_point)) != 0u && in_flags.w != 0u)
             texel_color = filtered(texel_color);
     }
-    vec3 color = (draw.flags & draw_true_color) != 0u ? true_color(texel_color, texturing)
-                                                      : classic_color(texel_color, texturing);
+    float light = occlusion_light();
+    vec3 color = (draw.flags & draw_true_color) != 0u ? true_color(texel_color, texturing, light)
+                                                      : classic_color(texel_color, texturing, light);
     // A textured face blends only its STP texels; an untextured one blends whole.
     bool stp = texturing == texturing_solid || texel_color.a < stp_alpha_threshold;
     out_color = blend_output(color, stp);
