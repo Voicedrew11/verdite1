@@ -232,7 +232,7 @@ find_program(KF_GLSLANG glslangValidator REQUIRED)
 set(KF_SHADER_DIR ${CMAKE_SOURCE_DIR}/port/renderer/vulkan/shaders)
 set(KF_SHADER_OUT ${CMAKE_BINARY_DIR}/generated/shaders)
 set(KF_SHADER_HEADERS)
-foreach(shader world.vert world.frag)
+foreach(shader world.vert world.frag downsample.vert downsample.frag)
   string(REPLACE "." "_" symbol ${shader})
   add_custom_command(OUTPUT ${KF_SHADER_OUT}/${symbol}.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${KF_SHADER_OUT}
@@ -248,8 +248,8 @@ target_compile_definitions(kf_vulkan_libraries PUBLIC VK_NO_PROTOTYPES VMA_STATI
 target_link_libraries(kf_vulkan_libraries PUBLIC Vulkan::Headers volk::volk GPUOpen::VulkanMemoryAllocator
   vk-bootstrap::vk-bootstrap kf_imgui)
 add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/renderer/vulkan/vulkan_device.cpp
-  port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_resources.cpp
-  port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})
+  port/renderer/vulkan/vulkan_downsample.cpp port/renderer/vulkan/vulkan_pipelines.cpp
+  port/renderer/vulkan/vulkan_resources.cpp port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})
 target_include_directories(kf_vulkan PUBLIC ${KF_INCLUDES} PRIVATE ${KF_SHADER_OUT})
 target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries SDL3::SDL3)
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -291,6 +291,7 @@ if(doctest_FOUND)
   # It loads the host's Vulkan loader and drivers, as scripts/run-linux.sh does; 77: no device.
   add_executable(kf_vulkan_tests port/tests/vulkan.cpp)
   target_link_libraries(kf_vulkan_tests PRIVATE kf_vulkan kf_support doctest::doctest)
+  target_include_directories(kf_vulkan_tests PRIVATE port/renderer/vulkan)
   target_compile_options(kf_vulkan_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   set(KF_HOST_LIBRARY_PATH "/usr/lib64" CACHE PATH "Where the host's libvulkan.so.1 is, for the Vulkan tests")
   foreach(device gpu llvmpipe)

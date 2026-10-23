@@ -5,9 +5,14 @@
 
 #include <kf/renderer/backend.h>
 
+#include "vulkan_device.h"
+#include "vulkan_downsample.h"
+#include "vulkan_resources.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 using namespace kf;
@@ -114,7 +119,80 @@ int widest_step(Rgb5 a, Rgb5 b) {
 DrawRun run_of(BlendMode blend, std::size_t first, std::size_t count) {
     return {{blend, false, false}, static_cast<u32>(first), static_cast<u32>(count)};
 }
+
+// A test pattern: no two pixels of a block alike, so a wrong tap shows.
+u8 pattern_channel(int x, int y, int channel) { return static_cast<u8>((x * 37 + y * 11 + channel * 50) % 256); }
+
+// Averages a pattern of this size through Downsample on its own device and
+// returns the picture, RGBA8.
+std::vector<u8> downsampled_pattern(const VulkanDevice &device, uint32_t width, uint32_t height, uint32_t factor) {
+    std::unique_ptr<Downsample> downsample = Downsample::create(device);
+    REQUIRE(downsample);
+    const ImageShape shape{width, height, 1, VK_FORMAT_R8G8B8A8_UNORM,
+                           VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    const GpuImage target = GpuImage::create(device.device(), device.allocator(), shape);
+    REQUIRE(target);
+    REQUIRE(downsample->fit(target, factor));
+    GpuBuffer upload = GpuBuffer::create(device.allocator(), VkDeviceSize{width} * height * 4,
+                                         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, BufferAccess::HostWrites);
+    const uint32_t shown_width = width / factor, shown_height = height / factor;
+    GpuBuffer readback = GpuBuffer::create(device.allocator(), VkDeviceSize{shown_width} * shown_height * 4,
+                                           VK_BUFFER_USAGE_TRANSFER_DST_BIT, BufferAccess::HostReads);
+    REQUIRE((upload && upload.data() && readback && readback.data()));
+    auto *texels = static_cast<u8 *>(upload.data());
+    for (uint32_t y = 0; y < height; ++y)
+        for (uint32_t x = 0; x < width; ++x)
+            for (int c = 0; c < 4; ++c)
+                texels[(y * width + x) * 4 + c] = c == 3 ? 255 : pattern_channel(static_cast<int>(x), static_cast<int>(y), c);
+    upload.flush();
+    const bool ran = device.run_now([&](VkCommandBuffer commands) {
+        transition(commands, target.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {width, height, 1};
+        vkCmdCopyBufferToImage(commands, upload.buffer(), target.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        transition(commands, target.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        downsample->record(commands);
+        copy.imageExtent = {shown_width, shown_height, 1};
+        vkCmdCopyImageToBuffer(commands, downsample->picture().image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               readback.buffer(), 1, &copy);
+    });
+    REQUIRE(ran);
+    readback.invalidate();
+    std::vector<u8> out(std::size_t{shown_width} * shown_height * 4);
+    std::memcpy(out.data(), readback.data(), out.size());
+    return out;
+}
 } // namespace
+
+TEST_CASE("vulkan: supersampling shows the mean of each N x N block") {
+    VulkanDeviceStart started = VulkanDevice::create(nullptr);
+    REQUIRE(started.device);
+    const VulkanDevice &device = *started.device;
+    constexpr uint32_t width = 12, height = 6;
+    for (const uint32_t factor : {2u, 3u}) {
+        CAPTURE(factor);
+        const std::vector<u8> picture = downsampled_pattern(device, width, height, factor);
+        const uint32_t shown_width = width / factor;
+        for (uint32_t y = 0; y < height / factor; ++y) {
+            for (uint32_t x = 0; x < shown_width; ++x) {
+                for (int c = 0; c < 3; ++c) {
+                    int sum = 0;
+                    for (uint32_t j = 0; j < factor; ++j)
+                        for (uint32_t i = 0; i < factor; ++i)
+                            sum += pattern_channel(static_cast<int>(x * factor + i), static_cast<int>(y * factor + j), c);
+                    const double mean = static_cast<double>(sum) / (factor * factor);
+                    CAPTURE(x);
+                    CAPTURE(y);
+                    CHECK(std::abs(picture[(y * shown_width + x) * 4 + c] - mean) <= 0.51);
+                }
+            }
+        }
+    }
+    CHECK(device.validation_errors() == 0);
+}
 
 TEST_CASE("vulkan: the clear colour is cut to 15 bits") {
     FrameStyle style;

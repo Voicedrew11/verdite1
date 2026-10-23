@@ -4,6 +4,7 @@
 #include <kf/renderer/backend.h>
 
 #include "vulkan_device.h"
+#include "vulkan_downsample.h"
 #include "vulkan_pipelines.h"
 #include "vulkan_resources.h"
 #include "vulkan_swapchain.h"
@@ -103,13 +104,15 @@ private:
     bool make_target();
     bool make_pages();
     bool make_frame_slots();
+    void fit_downsample();
     bool flush_layers();
     bool wait_for_frames();
     bool write_motions(FrameSlot &slot, std::span<const Motion> motions);
     VkRect2D clip_rect() const;
     void draw_world(VkCommandBuffer commands, const FrameView &view, const FrameSlot &slot);
     void draw_runs(VkCommandBuffer commands, DrawConstants constants);
-    void blit_to(VkCommandBuffer commands, VkImage image, VkExtent2D extent);
+    const GpuImage &shown_picture(VkCommandBuffer commands);
+    void blit_to(VkCommandBuffer commands, const GpuImage &source, VkImage image, VkExtent2D extent);
     void draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, ImDrawData *overlay);
 
     std::unique_ptr<VulkanDevice> device_;
@@ -119,6 +122,8 @@ private:
     int logical_width_ = render_width, scale_ = 1;
     VkFormat depth_format_ = VK_FORMAT_D32_SFLOAT;
     std::unique_ptr<WorldPipelines> pipelines_;
+    std::unique_ptr<Downsample> downsample_;   // window only
+    bool downsampled_ = false;                 // the window shows downsample_'s picture
     GpuImage target_, depth_;
     VkImageLayout target_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     GpuImage pages_;
@@ -168,8 +173,14 @@ bool VulkanBackend::start(std::string &error) {
     const VkFormatFeatureFlags depth_features = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
     if (!format_supports(device_->physical(), depth_format_, depth_features))
         depth_format_ = VK_FORMAT_D16_UNORM;
-    if (window_)
+    if (window_) {
         swapchain_ = std::make_unique<VulkanSwapchain>(*device_);
+        downsample_ = Downsample::create(*device_);
+        if (!downsample_) {
+            error = "supersampling pipeline";
+            return false;
+        }
+    }
     if (!make_pages() || !make_frame_slots()) {
         error = "texture or frame resources";
         return false;
@@ -185,7 +196,7 @@ bool VulkanBackend::start(std::string &error) {
 
 VkFormat VulkanBackend::wanted_color_format() const {
     const VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-                                        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+                                        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     if (!options_.true_color && format_supports(device_->physical(), classic_format, needed))
         return classic_format;
     return true_color_format;
@@ -200,7 +211,7 @@ bool VulkanBackend::make_target() {
     ImageShape color{static_cast<uint32_t>(logical_width_ * scale_), static_cast<uint32_t>(render_height * scale_), 1,
                      format,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                         VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT};
     ImageShape depth = color;
     depth.format = depth_format_;
@@ -231,7 +242,16 @@ bool VulkanBackend::make_target() {
     depth_ = std::move(new_depth);
     target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     frame_drawn_ = false;
+    fit_downsample();
     return true;
+}
+
+// Supersampling shows the target averaged down by its factor, when the target
+// is a whole multiple of it; otherwise the window gets the target as it is.
+// The frames in flight are done with the old picture.
+void VulkanBackend::fit_downsample() {
+    const auto factor = static_cast<uint32_t>(std::max(options_.supersample, 1));
+    downsampled_ = downsample_ && target_ && factor > 1 && downsample_->fit(target_, factor);
 }
 
 // One RGBA8 layer per texture page and palette, sampled as the PS1 did.
@@ -333,9 +353,12 @@ bool VulkanBackend::set_target(int logical_width, int scale) {
 
 void VulkanBackend::set_options(const PictureOptions &options) {
     const bool precision_changed = options.true_color != options_.true_color;
+    const bool supersample_changed = options.supersample != options_.supersample;
     options_ = options;
     if (precision_changed && target_ && !make_target())
         std::fprintf(stderr, "[vulkan] cannot remake the render target\n");
+    else if (supersample_changed && wait_for_frames())
+        fit_downsample();
 }
 
 void VulkanBackend::upload_layer(u8 layer, const Image &texels) {
@@ -514,18 +537,32 @@ void VulkanBackend::draw_runs(VkCommandBuffer commands, DrawConstants constants)
     }
 }
 
-// Letterboxes the target into a swapchain image: nearest at whole multiples,
-// smoothed otherwise.
-void VulkanBackend::blit_to(VkCommandBuffer commands, VkImage image, VkExtent2D extent) {
-    transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, target_layout_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+// What the window shows, in TRANSFER_SRC_OPTIMAL: the target, or its average
+// when supersampling.
+const GpuImage &VulkanBackend::shown_picture(VkCommandBuffer commands) {
+    if (!downsampled_) {
+        transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, target_layout_,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        return target_;
+    }
+    transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, target_layout_,
+               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    target_layout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    downsample_->record(commands);
+    return downsample_->picture();
+}
+
+// Letterboxes source (in TRANSFER_SRC_OPTIMAL) into a swapchain image: nearest
+// at whole multiples, smoothed otherwise.
+void VulkanBackend::blit_to(VkCommandBuffer commands, const GpuImage &source_image, VkImage image, VkExtent2D extent) {
     transition(commands, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     const VkClearColorValue black{};
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
     const PresentRect rect =
         letterbox(logical_width_, static_cast<int>(extent.width), static_cast<int>(extent.height));
-    const ImageShape &source = target_.shape();
+    const ImageShape &source = source_image.shape();
     if (rect.width > 0 && rect.height > 0) {
         VkImageBlit blit{};
         blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -537,7 +574,7 @@ void VulkanBackend::blit_to(VkCommandBuffer commands, VkImage image, VkExtent2D 
                            rect.height % static_cast<int>(source.height) == 0;
         const bool can_smooth = format_supports(device_->physical(), source.format,
                                                 VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
-        vkCmdBlitImage(commands, target_.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
+        vkCmdBlitImage(commands, source_image.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                        whole || !can_smooth ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
     }
@@ -646,7 +683,7 @@ void VulkanBackend::present(const FrameView &view, std::span<const RenderLight>,
         draw_world(slot.commands, view, slot);
     frame_drawn_ = true;
     if (image) {
-        blit_to(slot.commands, image->image, swapchain_->extent());
+        blit_to(slot.commands, shown_picture(slot.commands), image->image, swapchain_->extent());
         draw_overlay(slot.commands, *image, overlay);
     }
     if (vkEndCommandBuffer(slot.commands) != VK_SUCCESS)

@@ -29,17 +29,6 @@ constexpr std::array<VkVertexInputAttributeDescription, 7> vertex_attributes = {
     {6, 0, VK_FORMAT_R16G16_UINT, offsetof(GpuVertex, entity)},
 }};
 
-VkShaderModule shader_module(VkDevice device, const uint32_t *code, std::size_t bytes) {
-    VkShaderModuleCreateInfo info{};
-    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    info.codeSize = bytes;
-    info.pCode = code;
-    VkShaderModule module = VK_NULL_HANDLE;
-    if (vkCreateShaderModule(device, &info, nullptr, &module) != VK_SUCCESS)
-        return VK_NULL_HANDLE;
-    return module;
-}
-
 VkPipelineColorBlendAttachmentState blend_state(BlendEquation equation) {
     VkPipelineColorBlendAttachmentState out{};
     // The target's alpha (one bit in 15-bit colour) means nothing; leave it.
@@ -73,6 +62,17 @@ VkPipelineColorBlendAttachmentState blend_state(BlendEquation equation) {
 }
 
 } // namespace
+
+VkShaderModule create_shader_module(VkDevice device, std::span<const uint32_t> code) {
+    VkShaderModuleCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = code.size_bytes();
+    info.pCode = code.data();
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device, &info, nullptr, &module) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    return module;
+}
 
 VkDescriptorSetLayout create_world_set_layout(VkDevice device) {
     std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
@@ -108,8 +108,8 @@ std::unique_ptr<WorldPipelines> WorldPipelines::create(VkDevice device, VkDescri
     layout_info.pPushConstantRanges = &constants;
     if (vkCreatePipelineLayout(device, &layout_info, nullptr, &out->layout_) != VK_SUCCESS)
         return nullptr;
-    out->vertex_ = shader_module(device, world_vert, sizeof world_vert);
-    out->fragment_ = shader_module(device, world_frag, sizeof world_frag);
+    out->vertex_ = create_shader_module(device, world_vert);
+    out->fragment_ = create_shader_module(device, world_frag);
     if (!out->vertex_ || !out->fragment_)
         return nullptr;
     return out;

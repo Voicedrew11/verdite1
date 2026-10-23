@@ -144,8 +144,11 @@ What carries over is decisions and references, not code:
    Vulkan reaches Classic, chosen by the Renderer setting (Display, applies on
    restart; `KF_RENDERER=gl|vulkan` overrides it); then GL is deleted.
    2026-10-23: `port/renderer/vulkan/` draws Classic and the Clean options
-   but supersampling and mipmaps, offscreen-tested in `kf_vulkan_tests` on RADV
-   and llvmpipe with validation on; not yet called by the game, and no overlay.
+   but mipmaps (no Display row yet), offscreen-tested in `kf_vulkan_tests` on
+   RADV and llvmpipe with validation on, and the game draws with it, overlay
+   included, when Renderer is Vulkan; Classic waits to be judged in play.
+   Supersampling draws the target N times larger and averages each N x N block
+   before the window (`vulkan_downsample.h`); captures keep the full target.
    It needs dynamic rendering (`VK_KHR_dynamic_rendering`); render-pass
    objects for devices without it are not written.
 3. A second backend early, before the frontend sets in Vulkan-shaped habits.

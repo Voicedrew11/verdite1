@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace kf {
@@ -23,6 +24,9 @@ struct PipelineKey {
     bool depth_write = false;
     bool operator==(const PipelineKey &) const = default;
 };
+
+// SPIR-V as glslang embeds it (generated/shaders/<name>.h). VK_NULL_HANDLE on failure.
+VkShaderModule create_shader_module(VkDevice device, std::span<const uint32_t> code);
 
 // The descriptor set every world pipeline uses: binding 0 the texture pages,
 // binding 1 the motions. The caller owns it and keeps it past every pipeline.
