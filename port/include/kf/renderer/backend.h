@@ -125,6 +125,7 @@ inline PictureOptions within_tier(PictureOptions options, Tier tier) {
         options.glow = off.glow;
         options.fxaa = off.fxaa;
         options.fog = off.fog;
+        options.anisotropy = off.anisotropy;
     }
     if (tier < Tier::Balanced) {
         options.true_color = off.true_color;

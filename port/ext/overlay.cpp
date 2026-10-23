@@ -343,6 +343,16 @@ void draw_settings_window() {
             changed = true;
         }
         ImGui::SetItemTooltip("Distant textures are averaged instead of shimmering as you move.\nVulkan only.");
+        static const char *const anisotropy_labels[] = {"Off", "2x", "4x", "8x", "16x"};
+        int anisotropy_index = 0;
+        while (anisotropy_index < 4 && (2 << anisotropy_index) <= s.anisotropy)
+            ++anisotropy_index;
+        if (ImGui::Combo("Anisotropic filtering", &anisotropy_index, anisotropy_labels, 5)) {
+            s.anisotropy = 1 << anisotropy_index;
+            apply_render_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("Keeps floors and walls seen at a slant sharp into the distance.\nNeeds bilinear filtering and mipmaps. Vulkan only.");
         const char *fog_labels[] = {"Corners (original)", "Per pixel, by depth", "Per pixel, by distance"};
         if (ImGui::Combo("Fog", &s.fog, fog_labels, 3)) {
             apply_render_settings();

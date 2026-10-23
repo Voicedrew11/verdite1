@@ -82,6 +82,7 @@ public:
         out.ambient_occlusion = wanted.ambient_occlusion;
         out.occlusion_quality = wanted.occlusion_quality;
         out.fog = wanted.fog;
+        out.anisotropy = std::clamp(wanted.anisotropy, 1, static_cast<int>(device_->max_anisotropy()));
         return out;
     }
     bool set_target(int logical_width, int scale) override;
@@ -101,6 +102,8 @@ private:
     VkFormat wanted_color_format() const;
     bool make_target();
     bool make_pages();
+    bool make_smooth_sampler();
+    void bind_pages(const FrameSlot &slot);
     bool make_frame_slots();
     void fit_downsample();
     void fit_occlusion();
@@ -311,18 +314,53 @@ bool VulkanBackend::make_pages() {
     sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    if (vkCreateSampler(device_->device(), &sampler, nullptr, &nearest_) != VK_SUCCESS)
-        return false;
-    sampler.magFilter = VK_FILTER_LINEAR;
-    sampler.minFilter = VK_FILTER_LINEAR;
-    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler.maxLod = VK_LOD_CLAMP_NONE;
-    if (vkCreateSampler(device_->device(), &sampler, nullptr, &smooth_) != VK_SUCCESS)
+    if (vkCreateSampler(device_->device(), &sampler, nullptr, &nearest_) != VK_SUCCESS || !make_smooth_sampler())
         return false;
     return device_->run_now([&](VkCommandBuffer commands) {
         transition(commands, pages_.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
+}
+
+// The trilinear sampler at the anisotropy wanted (options_), replacing the old
+// one, which the frames in flight are done with. On failure the old one stays.
+bool VulkanBackend::make_smooth_sampler() {
+    VkSamplerCreateInfo sampler{};
+    sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler.magFilter = VK_FILTER_LINEAR;
+    sampler.minFilter = VK_FILTER_LINEAR;
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.maxLod = VK_LOD_CLAMP_NONE;
+    sampler.anisotropyEnable = options_.anisotropy > 1 ? VK_TRUE : VK_FALSE;
+    sampler.maxAnisotropy = static_cast<float>(options_.anisotropy);
+    VkSampler made = VK_NULL_HANDLE;
+    if (vkCreateSampler(device_->device(), &sampler, nullptr, &made) != VK_SUCCESS)
+        return false;
+    if (smooth_)
+        vkDestroySampler(device_->device(), smooth_, nullptr);
+    smooth_ = made;
+    return true;
+}
+
+// The pages through both samplers, into a slot's set.
+void VulkanBackend::bind_pages(const FrameSlot &slot) {
+    const std::array<VkDescriptorImageInfo, 2> images = {{
+        {nearest_, pages_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {smooth_, pages_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+    }};
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    for (std::size_t i = 0; i < writes.size(); ++i) {
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = slot.descriptors;
+        writes[i].dstBinding = i == 0 ? world_binding_pages : world_binding_smooth_pages;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].pImageInfo = &images[i];
+    }
+    vkUpdateDescriptorSets(device_->device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
 bool VulkanBackend::make_frame_slots() {
@@ -362,20 +400,7 @@ bool VulkanBackend::make_frame_slots() {
             vkCreateSemaphore(device, &semaphore, nullptr, &slot.acquired) != VK_SUCCESS ||
             vkAllocateDescriptorSets(device, &set, &slot.descriptors) != VK_SUCCESS)
             return false;
-        const std::array<VkDescriptorImageInfo, 2> images = {{
-            {nearest_, pages_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {smooth_, pages_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        }};
-        std::array<VkWriteDescriptorSet, 2> writes{};
-        for (std::size_t i = 0; i < writes.size(); ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = slot.descriptors;
-            writes[i].dstBinding = i == 0 ? world_binding_pages : world_binding_smooth_pages;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[i].pImageInfo = &images[i];
-        }
-        vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        bind_pages(slot);
         if (!write_motions(slot, {}))
             return false;
     }
@@ -409,7 +434,16 @@ void VulkanBackend::set_options(const PictureOptions &options) {
     const bool supersample_changed = options.supersample != options_.supersample;
     const bool occlusion_changed = (options.ambient_occlusion > 0.0f) != (options_.ambient_occlusion > 0.0f) ||
                                    options.occlusion_quality != options_.occlusion_quality;
+    const int old_anisotropy = options_.anisotropy;
     options_ = options;
+    if (options.anisotropy != old_anisotropy && smooth_ && wait_for_frames()) {
+        if (!make_smooth_sampler()) {
+            std::fprintf(stderr, "[vulkan] cannot make the anisotropic sampler\n");
+            options_.anisotropy = old_anisotropy;
+        }
+        for (const FrameSlot &slot : slots_)
+            bind_pages(slot);
+    }
     if (precision_changed && target_) {
         if (!make_target())
             std::fprintf(stderr, "[vulkan] cannot remake the render target\n");
@@ -545,6 +579,7 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
     constants.cue_slope = cue_.slope;
     constants.cue_projection_distance = cue_.projection_distance;
     constants.fog_color = cue_.far_color;
+    constants.anisotropy = static_cast<float>(options_.anisotropy);
     return constants;
 }
 

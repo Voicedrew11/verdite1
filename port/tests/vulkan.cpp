@@ -432,10 +432,10 @@ TEST_CASE("vulkan: fog at the corners draws the game's own colours") {
 
 namespace {
 // Layer 1: a one-texel checker of black and grey 30 in the aligned square
-// 64..95, red 96..127 beside it, and white over the left half of 128..159
-// with the right half transparent.
+// 64..95, red 96..127 beside it, white over the left half of 128..159 with the
+// right half transparent, and stripes 4 texels wide, black then grey, across 160..191.
 constexpr u8 mip_layer = 1;
-constexpr int checker_low = 64, square_size = 32, red_low = 96, cutout_low = 128;
+constexpr int checker_low = 64, square_size = 32, red_low = 96, cutout_low = 128, stripes_low = 160;
 constexpr Rgb5 checker_grey{30, 30, 30};
 
 Image mip_test_page() {
@@ -454,17 +454,19 @@ Image mip_test_page() {
             put(red_low + x, y, Rgb5{31, 0, 0});
             if (x < square_size / 2)
                 put(cutout_low + x, y, Rgb5{31, 31, 31});
+            put(stripes_low + x, y, (x / 4) % 2 ? checker_grey : Rgb5{0, 0, 0});
         }
     }
     return page;
 }
 
-// A world face 200 units ahead filling 8 x 8 pixels from (156, 116), showing
-// the 32 x 32 texels from (u, 0): four texels a pixel.
-std::vector<GpuVertex> minified_square(int u) {
+// A world face 200 units ahead filling width x height pixels about the view's
+// centre, showing the 32 x 32 texels from (u, 0).
+std::vector<GpuVertex> textured_rect(int u, float width, float height) {
     std::vector<GpuVertex> out;
-    GpuVertex corners[4] = {world_corner(-4, -4, 200), world_corner(4, -4, 200), world_corner(-4, 4, 200),
-                            world_corner(4, 4, 200)};
+    const float x = width / 2, y = height / 2;
+    GpuVertex corners[4] = {world_corner(-x, -y, 200), world_corner(x, -y, 200), world_corner(-x, y, 200),
+                            world_corner(x, y, 200)};
     const float uvs[4][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
     for (int i = 0; i < 4; ++i) {
         GpuVertex &corner = corners[i];
@@ -478,10 +480,14 @@ std::vector<GpuVertex> minified_square(int u) {
     return out;
 }
 
-Image draw_textured(const std::vector<GpuVertex> &vertices, bool mipmaps, TextureFilter filter) {
+// 8 x 8 pixels from (156, 116): four texels a pixel.
+std::vector<GpuVertex> minified_square(int u) { return textured_rect(u, 8, 8); }
+
+Image draw_textured(const std::vector<GpuVertex> &vertices, bool mipmaps, TextureFilter filter, int anisotropy = 1) {
     PictureOptions options;
     options.mipmaps = mipmaps;
     options.texture_filter = filter;
+    options.anisotropy = anisotropy;
     backend->set_options(options);
     const Image picture = draw(vertices, {run_of(BlendMode::opaque, 0, vertices.size())}, cleared_to(background));
     backend->set_options({});
@@ -517,6 +523,22 @@ TEST_CASE("vulkan: a mipmapped cut-out keeps its colour and its edge") {
             CHECK(pixel(mipped, x, 120) == (x < 160 ? Rgb5{31, 31, 31} : background));
         }
     }
+}
+
+TEST_CASE("vulkan: anisotropic filtering keeps stripes across a face squeezed the other way") {
+    PictureOptions wanted;
+    wanted.anisotropy = 16;
+    if (backend->drawable(wanted).anisotropy < 16) {
+        MESSAGE("skipped: the device has no 16x anisotropic filtering");
+        return;
+    }
+    // 32 x 2 pixels from (144, 119): a texel a pixel across, 16 a pixel down.
+    const std::vector<GpuVertex> squeezed = textured_rect(stripes_low, 32, 2);
+    const Image isotropic = draw_textured(squeezed, true, TextureFilter::Bilinear, 1);
+    CHECK(widest_step(pixel(isotropic, 145, 120), pixel(isotropic, 149, 120)) <= 2);
+    const Image anisotropic = draw_textured(squeezed, true, TextureFilter::Bilinear, 16);
+    CHECK(widest_step(pixel(anisotropic, 145, 120), Rgb5{0, 0, 0}) <= 2);
+    CHECK(widest_step(pixel(anisotropic, 149, 120), checker_grey) <= 2);
 }
 
 namespace {

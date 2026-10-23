@@ -39,6 +39,8 @@ public:
     VmaAllocator allocator() const { return allocator_; }
     VkCommandPool command_pool() const { return command_pool_; }
     const std::string &name() const { return name_; }
+    // The most samples an anisotropic sampler may take; 1: the device has none.
+    float max_anisotropy() const { return max_anisotropy_; }
     // Errors the validation layers reported so far (0 without layers).
     int validation_errors() const { return validation_errors_.load(); }
 
@@ -60,6 +62,7 @@ private:
     VmaAllocator allocator_ = VK_NULL_HANDLE;
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
     std::string name_;
+    float max_anisotropy_ = 1.0f;
     std::atomic<int> validation_errors_{0};
 };
 

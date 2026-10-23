@@ -90,12 +90,15 @@ vec4 filtered(vec4 nearest, int level) {
     return uncovered(sum, nearest);
 }
 
-// Bilinear filtering from the mip chain by the hardware, trilinear. The
-// footprint is held inside the face's square, and the centre inside its rectangle.
+// Bilinear filtering from the mip chain by the hardware, trilinear and
+// anisotropic. The footprint (the short axis, or the long one over the
+// anisotropy, as the hardware picks its level) is held inside the face's
+// square, and the centre inside its rectangle.
 vec4 trilinear(vec4 nearest, vec2 dx, vec2 dy) {
     vec2 size = vec2(textureSize(pages, 0).xy);
     ivec4 rect = face_texels();
-    float footprint = max(length(dx * size), length(dy * size));
+    float x_axis = length(dx * size), y_axis = length(dy * size);
+    float footprint = max(min(x_axis, y_axis), max(x_axis, y_axis) / draw.anisotropy);
     float limit = exp2(float(square_levels(rect)));
     float scale = footprint > limit ? limit / footprint : 1.0;
     // Half a texel of the coarser level blended, so its taps stay in the rectangle.

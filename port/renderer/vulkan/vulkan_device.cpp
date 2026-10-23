@@ -95,8 +95,14 @@ VulkanDeviceStart VulkanDevice::create(SDL_Window *window) {
     }
     self->physical_ = physical->physical_device;
     self->name_ = physical->name;
+    // Anisotropic filtering where the device has it; 1 (none) otherwise.
+    vkb::PhysicalDevice chosen = *physical;
+    VkPhysicalDeviceFeatures anisotropic{};
+    anisotropic.samplerAnisotropy = VK_TRUE;
+    if (chosen.enable_features_if_present(anisotropic))
+        self->max_anisotropy_ = std::max(1.0f, chosen.properties.limits.maxSamplerAnisotropy);
 
-    auto device = vkb::DeviceBuilder(*physical).build();
+    auto device = vkb::DeviceBuilder(chosen).build();
     if (!device)
         return {nullptr, "device: " + device.error().message()};
     self->device_ = device->device;

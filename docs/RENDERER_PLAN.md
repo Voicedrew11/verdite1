@@ -204,9 +204,13 @@ coverage stays near 1. `world.frag` caps a face's level at the smallest aligned
 square holding its rectangle, which is what `MipShare`'s entries held, and
 keeps a filtered sample's taps inside the rectangle. Transparency and STP come
 from the nearest level-0 texel. Nearest and three-point filtering pick the
-nearest level by hand; bilinear is the hardware's trilinear. `kf_vulkan_tests`
-checks a minified checker averages with nothing from the square beside it,
-and a cut-out keeps its colour and edge.
+nearest level by hand; bilinear is the hardware's trilinear, and anisotropic
+(Display > Anisotropic filtering, Enhanced, 16x by default as Verdite judged,
+held to what the device has) when that is on: the level comes from the short
+axis of the footprint, or the long one over the anisotropy, as the hardware
+picks it, so the cap holds. `kf_vulkan_tests` checks a minified checker
+averages with nothing from the square beside it, a cut-out keeps its colour and
+edge, and 16x keeps stripes across a face squeezed 16 to 1 that 1x blurs.
 
 What carries over is decisions and references, not code:
 

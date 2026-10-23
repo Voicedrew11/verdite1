@@ -32,7 +32,8 @@ class RenderBackend;
 //             modes, dither, 15-bit colour, the game's draw order.
 //   Balanced: plus depth buffer, true colour, filtering, mipmaps, widescreen,
 //             smoothing, supersampling.
-//   Enhanced: plus dynamic lights, shadows, AO, glow, FXAA, fog per pixel.
+//   Enhanced: plus dynamic lights, shadows, AO, glow, FXAA, fog per pixel,
+//             anisotropic filtering.
 // Sub-pixel and perspective are Classic-or-Balanced choices the game makes while
 // projecting (render_subpixel, render_perspective in renderer.h).
 enum class Tier : u8 { Classic, Balanced, Enhanced };
@@ -73,6 +74,8 @@ struct PictureOptions {
     float glow = 0.0f;            // halo around light sources (0: off)
     bool fxaa = false;
     FogMode fog = FogMode::Corners;
+    int anisotropy = 1;           // samples along a slanted texture's long axis (1: none);
+                                  // mipmapped bilinear filtering only
     // Presentation
     bool vsync = true;            // off: frames are shown as soon as they are drawn
 };
