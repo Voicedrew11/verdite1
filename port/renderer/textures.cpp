@@ -13,11 +13,13 @@ bool texture_store_upload_tim(TextureStore *store, const u8 *bytes, std::size_t 
         store->words.resize(texture_word_count);
     // The codec validates the entire stream before changing any texels, and
     // copies them before the original loader can rewind its resource arena.
-    if (kf_tim_compose({bytes, size}, store->words) != KF_CODEC_OK)
-        return false;
+    kf_tim_compose({bytes, size}, store->words);
     for (std::size_t i = 0; i < store->entries.size(); ++i)
         store->entries[i].dirty = true;
     return true;
+} catch (const codec::Error &error) {
+    error.report();
+    return false;
 } catch (const std::bad_alloc &) {
     return false;
 }
@@ -28,16 +30,17 @@ bool texture_store_translate_tim(TextureStore *store, const u8 *before, std::siz
         return false;
     std::vector<u16> old_words(texture_word_count);
     std::vector<u16> new_words(texture_word_count);
-    const bool valid = kf_tim_compose({before, before_size}, old_words) == KF_CODEC_OK &&
-        kf_tim_compose({after, after_size}, new_words) == KF_CODEC_OK;
-    if (valid) {
-        for (std::size_t i = 0; i < texture_word_count; ++i)
-            if (old_words[i] != new_words[i])
-                store->words[i] = new_words[i];
-        for (std::size_t i = 0; i < store->entries.size(); ++i)
-            store->entries[i].dirty = true;
-    }
-    return valid;
+    kf_tim_compose({before, before_size}, old_words);
+    kf_tim_compose({after, after_size}, new_words);
+    for (std::size_t i = 0; i < texture_word_count; ++i)
+        if (old_words[i] != new_words[i])
+            store->words[i] = new_words[i];
+    for (std::size_t i = 0; i < store->entries.size(); ++i)
+        store->entries[i].dirty = true;
+    return true;
+} catch (const codec::Error &error) {
+    error.report();
+    return false;
 } catch (const std::bad_alloc &) {
     return false;
 }

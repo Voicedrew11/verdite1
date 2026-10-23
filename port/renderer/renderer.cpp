@@ -1173,6 +1173,33 @@ PresentRect renderer_present_rect(const Renderer *renderer, int width, int heigh
     return {(width - target_width) / 2, (height - target_height) / 2, target_width, target_height};
 }
 
+// Frame snapshots retain OpenGL's bottom-up row order.
+// The target is logical_width x render_height, scaled (see renderer_configure).
+bool renderer_capture_frame(const Renderer *renderer, Image &image) {
+    const int width = renderer->logical_width * renderer->scale, height = render_height * renderer->scale;
+    try {
+        image.rgba.resize(static_cast<std::size_t>(width) * height * 4);
+    } catch (const std::bad_alloc &) {
+        return false;
+    }
+    image.width = width;
+    image.height = height;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, renderer->framebuffer);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
+    return glGetError() == GL_NO_ERROR;
+}
+
+bool renderer_restore_frame(const Renderer *renderer, const Image &image) {
+    const int width = renderer->logical_width * renderer->scale, height = render_height * renderer->scale;
+    if (static_cast<int>(image.width) != width || static_cast<int>(image.height) != height ||
+        image.rgba.size() != static_cast<std::size_t>(width) * height * 4)
+        return false;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, renderer->color_texture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
+    return glGetError() == GL_NO_ERROR;
+}
+
 struct FaceOrder {
     std::size_t index;
     s32 depth;

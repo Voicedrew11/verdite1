@@ -2,6 +2,7 @@
 #define KF_PLATFORM_INPUT_H
 
 #include <kf/lib/types.h>
+#include <kf/platform/controls.h>
 
 namespace kf {
 enum class Button : u32 {
@@ -24,6 +25,7 @@ enum class InputContext : u8 { Opening, Gameplay, Menu, Scripted };
 struct LookDelta { s32 yaw, pitch; };
 
 u32 host_read_buttons();
+bool host_action_held(Action action);
 void host_wait_buttons_released(u32 mask = ~u32(0));
 void host_wait_button_press();
 InputContext host_set_input_context(InputContext context);

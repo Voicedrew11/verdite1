@@ -64,7 +64,7 @@ from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COPIED = ["codecs", "include/kf/audio", "include/kf/cutscene", "include/kf/game", "include/kf/lib",
+COPIED = ["include/kf/audio", "include/kf/cutscene", "include/kf/game", "include/kf/lib",
           "src/audio", "src/cutscene", "src/game", "src/lib"]
 PRISTINE = "pristine"
 INCOMPLETE = "incomplete"  # tag on a work copy whose patches did not all apply

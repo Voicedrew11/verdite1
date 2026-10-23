@@ -29,6 +29,7 @@ enum class Action : u8 {
     run,
     quick_save,
     quick_load,
+    compare_language,
     count
 };
 enum class InputDevice : u8 { keyboard, mouse, gamepad };

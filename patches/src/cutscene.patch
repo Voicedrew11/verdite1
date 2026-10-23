@@ -15,7 +15,7 @@ index eba4d2d2409d6cfa648463a7093e138fa4184c75..2530eb75d213cda8d51c209ebad482e0
          if ((input & kf::Button::Start) != 0) {
              opening_input_action = KF_OPENING_INPUT_SKIP;
 diff --git a/src/cutscene/opening_scenes.cpp b/src/cutscene/opening_scenes.cpp
-index df82fcdadb81e615079cc66d7334b977a58a0825..fecf6aa3ae4edeb2e62225e30b612cbfb1716a2a 100644
+index 0bbeb961b5c6ce038cfd3612d63e1dce776040dd..02b1e46062bae3bdf5101e3295e6cdea1690c912 100644
 --- a/src/cutscene/opening_scenes.cpp
 +++ b/src/cutscene/opening_scenes.cpp
 @@ -18,6 +18,10 @@ enum {
@@ -30,8 +30,8 @@ index df82fcdadb81e615079cc66d7334b977a58a0825..fecf6aa3ae4edeb2e62225e30b612cbf
      SCENE0_FADE_OUT_START_POINT = 15,
      SCENE0_YAW_STEP = 40,
 @@ -397,6 +401,7 @@ void opening_scene3_run(void)
-     decreasing_yaw_model->rotation.y = 0;
-     increasing_yaw_model->rotation.y = 0;
+     decreasing_yaw_model->rotation.vy = 0;
+     increasing_yaw_model->rotation.vy = 0;
      opening_camera_path_begin(opening_scene3_camera_path);
 +    auto pacer = kf::host_begin_update_pacer(SCENE3_UPDATES_PER_SECOND);
  
@@ -43,7 +43,7 @@ index df82fcdadb81e615079cc66d7334b977a58a0825..fecf6aa3ae4edeb2e62225e30b612cbf
          opening_poll_input();
 +        kf::host_wait_update(pacer);
          blend += OPENING_COLOR_FADE_STEP;
-         if (blend >= KF_FIXED12_ONE + 1) {
+         if (blend > KF_FIXED12_ONE) {
              break;
 @@ -423,6 +429,7 @@ void opening_scene3_run(void)
              &opening_camera_path_state.position,
@@ -62,10 +62,10 @@ index df82fcdadb81e615079cc66d7334b977a58a0825..fecf6aa3ae4edeb2e62225e30b612cbf
  
      transition_position = {
 diff --git a/src/cutscene/render.cpp b/src/cutscene/render.cpp
-index 80acf35e6167d9fd8e4ca63e57a793b91b43d100..d25fb38b6a2fa7a11485aee6a072d24977f488a9 100644
+index 9fd3331f75a261bfdede047ae7677ef281315b44..b2c435ed951247543e94c24cf16dfe773e03f7ab 100644
 --- a/src/cutscene/render.cpp
 +++ b/src/cutscene/render.cpp
-@@ -20,6 +20,12 @@ void cutscene_tmd_project_vertices(s32 count, const MATRIX *model, const kf::Pro
+@@ -17,6 +17,12 @@ void cutscene_tmd_project_vertices(s32 count, const MATRIX *model, const kf::Pro
          projected->position = {point.x, point.y};
          projected->p2 = point.fog << open_graphics_runtime.tmd_projection_shift;
          projected->sz = point.depth;
@@ -78,7 +78,7 @@ index 80acf35e6167d9fd8e4ca63e57a793b91b43d100..d25fb38b6a2fa7a11485aee6a072d249
          projected++;
          vertex++;
      }
-@@ -39,6 +45,12 @@ void tmd_project_vertices_perspective_right(s32 count, const MATRIX *model, cons
+@@ -34,6 +40,12 @@ void tmd_project_vertices_perspective_right(s32 count, const MATRIX *model, cons
          out->position = {point.x, point.y};
          out->p2 = point.fog >> open_graphics_runtime.tmd_projection_shift;
          out->sz = point.depth;

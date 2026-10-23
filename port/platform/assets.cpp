@@ -54,24 +54,23 @@ constexpr double import_file_progress = 0.9;
 }
 
 bool image_decode_tim(Image *image, const u8 *data, std::size_t size, std::size_t offset,
-                      u32 palette) {
-    KfTimInfo info{};
-    if (kf_tim_info({data, size}, offset, info) != KF_CODEC_OK)
+                      u32 palette) try {
+    const auto tim = KfTimImage::parse({data, size}, offset);
+    if (!tim)
         return false;
+    const auto info = tim->info();
     if (info.width > maximum_tim_dimension || info.height > maximum_tim_dimension)
         return false;
     Image decoded{info.width, info.height, {}};
-    try {
-        decoded.rgba.resize(static_cast<std::size_t>(info.width) * info.height * 4);
-    } catch (const std::bad_alloc &) {
-        return false;
-    }
-    if (kf_tim_rgba({data, size}, offset, palette, decoded.rgba) !=
-        KF_CODEC_OK) {
-        return false;
-    }
+    decoded.rgba.resize(static_cast<std::size_t>(info.width) * info.height * 4);
+    tim->rgba(palette, decoded.rgba);
     *image = std::move(decoded);
     return true;
+} catch (const codec::Error &error) {
+    error.report();
+    return false;
+} catch (const std::bad_alloc &) {
+    return false;
 }
 bool asset_path(std::span<char> output, const char *input) {
     std::size_t size = 0;

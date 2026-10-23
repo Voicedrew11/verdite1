@@ -1,5 +1,5 @@
 diff --git a/src/audio/sound.cpp b/src/audio/sound.cpp
-index bc5195e96b62ebb4a241caab0d36e0bf825b61ed..804ce2ed6fa4da27fa81b9d5380f31f6b3c07c55 100644
+index 46a90d2eae092e35736a2b9aad0caa49559facfd..759a6ccade8749ba569378249163a467bdcb2c5a 100644
 --- a/src/audio/sound.cpp
 +++ b/src/audio/sound.cpp
 @@ -122,6 +122,10 @@ struct SoundState {

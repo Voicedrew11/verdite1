@@ -18,8 +18,8 @@
       decompScripts = pkgs.fetchFromGitHub {
         owner = "Voicedrew11";
         repo = "kings-field-decomp";
-        rev = "150ae354a4d6c36282f56d4000d2a7ca99c3661c";
-        hash = "sha256-2gRkzxE6CTJt/J1bPXe9V1qW6zcqIIJCy57C0QH7Cwo=";
+        rev = "7bd4567cf3ac285244d724bfb9945d92ad7abe4e";
+        hash = "sha256-vUH4dUyahAl9MRQoudWAAWv2f2jUJ8rtrJR2KSCpNgQ=";
       };
       englishDelta = pkgs.runCommand "kings-field-english-v1.kfdelta" {
         nativeBuildInputs = [ pkgs.libarchive pkgs.python3 ];

@@ -33,7 +33,6 @@
 // Shared game-library types and operations have one identity across phases.
 #include <kf/lib/audio.h>
 #include <kf/lib/camera_path.h>
-#include <kf/lib/debug.h>
 #include <kf/lib/graphics.h>
 #include <kf/lib/item_types.h>
 #include <kf/lib/map_types.h>

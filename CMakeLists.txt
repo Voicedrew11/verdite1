@@ -21,7 +21,7 @@ endif()
 # From holyland: each configure builds the patched decomp in a staging directory, then copies into
 # decomp_src/ only the files whose content changed, so a patch edit recompiles only what it touches.
 # KF_COPIED must match COPIED in tools/patches.py.
-set(KF_COPIED codecs include/kf/audio include/kf/cutscene include/kf/game include/kf/lib
+set(KF_COPIED include/kf/audio include/kf/cutscene include/kf/game include/kf/lib
     src/audio src/cutscene src/game src/lib)
 set(KF_DECOMP ${CMAKE_SOURCE_DIR}/decomp)
 set(KF_STAGE ${CMAKE_BINARY_DIR}/decomp_stage)
@@ -110,10 +110,6 @@ file(CHMOD_RECURSE ${KF_SRC}
 set(KF_INCLUDES ${CMAKE_SOURCE_DIR}/port/include ${KF_SRC}/include)
 
 # ---- Libraries ----------------------------------------------------------------------------------
-add_library(kf_codecs STATIC ${KF_SRC}/codecs/tim.cpp ${KF_SRC}/codecs/audio.cpp ${KF_SRC}/codecs/resources.cpp)
-target_include_directories(kf_codecs PUBLIC ${KF_INCLUDES})
-target_compile_options(kf_codecs PRIVATE -Wall -Wextra -Wpedantic -Werror)
-
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 # The Nix dev shell supplies a delta derived from the translator's PPF release; otherwise a local
 # english-v1.kfdelta in the build directory is used. The script is the decomp's, used as is.
@@ -131,19 +127,20 @@ add_custom_target(kf_english_patch
     --input "${KF_ENGLISH_PATCH}" --optional --output "${CMAKE_BINARY_DIR}/generated/english_patch.inc"
   BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/english_patch.inc" VERBATIM)
 
-# The game: every source in the copied game, cutscene and lib folders but the two kf_support takes.
+# The game: every source in the copied game, cutscene and lib folders but the three kf_support takes.
 file(GLOB KF_GAME_SOURCES CONFIGURE_DEPENDS
   ${KF_SRC}/src/game/*.cpp ${KF_SRC}/src/cutscene/*.cpp ${KF_SRC}/src/lib/*.cpp)
-list(REMOVE_ITEM KF_GAME_SOURCES ${KF_SRC}/src/lib/fixed_math.cpp ${KF_SRC}/src/lib/random.cpp)
+list(REMOVE_ITEM KF_GAME_SOURCES ${KF_SRC}/src/lib/fixed_math.cpp ${KF_SRC}/src/lib/random.cpp
+  ${KF_SRC}/src/lib/resource_decode.cpp)
 set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES
   COMPILE_OPTIONS "-Wall;-Wextra;-fwrapv;-fno-strict-aliasing")
 
 add_library(kf_support STATIC port/platform/files.cpp port/platform/disc.cpp port/platform/assets.cpp
   port/platform/language.cpp port/platform/translation.cpp port/platform/translation_ppf.cpp
-  port/platform/controls.cpp ${KF_SRC}/src/lib/fixed_math.cpp ${KF_SRC}/src/lib/random.cpp)
+  port/platform/controls.cpp port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
+  ${KF_SRC}/src/lib/random.cpp ${KF_SRC}/src/lib/resource_decode.cpp)
 target_sources(kf_support PRIVATE "${CMAKE_BINARY_DIR}/generated/english_patch.inc")
 target_include_directories(kf_support PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(kf_support PUBLIC kf_codecs)
 add_dependencies(kf_support kf_english_patch)
 target_compile_options(kf_support PRIVATE -Wall -Wextra -Wpedantic -Werror)
 

@@ -141,6 +141,9 @@ void renderer_set_camera(Renderer *renderer, const float rotation[9], const floa
 // Projection distance of the world camera (needed to rebuild positions for AO).
 void renderer_set_projection_distance(Renderer *renderer, float distance);
 inline int renderer_extra_columns(const Renderer *renderer) { return (renderer->logical_width - render_width) / 2; }
+// Frame snapshots retain OpenGL's bottom-up row order.
+bool renderer_capture_frame(const Renderer *renderer, Image &image);
+bool renderer_restore_frame(const Renderer *renderer, const Image &image);
 bool renderer_draw_faces(Renderer *renderer, const FaceList *faces, int width, int height);
 } // namespace kf
 

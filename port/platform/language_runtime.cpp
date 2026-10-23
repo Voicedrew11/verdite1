@@ -18,6 +18,8 @@ namespace {
 std::mutex lock;
 std::string library;
 std::array<std::string, 2> folders;
+// Folders whose game files have been checked against the disc (or made by the importer).
+std::array<bool, 2> verified;
 Language requested = Language::English;
 // English generated from the embedded translation without a library folder
 // (sushi-shi's Linux flow) goes to a private temporary folder.
@@ -104,6 +106,25 @@ void task_progress(const char *message) {
     std::lock_guard guard(lock);
     task_message = message;
 }
+
+bool prepare_resources(Language language) {
+    // English is made from the Japanese files when missing, with the embedded translation.
+    if (language_folder(language).empty()) {
+        std::string message;
+        if (language != Language::English || !languages_make_english({}, &message))
+            return false;
+    }
+    {
+        std::lock_guard guard(lock);
+        if (verified[slot(language)])
+            return true;
+    }
+    if (!disc_verify_directory(language_folder(language).c_str(), language))
+        return false;
+    std::lock_guard guard(lock);
+    verified[slot(language)] = true;
+    return true;
+}
 }
 
 bool language_resources_start(const char *data, Language language, const char *japanese_data) {
@@ -115,6 +136,8 @@ bool language_resources_start(const char *data, Language language, const char *j
         folders[slot(language)] = data;
         if (japanese_data)
             folders[slot(Language::Japanese)] = japanese_data;
+        // main has already verified the active tree.
+        verified[slot(language)] = true;
         requested = language;
     }
     game_set_language(language);
@@ -130,6 +153,7 @@ void language_resources_stop() {
     }
     if (library.empty())
         folders = {};
+    verified = {};
 }
 
 void languages_configure(const std::string &directory) {
@@ -190,22 +214,28 @@ Language language_requested() {
     return requested;
 }
 
+FileResult language_file_open(DataFile *file, Language language, const char *path) {
+    *file = {};
+    if (!prepare_resources(language))
+        return FileResult::IoError;
+    return data_file_open_at(file, language_folder(language).c_str(), path);
+}
+
 bool language_apply_pending() {
     const Language current = game_language();
     Language target;
-    std::string folder;
     {
         std::lock_guard guard(lock);
         if (requested == current)
             return false;
         target = requested;
-        folder = folders[slot(target)];
     }
-    // English from the translation embedded in the build (sushi-shi's Nix flow).
-    std::string message;
-    if (folder.empty() && target == Language::English && languages_make_english({}, &message))
-        folder = language_folder(target);
-    if (folder.empty() || !data_files_set_root(folder.c_str())) {
+    // Also makes English from the embedded translation when it is missing.
+    const bool prepared = prepare_resources(target);
+    const auto folder = language_folder(target);
+    if (!prepared || !data_files_set_root(folder.c_str())) {
+        if (!prepared)
+            host_language_status("Cannot prepare the selected language. Current language retained.");
         std::fprintf(stderr, "Cannot switch to the %s game files%s%s\n", language_name(target),
                      folder.empty() ? "" : " in ", folder.c_str());
         const auto previous = language_folder(current);
@@ -290,6 +320,7 @@ bool languages_make_english(const std::vector<u8> &ppf, std::string *message) {
         *message = "English is ready.";
         std::lock_guard guard(lock);
         folders[slot(Language::English)] = folder;
+        verified[slot(Language::English)] = true;
     }
     return ok;
 }
@@ -337,5 +368,16 @@ void language_task_clear() {
         task_state = LanguageTask::Idle;
         task_message.clear();
     }
+}
+
+FileResult language_file_load(Language language, const char *path, std::vector<u8> &destination,
+                              std::size_t capacity) {
+    destination.clear();
+    DataFile file{};
+    auto result = language_file_open(&file, language, path);
+    if (result == FileResult::Ok)
+        result = data_file_read(&file, destination, capacity);
+    data_file_close(&file);
+    return result;
 }
 }

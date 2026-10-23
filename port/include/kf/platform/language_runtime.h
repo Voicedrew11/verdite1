@@ -2,6 +2,7 @@
 #define KF_PLATFORM_LANGUAGE_RUNTIME_H
 
 #include <kf/lib/types.h>
+#include <kf/platform/files.h>
 #include <kf/platform/language.h>
 
 #include <string>
@@ -15,7 +16,10 @@ void language_resources_stop();
 bool language_request(Language language);
 Language language_requested();
 bool language_available(Language language);
-// Call only where no menu/dialogue holds copies of the old language's labels.
+FileResult language_file_open(DataFile *file, Language language, const char *path);
+FileResult language_file_load(Language language, const char *path, std::vector<u8> &destination,
+                              std::size_t capacity);
+// Apply permanent changes between modal screens or in Configuration.
 bool language_apply_pending();
 void host_language_status(const char *message);
 

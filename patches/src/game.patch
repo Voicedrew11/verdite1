@@ -1,5 +1,5 @@
 diff --git a/src/game/actor_behavior.cpp b/src/game/actor_behavior.cpp
-index 741aaab25792b6a43be8ed59b90ce39070425853..dbac4692d7f49bb4a98e482b31f93d2ea5fb4c60 100644
+index e88d8973767040536c3668beb2f4f80bc85f32f6..a027e192d88d45735d0948a338abe6147d473578 100644
 --- a/src/game/actor_behavior.cpp
 +++ b/src/game/actor_behavior.cpp
 @@ -10,6 +10,8 @@
@@ -11,7 +11,7 @@ index 741aaab25792b6a43be8ed59b90ce39070425853..dbac4692d7f49bb4a98e482b31f93d2e
  
  enum {
      ACTOR_ACTIVATION_RANGE = 28000,
-@@ -1079,7 +1081,10 @@ void actor_update_current_action(void)
+@@ -1117,7 +1119,10 @@ void actor_update_current_action(void)
                      actor->position.vx, actor->position.vy, actor->position.vz,
                      definition->collision_radius, definition->collision_height,
                      ACTOR_VELOCITY_COLLISION_FLAGS);
@@ -50,10 +50,10 @@ index 31f832db7b441760cf013f561eaf55ce8ee9842c..80c2e53fe4ef7943fcf892407d9bd984
      }
 diff --git a/src/game/automap_feed.cpp b/src/game/automap_feed.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4c951d4bb
+index 0000000000000000000000000000000000000000..a5ad45274cfa6ba796c7b871683230087898a016
 --- /dev/null
 +++ b/src/game/automap_feed.cpp
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,298 @@
 +// PC extension: publishes the current floor for the automap (kf/platform/automap.h).
 +#include <kf/game/game.h>
 +#include <kf/platform/automap.h>
@@ -113,8 +113,8 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +    static std::array<u16, KF_MAP_CELL_COUNT> queue;
 +    group.fill(-1);
 +    chasm.fill(false);
-+    auto walkable = [](int i) { return map_collision_grid.linear[i] != KF_MAP_CELL_BLOCKED; };
-+    auto height = [](int i) { return static_cast<int>(map_floor_height_grid.linear[i]); };
++    auto walkable = [](int i) { return map_collision_grid.cell(static_cast<u16>(i)) != KF_MAP_CELL_BLOCKED; };
++    auto height = [](int i) { return static_cast<int>(map_floor_height_grid.cell(static_cast<u16>(i))); };
 +    s16 groups = 0;
 +    for (int start = 0; start < KF_MAP_CELL_COUNT; ++start) {
 +        if (!walkable(start) || group[start] >= 0)
@@ -160,10 +160,20 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +// Doors swing or lift while animating, so remember each door's closed yaw.
 +u16 door_closed_yaw[KF_MAP_OBJECT_CAPACITY];
 +
-+bool all_empty(const KfObjectId *ids)
++using ContainerItems = std::array<KfObjectId, KF_MAP_CONTAINER_ITEM_COUNT>;
++
++ContainerItems container_items(const KfMapObjectLink &link, KfMapObjectOperation container)
 +{
-+    for (int i = 0; i < KF_MAP_CONTAINER_ITEM_COUNT; ++i)
-+        if (ids[i] != KF_OBJECT_NONE)
++    ContainerItems items{};
++    for (unsigned slot = 0; slot < KF_MAP_CONTAINER_ITEM_COUNT; ++slot)
++        items[slot] = map_container_item(link, container, slot);
++    return items;
++}
++
++bool all_empty(const ContainerItems &ids)
++{
++    for (const KfObjectId id : ids)
++        if (id != KF_OBJECT_NONE)
 +            return false;
 +    return true;
 +}
@@ -203,8 +213,8 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +    find_chasms(chasm, player_cell_x >= 0 && player_cell_x < KF_MAP_COLUMNS && player_cell_z >= 0 && player_cell_z < KF_MAP_ROWS
 +                           ? player_cell_z * KF_MAP_COLUMNS + player_cell_x : -1);
 +    for (int i = 0; i < KF_MAP_ROWS * KF_MAP_COLUMNS; ++i) {
-+        const auto attribute = map_cell_attribute_grid.linear[i];
-+        snapshot.cells[i] = chasm[i] ? kf::AutomapCell::Chasm : cell_kind(map_collision_grid.linear[i], attribute);
++        const auto attribute = map_cell_attribute_grid.cell(static_cast<u16>(i));
++        snapshot.cells[i] = chasm[i] ? kf::AutomapCell::Chasm : cell_kind(map_collision_grid.cell(static_cast<u16>(i)), attribute);
 +        auto hazard = kf::AutomapHazard::None;
 +        if (attribute == KF_MAP_ATTRIBUTE_PITFALL)
 +            hazard = kf::AutomapHazard::Pit;
@@ -228,7 +238,7 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +            for (int k = 0; k < segment.cell_count; ++k) {
 +                const int i = z * KF_MAP_COLUMNS + x;
 +                // Raised once it is within a step of the walkway it joins.
-+                const bool raised = map_floor_height_grid.linear[i] + 6 >= segment.end_height;
++                const bool raised = map_floor_height_grid.cell(static_cast<u16>(i)) + 6 >= segment.end_height;
 +                snapshot.cells[i] = raised ? kf::AutomapCell::HarpBridgeRaised : kf::AutomapCell::HarpBridge;
 +                x += static_cast<s8>(segment.column_step);
 +                z += static_cast<s8>(segment.row_step);
@@ -251,7 +261,7 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +        case KF_MAP_OBJECT_OP_LIFT_DOOR:
 +        case KF_MAP_OBJECT_OP_03: {
 +            if (object.action == KF_MAP_OBJECT_OP_NONE)
-+                door_closed_yaw[slot] = static_cast<u16>(object.rotation.angles.y);
++                door_closed_yaw[slot] = static_cast<u16>(object.rotation.vy);
 +            // Snap to the nearest quarter turn, as the collision marking expects.
 +            const int yaw = ((door_closed_yaw[slot] + KF_ANGLE_EIGHTH_TURN) & KF_ANGLE_WRAP_MASK) & ~(KF_ANGLE_QUARTER_TURN - 1);
 +            int cx = object.cell_x, cz = object.cell_z;
@@ -276,12 +286,12 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +                if (dx < 0 || dz < 0 || dx >= KF_MAP_COLUMNS || dz >= KF_MAP_ROWS)
 +                    continue;
 +                const int i = dz * KF_MAP_COLUMNS + dx;
-+                snapshot.cells[i] = map_collision_grid.linear[i] == KF_MAP_CELL_BLOCKED
++                snapshot.cells[i] = map_collision_grid.cell(static_cast<u16>(i)) == KF_MAP_CELL_BLOCKED
 +                    ? kf::AutomapCell::Door : kf::AutomapCell::DoorOpen;
 +                placed = true;
 +            }
 +            if (placed) {
-+                const u8 link = object.link.fields.link_id;
++                const u8 link = object.link.link_id;
 +                add(link != KF_MAP_LINK_NONE ? kf::AutomapMarkerKind::LockedDoor : kf::AutomapMarkerKind::Door,
 +                    (ax + bx) * 0.5f + 0.5f, (az + bz) * 0.5f + 0.5f, link);
 +            }
@@ -291,17 +301,20 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +            add(kf::AutomapMarkerKind::SavePoint, x, z);
 +            break;
 +        case KF_MAP_OBJECT_OP_RESTORE_POINT:
-+            add(kf::AutomapMarkerKind::Fountain, x, z, object.link.fields.link_id == KF_MAP_LINK_NONE);
++            add(kf::AutomapMarkerKind::Fountain, x, z, object.link.link_id == KF_MAP_LINK_NONE);
 +            break;
-+        case KF_MAP_OBJECT_OP_HINGED_CONTAINER:
-+            if (!all_empty(object.link.hinged_container.item_ids))
-+                add(kf::AutomapMarkerKind::Chest, x, z, object.link.hinged_container.link_id,
-+                    object.link.hinged_container.item_ids, KF_MAP_CONTAINER_ITEM_COUNT);
++        case KF_MAP_OBJECT_OP_HINGED_CONTAINER: {
++            const auto items = container_items(object.link, KF_MAP_OBJECT_OP_HINGED_CONTAINER);
++            if (!all_empty(items))
++                add(kf::AutomapMarkerKind::Chest, x, z, object.link.link_id, items.data(), KF_MAP_CONTAINER_ITEM_COUNT);
 +            break;
-+        case KF_MAP_OBJECT_OP_ITEM_CONTAINER:
-+            if (!all_empty(object.link.item_ids))
-+                add(kf::AutomapMarkerKind::Chest, x, z, kf::automap_unlocked, object.link.item_ids, KF_MAP_CONTAINER_ITEM_COUNT);
++        }
++        case KF_MAP_OBJECT_OP_ITEM_CONTAINER: {
++            const auto items = container_items(object.link, KF_MAP_OBJECT_OP_ITEM_CONTAINER);
++            if (!all_empty(items))
++                add(kf::AutomapMarkerKind::Chest, x, z, kf::automap_unlocked, items.data(), KF_MAP_CONTAINER_ITEM_COUNT);
 +            break;
++        }
 +        case KF_MAP_OBJECT_OP_ITEM_PICKUP:
 +        case KF_MAP_OBJECT_OP_GOLD_PICKUP:
 +            add(kf::AutomapMarkerKind::Item, x, z, 0, &object.object_id, 1);
@@ -340,10 +353,10 @@ index 0000000000000000000000000000000000000000..4fcc6d289a2b6d238125d345e85385e4
 +    kf::automap_published();
 +}
 diff --git a/src/game/effect_update.cpp b/src/game/effect_update.cpp
-index 7d2e8fa5ced73f0089872cc2470dd41570517fa8..a03c9f140b2e3e749599bd3cb5f613646f4bf749 100644
+index b0d8a7376e2d4a10cf30719994b0a16271c57cca..9ad4a869ba594b39fe114291289538333ee1a94d 100644
 --- a/src/game/effect_update.cpp
 +++ b/src/game/effect_update.cpp
-@@ -163,6 +163,11 @@ void effect_update_orbiting_projectile(s32 orbit_radius, KfEffectPhase phase_lim
+@@ -161,6 +161,11 @@ void effect_update_orbiting_projectile(s32 orbit_radius, u8 phase_limit)
      }
  }
  
@@ -356,15 +369,15 @@ index 7d2e8fa5ced73f0089872cc2470dd41570517fa8..a03c9f140b2e3e749599bd3cb5f61364
  {
      KfFloorDeformSegment *segment = &floor_deform_segments[segment_index];
 diff --git a/src/game/entity_render.cpp b/src/game/entity_render.cpp
-index 4466b749e702d2b76c3e95d3dd360917171275e9..6dc853cd5b29706a1aa30827bc6b859d27d354c3 100644
+index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9eb7a1d3a 100644
 --- a/src/game/entity_render.cpp
 +++ b/src/game/entity_render.cpp
-@@ -57,6 +57,21 @@ void render_effect(KfEffectRecord *effect, const MATRIX *lights)
-     if (effect->render_id.model == KF_EFFECT_MODEL_NONE) {
+@@ -56,6 +56,21 @@ void render_effect(KfEffectRecord *effect, const MATRIX *lights)
+     if (!effect_has_visual(*effect)) {
          return;
      }
 +    // PC extension (dynamic lighting): fire and lightning projectiles light their surroundings.
-+    const auto billboard = effect->render_id.billboard;
++    const auto billboard = effect->render_id.billboard();
 +    if (effect->animation_clip == KF_ANIMATION_CLIP_NONE) {
 +        if (billboard <= KF_EFFECT_BILLBOARD_FIRE_BALL_FRAME_4) {
 +            render_publish_light(effect->position.vx, effect->position.vy, effect->position.vz,
@@ -382,7 +395,7 @@ index 4466b749e702d2b76c3e95d3dd360917171275e9..6dc853cd5b29706a1aa30827bc6b859d
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 61e9587c017036b99d03efd2af7020e607880341..47cd05c3f9a34cb39a27c2d026adbb77190ff533 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..33e9aff4fa21addea4e81643c71d44133a9ea896 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -20,8 +20,11 @@ static std::uint64_t frame_pacer_last_tick;
@@ -433,20 +446,20 @@ index 61e9587c017036b99d03efd2af7020e607880341..47cd05c3f9a34cb39a27c2d026adbb77
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
-index 3336e18ab7c21a60d181b49376c2121473910a21..630a0241f57c1a082a0e1c2ba5793caa3d343d68 100644
+index 660386288c157b2819409141f669eb2ae4d10af9..c99764840573dfed93d85ea3c02e9df7f4aa58dd 100644
 --- a/src/game/item.cpp
 +++ b/src/game/item.cpp
-@@ -205,6 +205,8 @@ void menu_resources_reload(void)
+@@ -173,6 +173,8 @@ static void menu_resources_decode(std::span<const u8> bytes, KfMenuResources &re
      // label, moved into that removed row in the native menu description.
-     auto &save_layout = menu_window_layouts[kf_enum_encode<s32>(KF_MENU_WINDOW_SAVE)];
+     auto &save_layout = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_SAVE)];
      save_layout.rows[KF_MENU_SAVE_RETURN_ROW].glyphs = save_layout.rows[stat_save_return_row].glyphs;
 +    // Port addition: Configuration gets a language row where Return was, and
 +    // Return moves down a row. menu_draw_window draws the row's text.
-     auto &config = menu_window_layouts[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)];
+     auto &config = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)];
      config.rows[KF_MENU_CONFIG_RETURN_ROW] = config.rows[KF_MENU_CONFIG_LANGUAGE_ROW];
      config.rows[KF_MENU_CONFIG_RETURN_ROW].position.y += config.rows[1].position.y - config.rows[0].position.y;
 diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
-index db35b0bba66fdf151c9f57f5dda56f61827168c6..eb1a0efe6009f08c6c2df06d9ab7672cf326e740 100644
+index 1477de2e4583d114e5e02fb014b8e8263bb7510b..78266ab7cb4c93b2c113f200623a503cf2f960a9 100644
 --- a/src/game/map_scripts.cpp
 +++ b/src/game/map_scripts.cpp
 @@ -51,6 +51,7 @@ enum {
@@ -454,25 +467,27 @@ index db35b0bba66fdf151c9f57f5dda56f61827168c6..eb1a0efe6009f08c6c2df06d9ab7672c
      MAP_WEAPON_TRANSFORM_SWAP_COUNTDOWN = 20,
      MAP_SHOP_SEQUENCE_INDEX = 2,
 +    MAP_KEY_UNLOCK_VOLUME = 110,   // as when a key is used from the item menu
-     MAP_FLOOR3_DIALOGUE_DOOR_LINK = 0x37
+     MAP_FLOOR3_DIALOGUE_DOOR_LINK = 55
  };
  
-@@ -497,6 +498,24 @@ static void map_finish_event_interaction(KfMapEvent *event)
-     player_clear_motion();
+@@ -523,12 +524,35 @@ static bool map_take_container_items(KfMapObject *object, KfMapObjectOperation c
+     return found_item;
  }
  
 +// PC extension: interacting with a lock whose key the player carries uses it,
 +// as choosing the key from the item menu would (keys are not used up).
 +static bool map_unlock_with_carried_key(KfMapObject *object)
 +{
-+    if (kf::classic_mode || !kf::auto_use_keys)
++    if (kf::classic_mode || !kf::auto_use_keys) {
 +        return false;
++    }
 +    const auto &stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)];
 +    for (const auto key : {KF_ITEM_KEY_OF_THE_DEAD, KF_ITEM_RAITO_FAMILY_KEY, KF_ITEM_DUNGEON_KEY, KF_ITEM_SORCERER_KEY}) {
 +        const u8 id = kf_enum_encode<u8>(key);
-+        if (object->link.fields.link_id != id || stock[id] == 0)
++        if (object->link.link_id != id || stock[id] == 0) {
 +            continue;
-+        object->link.fields.link_id = KF_MAP_LINK_NONE;
++        }
++        object->link.link_id = KF_MAP_LINK_NONE;
 +        sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_KEY_UNLOCK], MAP_KEY_UNLOCK_VOLUME);
 +        return true;
 +    }
@@ -482,55 +497,57 @@ index db35b0bba66fdf151c9f57f5dda56f61827168c6..eb1a0efe6009f08c6c2df06d9ab7672c
  static void map_interact_hinged_container(KfMapObject *object,
      const VECTOR *position, SVECTOR *rotation)
  {
-@@ -506,6 +525,8 @@ static void map_interact_hinged_container(KfMapObject *object,
-     KfObjectId *item_id;
+     u16 saved_pitch;
  
-     if (object->link.fields.link_id != KF_MAP_LINK_NONE) {
-+        if (map_unlock_with_carried_key(object))
+     if (object->link.link_id != KF_MAP_LINK_NONE) {
++        if (map_unlock_with_carried_key(object)) {
 +            return;
-         notify_enqueue(object->link.fields.linked_notification);
++        }
+         notify_enqueue(object->link.linked_notification);
          return;
      }
-@@ -742,7 +763,8 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -704,7 +728,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
-                 if (object->link.fields.link_id != KF_MAP_LINK_NONE) {
--                    notify_enqueue(object->link.fields.default_notification);
-+                    if (!map_unlock_with_carried_key(object))
-+                        notify_enqueue(object->link.fields.default_notification);
+                 if (object->link.link_id != KF_MAP_LINK_NONE) {
+-                    notify_enqueue(object->link.default_notification);
++                    if (!map_unlock_with_carried_key(object)) {
++                        notify_enqueue(object->link.default_notification);
++                    }
                      break;
                  }
                  map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_LIFT_DOOR);
-@@ -756,7 +778,8 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -718,7 +744,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
-                 if (object->link.fields.link_id != KF_MAP_LINK_NONE && definition->behavior_type == KF_MAP_OBJECT_OP_HINGED_DOOR) {
--                    notify_enqueue(object->link.fields.default_notification);
-+                    if (!map_unlock_with_carried_key(object))
-+                        notify_enqueue(object->link.fields.default_notification);
+                 if (object->link.link_id != KF_MAP_LINK_NONE && definition->behavior_type == KF_MAP_OBJECT_OP_HINGED_DOOR) {
+-                    notify_enqueue(object->link.default_notification);
++                    if (!map_unlock_with_carried_key(object)) {
++                        notify_enqueue(object->link.default_notification);
++                    }
                      break;
                  }
  
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54bb828c153 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e076a71b41974c0fba2da66d781b0e2e071c938d 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
-@@ -598,7 +598,13 @@ void menu_config_panel(void)
+@@ -634,7 +634,13 @@ void menu_config_panel(void)
          menu_config_panel_draw(on_label, off_label, option_states);
          menu_draw_window(KF_MENU_WINDOW_CONFIG, KF_MENU_CONFIG_ROW_COUNT, row, confirm);
          if (language_failed) {
 -            MenuGlyphString message{{16, 190}, menu_label(MenuLabel::LanguageUnavailable)};
 +            // Below the language row (port placement), clear of Return.
 +            MenuGlyphString message;
-+            message.position = menu_window_layouts[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)]
++            message.position = menu_resources().windows[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)]
 +                                   .rows[KF_MENU_CONFIG_LANGUAGE_ROW].position;
 +            message.position.x = CONFIG_OPTION_ON_X;
 +            message.position.y += 16;
 +            message.glyphs = menu_label(MenuLabel::LanguageUnavailable);
-             menu_draw_string(&menu_assets.glyph_atlas, &message);
+             menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1136,6 +1142,212 @@ enum {
+@@ -1173,6 +1179,212 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -652,7 +669,7 @@ index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54b
 +        gs.glyphs.codes[count++] = sequence[i];
 +    }
 +    gs.glyphs.codes[count] = MENU_TEXT_END;
-+    menu_draw_string(&menu_assets.glyph_atlas, &gs);
++    menu_draw_string(&menu_resources().assets.glyph_atlas, &gs);
 +}
 +}
 +
@@ -671,7 +688,7 @@ index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54b
 +        menu_number_tint[0] = 1.45f; menu_number_tint[1] = 0.5f; menu_number_tint[2] = 0.45f;
 +    }
 +    menu_format_number(value < 0 ? 0 : value, MENU_STATS_DIGITS, KF_FORMAT_PAD_SPACES, gs.glyphs.codes);
-+    menu_draw_number(&menu_assets.number_atlas, &gs);
++    menu_draw_number(&menu_resources().assets.number_atlas, &gs);
 +    menu_number_tint[0] = menu_number_tint[1] = menu_number_tint[2] = 1.0f;
 +}
 +
@@ -743,7 +760,7 @@ index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54b
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1143,10 +1355,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1392,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -762,7 +779,7 @@ index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54b
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1203,9 +1420,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1241,9 +1458,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -779,7 +796,7 @@ index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54b
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1802,6 +2023,11 @@ void menu_draw_number(
+@@ -1854,6 +2075,11 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -792,10 +809,10 @@ index b6466e3bba3313732c799fc77b48a2f6ed28954a..9381586cb329599bf4c02a6a6beba54b
      }
  }
 diff --git a/src/game/menu_select.cpp b/src/game/menu_select.cpp
-index 0b9939e86e86b94c1b9e04fbb9435e8e999a59cb..fad189868b50db9ccdf2d6b14d6873da979e6056 100644
+index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..f018353051f116178257fb3471be0888a03c4811 100644
 --- a/src/game/menu_select.cpp
 +++ b/src/game/menu_select.cpp
-@@ -86,6 +86,7 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
+@@ -82,6 +82,7 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
              return;
      }
  
@@ -803,7 +820,7 @@ index 0b9939e86e86b94c1b9e04fbb9435e8e999a59cb..fad189868b50db9ccdf2d6b14d6873da
      for (;;) {
          if (confirm == KF_MENU_CONFIRM_REQUESTED) {
              if (menu_list_confirm(&ctx, KF_MENU_CONFIRM_EQUIP,
-@@ -109,8 +110,10 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
+@@ -105,8 +106,10 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
                  selection = kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED);
              }
          } else if (menu_list_handle_navigation(ctx, input, prev)) {
@@ -815,7 +832,7 @@ index 0b9939e86e86b94c1b9e04fbb9435e8e999a59cb..fad189868b50db9ccdf2d6b14d6873da
          } else if (kf::button_pressed(input, prev, kf::Button::Confirm)) {
              menu_play_input_sound(MENU_SOUND_CONFIRM);
              confirm = KF_MENU_CONFIRM_REQUESTED;
-@@ -126,6 +129,7 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
+@@ -122,6 +125,7 @@ void menu_equip_select(KfEquipmentMenuCategory equipment_category)
          menu_present_frame();
      }
  
@@ -824,7 +841,7 @@ index 0b9939e86e86b94c1b9e04fbb9435e8e999a59cb..fad189868b50db9ccdf2d6b14d6873da
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
          switch (equipment_category) {
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a1cd94fee823f5e3e4e51e80b792d3d7183fae87..b92f9dd8e6d3c414c7866efd6a8a451b993be9a3 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..f5823ec3c0a5cdad674bd09554386c36b48821c6 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
 @@ -65,6 +65,10 @@ void player_death_begin(void)
@@ -1065,10 +1082,10 @@ index a1cd94fee823f5e3e4e51e80b792d3d7183fae87..b92f9dd8e6d3c414c7866efd6a8a451b
  
  void player_increment_physical_power_training(void)
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index 1305eaf87697c1b0dfb5aa889896116dd3f36e49..0c5e150b7468ea506da06c06ebe5381c4c9a397f 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..0c98a7f2a79c3d82c2bccd055a23fd17e65af702 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
-@@ -330,6 +330,9 @@ static void player_update_movement_input(u32 input)
+@@ -349,6 +349,9 @@ static void player_update_movement_input(u32 input)
          player_turn_step_limit = PLAYER_SLOWED_TURN_LIMIT;
      } else {
          player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
@@ -1078,7 +1095,7 @@ index 1305eaf87697c1b0dfb5aa889896116dd3f36e49..0c5e150b7468ea506da06c06ebe5381c
          player_turn_step_limit = PLAYER_NORMAL_TURN_LIMIT;
      }
      if (input & kf::Button::Up) {
-@@ -436,11 +439,11 @@ static void player_update_view_input(u32 input)
+@@ -455,11 +458,11 @@ static void player_update_view_input(u32 input)
      if (motion.pitch_step > 0) {
          player_state.camera_rotation.vx += motion.pitch_step;
          player_state.camera_rotation.vx =
@@ -1092,7 +1109,7 @@ index 1305eaf87697c1b0dfb5aa889896116dd3f36e49..0c5e150b7468ea506da06c06ebe5381c
      }
  }
  
-@@ -623,6 +626,42 @@ static void player_restore_loaded_game()
+@@ -642,6 +645,42 @@ static void player_restore_loaded_game()
      player_select_magic(player_state.selected_magic_id);
  }
  
@@ -1135,7 +1152,7 @@ index 1305eaf87697c1b0dfb5aa889896116dd3f36e49..0c5e150b7468ea506da06c06ebe5381c
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -630,6 +669,18 @@ void player_update(void)
+@@ -649,6 +688,18 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -1154,7 +1171,7 @@ index 1305eaf87697c1b0dfb5aa889896116dd3f36e49..0c5e150b7468ea506da06c06ebe5381c
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
          player_death_update();
          return;
-@@ -643,7 +694,7 @@ void player_update(void)
+@@ -662,7 +713,7 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,
@@ -1164,7 +1181,7 @@ index 1305eaf87697c1b0dfb5aa889896116dd3f36e49..0c5e150b7468ea506da06c06ebe5381c
          display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
      }
 diff --git a/src/game/player_use_item.cpp b/src/game/player_use_item.cpp
-index e2d2e6cd2a91122d9b5bc3484428d0775c7746d2..353e921b1991c52588e7d9b2bd0eb4f0726a88ad 100644
+index b4dc15cd178b02cc492d80830474a514ddb80702..1873eb5e0a7385fb3aec720faa259d80f6869596 100644
 --- a/src/game/player_use_item.cpp
 +++ b/src/game/player_use_item.cpp
 @@ -113,6 +113,8 @@ void player_use_item(KfObjectId item_id)
@@ -1177,7 +1194,7 @@ index e2d2e6cd2a91122d9b5bc3484428d0775c7746d2..353e921b1991c52588e7d9b2bd0eb4f0
  
      case KF_ITEM_DRAGON_CHALICE:
 diff --git a/src/game/render.cpp b/src/game/render.cpp
-index 176879d41cab61225d665e1856ea8551754cac48..0e9be82091e1a39a265cfdee5fe66b14cd3264ab 100644
+index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..ab45b5af1618536d8be42efc29a3ec3c8719b86e 100644
 --- a/src/game/render.cpp
 +++ b/src/game/render.cpp
 @@ -201,6 +201,38 @@ void render_initialize(void)
@@ -1218,8 +1235,8 @@ index 176879d41cab61225d665e1856ea8551754cac48..0e9be82091e1a39a265cfdee5fe66b14
 +
  void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &projection)
  {
-     if (count < 0 || count > KF_PROJECTED_VERTEX_CAPACITY)
-@@ -215,6 +247,14 @@ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &
+     KfScreenVertex *projected;
+@@ -213,6 +245,14 @@ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &
          projected->position = {point.x, point.y};
          projected->p2 = point.fog << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT;
          projected->sz = point.depth;
@@ -1258,10 +1275,10 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..1d355c4aa873fe303d50a7f84b8fdc2d
      render_face_uv_rectangle(&face, sprite->u, sprite->v,
          sprite->u + sprite->u_span, sprite->v + sprite->v_span);
 diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
-index 254be2add3569388874377de07540d2a6cbebbc1..7fba5bc99ac7ac51273bf050517784edb0e27dd3 100644
+index 73c6900e478aa3769791136fbf65a88230b2c272..e14c22a47e9a1fb6295d5a943808873b418058f1 100644
 --- a/src/game/render_frame.cpp
 +++ b/src/game/render_frame.cpp
-@@ -10,6 +10,7 @@
+@@ -11,6 +11,7 @@
  #include <kf/lib/math.h>
  
  #include <array>
@@ -1269,7 +1286,7 @@ index 254be2add3569388874377de07540d2a6cbebbc1..7fba5bc99ac7ac51273bf050517784ed
  
  enum {
      HUD_GAUGE_WIDTH = 50,
-@@ -81,6 +82,15 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -83,6 +84,15 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
  
      render_set_view_transform(game_graphics_runtime.render_state, position_or_null, rotation_or_null);
      display_begin_frame(game_graphics_runtime.display_state);
@@ -1279,13 +1296,13 @@ index 254be2add3569388874377de07540d2a6cbebbc1..7fba5bc99ac7ac51273bf050517784ed
 +        // Dynamic lighting: solid rock cells stop light (diagonal half-cells count as open).
 +        static u8 solid[KF_MAP_ROWS * KF_MAP_COLUMNS];
 +        for (int i = 0; i < KF_MAP_ROWS * KF_MAP_COLUMNS; ++i)
-+            solid[i] = map_collision_grid.linear[i] == KF_MAP_CELL_BLOCKED ? 1 : 0;
++            solid[i] = map_collision_grid.cell(static_cast<u16>(i)) == KF_MAP_CELL_BLOCKED ? 1 : 0;
 +        kf::host_light_occluders(solid, KF_MAP_COLUMNS, KF_MAP_ROWS, static_cast<float>(KF_MAP_TILE_SIZE));
 +    }
      animation_cache_mark_stale();
      render_map_cells();
      poison_icon = &hud_sprites[KF_HUD_POISON_ICON];
-@@ -151,6 +161,7 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -153,6 +163,7 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      kf::matrix_set_rotation_xyz(spin, model);
  
      game_graphics_runtime.active_render_material = game_graphics_runtime.notification_text_material;
@@ -1293,7 +1310,7 @@ index 254be2add3569388874377de07540d2a6cbebbc1..7fba5bc99ac7ac51273bf050517784ed
      record = notification_sprites.data();
      if (record[KF_NOTIFICATION_TEXT_SPRITE].active == KF_SPRITE_VISIBLE) {
          render_enqueue_sprite(&record[KF_NOTIFICATION_TEXT_SPRITE].sprite, 0, KF_SPRITE_DEPTH_CUE_NORMAL, &render_light_matrices[KF_RENDER_LIGHT_NOTIFICATION], &model, game_graphics_runtime.render_state.projection);
-@@ -166,9 +177,12 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -168,9 +179,12 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
          }
          record++;
      }
@@ -1307,7 +1324,7 @@ index 254be2add3569388874377de07540d2a6cbebbc1..7fba5bc99ac7ac51273bf050517784ed
      animation_cache_release_stale();
      // World rendering also advances floor sprites and notifications. Pace every
 diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
-index 2193de4d9d70b95ead7cc2bd7626c4bf5103a554..17c731e74b098a9f096c4e8f5b1ea1ea76c3982d 100644
+index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..317bb88f53b5546364545f3b508d50161837269b 100644
 --- a/src/game/render_map_cells.cpp
 +++ b/src/game/render_map_cells.cpp
 @@ -3,6 +3,9 @@
@@ -1427,7 +1444,7 @@ index 2193de4d9d70b95ead7cc2bd7626c4bf5103a554..17c731e74b098a9f096c4e8f5b1ea1ea
  
      row = (u16)game_graphics_runtime.render_state.view_cell.z - game_graphics_runtime.active_cell_window->origin_z;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index 8b9bef2c78362830972d81e1f8dd50892f8ea95a..ddc6d744954a3cffe5d913144a0258e7f7f2962a 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..b35231117128b2dea3de7814a2edda21d228d28d 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -14,6 +14,22 @@ struct RenderCellOrigin {
@@ -1469,7 +1486,7 @@ index 8b9bef2c78362830972d81e1f8dd50892f8ea95a..ddc6d744954a3cffe5d913144a0258e7
 +        auto &object = map_object_state.objects[i];
          if (object.object_id < KF_MAP_OBJECT_RENDER_ID_END
              && render_cell_is_visible(object.cell_x, object.cell_z, origin)) {
-+            tag(1, i, object.position.vx, object.position.vy, object.position.vz, object.rotation.angles.y, 1);
++            tag(1, i, object.position.vx, object.position.vy, object.position.vz, object.rotation.vy, 1);
              render_map_object(&object);
          }
      }
@@ -1479,7 +1496,7 @@ index 8b9bef2c78362830972d81e1f8dd50892f8ea95a..ddc6d744954a3cffe5d913144a0258e7
 +        auto &actor = actor_state.actors[i];
          if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
              && render_actor_is_visible(actor, origin)) {
-+            tag(256, i, actor.position.vx, actor.position.vy, actor.position.vz, actor.rotation.angles.y, -1);
++            tag(256, i, actor.position.vx, actor.position.vy, actor.position.vz, actor.rotation.vy, -1);
              render_actor(&actor);
          }
      }
@@ -1502,7 +1519,7 @@ index 8b9bef2c78362830972d81e1f8dd50892f8ea95a..ddc6d744954a3cffe5d913144a0258e7
 -    for (auto &effect : effect_state.records) {
 +    for (std::size_t i = 0; i < std::size(effect_state.records); ++i) {
 +        auto &effect = effect_state.records[i];
-         if (effect.type == KF_EFFECT_SLOT_FREE || effect.render_id.model == KF_EFFECT_MODEL_NONE) {
+         if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
              continue;
          }
          if (render_cell_is_visible(
@@ -1524,25 +1541,37 @@ index 8b9bef2c78362830972d81e1f8dd50892f8ea95a..ddc6d744954a3cffe5d913144a0258e7
 +    kf::render_entity_tag = 0;
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 8e065707c32786785389485077f4ff96ee7e1107..aa7dc812e060471f3f53fad02eebd9adb8adf801 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..9e37473917813b6ab1b26407308327e75a6dceb6 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
-@@ -14,6 +14,10 @@
- #include <cstdio>
- #include <cstring>
- #include <new>
+@@ -2,6 +2,8 @@
+ #include <kf/game/equipment.h>
+ #include <kf/game/game.h>
+ #include <kf/game/graphics.h>
 +#include <kf/game/menu.h>
 +#include <kf/game/menu_text.h>
+ #include <kf/game/player.h>
+ #include <kf/game/render.h>
+ #include <kf/game/resources.h>
+@@ -9,11 +11,13 @@
+ #include <kf/lib/map.h>
+ #include <kf/lib/null.h>
+ #include <kf/lib/resources.h>
 +#include <kf/renderer/renderer.h>
+ 
+ #include <array>
+ #include <cstdio>
+ #include <cstring>
+ #include <optional>
 +#include <vector>
  
  enum {
      MAP_VARIANT_ASSET_BUFFER_BYTES = 0x5a000,
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index 55e408fef91848631f997130d27684f51b73e3a4..7a63b033858c290d14ffa7458d30a97e040e263c 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..c405d02ec9ab554ba98849fdb02ab441d2bb5604 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
-@@ -418,12 +418,11 @@ KfSaveResult save_system_read_slot(kf::SaveSlot slot) {
+@@ -454,12 +454,11 @@ KfSaveResult save_system_read_slot(kf::SaveSlot slot) {
      }
      // No live game state is touched until the complete file is decoded and validated.
      save_state_apply(state);
@@ -1557,7 +1586,7 @@ index 55e408fef91848631f997130d27684f51b73e3a4..7a63b033858c290d14ffa7458d30a97e
      SavedGameState state{};
      state.player = player_state;
      state.world = map_runtime_state.world_state;
-@@ -431,27 +430,63 @@ KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
+@@ -467,27 +466,63 @@ KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
      for (std::size_t i = 0; i < KF_MAGIC_RECORD_COUNT; ++i)
          state.learned[i] = effect_state.magic.entries[i].learned;
      if (!save_state_valid(state))

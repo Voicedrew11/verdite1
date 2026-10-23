@@ -99,8 +99,11 @@ work/          (gitignored) the editable copy patches.py makes
   `src/renderer`, `include/kf/platform` and `include/kf/renderer` are replaced
   by `port/`, which is where the Vulkan renderer and the C++ core will grow.
   `port/include` comes first on the include path.
-- **The pin is `150ae354`**, the `sushi-shi/port` commit kf1-enhanced is based
-  on, so the first layout reproduces kf1-enhanced exactly. The submodule's
+- **The pin is `7bd4567c`**, `sushi-shi/port`'s head on 2026-10-23. The first
+  layout pinned `150ae354`, the commit kf1-enhanced is based on, so that it
+  reproduced kf1-enhanced exactly. Upstream's changes to the platform layer
+  and renderer are carried into `port/` by hand, as a 3-way merge with the old
+  pin as the base (`git merge-file`). The submodule's
   `upstream` remote is sushi-shi; `python3 tools/patches.py upgrade <commit>`
   moves the pin. The decomp has no `config/symbol_addrs.txt`, so unlike
   holyland's, renames are not followed: they come up as conflicts or compile
@@ -241,9 +244,9 @@ The branch is pushed to `origin/decomp`.
 
 1. ~~Build and boot on Linux from the user's disc.~~ Done 2026-10-22. The
    user plays the baseline to judge it by eye.
-2. ~~The holyland layout.~~ Done 2026-10-22. Next: move the pin to
-   `sushi-shi/port`'s head (37 commits, the readability pass among them) with
-   `patches.py upgrade`, and bring `port/` up to its interfaces.
+2. ~~The holyland layout.~~ Done 2026-10-22. ~~Move the pin to
+   `sushi-shi/port`'s head and bring `port/` up to its interfaces.~~ Done
+   2026-10-23 (`7bd4567c`, 37 commits with the readability pass).
 3. Infrastructure the rest leans on: headless/turbo, state beacon + command
    channel, then the fuzzer.
 4. The renderer frontend and the Vulkan backend, in the order of

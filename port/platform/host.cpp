@@ -105,7 +105,7 @@ static void platform_yield(Uint64 nanoseconds) {
 static void bind_inputs() {
     auto *input = &host.input;
     struct KeyBinding { SDL_Keycode code; Action action; };
-    constexpr std::array<KeyBinding, 22> keys = {
+    constexpr std::array<KeyBinding, 23> keys = {
         KeyBinding{SDLK_W, Action::forward}, KeyBinding{SDLK_UP, Action::forward},
         KeyBinding{SDLK_S, Action::backward}, KeyBinding{SDLK_DOWN, Action::backward},
         KeyBinding{SDLK_A, Action::strafe_left}, KeyBinding{SDLK_D, Action::strafe_right},
@@ -116,14 +116,15 @@ static void bind_inputs() {
         KeyBinding{SDLK_TAB, Action::inventory}, KeyBinding{SDLK_BACKSPACE, Action::back},
         KeyBinding{SDLK_ESCAPE, Action::pause_or_back}, KeyBinding{SDLK_P, Action::pause},
         KeyBinding{SDLK_LSHIFT, Action::run}, KeyBinding{SDLK_RSHIFT, Action::run},
-        KeyBinding{SDLK_F2, Action::quick_save}, KeyBinding{SDLK_F4, Action::quick_load}
+        KeyBinding{SDLK_F2, Action::quick_save}, KeyBinding{SDLK_F4, Action::quick_load},
+        KeyBinding{SDLK_R, Action::compare_language}
     };
     for (const auto &key : keys)
         input_bind(input, {InputDevice::keyboard, static_cast<u32>(key.code)}, key.action);
     input_bind(input, {InputDevice::mouse, SDL_BUTTON_LEFT}, Action::attack);
     input_bind(input, {InputDevice::mouse, SDL_BUTTON_RIGHT}, Action::magic);
     struct ButtonBinding { SDL_GamepadButton code; Action action; };
-    constexpr std::array<ButtonBinding, 13> buttons = {
+    constexpr std::array<ButtonBinding, 14> buttons = {
         ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_UP, Action::forward}, ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_DOWN, Action::backward},
         ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_LEFT, Action::turn_left}, ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_RIGHT, Action::turn_right},
         ButtonBinding{SDL_GAMEPAD_BUTTON_NORTH, Action::attack}, ButtonBinding{SDL_GAMEPAD_BUTTON_WEST, Action::magic},
@@ -131,7 +132,8 @@ static void bind_inputs() {
         ButtonBinding{SDL_GAMEPAD_BUTTON_START, Action::inventory}, ButtonBinding{SDL_GAMEPAD_BUTTON_BACK, Action::pause},
         ButtonBinding{SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, Action::strafe_left},
         ButtonBinding{SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, Action::strafe_right},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_LEFT_STICK, Action::run}
+        ButtonBinding{SDL_GAMEPAD_BUTTON_LEFT_STICK, Action::run},
+        ButtonBinding{SDL_GAMEPAD_BUTTON_RIGHT_STICK, Action::compare_language}
     };
     for (const auto &button : buttons)
         input_bind(input, {InputDevice::gamepad, static_cast<u32>(button.code)}, button.action);
@@ -262,8 +264,12 @@ static void process_keyboard_event(const SDL_KeyboardEvent &event) {
     if (event.down) {
         if (pressed_key != SDLK_UNKNOWN)
             return;
-        // Use the layout/remap, without Shift/Caps changing letter bindings.
-        pressed_key = SDL_GetKeyFromScancode(event.scancode, SDL_KMOD_NONE, false);
+        // Letter shortcuts follow physical QWERTY positions in every layout.
+        // Other keys retain logical remaps, including Caps Lock to Escape.
+        if (event.scancode >= SDL_SCANCODE_A && event.scancode <= SDL_SCANCODE_Z)
+            pressed_key = SDLK_A + static_cast<SDL_Keycode>(event.scancode - SDL_SCANCODE_A);
+        else
+            pressed_key = SDL_GetKeyFromScancode(event.scancode, SDL_KMOD_NONE, false);
         if (pressed_key != SDLK_UNKNOWN)
             input_button(&host.input, {InputDevice::keyboard, pressed_key}, true);
     } else {
@@ -598,6 +604,11 @@ static u32 test_input_actions() {
         if (now >= step.start && now < step.start + step.length)
             held |= action_bit(step.action);
     return held;
+}
+
+bool host_action_held(Action action) {
+    host_poll();
+    return (host.input.pending.held & action_bit(action)) != 0;
 }
 
 u32 host_read_buttons() {

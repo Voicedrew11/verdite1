@@ -70,7 +70,7 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..a73df60743df66ac1fc5d2aba151b5e8
  
  inline void render_face_uv(kf::DrawFace *face, unsigned index, u16 uv)
 diff --git a/include/kf/lib/tmd.h b/include/kf/lib/tmd.h
-index a57bbbd53528f8485840a5032d6bd283092728c7..3067d7bcfc3590b21229dca6dd8d8d0b11383d03 100644
+index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..2450c5f3b1f488f9cfb798ee347e30a8047773df 100644
 --- a/include/kf/lib/tmd.h
 +++ b/include/kf/lib/tmd.h
 @@ -126,6 +126,10 @@ typedef struct KfScreenVertex {
