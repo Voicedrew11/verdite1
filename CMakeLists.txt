@@ -198,7 +198,7 @@ target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 ${KF_GLES_LIBRARY})
 
 # libverdite: nothing from the game on its include path.
 find_package(Threads REQUIRED)
-add_library(verdite STATIC libverdite/src/agent.cpp)
+add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/discord.cpp libverdite/src/places.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
 target_link_libraries(verdite PUBLIC Threads::Threads)
 if(WIN32)
@@ -210,7 +210,8 @@ target_compile_options(verdite PRIVATE -Wall -Wextra -Wpedantic -Werror)
 find_package(doctest CONFIG QUIET)
 if(doctest_FOUND)
   enable_testing()
-  add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp)
+  add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp libverdite/tests/discord.cpp
+    libverdite/tests/places.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME verdite COMMAND verdite_tests)
