@@ -36,6 +36,7 @@ DepthCue depth_cue(const std::optional<CameraPose> &camera) {
     DepthCue cue;
     if (!camera)
         return cue;
+    cue.world = true;
     cue.slope = static_cast<float>(render_fog_slope(camera->projection));
     cue.projection_distance = static_cast<float>(camera->projection.distance);
     const LightColor &fog = camera->fog_color;

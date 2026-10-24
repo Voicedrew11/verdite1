@@ -72,8 +72,11 @@ struct ShownLightSet {
 // The game's depth cue for one update, for fog drawn per pixel: a point at
 // depth z (or distance) gets the cue (16 H slope / z + 5120) / 4096, held to
 // 0..1, times its face's scale, and its clear colour moves that far toward
-// far_color (render_fog_color's arithmetic, without its rounding).
+// far_color (render_fog_color's arithmetic, without its rounding). A 2D
+// update (a menu's item model) has none: its faces keep the colours the game
+// cued at their corners.
 struct DepthCue {
+    bool world = false;
     float slope = 0;                     // render_fog_slope
     float projection_distance = 200;     // H
     std::array<float, 3> far_color{};    // in the vertex colours' units

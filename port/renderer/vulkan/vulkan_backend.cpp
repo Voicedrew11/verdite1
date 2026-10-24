@@ -132,6 +132,7 @@ private:
     bool write_motions(FrameSlot &slot, std::span<const Motion> motions);
     bool write_light_sets(FrameSlot &slot, std::span<const ShownLightSet> sets);
     VkRect2D clip_rect() const;
+    uint32_t fog_flags() const;
     DrawConstants draw_constants(const FrameView &view) const;
     void measure_occlusion(VkCommandBuffer commands, const DrawConstants &constants, const FrameSlot &slot);
     void draw_world(VkCommandBuffer commands, const FrameView &view, const FrameSlot &slot);
@@ -598,6 +599,21 @@ VkRect2D VulkanBackend::clip_rect() const {
             {static_cast<uint32_t>((right - left) * scale_), static_cast<uint32_t>((bottom - top) * scale_)}};
 }
 
+// Fog drawn per pixel, for a world update; a 2D one keeps its corners' colours.
+uint32_t VulkanBackend::fog_flags() const {
+    if (!cue_.world)
+        return 0;
+    switch (options_.fog) {
+    case FogMode::Depth:
+        return draw_fog_depth;
+    case FogMode::Distance:
+        return draw_fog_distance;
+    case FogMode::Corners:
+        return 0;
+    }
+    return 0;
+}
+
 DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
     DrawConstants constants{};
     const int extra_columns = (logical_width_ - render_width) / 2;
@@ -609,8 +625,7 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
                       (options_.texture_filter == TextureFilter::Bilinear ? draw_filter_bilinear : 0) |
                       (options_.texture_filter == TextureFilter::ThreePoint ? draw_filter_three_point : 0) |
                       (options_.texture_filter == TextureFilter::Sharp ? draw_filter_sharp : 0) |
-                      (occlusion_ready_ ? draw_occlusion : 0) | (options_.fog == FogMode::Depth ? draw_fog_depth : 0) |
-                      (options_.fog == FogMode::Distance ? draw_fog_distance : 0) |
+                      (occlusion_ready_ ? draw_occlusion : 0) | fog_flags() |
                       (options_.mipmaps ? draw_mipmaps : 0) | (options_.pixel_lighting ? draw_pixel_lighting : 0);
     constants.pixel_scale = static_cast<uint32_t>(scale_);
     constants.carry = view.carry;

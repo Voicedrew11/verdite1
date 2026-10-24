@@ -384,13 +384,19 @@ int game_cued(float depth, int scale) {
     return render_fog_color(black, clear, point.fog * scale).r >> 3;
 }
 
-Image draw_fogged(const std::vector<GpuVertex> &vertices, FogMode fog, float enhanced_depth = 0) {
+DepthCue world_cue() {
+    DepthCue cue;
+    cue.world = true;
+    cue.slope = render_fog_slope(Projection{});
+    return cue;
+}
+
+Image draw_fogged(const std::vector<GpuVertex> &vertices, FogMode fog, float enhanced_depth = 0,
+                  const DepthCue &cue = world_cue()) {
     PictureOptions options;
     options.fog = fog;
     options.enhanced_depth = enhanced_depth;
     backend->set_options(options);
-    DepthCue cue;
-    cue.slope = render_fog_slope(Projection{});
     const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
     backend->upload_frame(vertices, runs, cleared_to(background), cue);
     Image picture = present_and_capture();
@@ -425,6 +431,16 @@ TEST_CASE("vulkan: fog keeps each face's strength, and faces the game did not cu
     CHECK(std::abs(pixel(sprite, 160, 120).r - game_cued(wall_depth, 1)) <= 1);
     const Image uncued = draw_fogged(cued_wall(0), FogMode::Distance);
     CHECK(pixel(uncued, 160, 120) == Rgb5{0, 0, 0});
+}
+
+TEST_CASE("vulkan: a 2D update's cued faces keep their corners' colours") {
+    // A menu's item model: cued by the game, with no world cue to redo.
+    constexpr u8 corner_grey = 120;
+    std::vector<GpuVertex> item = cued_wall(8);
+    for (GpuVertex &vertex : item)
+        vertex.color = {corner_grey, corner_grey, corner_grey, 255};
+    const Image picture = draw_fogged(item, FogMode::Distance, 0, DepthCue{});
+    CHECK(std::abs(pixel(picture, 160, 120).r - (corner_grey >> 3)) <= 1);
 }
 
 TEST_CASE("vulkan: fog at the corners draws the game's own colours") {
