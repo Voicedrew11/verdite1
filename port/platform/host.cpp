@@ -699,9 +699,8 @@ bool host_opening_quick_load() {
     if (!host.opening_load_pressed)
         return false;
     host.opening_load_pressed = false;
-    static u8 data[save_file_capacity];
-    std::size_t size = 0;
-    if (save_file_read(SaveSlot::Quick, data, sizeof data, &size) != SaveFileResult::Ok) {
+    static std::array<u8, save_card_bytes> data;
+    if (save_card_read(SaveCard::Quick, data) != SaveFileResult::Ok) {
         host_show_message("No quick save to load");
         return false;
     }

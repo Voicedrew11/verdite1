@@ -71,6 +71,9 @@ FILES
 Saves, settings, mods and kf.log are in:
   Windows: %APPDATA%\KingsField\SLPS00017
   Linux:   ~/.local/share/KingsField/SLPS00017
+Saves are BISLPS-00017KF, the PlayStation's own save file (the quick save is
+BISLPS-00017KF.quick). Saves from earlier builds are brought in on the first
+launch.
 The example mods in the "mods" folder here are copied there on the first launch,
 switched off. Enable them in F1 > Mods. See MODDING.md for writing your own.
 

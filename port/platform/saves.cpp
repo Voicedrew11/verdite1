@@ -101,20 +101,10 @@ EM_ASYNC_JS(int, browser_save_write, (int slot, const u8 *input, unsigned size),
 
 namespace kf {
 #if defined(_WIN32)
-static constexpr unsigned save_name_capacity = 16;
 static constexpr unsigned pending_name_capacity = 64;
 static std::filesystem::path *save_directory;
 static unsigned pending_serial;
-static std::filesystem::path save_path(SaveSlot slot) {
-    char name[save_name_capacity];
-    if (slot == SaveSlot::Quick)
-        std::snprintf(name, sizeof name, "quicksave.kfs");
-    else
-        std::snprintf(name, sizeof name, "slot%u.kfs", static_cast<unsigned>(slot));
-    return *save_directory / name;
-}
 #elif !defined(__EMSCRIPTEN__)
-static constexpr unsigned save_name_capacity = 16;
 static constexpr unsigned pending_name_capacity = 64;
 static constexpr unsigned pending_name_attempts = 8;
 static int save_directory = -1;
@@ -155,22 +145,29 @@ static bool valid_slot(SaveSlot slot) {
     return slot >= SaveSlot::First && slot <= SaveSlot::Quick;
 }
 
+static const char *card_name(SaveCard card) {
+    return card == SaveCard::Game ? "BISLPS-00017KF" : "BISLPS-00017KF.quick";
+}
+
+// The earlier builds named the quick save quicksave.kfs on Windows and slot4.kfs elsewhere.
+static std::string earlier_name(SaveSlot slot) {
+#if defined(_WIN32)
+    if (slot == SaveSlot::Quick)
+        return "quicksave.kfs";
+#endif
+    return "slot" + std::to_string(static_cast<unsigned>(slot)) + ".kfs";
+}
+
 #ifndef __EMSCRIPTEN__
 // Each crash report carries a copy of the saves, so it can be replayed from the player's state.
 static void keep_saves_in_crash_reports(const char *directory) {
-    for (const SaveSlot slot : {SaveSlot::First, SaveSlot::Second, SaveSlot::Third, SaveSlot::Quick}) {
-#if defined(_WIN32)
-        const std::string name = slot == SaveSlot::Quick ? "quicksave.kfs" : "slot" + std::to_string(static_cast<unsigned>(slot)) + ".kfs";
-#else
-        const std::string name = "slot" + std::to_string(static_cast<unsigned>(slot)) + ".kfs";
-#endif
-        verdite::crash_keep_file((std::filesystem::path(reinterpret_cast<const char8_t *>(directory)) / name).string());
-    }
+    for (const SaveCard card : {SaveCard::Game, SaveCard::Quick})
+        verdite::crash_keep_file((std::filesystem::path(reinterpret_cast<const char8_t *>(directory)) / card_name(card)).string());
 }
 #endif
 
-static void note_save(const char *what, SaveSlot slot) {
-    verdite::crash_event(std::string(what) + " save slot " + std::to_string(static_cast<unsigned>(slot)));
+static void note_save(const char *what, const char *name) {
+    verdite::crash_event(std::string(what) + " save file " + name);
 }
 
 bool save_storage_start(const char *directory) {
@@ -223,21 +220,14 @@ void save_storage_shutdown() {
 #endif
 }
 
-SaveFileResult save_file_read(SaveSlot slot, u8 *data, std::size_t capacity, std::size_t *size) {
-    if (size)
-        *size = 0;
-    if (!valid_slot(slot) || !data || !size || !capacity || capacity > save_file_capacity)
-        return SaveFileResult::Invalid;
-    note_save("reading", slot);
-#ifdef __EMSCRIPTEN__
-    unsigned loaded = 0;
-    const auto result = static_cast<SaveFileResult>(browser_save_read(static_cast<int>(slot), data, capacity, &loaded));
-    *size = loaded;
-    return result;
-#elif defined(_WIN32)
+#ifndef __EMSCRIPTEN__
+static SaveFileResult read_named(const char *name, u8 *data, std::size_t capacity, std::size_t *size) {
+    *size = 0;
+    note_save("reading", name);
+#if defined(_WIN32)
     if (!save_directory)
         return SaveFileResult::Unavailable;
-    const auto path = save_path(slot);
+    const auto path = *save_directory / name;
     std::error_code error;
     if (!std::filesystem::exists(path, error))
         return error ? SaveFileResult::IoError : SaveFileResult::Missing;
@@ -260,9 +250,7 @@ SaveFileResult save_file_read(SaveSlot slot, u8 *data, std::size_t capacity, std
 #else
     if (save_directory < 0)
         return SaveFileResult::Unavailable;
-    std::array<char, save_name_capacity> name;
-    std::snprintf(name.data(), name.size(), "slot%u.kfs", static_cast<unsigned>(slot));
-    const int file = ::openat(save_directory, name.data(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    const int file = ::openat(save_directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (file < 0)
         return errno == ENOENT ? SaveFileResult::Missing : io_error();
     struct stat info{};
@@ -294,22 +282,32 @@ SaveFileResult save_file_read(SaveSlot slot, u8 *data, std::size_t capacity, std
 #endif
 }
 
-SaveFileResult save_file_write(SaveSlot slot, const u8 *data, std::size_t size) {
-    if (!valid_slot(slot) || !data || !size || size > save_file_capacity)
-        return SaveFileResult::Invalid;
-    note_save("writing", slot);
-#ifdef __EMSCRIPTEN__
-    return static_cast<SaveFileResult>(browser_save_write(static_cast<int>(slot), data, size));
-#elif defined(_WIN32)
+// Keep: the file being replaced is copied to <name>.bak first, so one mistimed quick save is
+// recoverable.
+enum class Previous { Discard, Keep };
+
+static SaveFileResult write_named(const char *name, const u8 *data, std::size_t size, Previous previous);
+
+#if !defined(_WIN32)
+static void copy_to_backup(const char *name) {
+    std::array<u8, save_card_bytes> data;
+    std::size_t size = 0;
+    if (read_named(name, data.data(), data.size(), &size) == SaveFileResult::Ok)
+        write_named((std::string(name) + ".bak").c_str(), data.data(), size, Previous::Discard);
+}
+#endif
+
+static SaveFileResult write_named(const char *name, const u8 *data, std::size_t size, Previous previous) {
+    note_save("writing", name);
+#if defined(_WIN32)
     if (!save_directory)
         return SaveFileResult::Unavailable;
-    const auto path = save_path(slot);
+    const auto path = *save_directory / name;
     char pending_name[pending_name_capacity];
-    std::snprintf(pending_name, sizeof pending_name, ".slot%u.%llx.%u.tmp", static_cast<unsigned>(slot),
+    std::snprintf(pending_name, sizeof pending_name, ".save.%llx.%u.tmp",
         static_cast<unsigned long long>(SDL_GetTicksNS()), ++pending_serial);
     const auto pending = *save_directory / pending_name;
-    if (slot == SaveSlot::Quick) {
-        // Keep the previous quick save, so one mistimed F2 is recoverable.
+    if (previous == Previous::Keep) {
         auto backup = path;
         backup += ".bak";
         ::CopyFileW(path.c_str(), backup.c_str(), FALSE);
@@ -332,12 +330,12 @@ SaveFileResult save_file_write(SaveSlot slot, const u8 *data, std::size_t size) 
 #else
     if (save_directory < 0)
         return SaveFileResult::Unavailable;
-    std::array<char, save_name_capacity> name;
     std::array<char, pending_name_capacity> pending;
-    std::snprintf(name.data(), name.size(), "slot%u.kfs", static_cast<unsigned>(slot));
+    if (previous == Previous::Keep)
+        copy_to_backup(name);
     int file = -1;
     for (unsigned attempt = 0; attempt < pending_name_attempts && file < 0; ++attempt) {
-        std::snprintf(pending.data(), pending.size(), ".slot%u.%llx.%u.tmp", static_cast<unsigned>(slot),
+        std::snprintf(pending.data(), pending.size(), ".save.%llx.%u.tmp",
             static_cast<unsigned long long>(SDL_GetTicksNS()), ++pending_serial);
         file = ::openat(save_directory, pending.data(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR);
         if (file < 0 && errno != EEXIST)
@@ -360,7 +358,7 @@ SaveFileResult save_file_write(SaveSlot slot, const u8 *data, std::size_t size) 
         result = io_error();
     if (::close(file) != 0)
         result = io_error();
-    if (result == SaveFileResult::Ok && ::renameat(save_directory, pending.data(), save_directory, name.data()) != 0)
+    if (result == SaveFileResult::Ok && ::renameat(save_directory, pending.data(), save_directory, name) != 0)
         result = io_error();
     if (result != SaveFileResult::Ok) {
         // Only the uniquely created, unpublished temporary file is removed.
@@ -371,9 +369,50 @@ SaveFileResult save_file_write(SaveSlot slot, const u8 *data, std::size_t size) 
     return sync_file(save_directory) ? SaveFileResult::Ok : io_error();
 #endif
 }
+#endif // __EMSCRIPTEN__
+
+// The browser build was dropped; its store keeps only the earlier per-slot files.
+SaveFileResult save_card_read(SaveCard card, std::span<u8, save_card_bytes> data) {
+#ifdef __EMSCRIPTEN__
+    (void)card; (void)data;
+    return SaveFileResult::Unavailable;
+#else
+    std::size_t size = 0;
+    const auto result = read_named(card_name(card), data.data(), data.size(), &size);
+    return result == SaveFileResult::Ok && size != data.size() ? SaveFileResult::Invalid : result;
+#endif
+}
+
+SaveFileResult save_card_write(SaveCard card, std::span<const u8, save_card_bytes> data) {
+#ifdef __EMSCRIPTEN__
+    (void)card; (void)data;
+    return SaveFileResult::Unavailable;
+#else
+    return write_named(card_name(card), data.data(), data.size(),
+                       card == SaveCard::Quick ? Previous::Keep : Previous::Discard);
+#endif
+}
+
+SaveFileResult save_earlier_read(SaveSlot slot, std::vector<u8> &data) {
+    data.clear();
+    if (!valid_slot(slot))
+        return SaveFileResult::Invalid;
+    data.resize(earlier_save_capacity);
+    std::size_t size = 0;
+#ifdef __EMSCRIPTEN__
+    unsigned loaded = 0;
+    const auto result = static_cast<SaveFileResult>(browser_save_read(static_cast<int>(slot), data.data(), data.size(), &loaded));
+    size = loaded;
+#else
+    const auto result = read_named(earlier_name(slot).c_str(), data.data(), data.size(), &size);
+#endif
+    data.resize(result == SaveFileResult::Ok ? size : 0);
+    return result;
+}
+
 #if defined(_WIN32)
 static std::filesystem::path side_path(SaveSlot slot, const char *suffix) {
-    auto path = save_path(slot);
+    auto path = *save_directory / earlier_name(slot);
     path += suffix;
     return path;
 }

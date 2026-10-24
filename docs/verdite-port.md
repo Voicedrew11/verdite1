@@ -73,8 +73,13 @@ is the agent channel; its KF1 half is `port/platform/agent.cpp`.
 - **Region.** The decomps are JP; Verdite2 and Verdite3 are US releases. Each
   needs its US relink adapted (as the KF2 fork does), with its text encoding
   and fonts.
-- **Saves.** Players coming from a Verdite build want their saves. kf1-enhanced
-  writes the game's own format (`.kfs`), so a memory-card importer is cheap.
+- **Saves.** Players coming from a Verdite build want their saves. KF1 now
+  writes the PlayStation's own save file (`BISLPS-00017KF`, the card file's
+  40960 bytes, done 2026-10-24): a save taken out of a C# Verdite1 card
+  (`carda.sav`) loads, and one written here loads in the C# build. The earlier
+  per-slot `.kfs` files are brought in once on start. Still to do: importing
+  and exporting whole cards (`verdite/memory_card.h` reads and writes them) from
+  the game, for the C# builds and emulators (`.mcd`, `.mcr`).
 - **Following upstream.** sushi-shi moves fast and regenerates source. Keep
   Verdite features behind the core and small hooks rather than edits spread
   through the decomp's files, the same discipline as the fork patches.

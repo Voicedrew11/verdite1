@@ -24,7 +24,7 @@ creates `resources-en` from this base using an embedded translation delta.
 The source tree is unchanged. Input and complete output hashes must match;
 only verified output is published by renaming a temporary directory under the
 import lock. Partial/failed imports never replace a cache. Saves remain shared
-between languages in the same language-independent `.kfs` format.
+between languages: the save file holds no text.
 
 The browser follows the same workflow and keeps Japanese resources in
 `kings-field-resources` and English resources in `kings-field-resources-en`

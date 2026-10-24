@@ -50,6 +50,7 @@ EM_JS(void, browser_game_started, (), { Module['gameStarted'](); });
 #endif
 
 #include <kf/cutscene/playback.h>
+#include <kf/game/save.h>
 #include <kf/game/session.h>
 
 namespace {
@@ -410,6 +411,7 @@ int main(int argc, char **argv) {
     std::printf("Starting King's Field (%s).\n", kf::language_name(kf::game_language()));
     if (!kf::save_storage_start(saves))
         kf::host_fail("Cannot initialize save storage. Check browser storage permissions or the selected save directory.");
+    save_system_import_earlier();
 #ifdef __EMSCRIPTEN__
     browser_game_started();
 #endif

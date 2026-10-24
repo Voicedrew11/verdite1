@@ -134,14 +134,16 @@ index 7719295a3510f44a36c1d9ee37d043c141e41e4a..aefb01f134a43506e546918ff1acc8f0
  kf::Language game_text_language();
  void game_update_language_comparison();
 diff --git a/include/kf/game/save.h b/include/kf/game/save.h
-index 35636457c6d504dfede73c5568fb25701f4a9a9d..ac78de0b7e8d4a020aefc74ebf34571126e29e63 100644
+index 35636457c6d504dfede73c5568fb25701f4a9a9d..40411acc5b465454fd3ed82efa859c01528e4555 100644
 --- a/include/kf/game/save.h
 +++ b/include/kf/game/save.h
-@@ -28,5 +28,7 @@ struct KfSaveSlotSummary {
+@@ -28,5 +28,9 @@ struct KfSaveSlotSummary {
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries);
  KfSaveResult save_system_read_slot(kf::SaveSlot slot);
  KfSaveResult save_system_write_slot(kf::SaveSlot slot);
 +bool save_system_quick_write(void);
 +bool save_system_quick_read(void);
++// Brings the earlier builds' per-slot files into the card files, once (save_system.cpp).
++void save_system_import_earlier(void);
  
  #endif // KF_GAME_SAVE_H

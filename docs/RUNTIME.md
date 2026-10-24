@@ -16,7 +16,7 @@ replaced by a plain PC equivalent. Sound is the one partial exception.
 | GPU, VRAM | none: faces go into a draw list that the renderer frontend batches for Vulkan; textures become materials at load ("this is not runtime emulated VRAM", `decomp/include/kf/lib/codec.h:27`); 1024x512 survives as a texture-coordinate convention |
 | CD | none: the files are extracted once into `data/` and read as files |
 | BIOS, interrupts, DMA, timers | none: a 60 Hz host clock with waits (`port/platform/host.cpp`) |
-| memory card | none: the game's save format in `.kfs` files |
+| memory card | none: the game's own save file, `BISLPS-00017KF`, the 40960 bytes the PlayStation keeps on a card (header, icon, directory, four entries), read and written whole; the quick save is a second file of the same format. `verdite/memory_card.h` reads and writes whole card images |
 | SPU | **reimplemented at a high level**: `decomp/src/audio/sound.cpp` (709 lines, patched) mixes 24 voices at 44.1 kHz, decodes PS1 ADPCM (16-byte blocks, 28 samples), runs the envelopes and the sequenced music. Not register level, and its reverb is a generic comb and diffuser design, not the SPU's |
 
 The recompilations are the opposite: RecompOne translates the MIPS to C# and

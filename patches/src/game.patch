@@ -2397,12 +2397,431 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..aa22d1044416dd9cfa97e92d7553f3b8
          kf::host_fail("Cannot replace language graphics.");
      displayed_language = language;
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index d3474864ec0f4578414b005ecaa89eae266de167..ee5ea7b6559916d4af0821ec39697fdfd352c3e1 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..23e40c6edaf63864505fae002e43007ecf363d31 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
-@@ -454,12 +454,11 @@ KfSaveResult save_system_read_slot(kf::SaveSlot slot) {
+@@ -7,13 +7,16 @@
+ #include <kf/lib/null.h>
+ #include <kf/lib/resource_file.h>
+ #include <kf/platform/assets.h>
++#include <kf/platform/files.h>
+ #include <kf/platform/saves.h>
+ 
+ #include <array>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <span>
+ #include <string>
++#include <vector>
+ 
+ namespace {
+ constexpr int save_no_equipment_id = 255;
+@@ -58,11 +61,15 @@ struct SavedGameState {
+     std::array<KfMagicLearningState, KF_MAGIC_RECORD_COUNT> learned;
+ };
+ enum class SaveCodecMode { Read, Write };
++// Kfs: the earlier builds' field stream, read only to bring those saves in. Card: the
++// PlayStation's bytes, every field at its RAM offset, as the game's own save writes them.
++enum class SaveLayout { Kfs, Card };
+ struct SaveCodec {
+     u8 *data;
+     std::size_t size, position;
+     SaveCodecMode mode;
+     bool valid;
++    SaveLayout layout = SaveLayout::Kfs;
+ };
+ 
+ template <typename T, typename Wire>
+@@ -102,6 +109,37 @@ static void save_padding(SaveCodec &io, std::size_t count) {
      }
-     // No live game state is touched until the complete file is decoded and validated.
+ }
+ 
++// Card bytes the port does not keep (padding, unsaved runs): zero when written, skipped when read.
++static void save_card_gap(SaveCodec &io, std::size_t count) {
++    if (io.layout == SaveLayout::Card)
++        save_padding(io, count);
++}
++
++// The PlayStation addresses of the records the saved player points at. The game loads these
++// pointers as saved, so a save another PlayStation build reads must hold them.
++constexpr u32 ps1_magic_records = 0x8009ce60, ps1_magic_record_bytes = 0x14;
++constexpr u32 ps1_weapon_records = 0x8009ff10, ps1_weapon_record_bytes = 0x2c;
++constexpr u32 ps1_armor_records = 0x800a0248, ps1_armor_record_bytes = 0x1c;
++
++static u32 ps1_record_address(u8 id, u8 first_id, u32 table, u32 record_bytes) {
++    return id == save_no_equipment_id ? 0 : table + (id - first_id) * record_bytes;
++}
++
++static u32 ps1_armor_address(KfObjectId id) {
++    return ps1_record_address(kf_enum_encode<u8>(id), kf_enum_encode<u8>(KF_ITEM_IRON_MASK), ps1_armor_records,
++                              ps1_armor_record_bytes);
++}
++
++// Written in the Card layout; skipped when read, since the port rebuilds pointers from the ids.
++static void save_card_pointer(SaveCodec &io, u32 address) {
++    if (io.layout != SaveLayout::Card)
++        return;
++    if (io.mode == SaveCodecMode::Write)
++        save_field<u32>(io, address);
++    else
++        save_padding(io, sizeof address);
++}
++
+ // Each floor slot starts with KF_MAP_SAVED_RECORDS_OFFSET script bytes.
+ static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId floor) {
+     std::size_t used = 0;
+@@ -131,8 +169,25 @@ static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId f
+     save_padding(io, KF_MAP_SAVED_RECORDS_OFFSET - used);
+ }
+ 
++// The PlayStation keeps a cell z first, as KfMapCellCoordinates does; the earlier builds wrote x first.
++static void save_cell(SaveCodec &io, KfMapCellCoordinates &cell) {
++    if (io.layout == SaveLayout::Card) {
++        save_field<u8>(io, cell.z);
++        save_field<u8>(io, cell.x);
++    } else {
++        save_field<u8>(io, cell.x);
++        save_field<u8>(io, cell.z);
++    }
++}
++
++constexpr std::size_t card_player_bytes = 0xe0, card_world_offset = 0x30c, card_entry_bytes = 0x2580;
++// The world, the stock and the magic flags follow each other as in the PlayStation's payload.
++static_assert(KF_MAP_SAVED_FLOOR_COUNT * (KF_MAP_SAVED_RECORDS_OFFSET + sizeof(KfMapSavedWorld{}.floors[0].records)) == 0x2134);
++static_assert(KF_ITEM_STOCK_BANK_COUNT * KF_ITEM_COUNT == 0xf0 && KF_MAGIC_RECORD_COUNT == 24);
++
+ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+     auto &p = state.player;
++    const std::size_t start = io.position;
+ #define SAVE_FIELD(type, name) save_field<type>(io, p.name)
+ #define SAVE_BYTES(name) save_bytes(io, p.name)
+     SAVE_FIELD(s32, experience);
+@@ -182,14 +237,23 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+     SAVE_FIELD(u32, equipment_effect_ticks);
+     SAVE_FIELD(u8, selected_magic_id);
+     SAVE_BYTES(unknown_5d);
++    save_card_pointer(io, ps1_record_address(kf_enum_encode<u8>(p.selected_magic_id), 0, ps1_magic_records,
++                                             ps1_magic_record_bytes));
+     SAVE_FIELD(u8, equipped_weapon_id);
+     SAVE_BYTES(unknown_65);
++    save_card_pointer(io, ps1_record_address(kf_enum_encode<u8>(p.equipped_weapon_id), 0, ps1_weapon_records,
++                                             ps1_weapon_record_bytes));
++    save_card_gap(io, 4);   // the weapon's asset buffer, restored on load
+     SAVE_FIELD(s16, weapon_attack_phase);
+     SAVE_BYTES(unknown_72);
++    save_card_gap(io, 4);   // the weapon's animation cache, restored on load
+     SAVE_FIELD(u8, weapon_magic_shots_remaining);
+     SAVE_FIELD(u8, weapon_magic_delay);
+     SAVE_FIELD(u8, weapon_attack_fully_charged);
+     SAVE_BYTES(unknown_7b);
++    for (const auto id : {p.equipped_head_armor_id, p.equipped_body_armor_id, p.equipped_shield_id,
++                          p.equipped_arm_armor_id, p.equipped_leg_armor_id})
++        save_card_pointer(io, ps1_armor_address(id));
+     SAVE_FIELD(u8, equipped_head_armor_id);
+     SAVE_FIELD(u8, equipped_body_armor_id);
+     SAVE_FIELD(u8, equipped_shield_id);
+@@ -203,24 +267,25 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+     SAVE_FIELD(s16, view_rotation_offset.vx);
+     SAVE_FIELD(s16, view_rotation_offset.vy);
+     SAVE_FIELD(s16, view_rotation_offset.vz);
++    save_card_gap(io, 2);   // SVECTOR pad
+     SAVE_FIELD(u8, update_state);
+     SAVE_FIELD(u8, unknown_a3);
+     SAVE_FIELD(s32, camera_position.vx);
+     SAVE_FIELD(s32, camera_position.vy);
+     SAVE_FIELD(s32, camera_position.vz);
++    save_card_gap(io, 4);   // VECTOR pad
+     SAVE_FIELD(s32, foot_height);
+     SAVE_FIELD(s16, camera_rotation.vx);
+     SAVE_FIELD(s16, camera_rotation.vy);
+     SAVE_FIELD(s16, camera_rotation.vz);
++    save_card_gap(io, 2);   // SVECTOR pad
+     SAVE_FIELD(s16, motion_state.strafe_velocity);
+     SAVE_FIELD(s16, motion_state.forward_velocity);
+     SAVE_FIELD(u16, motion_state.movement_speed);
+     SAVE_FIELD(s16, motion_state.yaw_step);
+     SAVE_FIELD(s16, motion_state.pitch_step);
+-    SAVE_FIELD(u8, motion_state.map_cell.x);
+-    SAVE_FIELD(u8, motion_state.map_cell.z);
+-    SAVE_FIELD(u8, previous_map_cell.x);
+-    SAVE_FIELD(u8, previous_map_cell.z);
++    save_cell(io, p.motion_state.map_cell);
++    save_cell(io, p.previous_map_cell);
+     SAVE_BYTES(unknown_ce);
+     SAVE_FIELD(s16, view_bob_offset);
+     SAVE_FIELD(u16, view_bob_phase);
+@@ -231,6 +296,9 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+     SAVE_BYTES(unknown_df);
+ #undef SAVE_FIELD
+ #undef SAVE_BYTES
++    if (io.layout == SaveLayout::Card && io.valid && io.position - start != card_player_bytes)
++        io.valid = false;
++    save_card_gap(io, card_world_offset - card_player_bytes);   // never written by the game
+     for (unsigned i = 0; i < KF_MAP_SAVED_FLOOR_COUNT; ++i) {
+         save_floor_script(io, state.world, kf_enum_decode<KfFloorId>(i + 1));
+         save_bytes(io, state.world.floors[i].records);
+@@ -239,6 +307,12 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+         save_bytes(io, stock);
+     for (auto &learned : state.learned)
+         save_field<u8>(io, learned);
++    if (io.layout != SaveLayout::Card)
++        return;
++    if (io.valid && io.position - start <= card_entry_bytes)
++        save_card_gap(io, card_entry_bytes - (io.position - start));   // the entry's unsaved tail
++    if (io.position - start != card_entry_bytes)
++        io.valid = false;
+ }
+ 
+ static u32 save_checksum(const u8 *data, std::size_t size) {
+@@ -368,41 +442,145 @@ static void save_state_apply(const SavedGameState &state) {
+     // The existing load-return path reloads the floor, weapon and selected magic.
+ }
+ 
++// The earlier builds' slot files: magic, version, payload size, CRC-32, then the Kfs fields.
+ constexpr std::array<u8, 8> save_magic = {'K', 'F', 'J', 'P', 'S', 'A', 'V', 'E'};
+ constexpr u32 save_version = 1;
+ constexpr std::size_t save_header_bytes = 20;
+-struct SaveCatalogEntry { bool occupied; u32 checksum; };
+-static std::array<SaveCatalogEntry, KF_SAVE_SLOT_COUNT> save_catalog;
+ 
+-static bool save_slot_valid(kf::SaveSlot slot) {
+-    return slot >= kf::SaveSlot::First && slot <= kf::SaveSlot::Third;
+-}
+-static KfSaveSlotSummary save_summary(const SavedGameState &state) {
+-    const auto &p = state.player;
+-    return {static_cast<u32>(p.experience), static_cast<KfFloorId>(p.progress_state.current_floor),
+-        p.vitals.current_hp, p.vitals.maximum_hp, p.vitals.current_mp, p.vitals.maximum_mp,
+-        KfSaveSlotState::Ready};
+-}
+-
+-static kf::SaveFileResult save_read_record(kf::SaveSlot slot, SavedGameState &state, u32 &checksum) {
+-    std::array<u8, kf::save_file_capacity> data;
+-    std::size_t size;
+-    const auto result = kf::save_file_read(slot, data.data(), data.size(), &size);
+-    if (result != kf::SaveFileResult::Ok)
+-        return result;
+-    if (size < save_header_bytes || std::memcmp(data.data(), save_magic.data(), save_magic.size()) != 0)
+-        return kf::SaveFileResult::Invalid;
+-    SaveCodec io{data.data(), size, sizeof save_magic, SaveCodecMode::Read, true};
+-    u32 version = 0, payload_size = 0;
++static bool save_kfs_decode(std::span<u8> data, SavedGameState &state) {
++    if (data.size() < save_header_bytes || std::memcmp(data.data(), save_magic.data(), save_magic.size()) != 0)
++        return false;
++    SaveCodec io{data.data(), data.size(), sizeof save_magic, SaveCodecMode::Read, true};
++    u32 version = 0, payload_size = 0, checksum = 0;
+     save_field<u32>(io, version);
+     save_field<u32>(io, payload_size);
+     save_field<u32>(io, checksum);
+-    if (!io.valid || version != save_version || payload_size != size - save_header_bytes
++    if (!io.valid || version != save_version || payload_size != data.size() - save_header_bytes
+             || checksum != save_checksum(data.data() + save_header_bytes, payload_size))
+-        return kf::SaveFileResult::Invalid;
++        return false;
+     save_state_fields(io, state);
+-    return io.valid && io.position == size && save_state_valid(state)
+-        ? kf::SaveFileResult::Ok : kf::SaveFileResult::Invalid;
++    return io.valid && io.position == data.size();
++}
++
++// The PlayStation's save file, BISLPS-00017KF: a card header (title and three icon frames), the
++// game's directory, then four entries. Three entries are the slots' and the fourth is the spare
++// the next save goes into, so a failed write never loses the save it replaces.
++using SaveCard = std::array<u8, kf::save_card_bytes>;
++constexpr std::size_t card_header_bytes = 0x280, card_entries = 4;
++constexpr std::size_t card_directory_offset = 0x200, card_summaries_offset = 0x220, card_summary_bytes = 24;
++constexpr u8 card_entry_empty = 0, card_entry_spare = 4;
++constexpr u8 card_icon_type = 0x13, card_blocks = 5;
++constexpr std::size_t card_title_offset = 4, card_clut_offset = 0x60, card_icons_offset = 0x80;
++constexpr std::size_t card_clut_bytes = 0x20, card_icon_bytes = 0x80;
++constexpr std::size_t icon_tim_clut_offset = 0x14, icon_tim_pixels_offset = 0x40, icon_tim_capacity = 2048;
++// Full-width "<<  KING'S FIELD  >>" after six full-width spaces, in Shift-JIS.
++constexpr char card_title[] =
++    "\201@\201@\201@\201@\201@\201@\201\203\201\203\201@\201@\202j\202h\202m\202f"
++    "\201f\202r\201@\202e\202h\202d\202k\202c\201@\201@\201\204\201\204";
++
++static void card_put32(SaveCard &card, std::size_t at, u32 value) {
++    for (std::size_t i = 0; i < 4; ++i)
++        card[at + i] = static_cast<u8>(value >> (8 * i));
++}
++
++static u32 card_get32(const SaveCard &card, std::size_t at) {
++    return card[at] | card[at + 1] << 8 | card[at + 2] << 16 | static_cast<u32>(card[at + 3]) << 24;
++}
++
++// A new file, as the game makes one: the header with its title and icons, every entry empty.
++static void card_initialize(SaveCard &card) {
++    card.fill(0);
++    card[0] = 'S';
++    card[1] = 'C';
++    card[2] = card_icon_type;
++    card[3] = card_blocks;
++    std::memcpy(card.data() + card_title_offset, card_title, sizeof card_title);
++    for (std::size_t frame = 0; frame < 3; ++frame) {
++        std::array<char, 16> path{};
++        std::snprintf(path.data(), path.size(), "TIM/ICO%zu.TIM", frame + 1);
++        std::array<u8, icon_tim_capacity> tim{};
++        kf::DataFile file{};
++        auto result = resource_file_open(&file, path.data());
++        if (result == kf::FileResult::Ok && file.size < icon_tim_pixels_offset + card_icon_bytes)
++            result = kf::FileResult::IoError;
++        if (result == kf::FileResult::Ok)
++            result = kf::data_file_read(&file, tim.data(), tim.size());
++        kf::data_file_close(&file);
++        if (result != kf::FileResult::Ok) {
++            kf::data_file_report_error(result, path.data());
++            continue;
++        }
++        if (frame == 0)
++            std::memcpy(card.data() + card_clut_offset, tim.data() + icon_tim_clut_offset, card_clut_bytes);
++        std::memcpy(card.data() + card_icons_offset + frame * card_icon_bytes, tim.data() + icon_tim_pixels_offset,
++                    card_icon_bytes);
++    }
++}
++
++static std::size_t card_entry_offset(std::size_t entry) {
++    return card_header_bytes + entry * card_entry_bytes;
++}
++
++// The entry holding `slot`, or card_entries.
++static std::size_t card_entry_of(const SaveCard &card, kf::SaveSlot slot) {
++    for (std::size_t entry = 0; entry < card_entries; ++entry)
++        if (card[card_directory_offset + entry] == kf_enum_encode<u8>(slot))
++            return entry;
++    return card_entries;
++}
++
++static bool card_decode(SaveCard &card, std::size_t entry, SavedGameState &state) {
++    SaveCodec io{card.data(), card_entry_offset(entry) + card_entry_bytes, card_entry_offset(entry),
++                 SaveCodecMode::Read, true, SaveLayout::Card};
++    save_state_fields(io, state);
++    return io.valid;
++}
++
++// Writes `state` into the spare (or an empty) entry and makes it `slot`'s; the slot's earlier
++// entry becomes the spare. Unlike the PlayStation's writer, a slot saved for the first time does
++// not also overwrite the last byte of the third icon frame.
++static bool card_store(SaveCard &card, kf::SaveSlot slot, SavedGameState &state) {
++    std::size_t target = card_entries;
++    for (const u8 wanted : {card_entry_spare, card_entry_empty})
++        for (std::size_t entry = 0; entry < card_entries && target == card_entries; ++entry)
++            if (card[card_directory_offset + entry] == wanted)
++                target = entry;
++    if (target == card_entries)
++        return false;
++    SaveCodec io{card.data(), card_entry_offset(target) + card_entry_bytes, card_entry_offset(target),
++                 SaveCodecMode::Write, true, SaveLayout::Card};
++    save_state_fields(io, state);
++    if (!io.valid)
++        return false;
++    const std::size_t previous = card_entry_of(card, slot);
++    card[card_directory_offset + target] = kf_enum_encode<u8>(slot);
++    if (previous != card_entries)
++        card[card_directory_offset + previous] = card_entry_spare;
++    const auto &p = state.player;
++    const std::size_t summary = card_summaries_offset + target * card_summary_bytes;
++    card_put32(card, summary, static_cast<u32>(p.experience));
++    card_put32(card, summary + 4, kf_enum_encode<u8>(p.progress_state.current_floor));
++    card_put32(card, summary + 8, p.vitals.current_hp);
++    card_put32(card, summary + 12, p.vitals.maximum_hp);
++    card_put32(card, summary + 16, p.vitals.current_mp);
++    card_put32(card, summary + 20, p.vitals.maximum_mp);
++    return true;
++}
++
++static KfSaveSlotSummary card_summary(const SaveCard &card, std::size_t entry) {
++    const std::size_t at = card_summaries_offset + entry * card_summary_bytes;
++    return {card_get32(card, at), kf_enum_decode<KfFloorId>(static_cast<u8>(card_get32(card, at + 4))),
++        card_get32(card, at + 8), card_get32(card, at + 12), card_get32(card, at + 16), card_get32(card, at + 20),
++        KfSaveSlotState::Ready};
++}
++
++// The directory as the catalog showed it: a load whose file has changed since is refused, as
++// the game refuses one whose card was swapped.
++static std::array<u8, card_header_bytes - card_directory_offset> save_catalog_directory;
++static bool save_catalog_read;
++
++static bool save_slot_valid(kf::SaveSlot slot) {
++    return slot >= kf::SaveSlot::First && slot <= kf::SaveSlot::Third;
+ }
+ 
+ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
+@@ -418,76 +596,170 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
+ 
+ KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries) {
+     summaries = {};
+-    save_catalog = {};
++    save_catalog_read = false;
++    static SaveCard card;
++    const auto result = kf::save_card_read(kf::SaveCard::Game, card);
++    if (result == kf::SaveFileResult::Missing)
++        return KF_SAVE_RESULT_OK;
++    if (result != kf::SaveFileResult::Ok) {
++        for (auto &summary : summaries)
++            summary.state = result == kf::SaveFileResult::Invalid ? KfSaveSlotState::Damaged : KfSaveSlotState::Unavailable;
++        std::fprintf(stderr, "The save file cannot be read (%d)\n", static_cast<int>(result));
++        return KF_SAVE_RESULT_OK;
++    }
++    std::memcpy(save_catalog_directory.data(), card.data() + card_directory_offset, save_catalog_directory.size());
++    save_catalog_read = true;
+     for (std::size_t i = 0; i < summaries.size(); ++i) {
+-        SavedGameState state{};
+-        u32 checksum = 0;
+         const auto slot = static_cast<kf::SaveSlot>(i + 1);
+-        const auto result = save_read_record(slot, state, checksum);
+-        if (result == kf::SaveFileResult::Missing)
++        const std::size_t entry = card_entry_of(card, slot);
++        if (entry == card_entries)
+             continue;
+-        if (result != kf::SaveFileResult::Ok) {
+-            summaries[i].state = result == kf::SaveFileResult::Invalid
+-                ? KfSaveSlotState::Damaged : KfSaveSlotState::Unavailable;
+-            std::fprintf(stderr, "Save slot %zu cannot be read (%d); other slots remain available\n",
+-                i + 1, static_cast<int>(result));
++        SavedGameState state{};
++        if (!card_decode(card, entry, state) || !save_state_valid(state)) {
++            summaries[i].state = KfSaveSlotState::Damaged;
++            std::fprintf(stderr, "Save slot %zu cannot be read; other slots remain available\n", i + 1);
+             continue;
+         }
+-        save_catalog[i] = {true, checksum};
+-        summaries[i] = save_summary(state);
++        summaries[i] = card_summary(card, entry);
+     }
+     return KF_SAVE_RESULT_OK;
+ }
+ 
++// Decodes `slot` of `which` into `state`; nothing live is touched.
++static kf::SaveFileResult save_read_state(kf::SaveCard which, kf::SaveSlot slot, SaveCard &card, SavedGameState &state) {
++    const auto result = kf::save_card_read(which, card);
++    if (result != kf::SaveFileResult::Ok)
++        return result;
++    const std::size_t entry = card_entry_of(card, slot);
++    if (entry == card_entries)
++        return kf::SaveFileResult::Missing;
++    return card_decode(card, entry, state) && save_state_valid(state) ? kf::SaveFileResult::Ok
++                                                                      : kf::SaveFileResult::Invalid;
++}
++
+ KfSaveResult save_system_read_slot(kf::SaveSlot slot) {
+     if (!save_slot_valid(slot))
+         return save_failure(kf::SaveFileResult::Invalid, false);
++    static SaveCard card;
+     SavedGameState state{};
+-    u32 checksum = 0;
+-    const auto result = save_read_record(slot, state, checksum);
++    const auto result = save_read_state(kf::SaveCard::Game, slot, card, state);
+     if (result != kf::SaveFileResult::Ok)
+         return save_failure(result, false);
+-    const auto &catalog = save_catalog[kf_enum_encode<s16>(slot) - 1];
+-    if (!catalog.occupied || catalog.checksum != checksum) {
++    if (!save_catalog_read || std::memcmp(save_catalog_directory.data(), card.data() + card_directory_offset,
++                                          save_catalog_directory.size()) != 0) {
+         menu_load_message_image(SAVE_MESSAGE_STALE_CATALOG);
+         return KF_SAVE_RESULT_FAILED;
+     }
+-    // No live game state is touched until the complete file is decoded and validated.
++    // No live game state is touched until the slot is decoded and validated.
      save_state_apply(state);
 +    kf::automap_load(slot);
      return KF_SAVE_RESULT_OK;
@@ -2411,52 +2830,67 @@ index d3474864ec0f4578414b005ecaa89eae266de167..ee5ea7b6559916d4af0821ec39697fdf
 -KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
 -    if (!save_slot_valid(slot))
 -        return save_failure(kf::SaveFileResult::Invalid, true);
-+static kf::SaveFileResult save_write_record(kf::SaveSlot slot, u32 &checksum) {
++static SavedGameState save_live_state() {
      SavedGameState state{};
      state.player = player_state;
      state.world = map_runtime_state.world_state;
-@@ -467,27 +466,63 @@ KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
+     state.stock = item_stock;
      for (std::size_t i = 0; i < KF_MAGIC_RECORD_COUNT; ++i)
          state.learned[i] = effect_state.magic.entries[i].learned;
++    return state;
++}
++
++// Stores the live game as `slot` of `which`, keeping the file's other slots.
++static kf::SaveFileResult save_write_state(kf::SaveCard which, kf::SaveSlot slot) {
++    auto state = save_live_state();
      if (!save_state_valid(state))
--        return save_failure(kf::SaveFileResult::Invalid, true);
 +        return kf::SaveFileResult::Invalid;
-     std::array<u8, kf::save_file_capacity> data;
-     SaveCodec payload{data.data(), data.size(), save_header_bytes, SaveCodecMode::Write, true};
-     save_state_fields(payload, state);
-     if (!payload.valid)
--        return save_failure(kf::SaveFileResult::Invalid, true);
++    static SaveCard card;
++    const auto read = kf::save_card_read(which, card);
++    if (read == kf::SaveFileResult::Missing)
++        card_initialize(card);
++    else if (read != kf::SaveFileResult::Ok)
++        return read;   // never replace a file whose other slots cannot be read
++    if (!card_store(card, slot, state))
 +        return kf::SaveFileResult::Invalid;
-     std::memcpy(data.data(), save_magic.data(), save_magic.size());
-     SaveCodec header{data.data(), save_header_bytes, sizeof save_magic, SaveCodecMode::Write, true};
-     u32 version = save_version;
-     u32 payload_size = payload.position - save_header_bytes;
--    u32 checksum = save_checksum(data.data() + save_header_bytes, payload_size);
-+    checksum = save_checksum(data.data() + save_header_bytes, payload_size);
-     save_field<u32>(header, version);
-     save_field<u32>(header, payload_size);
-     save_field<u32>(header, checksum);
--    const auto result = kf::save_file_write(slot, data.data(), payload.position);
-+    return kf::save_file_write(slot, data.data(), payload.position);
++    return kf::save_card_write(which, card);
 +}
 +
 +KfSaveResult save_system_write_slot(kf::SaveSlot slot) {
 +    if (!save_slot_valid(slot))
-+        return save_failure(kf::SaveFileResult::Invalid, true);
-+    u32 checksum = 0;
-+    const auto result = save_write_record(slot, checksum);
+         return save_failure(kf::SaveFileResult::Invalid, true);
+-    std::array<u8, kf::save_file_capacity> data;
+-    SaveCodec payload{data.data(), data.size(), save_header_bytes, SaveCodecMode::Write, true};
+-    save_state_fields(payload, state);
+-    if (!payload.valid)
+-        return save_failure(kf::SaveFileResult::Invalid, true);
+-    std::memcpy(data.data(), save_magic.data(), save_magic.size());
+-    SaveCodec header{data.data(), save_header_bytes, sizeof save_magic, SaveCodecMode::Write, true};
+-    u32 version = save_version;
+-    u32 payload_size = payload.position - save_header_bytes;
+-    u32 checksum = save_checksum(data.data() + save_header_bytes, payload_size);
+-    save_field<u32>(header, version);
+-    save_field<u32>(header, payload_size);
+-    save_field<u32>(header, checksum);
+-    const auto result = kf::save_file_write(slot, data.data(), payload.position);
++    const auto result = save_write_state(kf::SaveCard::Game, slot);
      if (result != kf::SaveFileResult::Ok)
          return save_failure(result, true);
-     save_catalog[kf_enum_encode<s16>(slot) - 1] = {true, checksum};
+-    save_catalog[kf_enum_encode<s16>(slot) - 1] = {true, checksum};
++    // The catalog stays current, so this slot can be loaded straight back.
++    static SaveCard card;
++    if (kf::save_card_read(kf::SaveCard::Game, card) == kf::SaveFileResult::Ok) {
++        std::memcpy(save_catalog_directory.data(), card.data() + card_directory_offset, save_catalog_directory.size());
++        save_catalog_read = true;
++    }
 +    kf::automap_save(slot);
      return KF_SAVE_RESULT_OK;
  }
  
-+// PC extension: quick save/load (F2/F4) through the same record format, in its
-+// own file. The caller persists the current floor first and reloads it after.
++// PC extension: quick save/load (F2/F4), a regular save in a second file of the same format, as
++// its first slot. The caller persists the current floor first and reloads it after.
 +bool save_system_quick_write(void) {
-+    u32 checksum = 0;
-+    const auto result = save_write_record(kf::SaveSlot::Quick, checksum);
++    const auto result = save_write_state(kf::SaveCard::Quick, kf::SaveSlot::First);
 +    if (result != kf::SaveFileResult::Ok)
 +        std::printf("[quicksave] save failed (%d)\n", static_cast<int>(result));
 +    if (result == kf::SaveFileResult::Ok)
@@ -2465,9 +2899,9 @@ index d3474864ec0f4578414b005ecaa89eae266de167..ee5ea7b6559916d4af0821ec39697fdf
 +}
 +
 +bool save_system_quick_read(void) {
++    static SaveCard card;
 +    SavedGameState state{};
-+    u32 checksum = 0;
-+    const auto result = save_read_record(kf::SaveSlot::Quick, state, checksum);
++    const auto result = save_read_state(kf::SaveCard::Quick, kf::SaveSlot::First, card, state);
 +    if (result != kf::SaveFileResult::Ok) {
 +        if (result == kf::SaveFileResult::Missing)
 +            std::printf("[quicksave] no quick save yet (press F2)\n");
@@ -2480,10 +2914,45 @@ index d3474864ec0f4578414b005ecaa89eae266de167..ee5ea7b6559916d4af0821ec39697fdf
 +    return true;
 +}
 +
++// The builds before the card format kept each slot in its own file. When a card file does not
++// exist yet, the slots found are brought into it; the old files are left where they are.
++static void save_import_earlier(kf::SaveCard which, std::span<const kf::SaveSlot> from, std::span<const kf::SaveSlot> to) {
++    static SaveCard card;
++    if (kf::save_card_read(which, card) != kf::SaveFileResult::Missing)
++        return;
++    card_initialize(card);
++    unsigned brought = 0;
++    std::vector<u8> data;
++    for (std::size_t i = 0; i < from.size(); ++i) {
++        SavedGameState state{};
++        if (kf::save_earlier_read(from[i], data) != kf::SaveFileResult::Ok)
++            continue;
++        if (!save_kfs_decode(data, state) || !card_store(card, to[i], state)) {
++            std::printf("An earlier save (slot %u) could not be read and was left as it is\n",
++                        static_cast<unsigned>(from[i]));
++            continue;
++        }
++        ++brought;
++    }
++    if (!brought)
++        return;
++    const auto result = kf::save_card_write(which, card);
++    std::printf("%s %u earlier save%s into the %s file\n", result == kf::SaveFileResult::Ok ? "Brought" : "Could not bring",
++                brought, brought == 1 ? "" : "s", which == kf::SaveCard::Game ? "save" : "quick save");
++}
++
++void save_system_import_earlier(void) {
++    constexpr std::array slots = {kf::SaveSlot::First, kf::SaveSlot::Second, kf::SaveSlot::Third};
++    save_import_earlier(kf::SaveCard::Game, slots, slots);
++    constexpr std::array quick = {kf::SaveSlot::Quick};
++    constexpr std::array first = {kf::SaveSlot::First};
++    save_import_earlier(kf::SaveCard::Quick, quick, first);
++}
++
  void menu_play_input_sound(KfMenuSoundCue cue)
  {
      SoundRef sound;
-@@ -542,7 +577,7 @@ void screen_show_image_until_input(const char *path)
+@@ -542,7 +814,7 @@ void screen_show_image_until_input(const char *path)
      const auto alternate = comparison_image_read(path, game_graphics_runtime.display_state.asset_load_capacity);
      // Transparent glyph pixels need the original backdrop when replacing a page.
      kf::Image backdrop{};
@@ -2492,7 +2961,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..ee5ea7b6559916d4af0821ec39697fdf
          kf::host_fail("Cannot capture the dialogue background.");
      bool showing_alternate = false;
      bool reported_unavailable = false;
-@@ -552,7 +587,7 @@ void screen_show_image_until_input(const char *path)
+@@ -552,7 +824,7 @@ void screen_show_image_until_input(const char *path)
          const bool compare = kf::host_action_held(kf::Action::compare_language);
          const bool show_alternate = compare && !alternate.empty();
          if (show_alternate != showing_alternate) {
@@ -2501,3 +2970,11 @@ index d3474864ec0f4578414b005ecaa89eae266de167..ee5ea7b6559916d4af0821ec39697fdf
                  kf::host_fail("Cannot restore the dialogue background.");
              if (show_alternate)
                  tim_upload_images(alternate.data(), alternate.size());
+@@ -603,5 +875,6 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
+ void save_system_reset_module_state(void)
+ {
+     kf::restore_initial_value<talk_image_path_template>();
+-    kf::restore_initial_value<save_catalog>();
++    kf::restore_initial_value<save_catalog_directory>();
++    kf::restore_initial_value<save_catalog_read>();
+ }
