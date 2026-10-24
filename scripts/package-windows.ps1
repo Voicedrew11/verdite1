@@ -9,12 +9,12 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$name = "KingsFieldEnhanced-v$Version-windows"
+$name = "Verdite1-v$Version-windows"
 $stage = Join-Path $OutDir $name
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory $stage | Out-Null
 
-foreach ($file in "kings-field.exe", "SDL3.dll") {
+foreach ($file in "verdite1.exe", "SDL3.dll") {
     $path = Join-Path $BuildDir $file
     if (-not (Test-Path $path)) { throw "Missing $path - build the 'windows' preset first." }
     Copy-Item $path $stage
@@ -24,10 +24,12 @@ Copy-Item "docs\MODDING.md" $stage
 Copy-Item "mods" (Join-Path $stage "mods") -Recurse
 
 $licenses = New-Item -ItemType Directory (Join-Path $stage "licenses")
-Copy-Item "LICENSE" (Join-Path $licenses "KingsFieldEnhanced-CC0.txt")
-Copy-Item "vendor\imgui\LICENSE.txt" (Join-Path $licenses "DearImGui.txt")
-Copy-Item "vendor\lua\LICENSE" (Join-Path $licenses "Lua.txt")
-Copy-Item "vendor\cjson\LICENSE" (Join-Path $licenses "cJSON.txt")
+Copy-Item "LICENSE" (Join-Path $licenses "Verdite1-CC0.txt")
+Copy-Item "third_party\imgui\LICENSE.txt" (Join-Path $licenses "DearImGui.txt")
+Copy-Item "third_party\lua\LICENSE" (Join-Path $licenses "Lua.txt")
+Copy-Item "third_party\cjson\LICENSE" (Join-Path $licenses "cJSON.txt")
+Copy-Item "third_party\libchdr\LICENSE.txt" (Join-Path $licenses "libchdr.txt")
+Copy-Item "third_party\libchdr\deps\zstd-1.5.7\LICENSE" (Join-Path $licenses "zstd.txt")
 $sdl = Get-ChildItem $BuildDir -Directory -Filter "SDL3-*" | Select-Object -First 1
 if ($sdl) { Copy-Item (Join-Path $sdl.FullName "LICENSE.txt") (Join-Path $licenses "SDL3.txt") }
 else { Write-Warning "SDL3 license not found in $BuildDir; add it to licenses\SDL3.txt by hand." }

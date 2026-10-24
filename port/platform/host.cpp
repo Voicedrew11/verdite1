@@ -7,6 +7,7 @@
 #include <kf/platform/controls.h>
 #include <kf/platform/agent.h>
 #include <kf/platform/crash.h>
+#include <kf/platform/user_folder.h>
 #include <kf/renderer/backend.h>
 #include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
@@ -195,14 +196,14 @@ static void open_available_gamepad() {
 // that draws nothing.
 static bool start_window() {
     if (options.headless) {
-        host.window = SDL_CreateWindow("King's Field", 960, 720, 0);
+        host.window = SDL_CreateWindow(product_name, 960, 720, 0);
         if (!host.window) {
             std::fprintf(stderr, "%s\n", SDL_GetError());
             return false;
         }
         return renderer_start(make_null_backend());
     }
-    host.window = SDL_CreateWindow("King's Field", 960, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    host.window = SDL_CreateWindow(product_name, 960, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!host.window) {
         std::fprintf(stderr, "[renderer] no Vulkan window: %s\n", SDL_GetError());
         return false;

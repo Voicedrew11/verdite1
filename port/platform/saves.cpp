@@ -1,4 +1,5 @@
 #include <kf/platform/saves.h>
+#include <kf/platform/user_folder.h>
 
 #include <SDL3/SDL.h>
 #include <verdite/crash.h>
@@ -176,25 +177,25 @@ bool save_storage_start(const char *directory) {
     // Resource extraction/cache uses a separate store and cannot delay their commit.
     return !directory && browser_saves_open() != 0;
 #elif defined(_WIN32)
-    char *default_path = directory ? nullptr : SDL_GetPrefPath("KingsField", "SLPS00017");
+    const auto folder = user_folder().u8string();
+    const char *default_path = folder.empty() ? nullptr : reinterpret_cast<const char *>(folder.c_str());
     const char *path = directory ? directory : default_path;
     std::error_code error;
     if (path && std::filesystem::is_directory(std::filesystem::path(reinterpret_cast<const char8_t *>(path)), error)) {
         save_directory = new std::filesystem::path(std::filesystem::path(reinterpret_cast<const char8_t *>(path)));
         keep_saves_in_crash_reports(path);
     }
-    SDL_free(default_path);
     if (!save_directory)
         std::fprintf(stderr, "Cannot open save directory: %s\n", directory ? directory : "default user storage");
     return save_directory != nullptr;
 #else
-    char *default_path = directory ? nullptr : SDL_GetPrefPath("KingsField", "SLPS00017");
+    const auto folder = user_folder().u8string();
+    const char *default_path = folder.empty() ? nullptr : reinterpret_cast<const char *>(folder.c_str());
     const char *path = directory ? directory : default_path;
     if (path)
         save_directory = ::open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (save_directory >= 0)
         keep_saves_in_crash_reports(path);
-    SDL_free(default_path);
     // SDL may have created several preference directories. Publish their parent
     // entries before claiming that a first save in the leaf can be durable.
     if (!directory && save_directory >= 0 && !sync_directory_path(save_directory)) {

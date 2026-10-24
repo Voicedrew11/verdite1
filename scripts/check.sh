@@ -34,8 +34,8 @@ step "lint"
 python3 scripts/lint.py --base "$base"
 step "smoke"
 if [ -d data/en ]; then
-    python3 scripts/smoke.py build/linux/kings-field
-    python3 scripts/smoke.py build/linux/kings-field --renderer vulkan
+    python3 scripts/smoke.py build/linux/verdite1
+    python3 scripts/smoke.py build/linux/verdite1 --renderer vulkan
 else
     echo "skipped: no data/en"
 fi
@@ -51,8 +51,8 @@ step "sanitize tests"
 ctest --preset sanitize
 step "sanitize smoke"
 if [ -d data/en ]; then
-    python3 scripts/smoke.py build/sanitize/kings-field
-    python3 scripts/smoke.py build/sanitize/kings-field --renderer vulkan
+    python3 scripts/smoke.py build/sanitize/verdite1
+    python3 scripts/smoke.py build/sanitize/verdite1 --renderer vulkan
 else
     echo "skipped: no data/en"
 fi

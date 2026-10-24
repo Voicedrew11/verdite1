@@ -72,7 +72,7 @@ std::string library_folder(Language language) {
         return {};
     std::error_code error;
     if (temporary_root.empty()) {
-        auto root = std::filesystem::temp_directory_path(error) / "kings-field-language";
+        auto root = std::filesystem::temp_directory_path(error) / "verdite1-language";
         root += std::to_string(static_cast<unsigned long long>(
             std::hash<std::string>{}(utf8(std::filesystem::current_path(error)))));
         std::filesystem::remove_all(root, error);

@@ -1,8 +1,8 @@
 # Crash reports
 
 When the game crashes it writes a report to `<user dir>/crashes/crash-<UTC time>-<pid>/`
-(on Linux `~/.local/share/KingsField/SLPS00017/crashes/`, on Windows
-`%APPDATA%\KingsField\SLPS00017\crashes\`) and says where on stderr (and in `kf.log`). The
+(on Linux `~/.local/share/Verdite/Verdite1/crashes/`, on Windows
+`%APPDATA%\Verdite\Verdite1\crashes\`) and says where on stderr (and in `kf.log`). The
 mechanism is libverdite's (`verdite/crash.h`); KF1's sections, events and saves are
 `port/platform/crash.cpp`.
 
@@ -73,7 +73,7 @@ ASan a fault through the death callback. `KF_TEST_CRASH=fault|abort|soft@<gamepl
 crashes the game itself once:
 
 ```bash
-XDG_DATA_HOME=/tmp/kf-xdg KF_TEST_CRASH=fault@30 nix develop -c build/linux/kings-field \
+XDG_DATA_HOME=/tmp/kf-xdg KF_TEST_CRASH=fault@30 nix develop -c build/linux/verdite1 \
   --data data/en --saves /tmp/kf-saves --headless --turbo --skip-intro
 ```
 

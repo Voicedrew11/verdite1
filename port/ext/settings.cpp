@@ -8,6 +8,7 @@
 #include <kf/platform/analog.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
+#include <kf/platform/user_folder.h>
 #include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
 #include <verdite/crash.h>
@@ -107,13 +108,8 @@ void write_analog(cJSON *analog, const AnalogOptions &o) {
 }
 
 std::filesystem::path user_dir() {
-    static std::filesystem::path path = [] {
-        char *pref = SDL_GetPrefPath("KingsField", "SLPS00017");
-        std::filesystem::path result = pref ? std::filesystem::path(reinterpret_cast<const char8_t *>(pref)) : "user";
-        SDL_free(pref);
-        return result;
-    }();
-    return path;
+    const auto &folder = user_folder();
+    return folder.empty() ? std::filesystem::path("user") : folder;
 }
 
 std::filesystem::path mods_dir() { return user_dir() / "mods"; }

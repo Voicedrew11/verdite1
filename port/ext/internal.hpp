@@ -9,7 +9,7 @@ struct cJSON;
 
 namespace kf::ext {
 // ---- paths ----
-std::filesystem::path user_dir();   // %APPDATA%\KingsField\SLPS00017 (SDL pref path)
+std::filesystem::path user_dir();   // kf::user_folder(), or "user" without one
 std::filesystem::path mods_dir();
 
 // ---- console ----

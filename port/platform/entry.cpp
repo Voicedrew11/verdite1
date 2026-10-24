@@ -8,6 +8,7 @@
 #include <kf/platform/translation_ppf.h>
 #include <kf/platform/saves.h>
 #include <kf/platform/crash.h>
+#include <kf/platform/user_folder.h>
 #include <verdite/crash.h>
 #if KF_EXT
 #include <kf/ext/ext.h>
@@ -87,7 +88,7 @@ bool is_patch_file(const std::filesystem::path &path) {
 }
 
 void show_error(const char *text) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "King's Field Enhanced", text, nullptr);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kf::product_name, text, nullptr);
 }
 
 // Returns the index of the button pressed, or -1 when the box was closed.
@@ -96,7 +97,7 @@ int ask(const char *text, std::initializer_list<const char *> labels) {
     int id = 0;
     for (const char *label : labels)
         buttons.push_back({id == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0u, id++, label});
-    const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, "King's Field Enhanced", text,
+    const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, kf::product_name, text,
                                  static_cast<int>(buttons.size()), buttons.data(), nullptr};
     int pressed = -1;
     return SDL_ShowMessageBox(&box, &pressed) ? pressed : -1;
@@ -140,7 +141,7 @@ bool add_english(const std::string &source) {
 void offer_english() {
     for (;;) {
         const int choice = ask(
-            "This is the original Japanese disc. King's Field Enhanced can add John Osborne's English "
+            "This is the original Japanese disc. Verdite1 can add John Osborne's English "
             "fan translation (v1.0) to it, keeping Japanese too.\n\n"
             "Download the translator's patch from the Internet Archive (about 6 MB), or choose the patch "
             "file (.rar or .ppf) if you have it. You can also do this later in F1 > Settings > Language.",
@@ -178,10 +179,8 @@ std::filesystem::path release_directory() {
 }
 
 std::string user_folder() {
-    char *pref = SDL_GetPrefPath("KingsField", "SLPS00017");
-    std::string folder = pref ? pref : "the user folder";
-    SDL_free(pref);
-    return folder;
+    const auto &folder = kf::user_folder();
+    return folder.empty() ? "the user folder" : utf8(folder);
 }
 
 // "data" beside the game, or in the user folder when the game's folder cannot
@@ -220,7 +219,7 @@ std::string ask_for_disc(const std::filesystem::path &library) {
         "Choose your King's Field (Japan) disc image: the original, or with the English patch applied "
         "(.cue, .bin, .iso or .chd). Putting it beside the game also works.\n\nThe game files are copied out of it "
         "once, into " + utf8(library) + ". The image itself is not changed.";
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "King's Field Enhanced", text.c_str(), nullptr);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, kf::product_name, text.c_str(), nullptr);
     return choose_file("Disc images", "cue;bin;iso;chd");
 }
 
@@ -345,7 +344,7 @@ int main(int argc, char **argv) {
             dropped = argv[i];
 #endif
         else {
-            std::fprintf(stderr, "Usage: kings-field [--data DIRECTORY] [--data-ja DIRECTORY] [--data-en DIRECTORY] "
+            std::fprintf(stderr, "Usage: verdite1 [--data DIRECTORY] [--data-ja DIRECTORY] [--data-en DIRECTORY] "
                                  "[--language ja|en] [--english-patch FILE|download] "
                                  "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro] [--headless] [--turbo]\n");
             return 1;

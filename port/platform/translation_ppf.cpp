@@ -50,7 +50,7 @@ struct ScratchDirectory {
 #endif
         static std::atomic<unsigned> serial{0};
         path = std::filesystem::temp_directory_path(error) /
-            ("kings-field-enhanced-" + std::to_string(id) + "-" + std::to_string(serial++));
+            ("verdite1-" + std::to_string(id) + "-" + std::to_string(serial++));
         std::filesystem::remove_all(path, error);
         std::filesystem::create_directories(path, error);
     }

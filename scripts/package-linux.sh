@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the Linux release AppImage in a container (packaging/appimage/), so it runs on any
 # desktop with glibc 2.35 or later, unlike the nix build.
-#   scripts/package-linux.sh 0.1.0-pre.1      -> dist/KingsFieldEnhanced-v0.1.0-pre.1-x86_64.AppImage
+#   scripts/package-linux.sh 0.1.0-pre.1      -> dist/Verdite1-v0.1.0-pre.1-x86_64.AppImage
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version="${1:?usage: scripts/package-linux.sh VERSION}"
@@ -14,5 +14,5 @@ mkdir -p "$out" "$root/dist"
 common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)"
 "$engine" run --rm --security-opt label=disable -v "$root:$root:ro" -v "$common:$common:ro" -v "$out:/out" \
   kf-appimage-builder sh "$root/packaging/appimage/build.sh" "$root" "$version"
-mv "$out/KingsFieldEnhanced-v$version-x86_64.AppImage" "$root/dist/"
-echo "dist/KingsFieldEnhanced-v$version-x86_64.AppImage"
+mv "$out/Verdite1-v$version-x86_64.AppImage" "$root/dist/"
+echo "dist/Verdite1-v$version-x86_64.AppImage"

@@ -2,6 +2,7 @@
 #include <kf/platform/host.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language.h>
+#include <kf/platform/user_folder.h>
 #include <kf/game/actor.h>
 #include <kf/game/effect.h>
 #include <kf/game/player.h>
@@ -15,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -154,10 +156,9 @@ void write_effect(verdite::CrashWriter &out) {
 }
 
 std::string reports_directory() {
-    char *pref = SDL_GetPrefPath("KingsField", "SLPS00017");
-    std::string directory = pref ? std::string(pref) + "crashes" : std::string("crashes");
-    SDL_free(pref);
-    return directory;
+    const auto &folder = user_folder();
+    const auto directory = (folder.empty() ? std::filesystem::path("crashes") : folder / "crashes").u8string();
+    return {directory.begin(), directory.end()};
 }
 
 void note(const std::string &text) {

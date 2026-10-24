@@ -2,4 +2,4 @@
 # The bundled bsdtar opens the English patch's .rar (translation_ppf.cpp).
 here="$(dirname "$(readlink -f "$0")")"
 export PATH="$here/usr/bin:$PATH"
-exec "$here/usr/bin/kings-field" "$@"
+exec "$here/usr/bin/verdite1" "$@"

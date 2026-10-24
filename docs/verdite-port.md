@@ -173,7 +173,7 @@ The binary takes the disc and keeps extracted files under `--data`:
 v1.0 image (extraction verified 428 English files), so it went to `data/en`:
 
 ```bash
-mkdir -p data && nix develop -c build/linux/kings-field \
+mkdir -p data && nix develop -c build/linux/verdite1 \
   --disc ../verdite1/disc/KingsField1.cue --extract-to data/en --extract-only
 ```
 
@@ -182,7 +182,7 @@ does not see Fedora's Mesa ("Could not get EGL display"), so the script points
 `__EGL_VENDOR_LIBRARY_DIRS` at `/usr/share/glvnd/egl_vendor.d` and puts
 `/usr/lib64` on the library path. With that it booted (2026-10-22): 960x720
 target, overlay ready, "Starting King's Field (English v1.0)". User files go
-to `~/.local/share/KingsField/SLPS00017/`. The `offscreen` SDL driver finds no
+to `~/.local/share/Verdite/Verdite1/`. The `offscreen` SDL driver finds no
 EGL device even so, so there is no headless run yet.
 
 Without `--data` or `--disc` the game takes the release path, as on Windows:
@@ -202,7 +202,7 @@ measured once a build runs there.
 
 ## Linux release (AppImage)
 
-`scripts/package-linux.sh VERSION` builds `dist/KingsFieldEnhanced-vVERSION-x86_64.AppImage`
+`scripts/package-linux.sh VERSION` builds `dist/Verdite1-vVERSION-x86_64.AppImage`
 in podman (or docker) from `packaging/appimage/`. The nix build cannot ship: it
 links against the store's glibc. The image is Ubuntu 22.04 (glibc 2.35, the
 oldest the AppImage runs on) with clang 21 from apt.llvm.org and, built from
@@ -240,7 +240,7 @@ For an agent or a script, without a person or a screen:
   hold means the same under turbo), `release`, `quit`.
 
 ```bash
-KF_AGENT=1 KF_SHELL=1 nix develop -c build/linux/kings-field --data data/en \
+KF_AGENT=1 KF_SHELL=1 nix develop -c build/linux/verdite1 --data data/en \
   --saves /tmp/kf-saves --headless --turbo --skip-intro
 ```
 

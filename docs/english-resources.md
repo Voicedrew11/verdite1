@@ -11,8 +11,8 @@ translation payload or extracted resource tree is stored in this repository.
 
 The user supplies only the original Japanese SLPS-00017 disc. On the first
 launch, set `KF_DISC` to its ISO, BIN or CUE; English is selected by default
-and prepared automatically. After import, `kings-field` and
-`kings-field --language ja` reuse the cache without the disc. `KF_LANGUAGE`
+and prepared automatically. After import, `verdite1` and
+`verdite1 --language ja` reuse the cache without the disc. `KF_LANGUAGE`
 also selects a default; an explicit option overrides it.
 
 Direct launches with `--data` also accept a verified Japanese tree and prepare
@@ -111,9 +111,9 @@ MIPS executable runs at game startup.
 Direct executable workflows also support conversion:
 
 ```sh
-build/linux/kings-field --disc /path/to/Japanese.cue --language en \
+build/linux/verdite1 --disc /path/to/Japanese.cue --language en \
   --extract-to /new/english-directory --extract-only
-build/linux/kings-field --data /path/to/japanese/disc --language en \
+build/linux/verdite1 --data /path/to/japanese/disc --language en \
   --extract-to /new/english-directory --extract-only
 ```
 
@@ -219,7 +219,7 @@ These tests need no retail data and run the C++ decoder under ASan/UBSan.
 For supplied local assets, run:
 
 ```sh
-python3 tests/resource_import.py --binary build/sanitize/kings-field \
+python3 tests/resource_import.py --binary build/sanitize/verdite1 \
   --disc /path/to/Japanese.cue --english-reference /path/to/english/disc
 ```
 

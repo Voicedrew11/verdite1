@@ -10,8 +10,8 @@ planned under [The plan](#the-plan-api-10).
 ## Where mods live
 
 `mods/<folder>/` in the user folder (F1 → Mods → **Open mods folder**):
-`%APPDATA%\KingsField\SLPS00017` on Windows,
-`~/.local/share/KingsField/SLPS00017` on Linux.
+`%APPDATA%\Verdite\Verdite1` on Windows,
+`~/.local/share/Verdite/Verdite1` on Linux.
 
 ```
 mods/stathud/mod.json

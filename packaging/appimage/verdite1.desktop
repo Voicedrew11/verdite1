@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=King's Field Enhanced
+Name=Verdite1
 Comment=King's Field (Japan, 1994) on sushi-shi's source port
-Exec=kings-field
-Icon=kings-field-enhanced
+Exec=verdite1
+Icon=verdite1
 Categories=Game;RolePlaying;
 Terminal=false

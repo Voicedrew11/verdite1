@@ -23,7 +23,7 @@ FileResult language_file_load(Language language, const char *path, std::vector<u
 bool language_apply_pending();
 void host_language_status(const char *message);
 
-// PC extensions (King's Field Enhanced).
+// PC extensions (Verdite1).
 // The player's choice (settings.json), used at start when both are available.
 inline Language language_preference = Language::English;
 // `library` is where new language folders are written ("<library>/ja" and

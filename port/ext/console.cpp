@@ -2,6 +2,7 @@
 // splits lines into a ring buffer for the Console panel, and still forwards the
 // bytes to the original stdout and to kf.log.
 #include "internal.hpp"
+#include <kf/platform/user_folder.h>
 #include <cstdio>
 #include <deque>
 #include <mutex>
@@ -92,6 +93,8 @@ void console_start() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     std::thread(reader, fds[0]).detach();
+    if (const auto &note = user_folder_note(); !note.empty())
+        std::printf("%s\n", note.c_str());
 }
 
 void console_line(const std::string &line) {

@@ -15,7 +15,7 @@ you need your own copy of the disc.
 git submodule update --init decomp
 nix develop -c cmake --preset linux
 nix develop -c cmake --build --preset linux
-mkdir -p data && build/linux/kings-field --disc /path/to/KingsField.cue --extract-to data/en --extract-only
+mkdir -p data && build/linux/verdite1 --disc /path/to/KingsField.cue --extract-to data/en --extract-only
 scripts/run-linux.sh
 ```
 

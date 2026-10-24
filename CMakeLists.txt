@@ -143,6 +143,7 @@ set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES
   COMPILE_OPTIONS "-Wall;-Wextra;-fwrapv;-fno-strict-aliasing")
 
 add_library(kf_support STATIC port/platform/files.cpp port/platform/disc.cpp port/platform/assets.cpp
+  port/platform/user_folder.cpp
   port/platform/language.cpp port/platform/translation.cpp port/platform/translation_ppf.cpp
   port/platform/controls.cpp port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
   ${KF_SRC}/src/lib/random.cpp ${KF_SRC}/src/lib/resource_decode.cpp)
@@ -150,7 +151,7 @@ target_sources(kf_support PRIVATE "${CMAKE_BINARY_DIR}/generated/english_patch.i
 target_include_directories(kf_support PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 add_dependencies(kf_support kf_english_patch)
 target_compile_options(kf_support PRIVATE -Wall -Wextra -Wpedantic -Werror)
-target_link_libraries(kf_support PRIVATE verdite)
+target_link_libraries(kf_support PRIVATE verdite SDL3::SDL3)
 
 if(WIN32)
   # Windows: the SDL3 MinGW development package is downloaded unless SDL3 is
@@ -296,21 +297,21 @@ add_dependencies(kf_host kf_build_info)
 target_compile_definitions(kf_host PRIVATE KF_VERSION="${PROJECT_VERSION}" KF_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 target_compile_options(kf_host PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-add_executable(kings-field port/platform/entry.cpp ${KF_GAME_SOURCES})
-target_link_libraries(kings-field PRIVATE kf_host)
-target_compile_options(kings-field PRIVATE -Wall -Wextra)
+add_executable(verdite1 port/platform/entry.cpp ${KF_GAME_SOURCES})
+target_link_libraries(verdite1 PRIVATE kf_host)
+target_compile_options(verdite1 PRIVATE -Wall -Wextra)
 if(WIN32)
   # Static C++ runtime: the game folder needs only SDL3.dll beside the exe.
-  target_link_options(kings-field PRIVATE -static)
+  target_link_options(verdite1 PRIVATE -static)
   # A windowed app (no console window); output goes to kf.log and the F1 console.
   option(KF_WINDOWED "Build without a console window" ON)
   if(KF_WINDOWED)
-    target_link_options(kings-field PRIVATE -mwindows)
+    target_link_options(verdite1 PRIVATE -mwindows)
   endif()
-  add_custom_command(TARGET kings-field POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:kings-field>)
+  add_custom_command(TARGET verdite1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:verdite1>)
 endif()
-install(TARGETS kings-field RUNTIME DESTINATION bin)
+install(TARGETS verdite1 RUNTIME DESTINATION bin)
 
 # port/'s tests: the parts that run without a window or GPU.
 if(doctest_FOUND)
