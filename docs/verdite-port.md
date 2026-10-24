@@ -162,7 +162,7 @@ nix develop -c cmake --build --preset linux
 ```
 
 The binary takes the disc and keeps extracted files under `--data`:
-`--disc <cue|iso>`, `--english-patch <ppf|rar>`, `--language ja|en`,
+`--disc <cue|bin|iso|chd>`, `--english-patch <ppf|rar>`, `--language ja|en`,
 `--saves DIR`, `--skip-intro`, `--extract-only`. The disc is the one
 `main` uses, `../verdite1/disc/KingsField1.cue`; it is already the English
 v1.0 image (extraction verified 428 English files), so it went to `data/en`:
@@ -183,8 +183,17 @@ EGL device even so, so there is no headless run yet.
 Without `--data` or `--disc` the game takes the release path, as on Windows:
 game files in `data/ja` and `data/en` beside the game (beside the `.AppImage`
 file, from `$APPIMAGE`, not the mount), or under the user folder when that
-folder cannot be written; otherwise a `.cue`, `.bin` or `.iso` beside the game
+folder cannot be written; otherwise a `.cue`, `.bin`, `.iso` or `.chd` beside the game
 is copied there once, otherwise a file dialog asks for one.
+
+A `.chd` is read through libverdite's `verdite/disc_image.h` (libchdr, vendored in
+`third_party/libchdr`), which hands the importer the same bytes as the `.bin`, so the checks, the
+English patch and the extracted folders are unchanged. Checked 2026-10-24: `chdman createcd` of
+`KingsField1.cue` (one `MODE2_RAW` track, 12,916 frames, 7.4 MB, 98.6% of hunks LZMA) extracts
+the same 428 files as the `.bin`, 0.3 s slower. chdman 0.289 writes, for some tiny images, a map
+that fails its own CRC in chdman and libchdr alike (`tools/make_disc_fixtures.py` avoids those
+sizes); such a CHD fails `chdman verify` too. For the 3DS, libchdr's `CHDR_LOWRAM_TARGET` is to be
+measured once a build runs there.
 
 ## Linux release (AppImage)
 

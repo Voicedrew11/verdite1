@@ -76,7 +76,7 @@ std::string lower_extension(const std::filesystem::path &path) {
 
 bool is_disc_image(const std::filesystem::path &path) {
     const auto extension = lower_extension(path);
-    return extension == ".cue" || extension == ".bin" || extension == ".iso";
+    return extension == ".cue" || extension == ".bin" || extension == ".iso" || extension == ".chd";
 }
 
 // The translator's patch, or an archive holding it.
@@ -217,10 +217,10 @@ std::string ask_for_disc(const std::filesystem::path &library) {
     SDL_InitSubSystem(SDL_INIT_VIDEO);
     const std::string text =
         "Choose your King's Field (Japan) disc image: the original, or with the English patch applied "
-        "(.cue, .bin or .iso). Putting it beside the game also works.\n\nThe game files are copied out of it "
+        "(.cue, .bin, .iso or .chd). Putting it beside the game also works.\n\nThe game files are copied out of it "
         "once, into " + utf8(library) + ". The image itself is not changed.";
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "King's Field Enhanced", text.c_str(), nullptr);
-    return choose_file("Disc images", "cue;bin;iso");
+    return choose_file("Disc images", "cue;bin;iso;chd");
 }
 
 // Earlier versions kept one language directly in "data".
@@ -278,7 +278,7 @@ bool prepare_release_data(const char *dropped) {
             if (!any) {
                 show_error(("That disc image could not be read as King's Field (Japan, SLPS-00017).\n\n"
                             "Use the Japanese disc, original or with the English patch applied, as a .cue/.bin "
-                            "pair or an .iso. Details are in kf.log in " + user_folder() + ".").c_str());
+                            "pair, an .iso or a .chd. Details are in kf.log in " + user_folder() + ".").c_str());
                 return false;
             }
             show_error(message.c_str());

@@ -18,12 +18,13 @@ A disc image of King's Field (Japan) SLPS-00017 that you dumped yourself:
     by downloading the translator's own patch), or
   - a disc with the English translation patch (v1.0, by John Osborne) applied:
     https://www.romhacking.net/translations/7308/
-Use a .cue + .bin pair (single track) or an .iso. No game files are included.
+Use a .cue + .bin pair (single track), an .iso or a .chd. No game files are
+included.
 
 
 FIRST LAUNCH
 ------------
-Put your disc image (.cue + .bin, or .iso) in the same folder as the game
+Put your disc image (.cue + .bin, .iso or .chd) in the same folder as the game
 (kings-field.exe, or the .AppImage on Linux) and start it, or start it and
 choose the image when asked. The game copies its files into a "data" folder
 there, once (into the user folder below if the game's folder is read-only).
@@ -82,8 +83,8 @@ Menus, mods and console inspired by Verdite2 by Voicedrew11 (MIT):
   https://github.com/Voicedrew11/verdite2
 English translation by John Osborne (weissvulf / HwitVlf); it is applied to
 your own disc, not included.
-Uses Dear ImGui, Lua, cJSON and SDL3; their
-licenses are in the "licenses" folder.
+Uses Dear ImGui, Lua, cJSON, SDL3, libchdr and zstd; their licenses are in
+the "licenses" folder.
 
 King's Field is by FromSoftware. This is an unofficial fan project, not
 affiliated with or endorsed by FromSoftware or Sony.

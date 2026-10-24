@@ -3,6 +3,8 @@
 #include <kf/platform/disc_layout.h>
 #include <kf/platform/translation.h>
 
+#include <verdite/disc_image.h>
+
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
@@ -109,15 +111,7 @@ static FILE *open_image(const char *path, std::size_t *size) {
     *size = static_cast<std::size_t>(length);
     return file;
 }
-
-static int seek_file(FILE *file, std::uint64_t offset) {
-    return ::_fseeki64(file, static_cast<long long>(offset), SEEK_SET);
-}
 #else
-static int seek_file(FILE *file, std::uint64_t offset) {
-    return ::fseeko(file, static_cast<off_t>(offset), SEEK_SET);
-}
-
 static FILE *open_image(const char *path, std::size_t *size) {
     const int descriptor = ::open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (descriptor < 0)
@@ -146,19 +140,24 @@ static bool ends_with_cue(const char *path) {
         std::tolower(static_cast<unsigned char>(path[size - 1])) == 'e';
 }
 
-static FILE *open_disc(const char *source, std::size_t *size) {
-    FILE *file = open_image(source, size);
-    if (!file || !ends_with_cue(source))
-        return file;
-    if (*size > cue_file_capacity) {
+// The image a source names: a .cue's track file, otherwise the source itself. Empty when a .cue
+// cannot be read or is not the supported layout.
+static std::string disc_image_path(const char *source) {
+    if (!ends_with_cue(source))
+        return source;
+    std::size_t size;
+    FILE *file = open_image(source, &size);
+    if (!file)
+        return {};
+    if (size > cue_file_capacity) {
         std::fclose(file);
-        return nullptr;
+        return {};
     }
     ByteBuffer cue{};
     bool ok = true;
     try {
-        cue.resize(*size + 1);
-        ok = std::fread(cue.data(), 1, *size, file) == *size;
+        cue.resize(size + 1);
+        ok = std::fread(cue.data(), 1, size, file) == size;
     } catch (const std::bad_alloc &) {
         ok = false;
     }
@@ -166,13 +165,13 @@ static FILE *open_disc(const char *source, std::size_t *size) {
         ok = false;
     std::array<char, cue_line_capacity> name;
     if (ok) {
-        cue[*size] = 0;
-        ok = !std::memchr(cue.data(), 0, *size) &&
+        cue[size] = 0;
+        ok = !std::memchr(cue.data(), 0, size) &&
             disc_cue_image(reinterpret_cast<const char *>(cue.data()), name);
     }
     if (!ok) {
         std::fprintf(stderr, "CUE must describe one MODE2/2352 track with INDEX 01 at 00:00:00.\n");
-        return nullptr;
+        return {};
     }
     const char *slash = std::strrchr(source, '/');
 #ifdef _WIN32
@@ -182,10 +181,25 @@ static FILE *open_disc(const char *source, std::size_t *size) {
     const auto prefix = slash ? static_cast<std::size_t>(slash + 1 - source) : 0;
     std::array<char, disc_path_capacity> path;
     if (prefix + std::strlen(name.data()) >= path.size())
-        return nullptr;
+        return {};
     std::memcpy(path.data(), source, prefix);
     std::strcpy(path.data() + prefix, name.data());
-    return open_image(path.data(), size);
+    return path.data();
+}
+
+// A .cue's .bin, a .bin or .iso, or a .chd, read as the raw image.
+static std::unique_ptr<verdite::DiscImage> open_disc(const char *source) {
+    const auto image = disc_image_path(source);
+    if (image.empty())
+        return nullptr;
+#ifdef _WIN32
+    auto opened = verdite::open_disc_image(native_path(image.c_str()), disc_import_limit);
+#else
+    auto opened = verdite::open_disc_image(image, disc_import_limit);
+#endif
+    if (!opened.image)
+        std::fprintf(stderr, "%s\n", opened.error.c_str());
+    return std::move(opened.image);
 }
 
 #ifdef _WIN32
@@ -326,9 +340,8 @@ bool resource_tree_read(const char *directory, AssetTable &assets) {
 // any_release: accept every release with the retail file set (the Windows
 // flow sorts them by language afterwards); otherwise require `language`.
 static bool import_image(const char *source, Language language, bool any_release, AssetTable &assets) {
-    std::size_t size;
-    FILE *file = open_disc(source, &size);
-    if (!file) {
+    const auto image = open_disc(source);
+    if (!image) {
         std::fprintf(stderr, "Cannot open disc image: %s\n", source);
         return false;
     }
@@ -336,10 +349,9 @@ static bool import_image(const char *source, Language language, bool any_release
     try {
         importer = std::make_unique<DiscImporter>();
     } catch (const std::bad_alloc &) {
-        std::fclose(file);
         return false;
     }
-    disc_import_start(importer.get(), size, language);
+    disc_import_start(importer.get(), image->size_bytes(), language);
     importer->any_release = any_release;
     ByteBuffer read{};
     while (disc_import_waiting(importer.get())) {
@@ -350,16 +362,13 @@ static bool import_image(const char *source, Language language, bool any_release
             disc_import_fail(importer.get(), "Cannot allocate disc read buffer.");
             break;
         }
-        if (seek_file(file, request.offset) != 0 ||
-            std::fread(read.data(), 1, read.size(), file) != read.size()) {
+        if (!image->read(request.offset, read)) {
             disc_import_fail(importer.get(), "Cannot read the selected disc image.");
             break;
         }
         disc_import_supply(importer.get(), read);
     }
-    bool ok = importer->state == ImportState::complete;
-    if (std::fclose(file) != 0)
-        ok = false;
+    const bool ok = importer->state == ImportState::complete;
     if (!ok)
         std::fprintf(stderr, "%s\n", importer->message.data());
     if (ok)

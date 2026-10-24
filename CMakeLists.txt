@@ -150,6 +150,7 @@ target_sources(kf_support PRIVATE "${CMAKE_BINARY_DIR}/generated/english_patch.i
 target_include_directories(kf_support PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 add_dependencies(kf_support kf_english_patch)
 target_compile_options(kf_support PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_link_libraries(kf_support PRIVATE verdite)
 
 if(WIN32)
   # Windows: the SDL3 MinGW development package is downloaded unless SDL3 is

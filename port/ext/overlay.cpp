@@ -113,7 +113,7 @@ std::string pick_path;
 
 void pick_file(Pick purpose) {
     static const SDL_DialogFileFilter patch_filter[] = {{"English patch (.rar or .ppf)", "rar;ppf;zip;7z"}};
-    static const SDL_DialogFileFilter disc_filter[] = {{"Disc images", "cue;bin;iso"}};
+    static const SDL_DialogFileFilter disc_filter[] = {{"Disc images", "cue;bin;iso;chd"}};
     {
         std::lock_guard guard(pick_lock);
         pick_pending = purpose;
@@ -184,7 +184,7 @@ void language_settings_page(bool &changed) {
         ImGui::SetItemTooltip("Kings_Field_Jap_to_Eng_v1.0.rar, or the .ppf inside it.");
     }
     if (!japanese) {
-        ImGui::TextWrapped("Japanese needs your original Japanese disc image (.cue/.bin or .iso); a disc with the "
+        ImGui::TextWrapped("Japanese needs your original Japanese disc image (.cue/.bin, .iso or .chd); a disc with the "
                            "English patch applied can't be turned back.");
         if (ImGui::Button("Add Japanese disc..."))
             pick_file(Pick::Disc);

@@ -33,6 +33,8 @@ cp "$repo/LICENSE" "$doc/licenses/KingsFieldEnhanced-CC0.txt"
 cp "$repo/third_party/imgui/LICENSE.txt" "$doc/licenses/DearImGui.txt"
 cp "$repo/third_party/lua/LICENSE" "$doc/licenses/Lua.txt"
 cp "$repo/third_party/cjson/LICENSE" "$doc/licenses/cJSON.txt"
+cp "$repo/third_party/libchdr/LICENSE.txt" "$doc/licenses/libchdr.txt"
+cp "$repo/third_party/libchdr/deps/zstd-1.5.7/LICENSE" "$doc/licenses/zstd.txt"
 cp /opt/deps/share/licenses/SDL3/LICENSE.txt "$doc/licenses/SDL3.txt"
 chmod +x "$appdir/AppRun"
 
