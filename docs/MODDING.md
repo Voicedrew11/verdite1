@@ -1,12 +1,17 @@
-# Modding (Windows PC extensions)
+# Modding
 
 Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
+This page documents API 0.1, what ships today. Where it is going, API 1.0, is
+planned under [The plan](#the-plan-api-10).
+
 ## Where mods live
 
-`%APPDATA%\KingsField\SLPS00017\mods\<folder>\` (F1 → Mods → **Open mods folder**).
+`mods/<folder>/` in the user folder (F1 → Mods → **Open mods folder**):
+`%APPDATA%\KingsField\SLPS00017` on Windows,
+`~/.local/share/KingsField/SLPS00017` on Linux.
 
 ```
 mods/stathud/mod.json
@@ -47,7 +52,7 @@ Define any of these as globals:
 | function | when |
 |---|---|
 | `on_load()` | after the script runs, on every (re)load |
-| `on_frame()` | once per frame the game presents (gameplay, menus, cutscenes) |
+| `on_frame()` | once per game update, when the game hands over its picture (gameplay, menus, cutscenes); not per displayed frame, which smoothing makes more frequent |
 | `on_draw()` | every presented frame, for drawing over the game with `ui.draw_*` or a `ui.begin_window` |
 | `on_settings()` | while the mod's **Settings** node is open in the Mods panel |
 | `on_unload()` | before a reload or when the mod is disabled |
@@ -117,3 +122,117 @@ interface scale.
 
 `mods/stathud` (HUD drawing + settings) and `mods/quickheal` (hotkey + writing
 player state) in this repository. Copy them into the mods folder to try them.
+
+## The plan: API 1.0
+
+Decided 2026-10-23: mods stay Lua 5.4. It is small, interpreted (so it runs on
+the 3DS and the consoles that forbid a JIT), easy to sandbox, reloads on save,
+and modders know it. Luau, WebAssembly, native DLLs and C# were weighed; Lua's
+missing types are made up for by a definitions file (below).
+
+### What a mod can reach
+
+Inside the game, everything; outside it, nothing but the mod's own folder. The
+API is not a short list of approved knobs: a curated layer covers the common
+cases with stable names, and a raw layer reaches every named global the decomp
+has, so no mod waits on the curated layer to grow.
+
+| area | what | |
+|---|---|---|
+| player | stats (today), position, facing, map and floor, equipment, inventory, magic, status | read/write |
+| entities | the actors loaded on the map: kind, HP, position, state; spawn and remove | read/write |
+| world | the current map, its cells and walls, doors, chests, triggers, story flags, the automap | read/write |
+| game flow | pause, update rate (turbo, slow motion), warp, load a map, the screen shown (menu, shop, save point) | |
+| events | `on_damage`, `on_kill`, `on_item_pickup`, `on_floor_change`, `on_map_load`, `on_level_up`, `on_dialogue`, `on_shop`, `on_save`, `on_load_game`, `on_death` | a handler may cancel or change the event where the game allows |
+| rules | damage, hit and dodge, EXP to the next level, level-up gains, drops, shop prices, enemy stats at spawn, HP and MP regeneration | overridable functions: the game asks, each mod in load order may change the answer |
+| input | the pad, keys and mouse in the game's own terms (actions, not keycodes); press and block actions | |
+| assets | textures, models, sounds, music, text | drop files in the mod's `assets/` under the disc's paths, or swap them from Lua at run time |
+| drawing | 2D over the picture (today), plus 3D in the world: lines, markers, text at a point, lights | |
+| audio | play the game's sound effects and music, or the mod's own | |
+| saves | a `save` table stored with each save slot, beside the game's own | |
+| other mods | `mods.get(id)` returns another mod's exported table; mods can raise their own events | |
+| raw | `kf.game.<global>.<field>`: every named global and struct field in the decomp, typed and bounds-checked | unstable: follows the decomp's renames |
+
+### What a mod cannot do
+
+These limits keep the player's machine and the game process safe, which
+matters because mods travel as zip files from strangers:
+
+- No files outside its folder. `io` and `os` are replaced by `mod.fs`, which
+  reads and writes only inside the mod's folder, and `mod.time()`.
+- No processes, no native code: no `os.execute`, `io.popen`,
+  `package.loadlib` or C modules.
+- No sockets. Online play goes through the networking layer
+  ([NETWORKING_PLAN.md](NETWORKING_PLAN.md)), which can carry a mod's messages.
+- No `debug` library beyond `debug.traceback`: the rest escapes the sandbox.
+- No pointers. Raw access copies values in and out of a named field, checked
+  against the field's type and the array's bounds.
+- A budget: each callback gets an instruction count (`lua_sethook`) and each
+  mod a memory cap (its own allocator). Going over stops that mod with an
+  error, as a Lua error does today, instead of hanging or exhausting the game.
+
+Today every mod gets `luaL_openlibs`, the full standard library; closing that
+is the first step.
+
+### Timing
+
+- `on_update()` runs once per game update, where `on_frame` runs now
+  (`on_frame` stays as its alias). Game state is read and written here.
+- `on_draw()` runs once per displayed frame, which smoothing makes more
+  frequent than updates; it draws, it does not change game state.
+- Events run inline, at the point in the game code where the thing happens,
+  on the thread the game runs on, so a handler sees and changes state the game
+  is about to use, with no locking.
+
+### Types for editors
+
+`mods/kf.d.lua` is a Lua Language Server `---@meta` file listing every call,
+field and event with its type, generated from the same binding tables as the
+C++. VS Code, Neovim and others then complete names and flag mistakes. The
+example mods ship a `.luarc.json` pointing at it.
+
+### Where the code goes
+
+- `libverdite/include/verdite/mods.h`: the game-agnostic host. Discovery,
+  `mod.json`, live reload, the sandbox and budgets, `config`, `save`, `ui`,
+  `mod.fs`, the event registry and the binding-table types. KF2 and KF3 get
+  modding by linking it.
+- `port/ext/mods.cpp`: KF1's bindings only, as tables: a new field, event or
+  rule is a new table entry.
+- Game code calls the event and rule points through a small header in
+  `work/include/kf/platform/`, as `screen.h` does for Discord.
+- The raw layer's tables are generated from the decomp's headers at build
+  time, so they follow the pin when it moves.
+
+### Stability
+
+`kf.api_version` follows semver from 1.0, and `mod.json` names the API version
+it was written for. The curated layer keeps its names within a major version;
+`kf.game` promises nothing, as the decomp renames freely.
+
+### Online play
+
+A mod that changes play (state writes, rules, events it cancels) marks itself
+`"gameplay": true` in `mod.json`. Coop requires both players to run the same
+gameplay mods, compared by a hash; visual and HUD mods are free.
+
+### Order
+
+1. Move the host into libverdite. Add the sandbox, budgets, `on_update`, and
+   generation of the definitions file.
+2. Player position, world and game flow, then a debug mod (noclip, god mode,
+   infinite MP, peaceful, speed, warp) in place of Verdite's debug menu.
+3. Events and the per-save `save` table.
+4. Entities and rules.
+5. The generated raw layer.
+6. Asset overrides, audio, 3D drawing.
+7. Input actions: reading, pressing and blocking them.
+
+### Open questions
+
+- How the raw layer is generated: libclang over the decomp's headers, or a
+  listed subset.
+- Asset formats: PNG for textures, and how replaced textures sit in the Vulkan
+  backend's texture pages, including larger replacements.
+- Whether rules that run every update (regeneration) are worth an event per
+  call, or are better as values a mod sets.

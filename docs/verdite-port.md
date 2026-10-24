@@ -266,6 +266,7 @@ branch point.
 | debug: noclip, god mode, infinite MP, peaceful, speed, warp | `Menu/`, `Warp.cs` | candidates for a Lua mod |
 | message text (dialogue pictures as glyph text) | `Text/` | may be moot if the decomp's English resources are text already |
 | crash reports, hang watchdog, focus pause | Verdite Core | |
+| modding API (Verdite's C# runtime mods) | Verdite Core | kf1-enhanced has Lua API 0.1 (player stats, keys, ImGui); 1.0 is planned in [MODDING.md](MODDING.md#the-plan-api-10): whole game reachable, sandboxed, host in libverdite |
 | state beacon + command channel (port 27901) | `AgentBeacon.cs`, `AgentServer.cs` | what lets an agent drive and measure the game |
 | fuzzer: seeded headless turbo play, invariants, report | `Fuzz.cs`, `scripts/fuzz.py` | needs a headless, uncapped mode first |
 | frame profiler | Verdite Core | |
@@ -299,6 +300,6 @@ The branch is pushed to `origin/decomp`.
    [RENDERER_PLAN.md](RENDERER_PLAN.md). That also fixes the frame-rate gap
    ([RUNTIME.md](RUNTIME.md)).
 5. User-facing features, cheapest first: ~~Discord~~ (done 2026-10-23), pad layout, analog tuning,
-   debug mod, render distance, picture options.
+   debug mod (on the modding API's first two steps), render distance, picture options.
 6. Extract the shared parts into the C++ core subtree. Then KF2 on the same
    core once its US decomp and port layer exist; KF3's decomp starts.
