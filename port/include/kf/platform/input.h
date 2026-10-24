@@ -31,6 +31,9 @@ void host_wait_button_press();
 InputContext host_set_input_context(InputContext context);
 InputContext host_input_context();
 LookDelta host_take_look();
+// Which gamepad face button does what. West, the US King's Field's, is the default.
+enum class PadLayout : u8 { West, Japanese };
+void host_set_pad_layout(PadLayout layout);
 // Run is a port addition with no PlayStation button, so it stays out of the button mask.
 bool host_run_held();
 // Quick save/load presses made during gameplay since the last call.

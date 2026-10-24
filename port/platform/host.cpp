@@ -24,6 +24,7 @@
 #include <limits>
 #include <new>
 #include <optional>
+#include <span>
 #include <vector>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -55,6 +56,7 @@ struct HostState {
     u32 quick_pressed;
     bool opening_load_pressed;
     bool run_toggled;
+    PadLayout pad_layout;
     struct FrameLight {
         float x, y, z, radius, r, g, b, flicker;
         u32 seed;
@@ -88,6 +90,28 @@ static void platform_yield(Uint64 nanoseconds) {
 #endif
 }
 
+struct GamepadBinding { SDL_GamepadButton code; Action action; };
+
+// The face buttons by position (SDL's south is Cross on a PlayStation pad).
+// Japanese is this disc's own; West is the US King's Field's: Square attacks,
+// Cross examines and confirms, Circle opens the menu and backs out, Triangle
+// uses the item or spell.
+constexpr std::array<GamepadBinding, 4> japanese_face_buttons = {
+    GamepadBinding{SDL_GAMEPAD_BUTTON_NORTH, Action::attack}, GamepadBinding{SDL_GAMEPAD_BUTTON_WEST, Action::magic},
+    GamepadBinding{SDL_GAMEPAD_BUTTON_EAST, Action::interact}, GamepadBinding{SDL_GAMEPAD_BUTTON_SOUTH, Action::back}};
+constexpr std::array<GamepadBinding, 4> west_face_buttons = {
+    GamepadBinding{SDL_GAMEPAD_BUTTON_WEST, Action::attack}, GamepadBinding{SDL_GAMEPAD_BUTTON_NORTH, Action::magic},
+    GamepadBinding{SDL_GAMEPAD_BUTTON_SOUTH, Action::interact}, GamepadBinding{SDL_GAMEPAD_BUTTON_EAST, Action::back}};
+
+static std::span<const GamepadBinding> face_buttons(PadLayout layout) {
+    return layout == PadLayout::Japanese ? std::span(japanese_face_buttons) : std::span(west_face_buttons);
+}
+
+static void bind_gamepad_buttons(std::span<const GamepadBinding> buttons) {
+    for (const auto &button : buttons)
+        input_bind(&host.input, {InputDevice::gamepad, static_cast<u32>(button.code)}, button.action);
+}
+
 static void bind_inputs() {
     auto *input = &host.input;
     struct KeyBinding { SDL_Keycode code; Action action; };
@@ -109,20 +133,17 @@ static void bind_inputs() {
         input_bind(input, {InputDevice::keyboard, static_cast<u32>(key.code)}, key.action);
     input_bind(input, {InputDevice::mouse, SDL_BUTTON_LEFT}, Action::attack);
     input_bind(input, {InputDevice::mouse, SDL_BUTTON_RIGHT}, Action::magic);
-    struct ButtonBinding { SDL_GamepadButton code; Action action; };
-    constexpr std::array<ButtonBinding, 14> buttons = {
-        ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_UP, Action::forward}, ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_DOWN, Action::backward},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_LEFT, Action::turn_left}, ButtonBinding{SDL_GAMEPAD_BUTTON_DPAD_RIGHT, Action::turn_right},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_NORTH, Action::attack}, ButtonBinding{SDL_GAMEPAD_BUTTON_WEST, Action::magic},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_EAST, Action::interact}, ButtonBinding{SDL_GAMEPAD_BUTTON_SOUTH, Action::back},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_START, Action::inventory}, ButtonBinding{SDL_GAMEPAD_BUTTON_BACK, Action::pause},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, Action::strafe_left},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, Action::strafe_right},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_LEFT_STICK, Action::run},
-        ButtonBinding{SDL_GAMEPAD_BUTTON_RIGHT_STICK, Action::compare_language}
+    constexpr std::array<GamepadBinding, 10> buttons = {
+        GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_UP, Action::forward}, GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_DOWN, Action::backward},
+        GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_LEFT, Action::turn_left}, GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_RIGHT, Action::turn_right},
+        GamepadBinding{SDL_GAMEPAD_BUTTON_START, Action::inventory}, GamepadBinding{SDL_GAMEPAD_BUTTON_BACK, Action::pause},
+        GamepadBinding{SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, Action::strafe_left},
+        GamepadBinding{SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, Action::strafe_right},
+        GamepadBinding{SDL_GAMEPAD_BUTTON_LEFT_STICK, Action::run},
+        GamepadBinding{SDL_GAMEPAD_BUTTON_RIGHT_STICK, Action::compare_language}
     };
-    for (const auto &button : buttons)
-        input_bind(input, {InputDevice::gamepad, static_cast<u32>(button.code)}, button.action);
+    bind_gamepad_buttons(buttons);
+    bind_gamepad_buttons(face_buttons(host.pad_layout));
     // Axis directions use distinct controls so releasing a stick cannot release a held D-pad.
     input_bind(input, {InputDevice::gamepad, gamepad_axis_control_first + SDL_GAMEPAD_AXIS_LEFTX * 2}, Action::turn_left);
     input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_LEFTX * 2}, Action::turn_right);
@@ -696,6 +717,11 @@ InputContext host_set_input_context(InputContext context) {
 }
 
 InputContext host_input_context() { return host.input_context; }
+
+void host_set_pad_layout(PadLayout layout) {
+    host.pad_layout = layout;
+    bind_gamepad_buttons(face_buttons(layout));
+}
 
 LookDelta host_take_look() {
     constexpr double angle_units_per_pixel = mouse_degrees_per_pixel * angle_units_per_turn / degrees_per_turn;

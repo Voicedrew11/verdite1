@@ -117,6 +117,7 @@ void settings_load() {
     current.run_speed = static_cast<int>(read_number(controls, "run_speed", current.run_speed));
     current.run_toggle = read_bool(controls, "run_toggle", current.run_toggle);
     current.look_limit = static_cast<int>(read_number(controls, "look_limit", current.look_limit));
+    current.pad_layout = read_string(controls, "pad_layout", current.pad_layout);
     const cJSON *gameplay = cJSON_GetObjectItemCaseSensitive(document, "gameplay");
     current.language = read_string(gameplay, "language", current.language);
     current.classic = read_bool(gameplay, "classic_mode", current.classic);
@@ -195,6 +196,7 @@ void settings_save_if_dirty() {
     write_value(controls, "run_speed", cJSON_CreateNumber(current.run_speed));
     write_value(controls, "run_toggle", cJSON_CreateBool(current.run_toggle));
     write_value(controls, "look_limit", cJSON_CreateNumber(current.look_limit));
+    write_value(controls, "pad_layout", cJSON_CreateString(current.pad_layout.c_str()));
     cJSON *gameplay = object_entry(document, "gameplay");
     write_value(gameplay, "language", cJSON_CreateString(current.language.c_str()));
     write_value(gameplay, "classic_mode", cJSON_CreateBool(current.classic));
@@ -372,6 +374,7 @@ void apply_control_settings() {
     player_pitch_limit = std::max(191, degrees * 4096 / 360);
     fix_actor_ceiling_fall = e.fix_ceiling_fall;
     auto_use_keys = e.auto_keys;
+    host_set_pad_layout(e.pad_layout == "jp" ? PadLayout::Japanese : PadLayout::West);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.
     world_update_vblanks = std::clamp(60 / std::max(e.tick_rate, 1), 2, 5);
     Language language;

@@ -261,7 +261,7 @@ branch point.
 | render distance + fade, models past the game's reach | `RenderDistance.cs`, `CullCone.cs` | the decomp's stencil/cell loop can be widened directly |
 | distance fog, anisotropic, mipmaps, enhance distance | `KF1_FOG`, `KF1_ANISO`, `KF1_MIPMAPS`, `KF1_ENHANCEDIST` | done on Vulkan (2026-10-23, `RENDERER_PLAN.md`); enhanced distance leaves dynamic lights alone |
 | analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | kf1-enhanced has one deadzone |
-| pad layout `jp`/`west` | `PadLayout.cs` | |
+| pad layout `jp`/`west` | `PadLayout.cs` | done (2026-10-23): two face-button tables in `port/platform/host.cpp`, chosen by `controls.pad_layout` (West by default); only the gamepad's bindings change, so the keyboard, mouse and agent need no subtraction |
 | rumble, gyro aim | Verdite Core `Rumble.cs`, `GyroAim.cs` | SDL3 has both |
 | debug: noclip, god mode, infinite MP, peaceful, speed, warp | `Menu/`, `Warp.cs` | candidates for a Lua mod |
 | message text (dialogue pictures as glyph text) | `Text/` | may be moot if the decomp's English resources are text already |
@@ -299,7 +299,7 @@ The branch is pushed to `origin/decomp`.
 4. The renderer frontend and the Vulkan backend, in the order of
    [RENDERER_PLAN.md](RENDERER_PLAN.md). That also fixes the frame-rate gap
    ([RUNTIME.md](RUNTIME.md)).
-5. User-facing features, cheapest first: ~~Discord~~ (done 2026-10-23), pad layout, analog tuning,
+5. User-facing features, cheapest first: ~~Discord~~ (done 2026-10-23), ~~pad layout~~ (done 2026-10-23), analog tuning,
    debug mod (on the modding API's first two steps), render distance, picture options.
 6. Extract the shared parts into the C++ core subtree. Then KF2 on the same
    core once its US decomp and port layer exist; KF3's decomp starts.

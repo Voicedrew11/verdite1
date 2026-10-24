@@ -494,6 +494,17 @@ void draw_settings_window() {
         }
         ImGui::SetItemTooltip("How far the camera can tilt up or down. The original game allows about 17 degrees.");
         ImGui::EndDisabled();
+        const char *pad_layouts[] = {"West (US King's Field)", "Japanese (this disc's)"};
+        int pad_layout = s.pad_layout == "jp" ? 1 : 0;
+        if (ImGui::Combo("Gamepad buttons", &pad_layout, pad_layouts, 2)) {
+            s.pad_layout = pad_layout == 1 ? "jp" : "west";
+            apply_control_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("West: Square attacks, Cross examines and confirms, Circle opens the menu and backs out,\n"
+                              "Triangle uses the item or spell.\n"
+                              "Japanese: Triangle attacks, Circle examines and confirms, Cross opens the menu and backs out,\n"
+                              "Square uses the item or spell.");
         ImGui::Spacing();
         ImGui::TextWrapped("Current bindings (rebinding is planned):");
         const char *rows[][2] = {
