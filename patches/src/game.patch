@@ -739,10 +739,62 @@ index 28e999d5981c92f4abd18339b757abc90913a319..8dafb49fe21ff6410a8f57186d1a36a9
 +    kf::host_set_screen(screen);
  }
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e076a71b41974c0fba2da66d781b0e2e071c938d 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..28bccade0c1f1ee9549c494a5cda671b61ec8b94 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
-@@ -634,7 +634,13 @@ void menu_config_panel(void)
+@@ -7,8 +7,10 @@
+ #include <kf/game/resources.h>
+ #include <kf/lib/null.h>
+ #include <kf/lib/render_face.h>
++#include <kf/platform/host.h>
+ #include <kf/platform/input.h>
+ 
++#include <algorithm>
+ #include <array>
+ #include <cstdio>
+ #include <cstdlib>
+@@ -94,12 +96,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
+     kf::host_enqueue_face(face);
+ }
+ 
++// PC extension (widescreen): a background quad moved across by shift_x columns,
++// submitted only if it still reaches the picture, which runs columns past each side.
++static void menu_submit_background_copy(kf::DrawFace face, s32 shift_x, s32 columns)
++{
++    const s32 corners = static_cast<s32>(face.shape);
++    float left = face.vertices[0].x + shift_x;
++    float right = left;
++    for (s32 i = 0; i < corners; ++i) {
++        face.vertices[i].x += static_cast<float>(shift_x);
++        left = std::min(left, face.vertices[i].x);
++        right = std::max(right, face.vertices[i].x);
++    }
++    if (right <= static_cast<float>(-columns) || left >= static_cast<float>(kf::render_width + columns)) {
++        return;
++    }
++    menu_submit_template(face, MENU_BACKGROUND_OT_DEPTH);
++}
++
+ void menu_enqueue_background(void)
+ {
+     const auto &background = menu_resources().assets.background_quads[
+         kf_enum_encode<u8>(game_graphics_runtime.display_state.buffer_index)];
+     for (s32 i = MENU_BACKGROUND_QUAD_COUNT - 1; i >= 0; --i)
+         menu_submit_template(background[i], MENU_BACKGROUND_OT_DEPTH);
++
++    // PC extension (widescreen): the four quads tile the 320 columns with one
++    // texture, so copies 320 apart fill the columns beside them instead of black.
++    const s32 columns = kf::host_extra_columns();
++    for (s32 shift = kf::render_width; shift - kf::render_width < columns; shift += kf::render_width) {
++        for (const auto &face : background) {
++            menu_submit_background_copy(face, -shift, columns);
++            menu_submit_background_copy(face, shift, columns);
++        }
++    }
+ }
+ 
+ static void menu_draw_backdrop_tile(s32 x, s32 y, bool flip_x, bool flip_y)
+@@ -634,7 +664,13 @@ void menu_config_panel(void)
          menu_config_panel_draw(on_label, off_label, option_states);
          menu_draw_window(KF_MENU_WINDOW_CONFIG, KF_MENU_CONFIG_ROW_COUNT, row, confirm);
          if (language_failed) {
@@ -757,7 +809,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e076a71b41974c0fba2da66d781b0e2e
              menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1173,6 +1179,212 @@ enum {
+@@ -1173,6 +1209,212 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -970,7 +1022,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e076a71b41974c0fba2da66d781b0e2e
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1180,10 +1392,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1422,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -989,7 +1041,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e076a71b41974c0fba2da66d781b0e2e
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1241,9 +1458,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1241,9 +1488,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -1006,7 +1058,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e076a71b41974c0fba2da66d781b0e2e
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1854,6 +2075,11 @@ void menu_draw_number(
+@@ -1854,6 +2105,11 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
