@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=King's Field Enhanced
+Comment=King's Field (Japan, 1994) on sushi-shi's source port
+Exec=kings-field
+Icon=kings-field-enhanced
+Categories=Game;RolePlaying;
+Terminal=false

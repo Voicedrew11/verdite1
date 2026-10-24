@@ -180,6 +180,26 @@ target, overlay ready, "Starting King's Field (English v1.0)". User files go
 to `~/.local/share/KingsField/SLPS00017/`. The `offscreen` SDL driver finds no
 EGL device even so, so there is no headless run yet.
 
+Without `--data` or `--disc` the game takes the release path, as on Windows:
+game files in `data/ja` and `data/en` beside the game (beside the `.AppImage`
+file, from `$APPIMAGE`, not the mount), or under the user folder when that
+folder cannot be written; otherwise a `.cue`, `.bin` or `.iso` beside the game
+is copied there once, otherwise a file dialog asks for one.
+
+## Linux release (AppImage)
+
+`scripts/package-linux.sh VERSION` builds `dist/KingsFieldEnhanced-vVERSION-x86_64.AppImage`
+in podman (or docker) from `packaging/appimage/`. The nix build cannot ship: it
+links against the store's glibc. The image is Ubuntu 22.04 (glibc 2.35, the
+oldest the AppImage runs on) with clang 21 from apt.llvm.org and, built from
+pinned releases, SDL3 (the Windows build's version), the Vulkan libraries and
+cpptrace at the nix shell's versions, and a static bsdtar. The AppImage carries
+`libSDL3.so.0`, the C++ runtime linked in, and bsdtar on `PATH` for the English
+patch's `.rar` (GNU tar cannot read it); the Vulkan loader and drivers are the
+host's. No English delta is embedded. The repository is mounted at its own path
+with git's common directory beside it, because a worktree's `.git` files name
+them absolutely. `scripts/smoke.py dist/<AppImage>` boots it like the nix build.
+
 ## Driving the game
 
 For an agent or a script, without a person or a screen:

@@ -1,0 +1,54 @@
+# The Linux release's build environment (scripts/package-linux.sh). Ubuntu 22.04's glibc (2.35) is
+# the oldest the AppImage runs on; everything newer than the distribution has is built here from a
+# pinned release: SDL3 (the Windows build's version), the Vulkan libraries (the nix shell's
+# versions), cpptrace, and a static bsdtar for the English patch's .rar.
+FROM docker.io/library/ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg git file python3 python3-pip pkg-config make libstdc++-12-dev \
+      libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+      libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libdrm-dev libgbm-dev \
+      libpulse-dev libasound2-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir cmake==3.31.6 ninja==1.11.1.4
+# clang 21, the nix shell's: 22.04's own clang is too old for the code's C++20.
+RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" \
+      > /etc/apt/sources.list.d/llvm.list \
+    && apt-get update && apt-get install -y --no-install-recommends clang-21 lld-21 \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=clang-21 CXX=clang++-21
+WORKDIR /src
+
+# cmake_install NAME URL [CMAKE ARGS...]: builds a source tarball into /opt/deps.
+RUN printf '%s\n' '#!/bin/sh' 'set -eu' 'name=$1 url=$2; shift 2' \
+      'mkdir -p /src/$name && curl -fsSL "$url" | tar -xz -C /src/$name --strip-components=1' \
+      'cmake -S /src/$name -B /src/$name/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/deps -DCMAKE_PREFIX_PATH=/opt/deps "$@"' \
+      'cmake --build /src/$name/build && cmake --install /src/$name/build && rm -rf /src/$name' \
+      > /usr/local/bin/cmake_install && chmod +x /usr/local/bin/cmake_install
+
+RUN cmake_install sdl https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz \
+      -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_STATIC=OFF -DSDL_SHARED=ON
+RUN cmake_install vulkan-headers https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.341.tar.gz
+RUN cmake_install volk https://github.com/zeux/volk/archive/refs/tags/vulkan-sdk-1.4.341.0.tar.gz -DVOLK_INSTALL=ON
+RUN cmake_install vma https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.3.0.tar.gz
+RUN cmake_install vk-bootstrap https://github.com/charles-lunarg/vk-bootstrap/archive/refs/tags/v1.4.341.tar.gz \
+      -DVK_BOOTSTRAP_TEST=OFF -DVK_BOOTSTRAP_INSTALL=ON
+RUN cmake_install glslang https://github.com/KhronosGroup/glslang/archive/refs/tags/16.2.0.tar.gz \
+      -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=ON
+RUN cmake_install cpptrace https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v1.0.4.tar.gz
+# bsdtar alone, static and without optional libraries: its RAR reader needs none.
+RUN cmake_install libarchive https://github.com/libarchive/libarchive/releases/download/v3.8.9/libarchive-3.8.9.tar.gz \
+      -DENABLE_TEST=OFF -DENABLE_CAT=OFF -DENABLE_CPIO=OFF -DENABLE_UNZIP=OFF -DENABLE_OPENSSL=OFF -DENABLE_LIBB2=OFF \
+      -DENABLE_LZ4=OFF -DENABLE_LZMA=OFF -DENABLE_ZSTD=OFF -DENABLE_ZLIB=OFF -DENABLE_BZip2=OFF -DENABLE_LIBXML2=OFF \
+      -DENABLE_EXPAT=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LibGCC=OFF -DENABLE_CNG=OFF \
+      -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_ACL=OFF -DENABLE_XATTR=OFF -DENABLE_ICONV=OFF \
+      -DENABLE_TAR_SHARED=OFF -DBUILD_SHARED_LIBS=OFF
+
+RUN curl -fsSL -o /usr/local/bin/appimagetool \
+      https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
+    && curl -fsSL -o /opt/appimage-runtime \
+      https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 \
+    && chmod +x /usr/local/bin/appimagetool
+# No FUSE in a container: appimagetool runs extracted.
+ENV APPIMAGE_EXTRACT_AND_RUN=1 PATH=/opt/deps/bin:$PATH

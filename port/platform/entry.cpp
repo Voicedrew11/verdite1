@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 #ifdef __EMSCRIPTEN__
@@ -163,9 +164,41 @@ void offer_english() {
     }
 }
 
-#if defined(_WIN32)
-// Release layout on Windows: game files are copied out of the player's disc
-// image once, into "data/ja" and "data/en" beside the executable.
+#if !defined(__EMSCRIPTEN__)
+// Release layout: game files are copied out of the player's disc image once,
+// into "data/ja" and "data/en" beside the game.
+
+// The folder the player keeps the game in: an AppImage's own folder, not the
+// mount it runs from.
+std::filesystem::path release_directory() {
+    if (const char *appimage = std::getenv("APPIMAGE"))
+        return native_path(appimage).parent_path();
+    return executable_directory();
+}
+
+std::string user_folder() {
+    char *pref = SDL_GetPrefPath("KingsField", "SLPS00017");
+    std::string folder = pref ? pref : "the user folder";
+    SDL_free(pref);
+    return folder;
+}
+
+// "data" beside the game, or in the user folder when the game's folder cannot
+// be written (an AppImage in /opt, Program Files).
+std::filesystem::path release_library() {
+    auto beside = release_directory() / "data";
+    std::error_code error;
+    std::filesystem::create_directories(beside, error);
+    const auto probe = beside / ".write-test";
+    const bool writable = !error && std::ofstream(probe).good();
+    std::filesystem::remove(probe, error);
+    if (writable)
+        return beside;
+    auto user = native_path(user_folder().c_str()) / "data";
+    std::filesystem::create_directories(user, error);
+    return user;
+}
+
 std::string disc_beside(const std::filesystem::path &directory) {
     std::error_code error;
     std::string found;
@@ -180,12 +213,13 @@ std::string disc_beside(const std::filesystem::path &directory) {
     return found;
 }
 
-std::string ask_for_disc() {
+std::string ask_for_disc(const std::filesystem::path &library) {
     SDL_InitSubSystem(SDL_INIT_VIDEO);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "King's Field Enhanced",
+    const std::string text =
         "Choose your King's Field (Japan) disc image: the original, or with the English patch applied "
-        "(.cue, .bin or .iso).\n\nThe game files are copied out of it once, into the \"data\" folder "
-        "beside the game. The image itself is not changed.", nullptr);
+        "(.cue, .bin or .iso). Putting it beside the game also works.\n\nThe game files are copied out of it "
+        "once, into " + utf8(library) + ". The image itself is not changed.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "King's Field Enhanced", text.c_str(), nullptr);
     return choose_file("Disc images", "cue;bin;iso");
 }
 
@@ -209,7 +243,7 @@ void move_single_language_data(const std::filesystem::path &library) {
 // Finds or creates the game files. Returns false when the player cancelled or
 // the disc could not be used (already reported).
 bool prepare_release_data(const char *dropped) {
-    const auto library = executable_directory() / "data";
+    const auto library = release_library();
     move_single_language_data(library);
     kf::languages_configure(utf8(library));
     std::error_code error;
@@ -225,14 +259,14 @@ bool prepare_release_data(const char *dropped) {
     // A patch dropped onto the game adds English to the Japanese files.
     if (dropped && is_patch_file(native_path(dropped))) {
         if (!add_english(dropped))
-            show_error("That patch could not be applied. Details are in kf.log in %APPDATA%\\KingsField\\SLPS00017.");
+            show_error(("That patch could not be applied. Details are in kf.log in " + user_folder() + ".").c_str());
         dropped = nullptr;
     }
     std::string disc = dropped ? dropped : "";
     if (!any && disc.empty())
-        disc = disc_beside(executable_directory());
+        disc = disc_beside(release_directory());
     if (!any && disc.empty())
-        disc = ask_for_disc();
+        disc = ask_for_disc(library);
     if (!any && disc.empty())
         return false;
     if (!disc.empty()) {
@@ -242,9 +276,9 @@ bool prepare_release_data(const char *dropped) {
         if (!kf::languages_add_disc(disc.c_str(), &added, &message)) {
             std::printf("%s\n", message.c_str());
             if (!any) {
-                show_error("That disc image could not be read as King's Field (Japan, SLPS-00017).\n\n"
-                           "Use the Japanese disc, original or with the English patch applied, as a .cue/.bin "
-                           "pair or an .iso. Details are in kf.log in %APPDATA%\\KingsField\\SLPS00017.");
+                show_error(("That disc image could not be read as King's Field (Japan, SLPS-00017).\n\n"
+                            "Use the Japanese disc, original or with the English patch applied, as a .cue/.bin "
+                            "pair or an .iso. Details are in kf.log in " + user_folder() + ".").c_str());
                 return false;
             }
             show_error(message.c_str());
@@ -303,7 +337,7 @@ int main(int argc, char **argv) {
             host_options.headless = true;
         else if (std::strcmp(argv[i], "--turbo") == 0)
             host_options.turbo = true;
-#if defined(_WIN32)
+#if !defined(__EMSCRIPTEN__)
         // A disc image or the English patch dropped onto the executable.
         else if (!dropped && argv[i][0] != '-' &&
                  (is_disc_image(native_path(argv[i])) || is_patch_file(native_path(argv[i]))))
@@ -346,12 +380,12 @@ int main(int argc, char **argv) {
         kf::languages_add_folder(data);
     for (const char *folder : language_data)
         kf::languages_add_folder(folder);
-#if defined(_WIN32)
+#if !defined(__EMSCRIPTEN__)
     if (!data_selected && !disc) {
         if (!prepare_release_data(dropped))
             return 1;
     } else {
-        kf::languages_configure(utf8(executable_directory() / "data"));
+        kf::languages_configure(utf8(release_directory() / "data"));
     }
 #else
     if (!data_selected && !disc)

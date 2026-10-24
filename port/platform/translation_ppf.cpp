@@ -94,7 +94,12 @@ bool run_tool(const char *tool, const std::vector<std::filesystem::path> &argume
 // Extracts an archive and reads the largest .ppf inside it.
 bool patch_from_archive(const std::filesystem::path &archive, std::vector<u8> *ppf, std::string *error) {
     ScratchDirectory scratch;
-    if (!run_tool("tar", {"-xf", archive, "-C", scratch.path})) {
+#ifdef _WIN32
+    const char *archive_tool = "tar"; // Windows' tar is bsdtar
+#else
+    const char *archive_tool = "bsdtar"; // GNU tar cannot read .rar; the AppImage carries bsdtar
+#endif
+    if (!run_tool(archive_tool, {"-xf", archive, "-C", scratch.path})) {
         *error = "Cannot open that archive. Extract the .ppf patch from it and choose that instead.";
         return false;
     }

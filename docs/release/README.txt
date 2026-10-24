@@ -1,7 +1,7 @@
 King's Field Enhanced
 =====================
 
-King's Field (Japan, 1994) for Windows, in English with the fan translation
+King's Field (Japan, 1994) for Windows and Linux, in English with the fan translation
 or in the original Japanese, plus optional widescreen, high frame rates,
 lighting, an automap, quick saves, a settings overlay and Lua mods.
 
@@ -23,9 +23,12 @@ Use a .cue + .bin pair (single track) or an .iso. No game files are included.
 
 FIRST LAUNCH
 ------------
-Run kings-field.exe and choose your disc image when asked. The game copies its
-files into the "data" folder here, once. The image itself is not changed.
-You can also drop the .cue onto kings-field.exe, or put it in this folder first.
+Put your disc image (.cue + .bin, or .iso) in the same folder as the game
+(kings-field.exe, or the .AppImage on Linux) and start it, or start it and
+choose the image when asked. The game copies its files into a "data" folder
+there, once (into the user folder below if the game's folder is read-only).
+The image itself is not changed. On Windows you can also drop the .cue onto
+kings-field.exe. On Linux, make the .AppImage executable first.
 
 To switch to a different image later, delete the "data" folder.
 
@@ -65,7 +68,8 @@ turn it off).
 FILES
 -----
 Saves, settings, mods and kf.log are in:
-  %APPDATA%\KingsField\SLPS00017
+  Windows: %APPDATA%\KingsField\SLPS00017
+  Linux:   ~/.local/share/KingsField/SLPS00017
 The example mods in the "mods" folder here are copied there on the first launch,
 switched off. Enable them in F1 > Mods. See MODDING.md for writing your own.
 
