@@ -512,6 +512,24 @@ void draw_settings_window() {
         }
         ImGui::SetItemTooltip("Interacting with a lock unlocks it (with the unlock sound) when you carry\n"
                               "its key, instead of having to choose the key from the item menu.");
+        ImGui::SeparatorText("Enemies");
+        if (slider_input("Enemy turn speed", &s.enemy_turn, 1.0f, 4.0f, "%.2fx", 0.25f)) {
+            apply_control_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("How much faster an enemy turns while it chases you or backs away from you.\n"
+                              "Its wandering keeps the game's pace. The sticks, the mouse and the run key\n"
+                              "let you circle an enemy faster than the D-pad did; this lets it keep up.\n"
+                              "x1 is the original game.");
+        ImGui::BeginDisabled(s.enemy_turn <= 1.0f);
+        if (ImGui::Checkbox("Enemies keep you in sight", &s.enemy_track)) {
+            apply_control_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("A chasing enemy aims at where you are every update. The original\n"
+                              "re-aimed on about one update in eight, so it ran on at where you had been.\n"
+                              "Off at x1.");
+        ImGui::EndDisabled();
         ImGui::SeparatorText("Bug fixes");
         ImGui::TextWrapped("Fixes for bugs in the original game. Turn them off to play exactly as on the PlayStation.");
         ImGui::Spacing();

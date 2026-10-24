@@ -1,8 +1,12 @@
 diff --git a/src/game/actor_behavior.cpp b/src/game/actor_behavior.cpp
-index e88d8973767040536c3668beb2f4f80bc85f32f6..a027e192d88d45735d0948a338abe6147d473578 100644
+index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584176943d8 100644
 --- a/src/game/actor_behavior.cpp
 +++ b/src/game/actor_behavior.cpp
-@@ -10,6 +10,8 @@
+@@ -7,9 +7,12 @@
+ #include <kf/lib/random.h>
+ 
+ #include <algorithm>
++#include <cmath>
  #include <cstdio>
  #include <cstdlib>
  #include <cstring>
@@ -11,7 +15,68 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..a027e192d88d45735d0948a338abe614
  
  enum {
      ACTOR_ACTIVATION_RANGE = 28000,
-@@ -1117,7 +1119,10 @@ void actor_update_current_action(void)
+@@ -48,6 +51,8 @@ enum {
+ 
+ enum {
+     ACTOR_BLOCKED_TURN_STEP = KF_ANGLE_FULL_TURN / 64,
++    // PC extension: angle_approach looks a half turn either way, so a step stays well short of it.
++    ACTOR_TURN_STEP_LIMIT = KF_ANGLE_QUARTER_TURN,
+     ACTOR_LONG_DROP_HEIGHT = 600,
+     ACTOR_DEEP_DROP_HEIGHT = 3000,
+     ACTOR_LONG_DROP_RANDOM_MAX = (kf::random_max + 1) / 2,
+@@ -441,18 +446,27 @@ KfActorMoveResult actor_move_xz_with_collision(const struct KfVecXZs *delta, KfA
+     return KF_ACTOR_MOVE_SUCCEEDED;
+ }
+ 
++// PC extension (Gameplay > Enemy turn speed): pursuing and retreating head at the
++// player, so those turns go faster; a wander or the way home keeps the game's pace.
++static u32 actor_turn_rate(const KfActor *actor, const KfActorDefinition *definition)
++{
++    if (actor->action != KF_ACTOR_ACTION_PURSUE && actor->action != KF_ACTOR_ACTION_RETREAT) {
++        return definition->turn_rate;
++    }
++    return std::min<u32>(std::lround(definition->turn_rate * kf::enemy_turn_scale), ACTOR_TURN_STEP_LIMIT);
++}
++
+ KfActorMoveResult actor_move_along_heading(KfActorMoveDirection direction, KfActorCollisionPolicy collision_policy)
+ {
+     KfActor *actor = actor_state.current;
+     KfActorDefinition *definition = actor_state.current_definition;
+     struct KfVecXZs delta;
+-    u32 rate;
++    u32 rate = actor_turn_rate(actor, definition);
+ 
+     if (actor->collision_state == KF_ACTOR_COLLISION_SLIDING) {
+-        rate = definition->turn_rate;
+         actor->rotation.vy = angle_approach(actor->rotation.vy, actor->movement_yaw, (rate + rate + rate) >> 1);
+     } else {
+-        actor->rotation.vy = angle_approach(actor->rotation.vy, actor->movement_yaw, definition->turn_rate);
++        actor->rotation.vy = angle_approach(actor->rotation.vy, actor->movement_yaw, rate);
+     }
+     angle_to_forward_xz(actor->rotation.vy, &delta);
+     vector2s_scale_shift11(definition->move_speed, &delta);
+@@ -835,7 +849,9 @@ static void actor_update_pursuit(KfActor *actor, const KfActorDefinition *defini
+                 + KF_ACTOR_PROGRESS_BACKOFF_BASE;
+             return;
+         }
+-        if (kf::random_next() < ACTOR_PURSUIT_TURN_RANDOM_LIMIT) {
++        // PC extension: with Enemy turn speed above x1 the pursuit re-aims every update,
++        // not on one in eight; the draw is kept so the random sequence is the game's.
++        if (kf::random_next() < ACTOR_PURSUIT_TURN_RANDOM_LIMIT || kf::enemy_tracks_player) {
+             actor->movement_yaw = actor_bearing_to_player(actor);
+         }
+         break;
+@@ -1029,6 +1045,9 @@ void actor_update_current_action(void)
+                 actor->animation_phase = 0;
+             }
+             actor->movement_yaw = actor_bearing_to_player(actor);
++        } else if (kf::enemy_tracks_player) {
++            // PC extension: a retreat keeps facing the player as it backs away.
++            actor->movement_yaw = actor_bearing_to_player(actor);
+         }
+         if (actor_move_along_heading(KF_ACTOR_MOVE_BACKWARD, KF_ACTOR_COLLISION_STOP) != KF_ACTOR_MOVE_SUCCEEDED) {
+             actor->action = KF_ACTOR_ACTION_NONE;
+@@ -1117,7 +1136,10 @@ void actor_update_current_action(void)
                      actor->position.vx, actor->position.vy, actor->position.vz,
                      definition->collision_radius, definition->collision_height,
                      ACTOR_VELOCITY_COLLISION_FLAGS);

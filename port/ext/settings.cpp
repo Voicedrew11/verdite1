@@ -177,6 +177,8 @@ void settings_load() {
     current.classic = read_bool(gameplay, "classic_mode", current.classic);
     current.auto_keys = read_bool(gameplay, "auto_use_keys", current.auto_keys);
     current.tick_rate = static_cast<int>(read_number(gameplay, "tick_rate", current.tick_rate));
+    current.enemy_turn = std::clamp(static_cast<float>(read_number(gameplay, "enemy_turn", current.enemy_turn)), 1.0f, 4.0f);
+    current.enemy_track = read_bool(gameplay, "enemy_track", current.enemy_track);
     current.fix_ceiling_fall = read_bool(gameplay, "fix_ceiling_fall", current.fix_ceiling_fall);
     current.fix_spatial_panning = read_bool(gameplay, "fix_spatial_panning", current.fix_spatial_panning);
     const cJSON *map = cJSON_GetObjectItemCaseSensitive(document, "map");
@@ -257,6 +259,8 @@ void settings_save_if_dirty() {
     write_value(gameplay, "classic_mode", cJSON_CreateBool(current.classic));
     write_value(gameplay, "auto_use_keys", cJSON_CreateBool(current.auto_keys));
     write_value(gameplay, "tick_rate", cJSON_CreateNumber(current.tick_rate));
+    write_value(gameplay, "enemy_turn", cJSON_CreateNumber(current.enemy_turn));
+    write_value(gameplay, "enemy_track", cJSON_CreateBool(current.enemy_track));
     write_value(gameplay, "fix_ceiling_fall", cJSON_CreateBool(current.fix_ceiling_fall));
     write_value(gameplay, "fix_spatial_panning", cJSON_CreateBool(current.fix_spatial_panning));
     cJSON *map = object_entry(document, "map");
@@ -330,6 +334,7 @@ const Settings &effective_settings() {
     classic.run_speed = 100;          // no run key
     classic.look_limit = 17;
     classic.auto_keys = false;
+    classic.enemy_turn = 1.0f;
     classic.analog.enabled = false;   // the game came out before the DualShock
     classic.fix_ceiling_fall = false;
     classic.fix_spatial_panning = false;
@@ -430,6 +435,8 @@ void apply_control_settings() {
     player_pitch_limit = std::max(191, degrees * 4096 / 360);
     fix_actor_ceiling_fall = e.fix_ceiling_fall;
     auto_use_keys = e.auto_keys;
+    enemy_turn_scale = std::clamp(e.enemy_turn, 1.0f, 4.0f);
+    enemy_tracks_player = e.enemy_track && enemy_turn_scale > 1.0f;
     host_set_pad_layout(e.pad_layout == "jp" ? PadLayout::Japanese : PadLayout::West);
     host_set_analog_options(e.analog);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.

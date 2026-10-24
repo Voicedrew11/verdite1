@@ -62,6 +62,12 @@ inline bool fix_spatial_panning = true;
 inline bool classic_mode = false;
 // Interacting with a lock uses the matching key if the player carries it.
 inline bool auto_use_keys = true;
+// An enemy turning toward the player (pursuing, retreating) turns this many times its
+// own rate; 1 is the original.
+inline float enemy_turn_scale = 1.5f;
+// A pursuing or retreating enemy re-aims at the player every update; the original
+// re-aims a pursuit on one update in eight and a retreat only as it starts.
+inline bool enemy_tracks_player = true;
 }
 
 #endif // KF_PLATFORM_INPUT_H
