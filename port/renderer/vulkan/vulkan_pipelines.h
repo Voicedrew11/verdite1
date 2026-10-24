@@ -32,7 +32,7 @@ static_assert(sizeof(DrawConstants) == 64);
 constexpr uint32_t draw_reproject = 1, draw_whole_pixels = 2, draw_true_color = 4, draw_subtract_stp_pass = 8,
                    draw_filter_bilinear = 16, draw_filter_three_point = 32, draw_occlusion = 64,
                    draw_surface_pass = 128, draw_fog_depth = 256, draw_fog_distance = 512, draw_mipmaps = 1024,
-                   draw_filter_sharp = 2048;
+                   draw_filter_sharp = 2048, draw_pixel_lighting = 4096;
 
 // The fixed blend equations world.frag's outputs are written for.
 enum class BlendEquation : std::uint8_t {
@@ -65,9 +65,16 @@ VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, 
                                       VkFormat format);
 
 // Set 0 of every pipeline that draws faces: the texture pages through a
-// nearest sampler, the motions, and the pages again through a trilinear one.
-// The caller owns it and keeps it past every pipeline.
-constexpr uint32_t world_binding_pages = 0, world_binding_motions = 1, world_binding_smooth_pages = 2;
+// nearest sampler, the motions, the pages again through a trilinear one, and
+// the light sets (LightSetRows). The caller owns it and keeps it past every pipeline.
+constexpr uint32_t world_binding_pages = 0, world_binding_motions = 1, world_binding_smooth_pages = 2,
+                   world_binding_light_sets = 3;
+// A ShownLightSet as world.frag reads it: rows of dots_from_model, then of the
+// colour matrix with the ambient in w, then of normal_to_camera.
+struct LightSetRows {
+    std::array<std::array<float, 4>, 9> rows;
+};
+static_assert(sizeof(LightSetRows) == 144);
 VkDescriptorSetLayout create_world_set_layout(VkDevice device);
 // A pipeline layout over these sets with DrawConstants pushed to both stages.
 VkPipelineLayout create_face_pipeline_layout(VkDevice device, std::span<const VkDescriptorSetLayout> sets);

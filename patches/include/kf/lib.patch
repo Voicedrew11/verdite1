@@ -1,5 +1,5 @@
 diff --git a/include/kf/lib/render_face.h b/include/kf/lib/render_face.h
-index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..c4837469554e3d99b806c5fa26fd84e8ce6c7f26 100644
+index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..ad18685d1019e0124d6d090f277f4649b0d2e0f9 100644
 --- a/include/kf/lib/render_face.h
 +++ b/include/kf/lib/render_face.h
 @@ -3,8 +3,10 @@
@@ -95,7 +95,7 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..c4837469554e3d99b806c5fa26fd84e8
  }
  
  inline void render_face_uv(kf::DrawFace *face, unsigned index, u16 uv)
-@@ -80,6 +142,27 @@ inline void render_face_submit(kf::DrawFace *face, std::span<const CVECTOR> colo
+@@ -80,6 +142,43 @@ inline void render_face_submit(kf::DrawFace *face, std::span<const CVECTOR> colo
      kf::host_enqueue_face(*face);
  }
  
@@ -120,11 +120,27 @@ index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..c4837469554e3d99b806c5fa26fd84e8
 +    render_face_submit(face, std::span<const CVECTOR>(cued.data(), count), shading, depth);
 +}
 +
++// PC extension (lighting per pixel): the corners' normals as the game lit them
++// (the first for a flat face), the host_light_set and the colour lit, so a
++// renderer can light each pixel as the game lit the corners.
++inline void render_face_light(kf::DrawFace &face, u16 light_set, KfTmdBytes normals, const KfTmdFaceData &p,
++    kf::FaceShading shading, CVECTOR tint)
++{
++    face.light_set = light_set;
++    face.tint = {tint.r, tint.g, tint.b};
++    for (unsigned i = 0; i < static_cast<unsigned>(face.shape); ++i) {
++        const SVECTOR normal = tmd_read_normal(normals, p.normals[shading == kf::FaceShading::Flat ? 0 : i]);
++        face.vertices[i].nx = normal.vx;
++        face.vertices[i].ny = normal.vy;
++        face.vertices[i].nz = normal.vz;
++    }
++}
++
  inline void render_face_rectangle(kf::DrawFace *face, s16 x, s16 y, s16 right, s16 bottom)
  {
      face->shape = kf::FaceShape::Quad;
 diff --git a/include/kf/lib/tmd.h b/include/kf/lib/tmd.h
-index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..80f695ac622264d6c7c2f5563fc6259957f89837 100644
+index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..0c9c81ce7275bdd6732f2add984efffc00e3c17f 100644
 --- a/include/kf/lib/tmd.h
 +++ b/include/kf/lib/tmd.h
 @@ -126,6 +126,16 @@ typedef struct KfScreenVertex {
@@ -144,7 +160,7 @@ index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..80f695ac622264d6c7c2f5563fc62599
  } KfScreenVertex;
  
  struct KfTmdContext {
-@@ -150,6 +160,12 @@ extern void tmd_release_last_allocation(KfTmdContext context, KfMemoryArena &are
+@@ -150,6 +160,15 @@ extern void tmd_release_last_allocation(KfTmdContext context, KfMemoryArena &are
  extern void tmd_select(KfTmdContext context, KfTmdSlot slot);
  extern void tmd_select_object_vertices(KfTmdContext context, u16 object_index);
  extern std::span<const SVECTOR> tmd_vertices(KfTmdContext context, s32 count);
@@ -154,6 +170,9 @@ index cabe113c09e6e3b922e70e05907b445c9c9cf2ae..80f695ac622264d6c7c2f5563fc62599
 +// carried has no part and no way back.
 +extern void tmd_carry_projected(std::span<KfScreenVertex> projected, std::span<const SVECTOR> vertices,
 +    const MATRIX &model);
++// PC extension (lighting per pixel): the model-to-camera transform the vertices
++// last carried were projected with.
++extern const MATRIX &tmd_projected_model();
  
  extern void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_shift,
      const MATRIX *model, const kf::Projection &projection);

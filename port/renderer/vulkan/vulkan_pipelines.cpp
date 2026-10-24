@@ -12,13 +12,14 @@
 
 namespace kf {
 namespace {
-static_assert(sizeof(GpuVertex) == 80);
+static_assert(sizeof(GpuVertex) == 100);
 static_assert(offsetof(GpuVertex, cx) == 12 && offsetof(GpuVertex, u) == 24 && offsetof(GpuVertex, uv_bounds) == 32 &&
               offsetof(GpuVertex, color) == 40 && offsetof(GpuVertex, layer) == 44 && offsetof(GpuVertex, part) == 48 &&
-              offsetof(GpuVertex, lx) == 52 && offsetof(GpuVertex, bx) == 64 && offsetof(GpuVertex, clear_color) == 76);
+              offsetof(GpuVertex, lx) == 52 && offsetof(GpuVertex, bx) == 64 && offsetof(GpuVertex, clear_color) == 76 &&
+              offsetof(GpuVertex, nx) == 80 && offsetof(GpuVertex, light_set) == 92 && offsetof(GpuVertex, tint) == 96);
 
 // world.vert's inputs, in GpuVertex.
-constexpr std::array<VkVertexInputAttributeDescription, 10> vertex_attributes = {{
+constexpr std::array<VkVertexInputAttributeDescription, 13> vertex_attributes = {{
     {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, x)},
     {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, cx)},
     {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(GpuVertex, u)},
@@ -29,6 +30,9 @@ constexpr std::array<VkVertexInputAttributeDescription, 10> vertex_attributes = 
     {7, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, lx)},
     {8, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, bx)},
     {9, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(GpuVertex, clear_color)},
+    {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVertex, nx)},
+    {11, 0, VK_FORMAT_R16G16_UINT, offsetof(GpuVertex, light_set)},
+    {12, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(GpuVertex, tint)},
 }};
 constexpr VkVertexInputBindingDescription vertex_binding{0, sizeof(GpuVertex), VK_VERTEX_INPUT_RATE_VERTEX};
 
@@ -189,7 +193,7 @@ VkPipelineLayout create_face_pipeline_layout(VkDevice device, std::span<const Vk
 }
 
 VkDescriptorSetLayout create_world_set_layout(VkDevice device) {
-    std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
     bindings[0].binding = world_binding_pages;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -202,6 +206,10 @@ VkDescriptorSetLayout create_world_set_layout(VkDevice device) {
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[3].binding = world_binding_light_sets;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     info.bindingCount = static_cast<uint32_t>(bindings.size());

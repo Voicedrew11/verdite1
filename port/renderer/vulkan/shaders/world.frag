@@ -13,6 +13,10 @@ layout(set = 0, binding = 2) uniform sampler2DArray smooth_pages;
 // Light left by ambient occlusion and the camera depth it was measured at
 // (vulkan_ambient_occlusion.h).
 layout(set = 1, binding = 0) uniform sampler2D occlusion;
+// The light sets (LightSetRows in vulkan_pipelines.h), nine rows each.
+layout(set = 0, binding = 3) readonly buffer LightSets {
+    vec4 rows[];
+} light_sets;
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 1) in vec3 in_shade;
@@ -21,10 +25,15 @@ layout(location = 3) flat in uvec4 in_flags;   // layer, texturing, dither, worl
 layout(location = 4) in vec3 in_camera;        // z = 0: not world
 layout(location = 5) in vec3 in_clear;         // the colour before the depth cue
 layout(location = 6) flat in float in_cue_scale;   // 0: not cued
+layout(location = 7) in vec4 in_normal;            // model space, and its length
+layout(location = 8) flat in uvec4 in_light;       // light set (0: none), tint
 
 layout(location = 0) out vec4 out_color;
 
 const float rgb8_max = 255.0;
+// The GTE's IR registers saturate here.
+const float ir_max = 32767.0;
+const float game_unity = 4096.0;
 const int rgb5_max = 31;
 // Level 0 marks transparent texels with alpha 0, STP with 254, opaque with 255.
 const float stp_alpha_threshold = 254.5 / 255.0;
@@ -168,18 +177,52 @@ float occlusion_light() {
     return total > 0.0 ? sum / total : 1.0;
 }
 
+bool lit_per_pixel() {
+    return (draw.flags & draw_pixel_lighting) != 0u && in_light.x != 0u && !plain();
+}
+
+// The colour the game lights this pixel's normal with, before its depth cue
+// (render_light_normal, without its rounding). The blended normal is held to
+// the length blended from its corners, so at a corner it is the game's own.
+vec3 lit_clear() {
+    uint row = (in_light.x - 1u) * 9u;
+    float blended = length(in_normal.xyz);
+    vec3 normal = blended > 0.0 ? in_normal.xyz * (in_normal.w / blended) : in_normal.xyz;
+    vec3 dots = clamp(vec3(dot(light_sets.rows[row].xyz, normal), dot(light_sets.rows[row + 1u].xyz, normal),
+                           dot(light_sets.rows[row + 2u].xyz, normal)), 0.0, ir_max);
+    vec4 r = light_sets.rows[row + 3u], g = light_sets.rows[row + 4u], b = light_sets.rows[row + 5u];
+    vec3 intensity = vec3(r.w, g.w, b.w) * 16.0 + vec3(dot(r.xyz, dots), dot(g.xyz, dots), dot(b.xyz, dots));
+    return min(vec3(in_light.yzw) * clamp(intensity, 0.0, ir_max) / game_unity, rgb8_max);
+}
+
+// How far the game's cue at the corners, blended across the face, moved the
+// clear colour toward the fog colour, 0..1.
+float corner_cue() {
+    vec3 toward = vec3(draw.fog_r, draw.fog_g, draw.fog_b) - in_clear;
+    float reach = dot(toward, toward);
+    return reach < 1.0 ? 0.0 : clamp(dot(in_shade - in_clear, toward) / reach, 0.0, 1.0);
+}
+
 // The game's colour bytes at this fragment. Fog drawn per pixel takes the depth
 // cue render_project_point gives a corner (in floats, without its rounding) at
 // this pixel's depth or distance, and moves the clear colour that far, times
-// the face's scale, toward the fog colour, as render_fog_color does.
+// the face's scale, toward the fog colour, as render_fog_color does. Lit per
+// pixel, the clear colour is this pixel's own, and fog at the corners moves it
+// as far as the corners' cue moved theirs.
 vec3 shade() {
-    if ((draw.flags & (draw_fog_depth | draw_fog_distance)) == 0u || in_cue_scale == 0.0 || in_camera.z <= 0.0 ||
-        plain())
+    bool lit = lit_per_pixel();
+    vec3 clear = lit ? lit_clear() : in_clear;
+    bool fog_per_pixel = (draw.flags & (draw_fog_depth | draw_fog_distance)) != 0u && in_cue_scale != 0.0 &&
+                         in_camera.z > 0.0 && !plain();
+    if (fog_per_pixel) {
+        float measured = (draw.flags & draw_fog_distance) != 0u ? length(in_camera) : in_camera.z;
+        float cue = (16.0 * draw.cue_projection_distance * draw.cue_slope / measured + 5120.0) / 4096.0;
+        vec3 fog = vec3(draw.fog_r, draw.fog_g, draw.fog_b);
+        return clear + (fog - clear) * clamp(cue, 0.0, 1.0) * in_cue_scale;
+    }
+    if (!lit)
         return in_shade;
-    float measured = (draw.flags & draw_fog_distance) != 0u ? length(in_camera) : in_camera.z;
-    float cue = (16.0 * draw.cue_projection_distance * draw.cue_slope / measured + 5120.0) / 4096.0;
-    vec3 fog = vec3(draw.fog_r, draw.fog_g, draw.fog_b);
-    return in_clear + (fog - in_clear) * clamp(cue, 0.0, 1.0) * in_cue_scale;
+    return in_shade + (clear - in_clear) * (1.0 - corner_cue());
 }
 
 // The PS1's 15-bit colour: 5-bit channels, dithered on the original pixel grid.

@@ -7,6 +7,7 @@
 #include <kf/renderer/lighting.h>
 #include <kf/renderer/projection.h>
 
+#include "../light_sets.h"
 #include "vulkan_device.h"
 #include "vulkan_downsample.h"
 #include "vulkan_resources.h"
@@ -88,7 +89,7 @@ FrameStyle cleared_to(Rgb5 color) {
 }
 
 FrameView unmoved_view(const std::vector<Motion> &motions) {
-    return {motions, 0, false, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}};
+    return {motions, 0, false, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}, {}};
 }
 
 // Presents the uploaded frame again and returns the picture.
@@ -636,7 +637,7 @@ TEST_CASE("vulkan: past the enhanced depth the game's look is drawn") {
 namespace {
 // Presents the uploaded frame through motions, each vertex carrying this much of its way back.
 Image present_moved(const std::vector<Motion> &motions, float carry) {
-    const FrameView view{motions, carry, true, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}};
+    const FrameView view{motions, carry, true, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}, {}};
     backend->present(view, {}, 0, 0, nullptr);
     std::optional<Image> picture = backend->capture();
     if (!picture) {
@@ -741,4 +742,114 @@ int main(int argc, char **argv) {
     const int result = context.run();
     started.backend.reset();
     return result;
+}
+
+namespace {
+// A light along x, white, over a little ambient; a face 200 pixels wide whose
+// left corners' normals lean 45 degrees away from it and right ones 45 towards.
+constexpr int lit_left = 60, lit_width = 200;
+constexpr u8 lit_tint = 200;
+constexpr s16 lean = 2896;   // 4096 / sqrt(2)
+
+LightSet light_from_x() {
+    LightSet set{};
+    set.lights.m = {{{4096, 0, 0}, {0, 0, 0}, {0, 0, 0}}};
+    set.color_matrix.m = {{{4096, 0, 0}, {4096, 0, 0}, {4096, 0, 0}}};
+    set.ambient = {32, 32, 32};
+    set.model.m = {{{4096, 0, 0}, {0, 4096, 0}, {0, 0, 4096}}};
+    return set;
+}
+
+SVECTOR leaning_normal(bool right) { return {static_cast<s16>(right ? lean : -lean), 0, lean, 0}; }
+
+// The game's colour at a corner, lit as render_light_normal lights it.
+u8 game_lit(bool right) {
+    const LightSet set = light_from_x();
+    const LightingEnvironment environment{set.color_matrix, set.ambient, {}};
+    return render_light_normal(environment, set.lights, leaning_normal(right), {lit_tint, lit_tint, lit_tint, 0}).r;
+}
+
+// The face with its corners coloured as the game lit them, times keep (its
+// depth cue at the corners, toward black).
+std::vector<GpuVertex> lit_face(float keep) {
+    std::vector<GpuVertex> out;
+    add_rect(out, lit_left, 100, lit_width, 40, VertexTexturing::Solid);
+    for (GpuVertex &vertex : out) {
+        const bool right = vertex.x > lit_left;
+        const SVECTOR normal = leaning_normal(right);
+        const u8 clear = game_lit(right);
+        const auto cued = static_cast<u8>(std::lround(clear * keep));
+        vertex.color = {cued, cued, cued, 255};
+        vertex.clear_color = {clear, clear, clear};
+        vertex.cue_scale_quarters = keep < 1 ? 8 : 0;
+        vertex.nx = normal.vx;
+        vertex.ny = normal.vy;
+        vertex.nz = normal.vz;
+        vertex.light_set = 1;
+        vertex.tint = {lit_tint, lit_tint, lit_tint};
+    }
+    return out;
+}
+
+// The red byte across row 120 of the face, drawn in true colour, per pixel or not.
+std::vector<int> lit_row(const std::vector<GpuVertex> &vertices, bool per_pixel) {
+    PictureOptions options;
+    options.true_color = true;
+    options.pixel_lighting = per_pixel;
+    backend->set_options(options);
+    const std::vector<DrawRun> runs = {run_of(BlendMode::opaque, 0, vertices.size())};
+    backend->upload_frame(vertices, runs, cleared_to(background), {});
+    const std::vector<LightSet> sets = {light_from_x()};
+    static const std::vector<Motion> motions(1, Motion{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}});
+    const std::vector<ShownLightSet> shown = shown_light_sets(sets, {}, motions);
+    FrameView view = unmoved_view(motions);
+    view.light_sets = shown;
+    backend->present(view, {}, 0, 0, nullptr);
+    std::optional<Image> picture = backend->capture();
+    backend->set_options({});
+    std::vector<int> row;
+    if (!picture) {
+        FAIL("nothing captured");
+        return row;
+    }
+    for (int x = lit_left; x < lit_left + lit_width; ++x)
+        row.push_back(picture->rgba[(std::size_t{120} * picture->width + static_cast<std::size_t>(x)) * 4]);
+    return row;
+}
+} // namespace
+
+TEST_CASE("vulkan: lit per pixel, a face's corners are the game's colours") {
+    const std::vector<int> row = lit_row(lit_face(1), true);
+    REQUIRE(row.size() == lit_width);
+    CHECK(std::abs(row.front() - game_lit(false)) <= 1);
+    CHECK(std::abs(row.back() - game_lit(true)) <= 1);
+}
+
+TEST_CASE("vulkan: lit per pixel, a face turning from a light is unlit until it faces it") {
+    const std::vector<int> per_pixel = lit_row(lit_face(1), true);
+    const std::vector<int> corners = lit_row(lit_face(1), false);
+    REQUIRE(per_pixel.size() == lit_width);
+    REQUIRE(corners.size() == lit_width);
+    // Halfway the normal faces the camera, square to the light: only the ambient.
+    const std::size_t middle = lit_width / 2 - 2;
+    CHECK(std::abs(per_pixel[middle] - game_lit(false)) <= 1);
+    CHECK(corners[middle] > (game_lit(false) + game_lit(true)) / 2 - 3);
+    for (std::size_t x = 1; x < per_pixel.size(); ++x)
+        CHECK(per_pixel[x] >= per_pixel[x - 1]);
+}
+
+TEST_CASE("vulkan: lit per pixel, fog at the corners keeps the corners' cue") {
+    const std::vector<int> row = lit_row(lit_face(0.5f), true);
+    REQUIRE(row.size() == lit_width);
+    CHECK(std::abs(row.back() - game_lit(true) / 2) <= 1);
+    CHECK(std::abs(row[lit_width / 2 - 2] - game_lit(false) / 2) <= 1);
+}
+
+TEST_CASE("vulkan: a face with no light set is drawn from its corners") {
+    std::vector<GpuVertex> vertices = lit_face(1);
+    for (GpuVertex &vertex : vertices)
+        vertex.light_set = 0;
+    const std::vector<int> unlit = lit_row(vertices, true);
+    const std::vector<int> off = lit_row(lit_face(1), false);
+    CHECK(unlit == off);
 }

@@ -1496,10 +1496,19 @@ index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..98e50014ee530711f8e858d4fcd163df
  
  void render_reset_module_state(void)
 diff --git a/src/game/render_enqueuers.cpp b/src/game/render_enqueuers.cpp
-index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f8d7b381e 100644
+index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84f359f7d3 100644
 --- a/src/game/render_enqueuers.cpp
 +++ b/src/game/render_enqueuers.cpp
-@@ -36,10 +36,10 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -22,6 +22,8 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+     auto stream = tmd_primitive_stream(tmd_context(), object);
+     const auto normals = tmd_normal_bytes(tmd_context(), object);
+     const auto &vertices = game_graphics_runtime.tmd_projected_vertices;
++    // PC extension (lighting per pixel): how these faces are lit.
++    const u16 light_set = kf::host_light_set(*lights, game_graphics_runtime.render_state.lighting, tmd_projected_model());
+     s32 otz;
+ 
+     while (stream.remaining != 0) {
+@@ -36,13 +38,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1512,7 +1521,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), tmd_textured_primitive_color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -55,8 +55,8 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, tmd_textured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -55,11 +58,12 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1523,7 +1536,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), p.color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -71,12 +71,12 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -71,15 +75,16 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1540,7 +1557,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[2]), p.color, projected->fog(0));
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -92,14 +92,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -92,17 +97,18 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1560,7 +1581,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[3]), p.color, projected->fog(0));
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -114,14 +114,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -114,17 +120,18 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1579,7 +1604,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[2]), tmd_textured_primitive_color, projected->fog(0));
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -137,16 +137,16 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, tmd_textured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -137,19 +144,20 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1601,7 +1630,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[3]), tmd_textured_primitive_color, projected->fog(0));
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -161,13 +161,13 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, tmd_textured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -161,16 +169,17 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1619,7 +1652,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[2]), p.color, 0);
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -183,10 +183,10 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -183,13 +192,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1632,7 +1669,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), tmd_textured_primitive_color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -201,8 +201,8 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, tmd_textured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -201,11 +211,12 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1643,7 +1684,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), p.color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -218,15 +218,15 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -218,18 +229,19 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1664,7 +1709,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[3]), p.color, projected->fog(0));
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -241,9 +241,9 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -241,12 +253,13 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1676,7 +1725,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), p.color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -259,9 +259,9 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -259,12 +272,13 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1688,7 +1741,20 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), p.color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -299,14 +299,14 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, p.color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -285,6 +299,8 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
+     auto stream = tmd_primitive_stream(tmd_context(), object);
+     const auto normals = tmd_normal_bytes(tmd_context(), object);
+     const auto &vertices = game_graphics_runtime.tmd_projected_vertices;
++    // PC extension (lighting per pixel): how these faces are lit.
++    const u16 light_set = kf::host_light_set(*lights, game_graphics_runtime.render_state.lighting, tmd_projected_model());
+     s32 otz;
+ 
+     while (stream.remaining != 0) {
+@@ -299,17 +315,18 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1707,7 +1773,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[2]), retextured_primitive_color, projected->fog(0));
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -322,16 +322,16 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, retextured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -322,19 +339,20 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1729,7 +1799,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[3]), retextured_primitive_color, projected->fog(0));
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -346,10 +346,10 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Gouraud, retextured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -346,13 +364,14 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1742,7 +1816,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), retextured_primitive_color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -365,10 +365,10 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, retextured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -365,13 +384,14 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1755,7 +1833,20 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
                      tmd_read_normal(normals, p.normals[0]), retextured_primitive_color, projected->average_fog());
                  otz = projected->ordering_depth();
                  if (otz + depth_bias > (KF_SCENE_MIN_OT_DEPTH - 1)) {
-@@ -412,15 +412,15 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, retextured_primitive_color);
+                     render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
+                 }
+             }
+@@ -397,6 +417,8 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
+     CVECTOR shade;
+ 
+     tmd_project_vertices(object.vertex_count, model, projection);
++    // PC extension (lighting per pixel): how these faces are lit.
++    const u16 light_set = kf::host_light_set(*lights, game_graphics_runtime.render_state.lighting, *model);
+     while (stream.remaining != 0) {
+         const auto packet = tmd_next_packet(stream);
+         switch (packet.mode) {
+@@ -412,17 +434,18 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -1775,8 +1866,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
 +                colors[3] = kf::render_fog_color_cued(game_graphics_runtime.render_state.lighting, shade, projected->fog(3));
                  otz = projected->ordering_depth() + KF_MAP_OT_DEPTH_BIAS;
                  if (otz < KF_ORDERING_TABLE_LENGTH) {
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, map_textured_primitive_color);
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, otz & KF_ORDERING_TABLE_INDEX_MASK);
-@@ -436,14 +436,14 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
+                 }
+             }
+@@ -436,16 +459,17 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -1794,8 +1888,11 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..5a959d283336d16152a3b3bb2264c38f
 +                colors[2] = kf::render_fog_color_cued(game_graphics_runtime.render_state.lighting, shade, projected->fog(2));
                  otz = projected->ordering_depth() + KF_MAP_OT_DEPTH_BIAS;
                  if (otz < KF_ORDERING_TABLE_LENGTH) {
++                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, map_textured_primitive_color);
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, otz & KF_ORDERING_TABLE_INDEX_MASK);
-@@ -475,23 +475,34 @@ void render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpriteDepthCu
+                 }
+             }
+@@ -475,23 +499,34 @@ void render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpriteDepthCu
      depth_cue = positions[3].fog;
  
      kf::DrawFace face {};

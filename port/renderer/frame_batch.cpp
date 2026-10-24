@@ -70,6 +70,9 @@ Vertex mix(const Vertex &a, const Vertex &b, float t) {
     out.clear_r = lerp(a.clear_r, b.clear_r);
     out.clear_g = lerp(a.clear_g, b.clear_g);
     out.clear_b = lerp(a.clear_b, b.clear_b);
+    out.nx = lerp(a.nx, b.nx);
+    out.ny = lerp(a.ny, b.ny);
+    out.nz = lerp(a.nz, b.nz);
     return out;
 }
 
@@ -150,9 +153,11 @@ struct FaceAttributes {
     u8 casts_shadow;
     u16 part;
     u8 cue_scale_quarters;
+    u16 light_set;
+    std::array<u8, 3> tint;
 };
 
-FaceAttributes face_attributes(const DrawFace &face, u8 layer, std::size_t part_count) {
+FaceAttributes face_attributes(const DrawFace &face, u8 layer, const BatchRules &rules) {
     const bool textured = face.material.kind == SurfaceKind::Texture;
     const bool modulated = face.material.color_mode == TextureColorMode::Modulated;
     float min_u = 1, min_v = 1, max_u = 0, max_v = 0;
@@ -170,8 +175,10 @@ FaceAttributes face_attributes(const DrawFace &face, u8 layer, std::size_t part_
     // The PS1 dithered modulated textures and gouraud-shaded solids.
     out.dither = (textured ? modulated : face.shading == FaceShading::Gouraud) ? 1 : 0;
     out.casts_shadow = face.casts_shadow ? 1 : 0;
-    out.part = face.part <= part_count ? face.part : 0;
+    out.part = face.part <= rules.part_count ? face.part : 0;
     out.cue_scale_quarters = static_cast<u8>(std::clamp(std::lround(face.depth_cue_scale * 4), 0L, 255L));
+    out.light_set = face.light_set <= rules.light_set_count ? face.light_set : 0;
+    out.tint = face.tint;
     return out;
 }
 
@@ -202,6 +209,11 @@ GpuVertex gpu_vertex(const Vertex &vertex, const FaceAttributes &face) {
     out.clear_color = {color_byte(vertex.clear_r, face.color_unity), color_byte(vertex.clear_g, face.color_unity),
                        color_byte(vertex.clear_b, face.color_unity)};
     out.cue_scale_quarters = face.cue_scale_quarters;
+    out.nx = vertex.nx;
+    out.ny = vertex.ny;
+    out.nz = vertex.nz;
+    out.light_set = face.light_set;
+    out.tint = face.tint;
     return out;
 }
 
@@ -245,7 +257,7 @@ FrameBatch batch_faces(std::span<const DrawFace> faces, const BatchRules &rules,
         if (!layer)
             continue;
         const BlendMode blend = face.transparency == FaceTransparency::Blend ? preceding_blend : BlendMode::opaque;
-        const FaceAttributes attributes = face_attributes(face, *layer, rules.part_count);
+        const FaceAttributes attributes = face_attributes(face, *layer, rules);
         triangles.clear();
         split_face(face, rules, triangles);
         for (const Triangle &triangle : triangles) {

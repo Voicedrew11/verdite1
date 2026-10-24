@@ -49,6 +49,24 @@ struct GpuVertex {
     float bx, by, bz;
     std::array<u8, 3> clear_color;  // colour before the game's depth cue
     u8 cue_scale_quarters;          // DrawFace::depth_cue_scale x 4; 0: colour is drawn as given
+    float nx, ny, nz;               // the corner's model-space normal, 4096 = unit
+    u16 light_set;                  // FrameView::light_sets index + 1, 0: drawn as color
+    u16 light_padding = 0;
+    std::array<u8, 3> tint;         // DrawFace::tint
+    u8 tint_padding = 0;
+};
+
+// A light set as this displayed frame shows it, worked out by the frontend.
+// A model the frame carries turns its lights with its shown rotation, so they
+// stay fixed in the world as the game's do, rather than stepping at each update.
+struct ShownLightSet {
+    // Row-major. A model-space normal (4096 = unit) to its three light dots
+    // (4096 = 1), and those to the colour's intensity (4096 = unity, and the
+    // ambient's 255 is 255 x 16), as render_light_normal works them.
+    std::array<float, 9> dots_from_model;
+    std::array<float, 9> color_matrix;
+    std::array<float, 3> ambient;            // 0..255
+    std::array<float, 9> normal_to_camera;   // to the shown camera, for point lights
 };
 
 // The game's depth cue for one update, for fog drawn per pixel: a point at
@@ -99,6 +117,7 @@ struct FrameView {
     float center_x, center_y;               // in the original 320 columns
     std::array<float, 9> camera_to_world;   // the shown camera, row-major (light occlusion)
     std::array<float, 3> camera_world;      // world units
+    std::span<const ShownLightSet> light_sets;   // [n - 1]: GpuVertex::light_set n
 };
 
 // Where the picture goes in a window: letterboxed to the target's aspect, 4:3
@@ -118,6 +137,7 @@ inline PresentRect letterbox(int logical_width, int window_width, int window_hei
 inline PictureOptions within_tier(PictureOptions options, Tier tier) {
     const PictureOptions off{};
     if (tier < Tier::Enhanced) {
+        options.pixel_lighting = off.pixel_lighting;
         options.dynamic_lights = off.dynamic_lights;
         options.light_occlusion = off.light_occlusion;
         options.shadows = off.shadows;

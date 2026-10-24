@@ -26,6 +26,9 @@ struct Vertex {
     // PC extension (fog drawn per pixel): the colour before the game's depth
     // cue, in the units of r, g, b (DrawFace::depth_cue_scale).
     float clear_r = 0, clear_g = 0, clear_b = 0;
+    // PC extension (lighting per pixel): the corner's normal in model space, as
+    // the model holds it (4096 = unit). Read only when the face has a light set.
+    float nx = 0, ny = 0, nz = 0;
 };
 // PC extensions, set from the Display settings.
 // Camera-space depth where faces reaching behind the camera are clipped (PC extension).
@@ -86,6 +89,11 @@ struct DrawFace {
     // and models, 1 for sprites, 1.5 for floor items. 0: not cued, so its
     // colours are drawn as given.
     float depth_cue_scale = 0;
+    // PC extension (lighting per pixel): the host_light_set the game lit this
+    // face with (0: lit at the corners only), and the colour it lit (the
+    // packet's colour; 128 for a textured face).
+    u16 light_set = 0;
+    std::array<u8, 3> tint{};
 };
 struct FaceList {
     const DrawFace *faces;

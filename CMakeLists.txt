@@ -213,7 +213,7 @@ endif()
 # The renderer frontend's API-free parts: batching, texture layers, smoothing. Tested on their own.
 add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/texture_layers.cpp
   port/renderer/view_smoothing.cpp port/renderer/view_rotation.cpp port/renderer/vertex_carry.cpp port/renderer/model_transform.cpp
-  port/renderer/lighting.cpp port/renderer/projection.cpp port/renderer/texture_mips.cpp)
+  port/renderer/lighting.cpp port/renderer/projection.cpp port/renderer/texture_mips.cpp port/renderer/light_sets.cpp)
 target_link_libraries(kf_frontend PUBLIC kf_support)
 target_compile_options(kf_frontend PRIVATE -Wall -Wextra -Wpedantic -Werror)
 

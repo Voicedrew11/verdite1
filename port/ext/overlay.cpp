@@ -418,6 +418,11 @@ void draw_settings_window() {
         }
         ImGui::SetItemTooltip("Smooths jagged polygon edges. FXAA is nearly free and leaves the HUD sharp.\nSSAA renders 4 or 9 times the pixels and averages them: cleanest, but costly.");
         ImGui::SeparatorText("Lighting");
+        if (ImGui::Checkbox("Per-pixel lighting", &s.pixel_lighting)) {
+            apply_render_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("The game's own lights worked out at every pixel of a model, not\nblended from its corners: smooth shading over curved creatures, and\nlight that turns with them between game updates. Vulkan only.");
         if (ImGui::Checkbox("Dynamic lighting", &s.dynamic_lights)) {
             apply_render_settings();
             changed = true;

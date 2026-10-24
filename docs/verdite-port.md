@@ -254,7 +254,7 @@ branch point.
 | frame pacing, view/model/HUD smoothing | frame smoothing | carried on Vulkan: models, poses, the arm, HUD bars, item display, compass (`RENDERER_PLAN.md`) |
 | no dither, true colour, perspective, sub-pixel | `true_color`, `perspective`, `subpixel` | |
 | Z-buffer | `depth_buffer` | |
-| AO, per-pixel lighting | dynamic lights, AO, shadows, flame glow | different designs: judge, do not merge blindly |
+| AO, per-pixel lighting | dynamic lights, AO, shadows, flame glow | different designs: judge, do not merge blindly. AO and the game's lighting per pixel are done on Vulkan (`RENDERER_PLAN.md`); dynamic lights, shadows and glow were drawn only by GL and are not drawn yet |
 | mouse look, free look | mouse look, `look_limit` | |
 | English translation | language switch, ppf/rar import | |
 | keyboard layout | controls | |

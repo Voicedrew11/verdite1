@@ -34,6 +34,8 @@ const uint draw_fog_distance = 512u;
 const uint draw_mipmaps = 1024u;
 // Nearest texels with their edges blended across a screen pixel (world.frag).
 const uint draw_filter_sharp = 2048u;
+// The game's lights worked out at each pixel of a face that has a light set (world.frag).
+const uint draw_pixel_lighting = 4096u;
 
 const uint blend_opaque = 0u;
 const uint blend_average = 1u;

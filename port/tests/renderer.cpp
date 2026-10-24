@@ -1,4 +1,5 @@
 #include "../renderer/frame_batch.h"
+#include "../renderer/light_sets.h"
 #include "../renderer/texture_layers.h"
 #include "../renderer/texture_mips.h"
 #include "../renderer/model_transform.h"
@@ -617,4 +618,68 @@ TEST_CASE("smoothing: lights move with the camera, nearest first") {
     CHECK(shown[0].x == 10);
     CHECK(shown[0].r == 2);
     CHECK(shown[0].g == 0);
+}
+
+namespace {
+MATRIX game_matrix(std::array<std::array<s16, 3>, 3> rows) {
+    MATRIX out{};
+    out.m = rows;
+    return out;
+}
+
+const MATRIX game_identity = game_matrix({{{4096, 0, 0}, {0, 4096, 0}, {0, 0, 4096}}});
+
+// One light along the camera's x, white, and the model drawn at the camera.
+LightSet light_from_x() {
+    LightSet set{};
+    set.lights = game_matrix({{{4096, 0, 0}, {0, 0, 0}, {0, 0, 0}}});
+    set.color_matrix = game_matrix({{{4096, 0, 0}, {4096, 0, 0}, {4096, 0, 0}}});
+    set.ambient = {32, 32, 32};
+    set.model = game_identity;
+    return set;
+}
+} // namespace
+
+TEST_CASE("light sets: a set of no part is shown as the game lit it") {
+    const std::vector<LightSet> sets = {light_from_x()};
+    // The view turned a quarter about y since the update.
+    const std::vector<Motion> motions = {Motion{{0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0}}};
+    const std::vector<ShownLightSet> shown = shown_light_sets(sets, {}, motions);
+    REQUIRE(shown.size() == 1);
+    const std::array<float, 9> lights = {1, 0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK(shown[0].dots_from_model == lights);
+    CHECK(shown[0].color_matrix[3] == 1.0f);
+    CHECK(shown[0].ambient[0] == 32.0f);
+    // Its normals turn with the view, as its vertices do.
+    CHECK(shown[0].normal_to_camera == std::array<float, 9>{0, 0, 1, 0, 1, 0, -1, 0, 0});
+}
+
+TEST_CASE("light sets: a carried model turns its lights back by its own turn") {
+    const std::vector<LightSet> sets = {light_from_x()};
+    // The model shown a quarter turn about y from where the update drew it.
+    const std::vector<Motion> motions = {Motion{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}},
+                                         Motion{{0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 200}}};
+    const std::vector<u16> parts = {1};
+    const std::vector<ShownLightSet> shown = shown_light_sets(sets, parts, motions);
+    REQUIRE(shown.size() == 1);
+    // Model z now faces camera x, so the light along x lights model z.
+    const std::array<float, 9> expected = {0, 0, 1, 0, 0, 0, 0, 0, 0};
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        CAPTURE(i);
+        CHECK(shown[0].dots_from_model[i] == doctest::Approx(expected[i]));
+    }
+    // Not reprojected: no parts, so the game's own.
+    CHECK(shown_light_sets(sets, {}, motions)[0].dots_from_model == std::array<float, 9>{1, 0, 0, 0, 0, 0, 0, 0, 0});
+}
+
+TEST_CASE("light sets: a set's part is a model in the world, never the dial") {
+    std::vector<DrawFace> faces(3);
+    faces[0].light_set = 1;
+    faces[0].part = 2;
+    faces[1].light_set = 2;
+    faces[1].part = 1;
+    faces[2].light_set = 9;   // past the sets
+    faces[2].part = 2;
+    const std::vector<PartMove> parts = {DialTurn{160, 120}, ModelMove{}};
+    CHECK(light_set_parts(2, faces, parts) == std::vector<u16>{2, 0});
 }

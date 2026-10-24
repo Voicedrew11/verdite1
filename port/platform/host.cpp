@@ -63,6 +63,7 @@ struct HostState {
         u32 seed;
     } frame_lights[render_light_capacity];
     int frame_light_count;
+    std::vector<LightSet> frame_light_sets;
     std::uint64_t frames_presented;
     Uint64 turbo_ns;   // the game clock under turbo
     LookDelta look_consumed;   // by the game update being drawn
@@ -78,6 +79,8 @@ static constexpr u32 gamepad_axis_control_first = 100;
 static constexpr u32 gamepad_axis_positive_first = gamepad_axis_control_first + 1;
 static constexpr int gamepad_axis_deadzone = 16000;
 static constexpr double mouse_degrees_per_pixel = 0.12;
+// Each model and map cell drawn takes one; render distance 16 draws about 600.
+static constexpr std::size_t frame_light_set_capacity = 4096;
 static constexpr double angle_units_per_turn = 4096;
 static constexpr double degrees_per_turn = 360;
 
@@ -813,6 +816,7 @@ void host_begin_frame() {
     menu_preview_building = {};
     host.frame_faces.clear();
     host.frame_light_count = 0;
+    host.frame_light_sets.clear();
     render_entity_tag = 0;
 }
 
@@ -849,6 +853,17 @@ void host_present_frame(const FrameStyle &style) {
 void host_add_light(float x, float y, float z, float radius, float r, float g, float b, float flicker, u32 seed) {
     if (host.frame_light_count < render_light_capacity)
         host.frame_lights[host.frame_light_count++] = {x, y, z, radius, r, g, b, flicker, seed};
+}
+
+u16 host_light_set(const MATRIX &lights, const LightingEnvironment &environment, const MATRIX &model) {
+    if (host.frame_light_sets.size() >= frame_light_set_capacity)
+        return 0;
+    try {
+        host.frame_light_sets.push_back({lights, environment.color_matrix, environment.ambient, model});
+    } catch (const std::bad_alloc &) {
+        return 0;
+    }
+    return static_cast<u16>(host.frame_light_sets.size());
 }
 
 // ---- Frame smoothing (PC extension) ----
@@ -1046,7 +1061,8 @@ static void frontend_submit(const FaceList *faces) {
         lights.push_back({light.x, light.y, light.z, light.radius, light.r, light.g, light.b, light.flicker, light.seed});
     }
     const std::span<const PartMove> parts = camera ? vertex_carry.parts() : std::span<const PartMove>{};
-    GameFrame frame{{faces->faces, faces->count}, faces->style, camera, lights, parts, look_applied(camera)};
+    GameFrame frame{{faces->faces, faces->count}, faces->style, camera, lights, parts, host.frame_light_sets,
+                    look_applied(camera)};
     const Uint64 now = host_clock_ns();
     renderer_submit(frame, now);
     frontend_output.world_frame = camera.has_value();

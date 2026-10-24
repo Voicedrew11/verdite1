@@ -145,6 +145,7 @@ void settings_load() {
     current.perspective = read_bool(display, "perspective", current.perspective);
     current.depth_buffer = read_bool(display, "depth_buffer", current.depth_buffer);
     current.true_color = read_bool(display, "true_color", current.true_color);
+    current.pixel_lighting = read_bool(display, "pixel_lighting", current.pixel_lighting);
     current.dynamic_lights = read_bool(display, "dynamic_lights", current.dynamic_lights);
     current.light_strength = static_cast<int>(read_number(display, "light_strength", current.light_strength));
     current.light_occlusion = read_bool(display, "light_occlusion", current.light_occlusion);
@@ -228,6 +229,7 @@ void settings_save_if_dirty() {
     write_value(display, "perspective", cJSON_CreateBool(current.perspective));
     write_value(display, "depth_buffer", cJSON_CreateBool(current.depth_buffer));
     write_value(display, "true_color", cJSON_CreateBool(current.true_color));
+    write_value(display, "pixel_lighting", cJSON_CreateBool(current.pixel_lighting));
     write_value(display, "dynamic_lights", cJSON_CreateBool(current.dynamic_lights));
     write_value(display, "light_strength", cJSON_CreateNumber(current.light_strength));
     write_value(display, "light_occlusion", cJSON_CreateBool(current.light_occlusion));
@@ -319,6 +321,7 @@ const Settings &effective_settings() {
     classic.perspective = false;      // affine texture warping
     classic.depth_buffer = false;
     classic.true_color = false;       // 15-bit colour with dithering
+    classic.pixel_lighting = false;
     classic.dynamic_lights = false;
     classic.ambient_occlusion = false;
     classic.texture_filter = 0;
@@ -354,6 +357,7 @@ PictureOptions picture_options(const Settings &e) {
     options.texture_filter = static_cast<TextureFilter>(std::clamp(e.texture_filter, 0, 3));
     options.smoothing = e.frame_rate != 20;
     options.supersample = render_supersample;
+    options.pixel_lighting = e.pixel_lighting;
     options.dynamic_lights = e.dynamic_lights;
     options.light_strength = static_cast<float>(e.light_strength) / 100.0f;
     options.light_occlusion = e.light_occlusion;

@@ -38,6 +38,7 @@ struct Settings {
     bool perspective = true;    // perspective-correct textures (no warping)
     bool depth_buffer = false;  // experimental: fixes polygons showing through walls
     bool true_color = true;     // smooth colour: no 15-bit banding or dither
+    bool pixel_lighting = true; // the game's lights per pixel on models
     bool dynamic_lights = true; // torches and fire/lightning spells light nearby surfaces
     int light_strength = 100;   // percent
     bool light_occlusion = true; // walls block dynamic light

@@ -26,6 +26,7 @@ struct BatchRules {
     std::optional<Projection> near_clip;
     bool subpixel = true;   // new corners keep their fractions
     std::size_t part_count = 0;   // GameFrame::parts; a face of a part past them has none
+    std::size_t light_set_count = 0;   // GameFrame::light_sets; a face of a set past them has none
 };
 
 // Faces are drawn farthest first by the game's sort depth, later submissions

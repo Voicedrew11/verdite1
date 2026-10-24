@@ -112,7 +112,7 @@ work is rendering, not reverse engineering.
 | true colour, no dither, sub-pixel, perspective, Z-buffer | free: float vertices with real depth; kf1-enhanced has them |
 | retained map, map cache | build each area's static cells into GPU buffers once, keyed by area. Kept 2026-10-23, knowing the cost: the game projects and lights map cells on the CPU each update, so this moves that work into the renderer. Not in the first backend, which uploads each update's faces once |
 | smoothing (view, models, HUD, item display) | done on Vulkan (2026-10-23), below. Positions blend between the last two updates, but the view turns to the newest look input each displayed frame, so looking has no update (50 ms) of lag |
-| per-pixel lighting, distance fog | port the game's own lighting and depth-cue routines, named in the decomp, into the shader with the game's parameters: the original look, evaluated per pixel |
+| per-pixel lighting, distance fog | port the game's own lighting and depth-cue routines, named in the decomp, into the shader with the game's parameters: the original look, evaluated per pixel. Both done on Vulkan (2026-10-24), below |
 | AO with geometry normals | done on Vulkan (2026-10-23), below |
 | mipmaps, anisotropic, mip sharing | decode each texture page and palette to RGBA textures; watch textures the game rewrites in video memory (animated textures, palette changes), which need invalidating |
 | render distance with fade, widened cull | the cell loop and stencils as parameters; keep **render reach separate from logic reach**, so enemy activation and events do not move |
@@ -215,6 +215,37 @@ draws the game's own colours, so Classic is unchanged. The opening's writers
 hand no clear colour and stay at their corners. `kf_vulkan_tests` checks the
 curve against the game's arithmetic at a corner's depth, off the view's
 centre, at a sprite's scale and for an uncued face.
+
+### Lighting per pixel
+
+The game lights each corner on the CPU (`render_light_normal`, the GTE's
+NCDS): its light matrix turns the corner's normal into three dots, each held to
+0..32767, the colour matrix and ambient turn those into an intensity, and the
+packet's colour is scaled by it. The GPU blends the results across the face.
+Verdite1 on `main` could only take the three dots the GTE was handed and blend
+those, which is the normal blended without renormalizing. Here the writers have
+the normals: Display > Per-pixel lighting (Enhanced, on) has
+`render_enqueue_tmd`, its retextured pass and `render_enqueue_map` register
+how they light (`host_light_set`: the light matrix, colour matrix, ambient and
+the model-to-camera transform) and give each corner its model-space normal and
+the colour lit (`render_face_light`). `world.frag` blends the normal, holds it
+to the length blended from its corners (so at a corner it is the game's
+normal), and does the rest of `render_light_normal` at the pixel, then the fog:
+per pixel as above, or at the corners by as far as their cue moved their
+colours. Faces with no set (sprites, the opening, floor items) are drawn as
+before, as is everything past the enhanced distance.
+
+What it changes is Gouraud faces, which are models': map cells are all flat
+(FT3, FT4), lit from one normal, and look the same. The game's lights are
+fixed in the world, three directions and an ambient; a carried model's light
+matrix is turned back by its turn since the update (`light_sets.h`), so the
+light stays put as the model turns between updates rather than stepping with
+them. Each set also carries the turn of its normals to the shown camera, for
+point lights to use. 4096 sets a frame; past that, faces are lit at the
+corners. `kf_vulkan_tests` checks a face's corners against
+`render_light_normal`, that the middle of a face turning from a light gets only
+the ambient where blended corners get half the light, fog at the corners, and a
+face without a set; `kf_port_tests` checks the turned lights.
 
 ### Mipmaps
 

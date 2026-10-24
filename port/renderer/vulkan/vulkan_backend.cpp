@@ -18,8 +18,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <span>
 #include <vector>
 
 namespace kf {
@@ -28,6 +30,7 @@ constexpr int frames_in_flight = 2;
 // 256 x 256 down to 1 x 1.
 constexpr uint32_t page_mip_levels = 9;
 constexpr VkDeviceSize motion_bytes = sizeof(Motion);
+constexpr VkDeviceSize light_set_bytes = sizeof(LightSetRows);
 // The target is cleared and drawn at the original 15-bit precision when it can be.
 constexpr VkFormat classic_format = VK_FORMAT_A1R5G5B5_UNORM_PACK16;
 constexpr VkFormat true_color_format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -65,7 +68,20 @@ struct FrameSlot {
     VkSemaphore acquired = VK_NULL_HANDLE;
     VkDescriptorSet descriptors = VK_NULL_HANDLE;
     GpuBuffer motions;
+    GpuBuffer light_sets;
 };
+
+LightSetRows light_set_rows(const ShownLightSet &set) {
+    LightSetRows out{};
+    for (std::size_t r = 0; r < 3; ++r) {
+        out.rows[r] = {set.dots_from_model[r * 3], set.dots_from_model[r * 3 + 1], set.dots_from_model[r * 3 + 2], 0};
+        out.rows[r + 3] = {set.color_matrix[r * 3], set.color_matrix[r * 3 + 1], set.color_matrix[r * 3 + 2],
+                           set.ambient[r]};
+        out.rows[r + 6] = {set.normal_to_camera[r * 3], set.normal_to_camera[r * 3 + 1],
+                           set.normal_to_camera[r * 3 + 2], 0};
+    }
+    return out;
+}
 
 class VulkanBackend final : public RenderBackend {
 public:
@@ -82,6 +98,7 @@ public:
         out.ambient_occlusion = wanted.ambient_occlusion;
         out.occlusion_quality = wanted.occlusion_quality;
         out.fog = wanted.fog;
+        out.pixel_lighting = wanted.pixel_lighting;
         out.anisotropy = std::clamp(wanted.anisotropy, 1, static_cast<int>(device_->max_anisotropy()));
         out.enhanced_depth = wanted.enhanced_depth;
         return out;
@@ -110,7 +127,10 @@ private:
     void fit_occlusion();
     bool flush_layers();
     bool wait_for_frames();
+    bool write_storage(VkDescriptorSet descriptors, uint32_t binding, GpuBuffer &buffer,
+                       std::span<const std::byte> contents, VkDeviceSize least_bytes);
     bool write_motions(FrameSlot &slot, std::span<const Motion> motions);
+    bool write_light_sets(FrameSlot &slot, std::span<const ShownLightSet> sets);
     VkRect2D clip_rect() const;
     DrawConstants draw_constants(const FrameView &view) const;
     void measure_occlusion(VkCommandBuffer commands, const DrawConstants &constants, const FrameSlot &slot);
@@ -367,7 +387,7 @@ void VulkanBackend::bind_pages(const FrameSlot &slot) {
 bool VulkanBackend::make_frame_slots() {
     const std::array<VkDescriptorPoolSize, 2> sizes = {{
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * frames_in_flight},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, frames_in_flight},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * frames_in_flight},
     }};
     VkDescriptorPoolCreateInfo pool{};
     pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -402,7 +422,7 @@ bool VulkanBackend::make_frame_slots() {
             vkAllocateDescriptorSets(device, &set, &slot.descriptors) != VK_SUCCESS)
             return false;
         bind_pages(slot);
-        if (!write_motions(slot, {}))
+        if (!write_motions(slot, {}) || !write_light_sets(slot, {}))
             return false;
     }
     return true;
@@ -523,27 +543,43 @@ void VulkanBackend::upload_frame(std::span<const GpuVertex> vertices, std::span<
     frame_drawn_ = false;
 }
 
-bool VulkanBackend::write_motions(FrameSlot &slot, std::span<const Motion> motions) {
-    const VkDeviceSize bytes = std::max<VkDeviceSize>(motions.size_bytes(), motion_bytes);
-    if (!slot.motions || slot.motions.size() < bytes) {
-        slot.motions = GpuBuffer::create(device_->allocator(), bytes * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                         BufferAccess::HostWrites);
-        if (!slot.motions || !slot.motions.data())
+// Grows buffer to hold contents (at least least_bytes), pointing binding at it
+// when it is remade, and copies contents in.
+bool VulkanBackend::write_storage(VkDescriptorSet descriptors, uint32_t binding, GpuBuffer &buffer,
+                                  std::span<const std::byte> contents, VkDeviceSize least_bytes) {
+    const VkDeviceSize bytes = std::max<VkDeviceSize>(contents.size_bytes(), least_bytes);
+    if (!buffer || buffer.size() < bytes) {
+        buffer = GpuBuffer::create(device_->allocator(), bytes * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   BufferAccess::HostWrites);
+        if (!buffer || !buffer.data())
             return false;
-        VkDescriptorBufferInfo buffer{slot.motions.buffer(), 0, VK_WHOLE_SIZE};
+        VkDescriptorBufferInfo info{buffer.buffer(), 0, VK_WHOLE_SIZE};
         VkWriteDescriptorSet write{};
         write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = slot.descriptors;
-        write.dstBinding = world_binding_motions;
+        write.dstSet = descriptors;
+        write.dstBinding = binding;
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.pBufferInfo = &buffer;
+        write.pBufferInfo = &info;
         vkUpdateDescriptorSets(device_->device(), 1, &write, 0, nullptr);
     }
-    if (!motions.empty())
-        std::memcpy(slot.motions.data(), motions.data(), motions.size_bytes());
-    slot.motions.flush();
+    if (!contents.empty())
+        std::memcpy(buffer.data(), contents.data(), contents.size_bytes());
+    buffer.flush();
     return true;
+}
+
+bool VulkanBackend::write_motions(FrameSlot &slot, std::span<const Motion> motions) {
+    return write_storage(slot.descriptors, world_binding_motions, slot.motions, std::as_bytes(motions), motion_bytes);
+}
+
+bool VulkanBackend::write_light_sets(FrameSlot &slot, std::span<const ShownLightSet> sets) {
+    std::vector<LightSetRows> rows;
+    rows.reserve(sets.size());
+    for (const ShownLightSet &set : sets)
+        rows.push_back(light_set_rows(set));
+    return write_storage(slot.descriptors, world_binding_light_sets, slot.light_sets,
+                         std::as_bytes(std::span<const LightSetRows>{rows}), light_set_bytes);
 }
 
 // The frame's clip in target pixels. A full-width clip covers the widescreen
@@ -575,7 +611,7 @@ DrawConstants VulkanBackend::draw_constants(const FrameView &view) const {
                       (options_.texture_filter == TextureFilter::Sharp ? draw_filter_sharp : 0) |
                       (occlusion_ready_ ? draw_occlusion : 0) | (options_.fog == FogMode::Depth ? draw_fog_depth : 0) |
                       (options_.fog == FogMode::Distance ? draw_fog_distance : 0) |
-                      (options_.mipmaps ? draw_mipmaps : 0);
+                      (options_.mipmaps ? draw_mipmaps : 0) | (options_.pixel_lighting ? draw_pixel_lighting : 0);
     constants.pixel_scale = static_cast<uint32_t>(scale_);
     constants.carry = view.carry;
     constants.cue_slope = cue_.slope;
@@ -788,7 +824,7 @@ void VulkanBackend::present(const FrameView &view, std::span<const RenderLight>,
         std::fprintf(stderr, "[vulkan] cannot upload textures\n");
     FrameSlot &slot = slots_[frame_number_ % frames_in_flight];
     if (vkWaitForFences(device_->device(), 1, &slot.done, VK_TRUE, UINT64_MAX) != VK_SUCCESS ||
-        !write_motions(slot, view.motions))
+        !write_motions(slot, view.motions) || !write_light_sets(slot, view.light_sets))
         return;
     std::optional<SwapchainImage> image;
     if (to_window) {

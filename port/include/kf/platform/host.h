@@ -17,6 +17,7 @@ struct TextureStore;
 struct PictureOptions;
 struct Image;
 struct CarriedModel;
+struct LightingEnvironment;
 enum class AppMode : u8 { Opening, Gameplay, Ending };
 struct UpdatePacer {
     std::uint64_t deadline_ns;
@@ -42,6 +43,14 @@ void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Pr
 // PC extension: a point light for the frame being built, in camera space.
 // flicker: 0 steady .. 1 strong; seed varies the flicker phase per light.
 void host_add_light(float x, float y, float z, float radius, float r, float g, float b, float flicker, u32 seed);
+// PC extension (lighting per pixel): how the game lights the faces it enqueues
+// next. lights turns a model-space normal into its three light dots (the
+// game's light matrix, 4096 = 1), environment colours them (its colour matrix
+// and ambient; its fog is the frame's), and model is the model-to-camera
+// transform the corners were projected with. Returns the DrawFace::light_set
+// those faces carry, 0 if the frame has no room left (they are lit at the
+// corners, as the game lit them).
+u16 host_light_set(const MATRIX &lights, const LightingEnvironment &environment, const MATRIX &model);
 // PC extension: map cells that block dynamic light (non-zero = solid), row-major.
 void host_light_occluders(const u8 *solid, int columns, int rows, float tile_size);
 // PC extension (frame smoothing, VertexCarry in port/renderer): where what the

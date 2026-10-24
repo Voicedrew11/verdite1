@@ -32,8 +32,8 @@ class RenderBackend;
 //             modes, dither, 15-bit colour, the game's draw order.
 //   Balanced: plus depth buffer, true colour, filtering, mipmaps, widescreen,
 //             smoothing, supersampling.
-//   Enhanced: plus dynamic lights, shadows, AO, glow, FXAA, fog per pixel,
-//             anisotropic filtering.
+//   Enhanced: plus dynamic lights, the game's lights per pixel, shadows, AO,
+//             glow, FXAA, fog per pixel, anisotropic filtering.
 // Sub-pixel and perspective are Classic-or-Balanced choices the game makes while
 // projecting (render_subpixel, render_perspective in renderer.h).
 enum class Tier : u8 { Classic, Balanced, Enhanced };
@@ -66,6 +66,7 @@ struct PictureOptions {
     bool smoothing = false;       // frames drawn between game updates
     int supersample = 1;          // N x N pixels per output pixel
     // Enhanced
+    bool pixel_lighting = false;  // the game's own lights per pixel, from each corner's normal
     bool dynamic_lights = false;
     float light_strength = 1.0f;
     bool light_occlusion = false; // solid map cells block dynamic light
@@ -128,6 +129,14 @@ struct GameLight {
     u32 seed;                     // tells flames apart, so they do not flicker together
 };
 
+// How the game lit a run of faces (host_light_set), as recorded for the update.
+struct LightSet {
+    MATRIX lights;                // model-space normal to the three light dots, 4096 = 1
+    MATRIX color_matrix;          // the dots to colour, 4096 = 1
+    LightColor ambient;           // the game's back colour, 0..255
+    MATRIX model;                 // model to the update's camera
+};
+
 // One game update's picture, as the game built it: faces in submission order
 // with the game's sort depths, lights in camera space at this update's camera.
 struct GameFrame {
@@ -136,6 +145,7 @@ struct GameFrame {
     std::optional<CameraPose> camera;   // none: a 2D frame (menus, the opening), never smoothed
     std::span<const GameLight> lights;
     std::span<const PartMove> parts;   // what moved since the update before
+    std::span<const LightSet> light_sets;   // [n - 1]: DrawFace::light_set n
     // The look input this update added to camera->rotation (angle units), so a
     // smoothed view keeps showing it while blending towards this update.
     SVECTOR look_applied{0, 0, 0};

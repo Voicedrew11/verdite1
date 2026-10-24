@@ -66,7 +66,7 @@ index 9e34bd861ab6154f12997ce11056378ecc251c79..1565099a2c249d686babd3705c6e7edb
          kf::host_fail("Invalid TIM resource or texture allocation failure.");
  }
 diff --git a/src/lib/tmd.cpp b/src/lib/tmd.cpp
-index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..52377e9796e6b5f0da67946a267359089d8a913c 100644
+index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..7b323c277ce5c42b781ac105e0186874e7a1c6ec 100644
 --- a/src/lib/tmd.cpp
 +++ b/src/lib/tmd.cpp
 @@ -2,6 +2,9 @@
@@ -79,13 +79,22 @@ index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..52377e9796e6b5f0da67946a26735908
  
  static KfTmdResource &tmd_slot(KfTmdContext context, KfTmdSlot slot)
  {
-@@ -215,8 +218,44 @@ void tmd_release_last_allocation(KfTmdContext context, KfMemoryArena &arena, KfT
+@@ -215,8 +218,53 @@ void tmd_release_last_allocation(KfTmdContext context, KfMemoryArena &arena, KfT
      memory_release_last(arena);
  }
  
++// PC extension (lighting per pixel): the transform the last vertices were projected with.
++static MATRIX tmd_last_projected_model;
++
++const MATRIX &tmd_projected_model()
++{
++    return tmd_last_projected_model;
++}
++
 +void tmd_carry_projected(std::span<KfScreenVertex> projected, std::span<const SVECTOR> vertices,
 +    const MATRIX &model)
 +{
++    tmd_last_projected_model = model;
 +    for (auto &vertex : projected) {
 +        vertex.part = 0;
 +        vertex.bx = vertex.by = vertex.bz = 0;
@@ -124,7 +133,7 @@ index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..52377e9796e6b5f0da67946a26735908
      KfScreenVertex *projected;
      const SVECTOR *vertex;
  
-@@ -227,13 +266,22 @@ void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_
+@@ -227,13 +275,22 @@ void tmd_project_vertices_depth_shift(KfTmdContext context, s32 count, u8 depth_
          projected->position = {point.x, point.y};
          projected->p2 = point.fog << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT;
          projected->sz = point.depth >> depth_shift;
@@ -147,7 +156,7 @@ index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..52377e9796e6b5f0da67946a26735908
      KfScreenVertex *projected;
      const SVECTOR *vertex;
      VECTOR transformed;
-@@ -247,7 +295,17 @@ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model
+@@ -247,7 +304,17 @@ void tmd_transform_vertices(KfTmdContext context, s32 count, const MATRIX *model
          projected->position.vy = transformed.vy;
          projected->p2 = transformed.vz;
          projected->sz = transformed.vz;
