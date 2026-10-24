@@ -78,7 +78,6 @@ struct Settings {
     float ui_scale = 1.0f;
     bool item_descriptions = true;  // what an item does, in the game's item menus
     std::string ui_font;        // empty: first available system font
-    std::string renderer = "opengl";   // "opengl" or "vulkan"; applies on restart
     bool discord = true;        // Discord Rich Presence, while Discord is running
     bool discord_level = true;
     bool discord_location = true;   // floor and place
@@ -101,8 +100,6 @@ void apply_render_settings();   // also on window resize
 // The render target apply_render_settings last set: logical columns and scale.
 struct RenderTarget { int columns, scale; };
 RenderTarget applied_render_target();
-// Whether the overlay is drawn by the frontend (Vulkan) rather than GL.
-bool frontend_draws_overlay();
 
 // What an item does (effects only; the menus show equipment stats), or empty.
 std::string item_description(std::uint8_t id);

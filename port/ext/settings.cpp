@@ -67,7 +67,6 @@ std::filesystem::path mods_dir() { return user_dir() / "mods"; }
 Settings &settings() { return current; }
 
 void settings_load() {
-    // Read once: the host asks for the renderer before the overlay starts.
     static bool loaded = false;
     if (loaded)
         return;
@@ -86,7 +85,6 @@ void settings_load() {
     const cJSON *display = cJSON_GetObjectItemCaseSensitive(document, "display");
     current.fullscreen = read_bool(display, "fullscreen", current.fullscreen);
     current.vsync = read_bool(display, "vsync", current.vsync);
-    current.renderer = read_string(display, "renderer", current.renderer);
     current.show_fps = read_bool(display, "show_fps", current.show_fps);
     current.aspect = read_string(display, "aspect", current.aspect);
     current.resolution = static_cast<int>(read_number(display, "resolution", current.resolution));
@@ -166,7 +164,6 @@ void settings_save_if_dirty() {
     cJSON *display = object_entry(document, "display");
     write_value(display, "fullscreen", cJSON_CreateBool(current.fullscreen));
     write_value(display, "vsync", cJSON_CreateBool(current.vsync));
-    write_value(display, "renderer", cJSON_CreateString(current.renderer.c_str()));
     write_value(display, "show_fps", cJSON_CreateBool(current.show_fps));
     write_value(display, "aspect", cJSON_CreateString(current.aspect.c_str()));
     write_value(display, "resolution", cJSON_CreateNumber(current.resolution));
@@ -283,11 +280,6 @@ const Settings &effective_settings() {
     return classic;
 }
 
-std::string renderer_preference() {
-    settings_load();
-    return current.renderer;
-}
-
 namespace {
 RenderTarget applied_target{render_width, 1};
 
@@ -302,10 +294,10 @@ PictureOptions picture_options(const Settings &e) {
     options.dynamic_lights = e.dynamic_lights;
     options.light_strength = static_cast<float>(e.light_strength) / 100.0f;
     options.light_occlusion = e.light_occlusion;
-    options.shadows = render_shadows;
+    options.shadows = e.shadows ? static_cast<float>(e.shadow_strength) / 100.0f : 0.0f;
     options.ambient_occlusion = e.ambient_occlusion ? static_cast<float>(e.ao_strength) / 100.0f : 0.0f;
     options.occlusion_quality = static_cast<OcclusionQuality>(std::clamp(e.ao_quality, 0, 2));
-    options.glow = render_glow;
+    options.glow = e.flame_glow ? static_cast<float>(e.glow_strength) / 100.0f : 0.0f;
     options.fxaa = e.antialiasing == 1;
     options.mipmaps = e.mipmaps;
     options.anisotropy = e.anisotropy;
@@ -321,10 +313,7 @@ RenderTarget applied_render_target() { return applied_target; }
 void apply_display_settings() {
     if (SDL_Window *handle = window())
         SDL_SetWindowFullscreen(handle, current.fullscreen);
-    if (frontend_draws_overlay())
-        host_set_picture_options(picture_options(effective_settings()));
-    else
-        SDL_GL_SetSwapInterval(current.vsync ? 1 : 0);
+    host_set_picture_options(picture_options(effective_settings()));
 }
 
 void apply_render_settings() {
@@ -332,17 +321,8 @@ void apply_render_settings() {
     render_subpixel = e.subpixel;
     render_perspective = e.perspective;
     render_detailed_map = e.detailed_map;
-    render_depth_buffer = e.depth_buffer;
-    render_true_color = e.true_color;
     render_dynamic_lights = e.dynamic_lights;
-    render_light_strength = static_cast<float>(e.light_strength) / 100.0f;
     render_light_occlusion = e.light_occlusion;
-    render_ambient_occlusion = e.ambient_occlusion;
-    render_ao_strength = static_cast<float>(e.ao_strength) / 100.0f;
-    render_texture_filter = e.texture_filter;
-    render_fxaa = e.antialiasing == 1;
-    render_glow = e.flame_glow ? static_cast<float>(e.glow_strength) / 100.0f : 0.0f;
-    render_shadows = e.shadows ? static_cast<float>(e.shadow_strength) / 100.0f : 0.0f;
     render_supersample = e.antialiasing == 2 ? 2 : e.antialiasing == 3 ? 3 : 1;
     render_smoothing = e.frame_rate != 20;
     render_frame_limit = e.frame_rate == 20 ? 0 : e.frame_rate;

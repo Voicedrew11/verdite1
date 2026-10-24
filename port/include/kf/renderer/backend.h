@@ -6,7 +6,7 @@
 //
 // The frontend hands over finished data: one vertex buffer per game update,
 // already in draw order, cut into runs that share a draw state. Everything
-// that varied per triangle in the GL renderer is a vertex attribute, and
+// that varies per triangle is a vertex attribute, and
 // textures are layers of one array, so a run needs no binds between draws.
 #include <kf/platform/assets.h>
 #include <kf/renderer/frontend.h>
@@ -164,7 +164,7 @@ public:
     // (minimised) draws nothing.
     virtual void present(const FrameView &view, std::span<const RenderLight> lights,
                          int window_width, int window_height, ImDrawData *overlay) = 0;
-    // The game's picture as last drawn (renderer_capture). The null backend has none.
+    // The game's picture as last drawn (renderer_capture).
     virtual std::optional<Image> capture() = 0;
     // Puts a capture back as the picture; the uploaded frame is not drawn over it
     // until the next upload. False if it is not the target's size.

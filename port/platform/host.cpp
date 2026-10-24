@@ -14,7 +14,6 @@
 #include <SDL3/SDL.h>
 #if KF_EXT
 #include <kf/ext/ext.h>
-#include <GLES3/gl3.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -42,12 +41,9 @@ EM_JS(void, host_browser_language, (const char *current, const char *requested, 
 #endif
 
 namespace kf {
-enum class PictureRenderer : u8 { OpenGL, Frontend };
 struct HostState {
     SDL_Window *window;
-    SDL_GLContext context;
     SDL_Gamepad *gamepad;
-    Renderer renderer;
     std::vector<DrawFace> frame_faces;
     InputState input;
     InputContext input_context;
@@ -56,10 +52,6 @@ struct HostState {
     double look_remainder_x, look_remainder_y;
     bool focused, mouse_captured, resume_mouse_capture;
     bool paused, overlay_was_open, cursor_released, recapture_mouse;
-    Projection clip_projection;
-    struct EntityPose { u16 tag; float x, y, z; s32 yaw; s8 yaw_sign; };
-    std::vector<EntityPose> frame_poses;
-    std::vector<DrawFace> clipped_faces;
     u32 quick_pressed;
     bool opening_load_pressed;
     bool run_toggled;
@@ -70,9 +62,6 @@ struct HostState {
     int frame_light_count;
     std::uint64_t frames_presented;
     Uint64 turbo_ns;   // the game clock under turbo
-    // Which renderer draws: the GL renderer, or the frontend and its backend
-    // (Vulkan). Chosen once at start; branches on it stay in this file.
-    PictureRenderer picture;
     LookDelta look_consumed;   // by the game update being drawn
 };
 static HostState host;
@@ -85,36 +74,11 @@ static constexpr Uint64 maximum_wait_slice_ns = 8 * ns_per_millisecond;
 static constexpr u32 gamepad_axis_control_first = 100;
 static constexpr u32 gamepad_axis_positive_first = gamepad_axis_control_first + 1;
 static constexpr int gamepad_axis_deadzone = 16000;
-static constexpr std::size_t renderer_error_capacity = 2048;
 static constexpr double mouse_degrees_per_pixel = 0.12;
 static constexpr double angle_units_per_turn = 4096;
 static constexpr double degrees_per_turn = 360;
 
-#if KF_EXT
-static void capture_frame_if_requested(int width, int height);
-#endif
-
-static bool frontend_draws() { return host.picture == PictureRenderer::Frontend; }
 static void frontend_present(Uint64 now);
-
-static void present_retained_frame() {
-    if (frontend_draws()) {
-        frontend_present(host_clock_ns());
-        return;
-    }
-    if (!host.context)
-        return;
-    int width = 0, height = 0;
-    SDL_GetWindowSizeInPixels(host.window, &width, &height);
-    if (width > 0 && height > 0) {
-        renderer_present_retained(&host.renderer, width, height);
-#if KF_EXT
-        ext::draw(width, height);
-        capture_frame_if_requested(width, height);
-#endif
-        SDL_GL_SwapWindow(host.window);
-    }
-}
 
 static void platform_yield(Uint64 nanoseconds) {
 #ifdef __EMSCRIPTEN__
@@ -176,64 +140,31 @@ static void open_available_gamepad() {
     SDL_free(ids);
 }
 
-// KF_RENDERER=gl|vulkan, else the Renderer setting. Headless always takes the
-// GL renderer, which draws nothing there.
-static PictureRenderer chosen_renderer() {
-    if (options.headless)
-        return PictureRenderer::OpenGL;
-    if (const char *forced = std::getenv("KF_RENDERER"))
-        return std::strcmp(forced, "vulkan") == 0 ? PictureRenderer::Frontend : PictureRenderer::OpenGL;
-#if KF_EXT
-    return ext::renderer_preference() == "vulkan" ? PictureRenderer::Frontend : PictureRenderer::OpenGL;
-#else
-    return PictureRenderer::OpenGL;
-#endif
-}
-
-// A Vulkan window and backend; false (and no window) if Vulkan cannot start.
-static bool start_frontend_window() {
+// The window and the renderer's backend: Vulkan, or headless a window on the
+// dummy driver (settings and the overlay's state hang off it) and a backend
+// that draws nothing.
+static bool start_window() {
+    if (options.headless) {
+        host.window = SDL_CreateWindow("King's Field", 960, 720, 0);
+        if (!host.window) {
+            std::fprintf(stderr, "%s\n", SDL_GetError());
+            return false;
+        }
+        return renderer_start(make_null_backend());
+    }
     host.window = SDL_CreateWindow("King's Field", 960, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!host.window) {
-        std::fprintf(stderr, "[renderer] no Vulkan window: %s; drawing with OpenGL\n", SDL_GetError());
+        std::fprintf(stderr, "[renderer] no Vulkan window: %s\n", SDL_GetError());
         return false;
     }
     BackendStart started = make_vulkan_backend(host.window);
     if (started.backend && renderer_start(std::move(started.backend)))
         return true;
-    std::fprintf(stderr, "[renderer] %s; drawing with OpenGL\n",
-                 started.error.empty() ? "Vulkan cannot draw" : started.error.c_str());
-    renderer_stop();
-    SDL_DestroyWindow(host.window);
-    host.window = nullptr;
+    std::fprintf(stderr, "[renderer] %s\n", started.error.empty() ? "Vulkan cannot draw" : started.error.c_str());
     return false;
 }
 
-static bool start_gl_window() {
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    // Headless keeps a window on the dummy driver: settings and the overlay's state hang off it.
-    host.window = SDL_CreateWindow("King's Field", 960, 720, options.headless ? 0 : SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-    if (host.window && !options.headless)
-        host.context = SDL_GL_CreateContext(host.window);
-    if (!host.window || (!host.context && !options.headless)) {
-        std::fprintf(stderr, "%s\n", SDL_GetError());
-        return false;
-    }
-    // All frame pacing uses the absolute clock below, not a second swap-interval wait.
-    SDL_GL_SetSwapInterval(0);
-    std::array<char, renderer_error_capacity> error{};
-    if (!renderer_init(&host.renderer, error.data(), error.size())) {
-        std::fprintf(stderr, "%s\n", error.data());
-        return false;
-    }
-    return true;
-}
-
-void host_configure(const HostOptions &chosen) {
-    options = chosen;
-    render_headless = options.headless;
-}
+void host_configure(const HostOptions &chosen) { options = chosen; }
 
 bool host_start() {
     if (options.headless) {
@@ -244,9 +175,7 @@ bool host_start() {
         std::fprintf(stderr, "%s\n", SDL_GetError());
         return false;
     }
-    host.picture = chosen_renderer() == PictureRenderer::Frontend && start_frontend_window() ? PictureRenderer::Frontend
-                                                                                          : PictureRenderer::OpenGL;
-    if (host.picture == PictureRenderer::OpenGL && !start_gl_window()) {
+    if (!start_window()) {
         host_shutdown();
         return false;
     }
@@ -259,9 +188,7 @@ bool host_start() {
         return false;
     }
 #if KF_EXT
-    const ext::OverlayRenderer overlay = options.headless ? ext::OverlayRenderer::None
-        : frontend_draws() ? ext::OverlayRenderer::Frontend : ext::OverlayRenderer::OpenGL;
-    ext::start(host.window, overlay, host.context);
+    ext::start(host.window, options.headless ? ext::Overlay::Hidden : ext::Overlay::Drawn);
 #endif
     agent_start();
     if (options.headless || options.turbo)
@@ -278,12 +205,7 @@ void host_shutdown() {
     save_storage_shutdown();
     if (host.gamepad)
         SDL_CloseGamepad(host.gamepad);
-    if (frontend_draws())
-        renderer_stop();
-    else if (host.context || options.headless)
-        renderer_release(&host.renderer);
-    if (host.context)
-        SDL_GL_DestroyContext(host.context);
+    renderer_stop();
     if (host.window)
         SDL_DestroyWindow(host.window);
     host = {};
@@ -451,13 +373,11 @@ static void process_event(const SDL_Event &event) {
         // Modal waits still service presentation. Never resubmit their blended
         // draw commands here: the offscreen frame already contains the result.
         if (event.window.windowID == SDL_GetWindowID(host.window))
-            present_retained_frame();
+            frontend_present(host_clock_ns());
         break;
     default: break;
     }
 }
-
-static bool smooth_redraw_paused();
 
 // The game clock and audio stop while the window is unfocused or the overlay
 // asks for a pause; the paused interval is excluded from host_clock_ns().
@@ -488,51 +408,6 @@ static void update_pause() {
 }
 
 #if KF_EXT
-// KF_CAPTURE=<file.bmp>: after KF_CAPTURE_FRAME game frames (default 100), save
-// the finished window image and exit. For automated visual checks without focus.
-static void capture_frame_if_requested(int width, int height) {
-    static const char *path = std::getenv("KF_CAPTURE");
-    static const long target = std::getenv("KF_CAPTURE_FRAME") ? std::atol(std::getenv("KF_CAPTURE_FRAME")) : 100;
-    static long frames;
-    if (!path || ++frames < target)
-        return;
-    std::vector<unsigned char> pixels(static_cast<std::size_t>(width) * height * 4);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-    if (FILE *file = std::fopen(path, "wb")) {
-        const std::uint32_t row = static_cast<std::uint32_t>(width) * 3u + 3u & ~3u;
-        const std::uint32_t image = row * static_cast<std::uint32_t>(height);
-        unsigned char header[54] {'B', 'M'};
-        const auto put32 = [&](int at, std::uint32_t value) {
-            for (int i = 0; i < 4; ++i)
-                header[at + i] = static_cast<unsigned char>(value >> (8 * i));
-        };
-        put32(2, 54 + image);
-        put32(10, 54);
-        put32(14, 40);
-        put32(18, static_cast<std::uint32_t>(width));
-        put32(22, static_cast<std::uint32_t>(height));   // bottom-up, like glReadPixels
-        header[26] = 1;
-        header[28] = 24;
-        put32(34, image);
-        std::fwrite(header, 1, sizeof header, file);
-        std::vector<unsigned char> line(row);
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                const unsigned char *pixel = &pixels[(static_cast<std::size_t>(y) * width + x) * 4];
-                line[x * 3] = pixel[2];
-                line[x * 3 + 1] = pixel[1];
-                line[x * 3 + 2] = pixel[0];
-            }
-            std::fwrite(line.data(), 1, row, file);
-        }
-        std::fclose(file);
-        std::printf("[capture] saved %s (%dx%d)\n", path, width, height);
-    }
-    host_shutdown();
-    std::exit(0);
-}
-
 // Opening or closing the overlay drops held game input so nothing stays pressed.
 // While the overlay or the full map wants the cursor, mouse capture is released,
 // and it returns when they close if the game had it.
@@ -579,8 +454,8 @@ void host_poll() {
         host.input.pending.look_x = host.input.pending.look_y = 0;
 #if KF_EXT
         // The game is held here, so keep the overlay itself animating.
-        if (ext::redraw_while_paused() && host.focused && !smooth_redraw_paused())
-            present_retained_frame();
+        if (ext::redraw_while_paused() && host.focused)
+            frontend_present(host_clock_ns());
 #endif
         platform_yield(unfocused_poll_interval_ns);
     }
@@ -598,9 +473,8 @@ std::uint64_t host_clock_tick() {
     return elapsed / ns_per_second * clock_ticks_per_second + elapsed % ns_per_second * clock_ticks_per_second / ns_per_second;
 }
 
-static bool smooth_frames_wanted();
-static Uint64 smooth_next_present_ns();
-static void smooth_present_now(Uint64 now);
+static bool frontend_wants_frames();
+static Uint64 frontend_next_present_ns();
 
 static void wait_until_ns(std::uint64_t target) {
     if (options.turbo) {
@@ -615,12 +489,12 @@ static void wait_until_ns(std::uint64_t target) {
         if (now >= target)
             return;
         Uint64 slice = std::min<Uint64>(target - now, maximum_wait_slice_ns);
-        if (smooth_frames_wanted()) {
-            if (now >= smooth_next_present_ns()) {
-                smooth_present_now(now);
+        if (frontend_wants_frames()) {
+            if (now >= frontend_next_present_ns()) {
+                frontend_present(now);
                 continue;
             }
-            slice = std::min<Uint64>(slice, smooth_next_present_ns() - now);
+            slice = std::min<Uint64>(slice, frontend_next_present_ns() - now);
         }
         platform_yield(slice);
     }
@@ -842,8 +716,6 @@ LookDelta host_take_look() {
     return host.look_consumed;
 }
 
-Renderer *host_renderer() { return &host.renderer; }
-
 std::uint64_t host_frames_presented() { return host.frames_presented; }
 
 void host_show_message(const char *text) {
@@ -868,29 +740,19 @@ void host_begin_frame() {
     menu_preview_building = {};
     host.frame_faces.clear();
     host.frame_light_count = 0;
-    host.frame_poses.clear();
     render_entity_tag = 0;
 }
 
-void host_report_entity(u16 tag, s32 x, s32 y, s32 z, s32 yaw, int yaw_sign) {
-    host.frame_poses.push_back({tag, static_cast<float>(x), static_cast<float>(y), static_cast<float>(z), yaw,
-                                static_cast<s8>(yaw_sign)});
-}
-
 CarriedModel host_carry_model(const MATRIX &model, std::span<const SVECTOR> vertices) {
-    if (!frontend_draws())
-        return {};
     return vertex_carry.carry_model({render_entity_tag, render_entity_identity}, model, vertices);
 }
 
 std::span<const std::array<float, 2>> host_carry_screen(std::span<const std::array<float, 2>> points) {
-    if (!frontend_draws())
-        return {};
     return vertex_carry.carry_screen({render_entity_tag, render_entity_identity}, points);
 }
 
 u16 host_carry_dial(float pivot_x, float pivot_y) {
-    return frontend_draws() ? vertex_carry.add_dial(pivot_x, pivot_y) : 0;
+    return vertex_carry.add_dial(pivot_x, pivot_y);
 }
 
 void host_enqueue_face(const DrawFace &face) {
@@ -916,454 +778,50 @@ void host_add_light(float x, float y, float z, float radius, float r, float g, f
         host.frame_lights[host.frame_light_count++] = {x, y, z, radius, r, g, b, flicker, seed};
 }
 
-// Turns the frame's lights into renderer lights: strength, flicker (animated on
-// every presented frame) and an optional camera change for smoothed frames.
-static void apply_lights(const HostState::FrameLight *lights, int count, const float (*rotate)[3] = nullptr,
-    const float *translate = nullptr) {
-    RenderLight out[render_light_capacity];
-    const double seconds = SDL_GetTicksNS() / 1e9;
-    for (int i = 0; i < count; ++i) {
-        const auto &light = lights[i];
-        float position[3] = {light.x, light.y, light.z};
-        if (rotate) {
-            float world[3];
-            for (int r = 0; r < 3; ++r)
-                world[r] = rotate[r][0] * light.x + rotate[r][1] * light.y + rotate[r][2] * light.z + translate[r];
-            std::copy_n(world, 3, position);
-        }
-        // Two incommensurate sines per light read as an irregular flame flicker.
-        const double phase = (light.seed % 997) * 0.37;
-        const double wave = 0.5 * std::sin(seconds * 9.1 + phase) + 0.3 * std::sin(seconds * 23.7 + phase * 1.7)
-            + 0.2 * std::sin(seconds * 3.3 + phase * 0.3);
-        const float intensity = render_light_strength * static_cast<float>(1.0 + light.flicker * 0.18 * wave);
-        // Game lights (torches, spells) ignore their immediate surroundings as casters.
-        out[i] = {position[0], position[1], position[2], light.radius,
-                  light.r * intensity, light.g * intensity, light.b * intensity, 1200.0f};
-    }
-    // Nearest lights first: the renderer gives shadow maps to the leading ones.
-    std::sort(out, out + count, [](const RenderLight &a, const RenderLight &b) {
-        return a.x * a.x + a.y * a.y + a.z * a.z < b.x * b.x + b.y * b.y + b.z * b.z;
-    });
-    renderer_set_lights(&host.renderer, out, count);
-}
-
-// Faces that reach behind the camera's near plane are cut at it in camera space
-// and their new corners projected, instead of being dropped (as the PlayStation
-// did) or drawn from saturated coordinates.
-static bool face_crosses_near(const DrawFace &face) {
-    const unsigned count = static_cast<unsigned>(face.shape);
-    if (count != 3 && count != 4)
-        return false;
-    bool crossing = false;
-    for (unsigned v = 0; v < count; ++v) {
-        if (face.vertices[v].cz == 0)
-            return false;   // camera-fixed (menus, weapon): not clippable
-        const Vertex &vertex = face.vertices[v];
-        // Also corners projected past the saturated screen range: re-projecting
-        // them from camera space without the clamp keeps the face's shape.
-        crossing = crossing || vertex.cz < render_near_depth || vertex.x <= -1024.0f || vertex.x >= 1023.0f
-            || vertex.y <= -1024.0f || vertex.y >= 1023.0f;
-    }
-    return crossing;
-}
-
-static void clip_face_near(const DrawFace &face, std::vector<DrawFace> &out) {
-    const Projection &projection = host.clip_projection;
-    const float near_depth = render_near_depth;
-    // Outline order: quads are drawn as (0,1,2) and (1,3,2).
-    const unsigned outline_quad[] = {0, 1, 3, 2}, outline_triangle[] = {0, 1, 2};
-    const unsigned count = static_cast<unsigned>(face.shape);
-    const unsigned *outline = count == 4 ? outline_quad : outline_triangle;
-    Vertex polygon[8];
-    unsigned size = 0;
-    const auto lerp = [](const Vertex &a, const Vertex &b, float t) {
-        Vertex v = a;
-        const auto mix = [t](float x, float y) { return x + (y - x) * t; };
-        v.u = mix(a.u, b.u); v.v = mix(a.v, b.v);
-        v.r = mix(a.r, b.r); v.g = mix(a.g, b.g); v.b = mix(a.b, b.b); v.a = mix(a.a, b.a);
-        v.cx = mix(a.cx, b.cx); v.cy = mix(a.cy, b.cy); v.cz = mix(a.cz, b.cz);
-        return v;
-    };
-    for (unsigned i = 0; i < count; ++i) {
-        const Vertex &a = face.vertices[outline[i]], &b = face.vertices[outline[(i + 1) % count]];
-        const bool a_in = a.cz >= near_depth, b_in = b.cz >= near_depth;
-        if (a_in)
-            polygon[size++] = a;
-        if (a_in != b_in)
-            polygon[size++] = lerp(a, b, (near_depth - a.cz) / (b.cz - a.cz));
-    }
-    if (size < 3)
-        return;
-    const bool perspective = face.vertices[0].w > 0;
-    for (unsigned i = 0; i < size; ++i) {
-        Vertex &v = polygon[i];
-        const float scale = projection.distance / v.cz;
-        v.x = v.cx * scale + static_cast<float>(projection.center_x);
-        v.y = v.cy * scale + static_cast<float>(projection.center_y);
-        if (!render_subpixel) {
-            v.x = std::floor(v.x);
-            v.y = std::floor(v.y);
-        }
-        v.w = perspective ? v.cz : 0.0f;
-    }
-    // Fan into triangles; the pieces stay adjacent and share the face's depth.
-    for (unsigned i = 1; i + 1 < size; ++i) {
-        DrawFace piece = face;
-        piece.shape = FaceShape::Triangle;
-        piece.vertices[0] = polygon[0];
-        piece.vertices[1] = polygon[i];
-        piece.vertices[2] = polygon[i + 1];
-        out.push_back(piece);
-    }
-}
-
-static void draw_and_swap(const FaceList *faces) {
-    if (!host.context)
-        return;
-    int width = 0, height = 0;
-    SDL_GetWindowSizeInPixels(host.window, &width, &height);
-    // A minimized window can have no drawable pixels. Still update the logical
-    // target, so a one-shot modal is there when the window is restored.
-#if KF_EXT
-    // KF_PERF: log presented frames per second and the GPU time of the draw.
-    static const bool perf = std::getenv("KF_PERF") != nullptr;
-    static Uint64 perf_window_start, perf_draw_ns;
-    static unsigned perf_frames;
-    const Uint64 draw_start = perf ? SDL_GetTicksNS() : 0;
-#endif
-    FaceList clipped = *faces;
-    bool any_crossing = false;
-    for (std::size_t i = 0; i < faces->count && !any_crossing; ++i)
-        any_crossing = face_crosses_near(faces->faces[i]);
-    if (any_crossing) {
-        host.clipped_faces.clear();
-        for (std::size_t i = 0; i < faces->count; ++i) {
-            if (face_crosses_near(faces->faces[i]))
-                clip_face_near(faces->faces[i], host.clipped_faces);
-            else
-                host.clipped_faces.push_back(faces->faces[i]);
-        }
-        clipped.faces = host.clipped_faces.data();
-        clipped.count = host.clipped_faces.size();
-    }
-    if (!renderer_draw_faces(&host.renderer, &clipped, width, height))
-        host_fail("Cannot submit game render commands.");
-#if KF_EXT
-    if (perf) {
-        for (GLenum gl_error; (gl_error = glGetError()) != GL_NO_ERROR;)
-            std::printf("[perf] GL error 0x%04x after draw\n", gl_error);
-        glFinish();
-        const Uint64 now = SDL_GetTicksNS();
-        perf_draw_ns += now - draw_start;
-        ++perf_frames;
-        if (!perf_window_start)
-            perf_window_start = now;
-        if (now - perf_window_start >= 2 * ns_per_second) {
-            std::printf("[perf] %.1f fps, draw %.2f ms/frame, %zu faces, %d lights, target %dx%d\n",
-                perf_frames * 1e9 / static_cast<double>(now - perf_window_start),
-                perf_draw_ns / 1e6 / perf_frames, faces->count, host.renderer.light_count,
-                host.renderer.logical_width * host.renderer.scale, render_height * host.renderer.scale);
-            for (int l = 0; l < host.renderer.light_count; ++l) {
-                const auto &light = host.renderer.lights[l];
-                std::printf("[perf]   light %d at %.0f,%.0f,%.0f radius %.0f colour %.2f,%.2f,%.2f\n", l, light.x, light.y,
-                    light.z, light.radius, light.r, light.g, light.b);
-            }
-            perf_window_start = now;
-            perf_draw_ns = 0;
-            perf_frames = 0;
-        }
-    }
-#endif
-    if (width > 0 && height > 0) {
-#if KF_EXT
-        ext::draw(width, height);
-        capture_frame_if_requested(width, height);
-#endif
-        SDL_GL_SwapWindow(host.window);
-    }
-}
-
 // ---- Frame smoothing (PC extension) ----
-// The game updates and renders at its tick rate (20 a second as shipped). Each world frame keeps its
-// faces with camera-space positions; between updates the host re-projects them
-// from a camera interpolated between the last two updates, as often as the
-// display allows. Game logic and timing are untouched; the picture trails the
-// game by one update. Camera-attached models (cz = 0) are not moved.
+// The game updates and renders at its tick rate (20 a second as shipped). The
+// frontend redraws the last update from a camera between the last two, as often
+// as the display allows, and does its own near clipping and light flicker
+// (port/renderer/frontend.cpp); the host hands it each finished update and asks
+// for frames between. Game logic and timing are untouched.
 namespace {
-struct SmoothCamera {
-    VECTOR position;
-    SVECTOR rotation;
-    Projection projection;
+// The camera of the world frame being built; none for a 2D frame.
+std::optional<CameraPose> frame_camera;
+struct DisplayRefresh {
+    double hz = 0;
+    Uint64 checked_ns = 0;
 };
-struct FrameSmoothing {
-    SmoothCamera frame{};            // camera of the world frame being built
-    LightColor frame_fog_color{};
-    bool frame_has_camera = false;
-    SmoothCamera previous{}, current{};
-    bool have_current = false;
-    Uint64 current_ns = 0, interval_ns = 0, next_present_ns = 0;
-    DrawFace *faces = nullptr, *scratch = nullptr;
-    std::size_t count = 0, capacity = 0;
-    FrameStyle style{};
-    HostState::FrameLight lights[render_light_capacity];
-    int light_count = 0;
-    bool active = false;             // the picture on screen is a smoothable world frame
-    // Per entity tag: the current update's pose and the motion back to the
-    // previous one (so the shown pose is current + (1 - alpha) * motion).
-    struct EntityMotion { bool valid; float x, y, z, back_x, back_y, back_z, back_yaw; s8 yaw_sign; };
-    std::vector<EntityMotion> motion;
-    std::vector<HostState::EntityPose> poses;
-    double refresh_hz = 0;
-    Uint64 refresh_checked_ns = 0;
-};
-FrameSmoothing smooth;
-constexpr Uint64 smooth_interval_min_ns = 16 * ns_per_millisecond;
-constexpr Uint64 smooth_interval_max_ns = 100 * ns_per_millisecond;
-constexpr Uint64 smooth_default_interval_ns = 50 * ns_per_millisecond;
-constexpr s32 smooth_snap_distance = 4000;          // two map tiles in one update: a warp
-constexpr int smooth_snap_angle = 1024;             // a quarter turn in one update
-constexpr float smooth_near_depth = 16.0f;
-constexpr float fixed_one = 4096.0f;
+DisplayRefresh display_refresh;
 
 int angle_delta(int from, int to) {
     constexpr int half_turn = 0x800, wrap_mask = 0xfff;   // 4096 angle units per turn
     return ((to - from + half_turn) & wrap_mask) - half_turn;
 }
 
-void rotation_matrix(const SVECTOR &angles, float out[3][3]) {
-    MATRIX fixed{};
-    matrix_set_rotation_xyz(angles, fixed);
-    for (int row = 0; row < 3; ++row)
-        for (int col = 0; col < 3; ++col)
-            out[row][col] = fixed.m[row][col] / fixed_one;
-}
-
-// The renderer's camera for light occlusion: camera-to-world is the transpose
-// of the view rotation.
-void set_renderer_camera(const SVECTOR &rotation, float x, float y, float z) {
-    float view[3][3];
-    rotation_matrix(rotation, view);
-    const float camera_to_world[9] = {view[0][0], view[1][0], view[2][0], view[0][1], view[1][1], view[2][1],
-                                      view[0][2], view[1][2], view[2][2]};
-    const float position[3] = {x, y, z};
-    renderer_set_camera(&host.renderer, camera_to_world, position);
-}
-
-bool smoothing_applies() {
-    return render_smoothing && !options.headless && (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted);
-}
-
 Uint64 smooth_frame_period_ns() {
-    int limit = render_frame_limit;
+    const int limit = render_frame_limit;
     if (limit == 0) {
         const Uint64 now = SDL_GetTicksNS();
-        if (!smooth.refresh_hz || now - smooth.refresh_checked_ns > ns_per_second) {
+        if (!display_refresh.hz || now - display_refresh.checked_ns > ns_per_second) {
             const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(host.window));
-            smooth.refresh_hz = mode && mode->refresh_rate > 0 ? mode->refresh_rate : 60.0;
-            smooth.refresh_checked_ns = now;
+            display_refresh.hz = mode && mode->refresh_rate > 0 ? mode->refresh_rate : 60.0;
+            display_refresh.checked_ns = now;
         }
-        return static_cast<Uint64>(ns_per_second / smooth.refresh_hz);
+        return static_cast<Uint64>(ns_per_second / display_refresh.hz);
     }
     return limit < 0 ? 0 : ns_per_second / static_cast<Uint64>(limit);
 }
-
-void smooth_present(Uint64 now) {
-    const double alpha = std::clamp(static_cast<double>(now - smooth.current_ns) / smooth.interval_ns, 0.0, 1.0);
-    const auto &a = smooth.previous, &b = smooth.current;
-    const auto lerp = [alpha](s32 from, s32 to) { return static_cast<float>(from + (to - from) * alpha); };
-    const float shown_x = lerp(a.position.vx, b.position.vx);
-    const float shown_y = lerp(a.position.vy, b.position.vy);
-    const float shown_z = lerp(a.position.vz, b.position.vz);
-    const SVECTOR shown_rotation = VECTOR{
-        a.rotation.vx + static_cast<s32>(angle_delta(a.rotation.vx, b.rotation.vx) * alpha),
-        a.rotation.vy + static_cast<s32>(angle_delta(a.rotation.vy, b.rotation.vy) * alpha),
-        a.rotation.vz + static_cast<s32>(angle_delta(a.rotation.vz, b.rotation.vz) * alpha)}.narrowed();
-    float view_now[3][3], view_shown[3][3];
-    rotation_matrix(b.rotation, view_now);
-    rotation_matrix(shown_rotation, view_shown);
-    // Camera offset between the frame's camera and the shown one, in world units.
-    const float offset[3] = {b.position.vx - shown_x, b.position.vy - shown_y, b.position.vz - shown_z};
-    const float distance = b.projection.distance;
-    std::size_t kept = 0;
-    const float back = static_cast<float>(1.0 - alpha);
-    for (std::size_t i = 0; i < smooth.count; ++i) {
-        DrawFace face = smooth.faces[i];
-        const FrameSmoothing::EntityMotion *moving = face.entity && face.entity < smooth.motion.size()
-            && smooth.motion[face.entity].valid ? &smooth.motion[face.entity] : nullptr;
-        float turn_cos = 1, turn_sin = 0;
-        if (moving && moving->yaw_sign) {
-            // The model applies R_y(sign * yaw); turning it further by t is R_y(sign * t).
-            const float turn = moving->back_yaw * back * moving->yaw_sign;
-            turn_cos = std::cos(turn);
-            turn_sin = std::sin(turn);
-        }
-        bool visible = true;
-        for (unsigned v = 0; v < static_cast<unsigned>(face.shape) && visible; ++v) {
-            Vertex &vertex = face.vertices[v];
-            if (vertex.cz == 0)
-                continue;
-            // camera' = V_shown * (V_now^T * camera + P_now - P_shown)
-            float world[3];
-            for (int r = 0; r < 3; ++r)
-                world[r] = view_now[0][r] * vertex.cx + view_now[1][r] * vertex.cy + view_now[2][r] * vertex.cz + offset[r];
-            if (moving) {
-                // world[] is relative to the shown camera; so is the entity's origin.
-                const float origin[3] = {moving->x - shown_x, moving->y - shown_y, moving->z - shown_z};
-                const float rx = world[0] - origin[0], rz = world[2] - origin[2];
-                // R_y(t) = [[cos, 0, -sin], [0, 1, 0], [sin, 0, cos]] (matrix_set_rotation_y).
-                world[0] = origin[0] + turn_cos * rx - turn_sin * rz + moving->back_x * back;
-                world[1] += moving->back_y * back;
-                world[2] = origin[2] + turn_sin * rx + turn_cos * rz + moving->back_z * back;
-            }
-            float camera[3];
-            for (int r = 0; r < 3; ++r)
-                camera[r] = view_shown[r][0] * world[0] + view_shown[r][1] * world[1] + view_shown[r][2] * world[2];
-            // Corners in front of the near plane are projected here; faces that
-            // cross it are clipped (and re-projected) before drawing.
-            const float scale = distance / std::max(camera[2], smooth_near_depth);
-            float x = std::clamp(camera[0] * scale + b.projection.center_x, -1024.0f, 1023.0f);
-            float y = std::clamp(camera[1] * scale + b.projection.center_y, -1024.0f, 1023.0f);
-            if (!render_subpixel) {
-                x = std::floor(x);
-                y = std::floor(y);
-            }
-            vertex.x = x;
-            vertex.y = y;
-            if (vertex.w > 0)
-                vertex.w = camera[2];
-            vertex.cx = camera[0];
-            vertex.cy = camera[1];
-            vertex.cz = camera[2];
-        }
-        if (visible)
-            smooth.scratch[kept++] = face;
-    }
-    // Lights move with the same camera change: combined = V_shown * V_now^T, then offset.
-    float combined[3][3], shift[3];
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c)
-            combined[r][c] = view_shown[r][0] * view_now[c][0] + view_shown[r][1] * view_now[c][1] + view_shown[r][2] * view_now[c][2];
-        shift[r] = view_shown[r][0] * offset[0] + view_shown[r][1] * offset[1] + view_shown[r][2] * offset[2];
-    }
-    apply_lights(smooth.lights, smooth.light_count, combined, shift);
-    set_renderer_camera(shown_rotation, shown_x, shown_y, shown_z);
-    const FaceList list{smooth.scratch, kept, smooth.style};
-    draw_and_swap(&list);
-    const Uint64 period = smooth_frame_period_ns();
-    smooth.next_present_ns = now + period;
-}
-
-// Takes ownership of a finished world frame; returns false if it is not one.
-bool smooth_take_frame(const FaceList *faces) {
-    if (!smoothing_applies() || !smooth.frame_has_camera || faces->faces != host.frame_faces.data()) {
-        smooth.active = false;
-        return false;
-    }
-    if (faces->count > smooth.capacity) {
-        auto *grown = static_cast<DrawFace *>(std::realloc(smooth.faces, faces->count * sizeof(DrawFace)));
-        auto *scratch = grown ? static_cast<DrawFace *>(std::realloc(smooth.scratch, faces->count * sizeof(DrawFace))) : nullptr;
-        if (grown)
-            smooth.faces = grown;
-        if (!grown || !scratch) {
-            smooth.active = false;
-            return false;
-        }
-        smooth.scratch = scratch;
-        smooth.capacity = faces->count;
-    }
-    std::copy_n(faces->faces, faces->count, smooth.faces);
-    smooth.count = faces->count;
-    smooth.light_count = host.frame_light_count;
-    std::copy_n(host.frame_lights, host.frame_light_count, smooth.lights);
-    smooth.style = faces->style;
-    const Uint64 now = host_clock_ns();
-    const SmoothCamera &next = smooth.frame;
-    bool jump = !smooth.have_current || !smooth.active || now - smooth.current_ns > smooth_interval_max_ns;
-    if (!jump) {
-        const auto &last = smooth.current.position;
-        jump = std::abs(next.position.vx - last.vx) > smooth_snap_distance ||
-            std::abs(next.position.vy - last.vy) > smooth_snap_distance ||
-            std::abs(next.position.vz - last.vz) > smooth_snap_distance ||
-            std::abs(angle_delta(smooth.current.rotation.vy, next.rotation.vy)) > smooth_snap_angle ||
-            std::abs(angle_delta(smooth.current.rotation.vx, next.rotation.vx)) > smooth_snap_angle;
-    }
-    smooth.interval_ns = jump ? smooth_default_interval_ns
-        : std::clamp(now - smooth.current_ns, smooth_interval_min_ns, smooth_interval_max_ns);
-    smooth.previous = jump ? next : smooth.current;
-    smooth.current = next;
-    // Entities: pair this update's poses with the last update's by tag.
-    constexpr float entity_snap_distance = 3000.0f;   // farther in one update: a new occupant or a warp
-    constexpr int entity_tags = 2048;
-    smooth.motion.assign(entity_tags, {});
-    std::vector<const HostState::EntityPose *> last(entity_tags, nullptr);
-    if (!jump)
-        for (const auto &pose : smooth.poses)
-            if (pose.tag < entity_tags)
-                last[pose.tag] = &pose;
-    for (const auto &pose : host.frame_poses) {
-        if (pose.tag >= entity_tags || !last[pose.tag])
-            continue;
-        const auto &before = *last[pose.tag];
-        const float dx = before.x - pose.x, dy = before.y - pose.y, dz = before.z - pose.z;
-        if (std::abs(dx) > entity_snap_distance || std::abs(dy) > entity_snap_distance || std::abs(dz) > entity_snap_distance)
-            continue;
-        const int turn = pose.yaw_sign ? angle_delta(pose.yaw, before.yaw) : 0;
-        smooth.motion[pose.tag] = {true, pose.x, pose.y, pose.z, dx, dy, dz,
-                                   static_cast<float>(turn) * 6.28318531f / 4096.0f, pose.yaw_sign};
-    }
-    smooth.poses = host.frame_poses;
-    smooth.current_ns = now;
-    smooth.have_current = true;
-    smooth.active = true;
-    smooth_present(now);
-    return true;
-}
-
-bool smooth_wants_frames() {
-    return smooth.active && smoothing_applies() && !host.paused;
-}
-}
-
-static bool frontend_wants_frames();
-static Uint64 frontend_next_present_ns();
-
-static bool smooth_frames_wanted() { return frontend_draws() ? frontend_wants_frames() : smooth_wants_frames(); }
-// Paused under the overlay: draw the kept world frame again so graphics option
-// changes show immediately. Returns false when there is no such frame.
-static bool smooth_redraw_paused() {
-    if (frontend_draws() || !smooth.active || !render_smoothing || smooth.count == 0)
-        return false;
-    smooth_present(host_clock_ns());
-    return true;
-}
-static Uint64 smooth_next_present_ns() { return frontend_draws() ? frontend_next_present_ns() : smooth.next_present_ns; }
-static void smooth_present_now(Uint64 now) {
-    if (frontend_draws())
-        frontend_present(now);
-    else
-        smooth_present(now);
-}
+} // namespace
 
 void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Projection &projection,
                        const LightColor &fog_color) {
-    host.clip_projection = projection;
-    smooth.frame = {position, rotation, projection};
-    smooth.frame_fog_color = fog_color;
-    smooth.frame_has_camera = true;
+    frame_camera = CameraPose{position, rotation, projection, fog_color};
     vertex_carry.seen_from({position, rotation, projection});
-    // Unsmoothed frames are drawn from this camera; smoothed ones set their own.
-    set_renderer_camera(rotation, static_cast<float>(position.vx), static_cast<float>(position.vy),
-        static_cast<float>(position.vz));
-    renderer_set_projection_distance(&host.renderer, static_cast<float>(projection.distance));
 }
 
 void host_light_occluders(const u8 *solid, int columns, int rows, float tile_size) {
-    if (frontend_draws()) {
-        const auto cells = static_cast<std::size_t>(std::max(columns, 0)) * static_cast<std::size_t>(std::max(rows, 0));
-        renderer_set_occluders({solid, cells}, columns, rows, tile_size);
-        return;
-    }
-    renderer_set_occluders(&host.renderer, solid, columns, rows, tile_size);
+    const auto cells = static_cast<std::size_t>(std::max(columns, 0)) * static_cast<std::size_t>(std::max(rows, 0));
+    renderer_set_occluders({solid, cells}, columns, rows, tile_size);
 }
 
 static void frontend_submit(const FaceList *faces);
@@ -1374,23 +832,11 @@ void host_present_faces(const FaceList *faces) {
 #if KF_EXT
     ext::game_frame(static_cast<int>(host.input_context));
 #endif
-    if (frontend_draws()) {
-        frontend_submit(faces);
-        smooth.frame_has_camera = false;
-        return;
-    }
-    const bool smoothed = smooth_take_frame(faces);
-    smooth.frame_has_camera = false;
-    if (!smoothed) {
-        apply_lights(host.frame_lights, host.frame_light_count);
-        draw_and_swap(faces);
-    }
+    frontend_submit(faces);
+    frame_camera.reset();
 }
 
-// ---- The frontend renderer (Vulkan) ----
-// Chosen by the Renderer setting or KF_RENDERER. The frontend does its own
-// smoothing, near clipping and light flicker (port/renderer/frontend.cpp), so
-// the host only hands it each finished update and asks for frames between.
+// ---- The renderer frontend ----
 namespace {
 struct FrontendOutput {
     PictureOptions requested;          // as the settings asked
@@ -1402,11 +848,16 @@ struct FrontendOutput {
 };
 FrontendOutput frontend_output;
 
-// Smoothing only where the camera is the player's: not in menus or the map.
+// Smoothing only where the camera is the player's: not in menus or the map,
+// and not headless, where nothing is shown.
+bool smoothing_allowed() {
+    return !options.headless &&
+           (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted);
+}
+
 void apply_frontend_options() {
     PictureOptions picture = frontend_output.requested;
-    picture.smoothing = picture.smoothing &&
-                        (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted);
+    picture.smoothing = picture.smoothing && smoothing_allowed();
     frontend_output.smoothing_applied = picture.smoothing;
     renderer_set_options(picture);
 }
@@ -1440,8 +891,9 @@ SVECTOR look_applied(const std::optional<CameraPose> &camera) {
 }
 
 #if KF_EXT
-// KF_CAPTURE=<file.bmp>: as for GL, the game's picture after KF_CAPTURE_FRAME
-// frames (default 100), at the target's size, top row first.
+// KF_CAPTURE=<file.bmp>: the game's picture after KF_CAPTURE_FRAME frames
+// (default 100), at the target's size, top row first, then exit. For automated
+// visual checks without focus.
 void capture_picture_if_requested() {
     static const char *path = std::getenv("KF_CAPTURE");
     static const long target = [] {
@@ -1511,14 +963,9 @@ static void frontend_present(Uint64 now) {
 }
 
 static void frontend_submit(const FaceList *faces) {
-    if (frontend_output.smoothing_applied !=
-        (frontend_output.requested.smoothing &&
-         (host.input_context == InputContext::Gameplay || host.input_context == InputContext::Scripted)))
+    if (frontend_output.smoothing_applied != (frontend_output.requested.smoothing && smoothing_allowed()))
         apply_frontend_options();
-    std::optional<CameraPose> camera;
-    if (smooth.frame_has_camera)
-        camera = CameraPose{smooth.frame.position, smooth.frame.rotation, smooth.frame.projection,
-                            smooth.frame_fog_color};
+    const std::optional<CameraPose> &camera = frame_camera;
     auto &lights = frontend_output.lights;
     lights.clear();
     for (int i = 0; i < host.frame_light_count; ++i) {
@@ -1541,8 +988,6 @@ TextureStore &host_textures() { return renderer_textures(); }
 int host_extra_columns() { return renderer_extra_columns(); }
 
 bool host_capture_frame(Image &image) {
-    if (!frontend_draws())
-        return renderer_capture_frame(&host.renderer, image);
     std::optional<Image> picture = renderer_capture();
     if (!picture)
         return false;
@@ -1551,18 +996,15 @@ bool host_capture_frame(Image &image) {
 }
 
 bool host_restore_frame(const Image &image) {
-    return frontend_draws() ? renderer_restore(image) : renderer_restore_frame(&host.renderer, image);
+    return renderer_restore(image);
 }
 
 bool host_set_render_target(int logical_width, int scale) {
-    if (!frontend_draws() && !renderer_configure(&host.renderer, logical_width, scale))
-        return false;
     return renderer_set_target(logical_width, scale);
 }
 
 void host_set_picture_options(const PictureOptions &options) {
     frontend_output.requested = options;
-    if (frontend_draws())
-        apply_frontend_options();
+    apply_frontend_options();
 }
 }

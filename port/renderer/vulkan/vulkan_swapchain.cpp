@@ -28,7 +28,7 @@ bool VulkanSwapchain::fit(uint32_t width, uint32_t height, PresentPacing pacing)
     vkDeviceWaitIdle(device_.device());
     vkb::SwapchainBuilder builder(device_.physical(), device_.device(), device_.surface(), device_.queue_family(),
                                   device_.queue_family());
-    // Unorm, as the GL renderer presented: the game's colours are not linear.
+    // Unorm: the game's colours are not linear.
     builder.set_desired_format({VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
         .add_fallback_format({VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
         .set_desired_extent(width, height)

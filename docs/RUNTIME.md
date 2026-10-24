@@ -13,7 +13,7 @@ replaced by a plain PC equivalent. Sound is the one partial exception.
 |---|---|
 | CPU | none: the decomp's C/C++, compiled natively |
 | GTE | none: the math the game asked of it is ordinary code in the game's 12-bit fixed point (`decomp/src/lib/fixed_math.cpp`), so results match; only conventions remain (`KF_GTE_DEPTH_TO_OT_SHIFT`) |
-| GPU, VRAM | none: faces go into a draw list that GLES draws; textures become materials at load ("this is not runtime emulated VRAM", `decomp/include/kf/lib/codec.h:27`); 1024x512 survives as a texture-coordinate convention |
+| GPU, VRAM | none: faces go into a draw list that the renderer frontend batches for Vulkan; textures become materials at load ("this is not runtime emulated VRAM", `decomp/include/kf/lib/codec.h:27`); 1024x512 survives as a texture-coordinate convention |
 | CD | none: the files are extracted once into `data/` and read as files |
 | BIOS, interrupts, DMA, timers | none: a 60 Hz host clock with waits (`port/platform/host.cpp`) |
 | memory card | none: the game's save format in `.kfs` files |
@@ -82,7 +82,9 @@ The original 3DS is a plausible target, to be measured once a build runs there.
 The user's report (2026-10-22, uncapped, vsync off, `frame_rate: -1`, an RX
 9070): **kf1-enhanced draws about 300-400 frames a second; Verdite3 draws
 800-1200.** The gap is the renderer's GL submission, not the decomp. Read from
-the code, not profiled, so the shares are estimates:
+the code, not profiled, so the shares are estimates. That renderer was deleted
+on 2026-10-23 for the Vulkan one, built by the rules below; the paths are as
+they were before then.
 
 1. **One draw call per triangle.** The main loop in
    `port/renderer/renderer.cpp:1004-1024`, for every triangle: toggles depth test

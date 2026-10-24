@@ -28,7 +28,6 @@ Copy-Item "LICENSE" (Join-Path $licenses "KingsFieldEnhanced-CC0.txt")
 Copy-Item "vendor\imgui\LICENSE.txt" (Join-Path $licenses "DearImGui.txt")
 Copy-Item "vendor\lua\LICENSE" (Join-Path $licenses "Lua.txt")
 Copy-Item "vendor\cjson\LICENSE" (Join-Path $licenses "cJSON.txt")
-Copy-Item "vendor\gles\LICENSE" (Join-Path $licenses "Khronos-GLES-headers.txt")
 $sdl = Get-ChildItem $BuildDir -Directory -Filter "SDL3-*" | Select-Object -First 1
 if ($sdl) { Copy-Item (Join-Path $sdl.FullName "LICENSE.txt") (Join-Path $licenses "SDL3.txt") }
 else { Write-Warning "SDL3 license not found in $BuildDir; add it to licenses\SDL3.txt by hand." }

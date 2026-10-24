@@ -6,7 +6,7 @@ exit cleanly, or a sanitizer reports anything. Usage: scripts/smoke.py BINARY [-
 [--renderer vulkan]
 
 With --renderer vulkan it draws for real, on SDL's offscreen video driver (no window) with dummy
-audio and the validation layers on, and also fails on a validation error or a fall back to GL.
+audio and the validation layers on, and also fails on a validation error or a renderer error.
 It loads the host's Vulkan loader and drivers from --host-libraries, as scripts/run-linux.sh does.
 """
 
@@ -85,7 +85,7 @@ def main():
     if args.renderer == "vulkan":
         mode = []
         # The host drivers' own allocations are reported from unloaded modules (code-style.md).
-        env.update(SDL_VIDEO_DRIVER="offscreen", SDL_AUDIO_DRIVER="dummy", KF_RENDERER="vulkan",
+        env.update(SDL_VIDEO_DRIVER="offscreen", SDL_AUDIO_DRIVER="dummy",
                    KF_VK_VALIDATION="1", KF_TEST_NO_PAUSE="1", LD_LIBRARY_PATH=args.host_libraries,
                    VK_LOADER_LAYERS_DISABLE="~implicit~", ASAN_OPTIONS="abort_on_error=0:detect_leaks=0")
     with tempfile.TemporaryDirectory() as saves:

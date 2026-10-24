@@ -184,8 +184,8 @@ EGL device even so, so there is no headless run yet.
 
 For an agent or a script, without a person or a screen:
 
-- **`--headless`**: SDL's dummy video and audio drivers, no GL context; the
-  renderer keeps its state (texture store, target size) but draws nothing, the
+- **`--headless`**: SDL's dummy video and audio drivers and the null backend;
+  the renderer keeps its state (texture store, target size) but draws nothing, the
   overlay loads settings and mods without Dear ImGui, frame smoothing is off.
   Runs inside `nix develop`, since nothing needs the host's EGL.
 - **`--turbo`**: the game clock jumps to each wait's deadline instead of

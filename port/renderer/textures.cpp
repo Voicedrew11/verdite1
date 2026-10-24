@@ -1,4 +1,4 @@
-#include <kf/renderer/renderer.h>
+#include <kf/renderer/constants.h>
 #include <kf/renderer/textures.h>
 
 #include <new>
@@ -14,8 +14,6 @@ bool texture_store_upload_tim(TextureStore *store, const u8 *bytes, std::size_t 
     // The codec validates the entire stream before changing any texels, and
     // copies them before the original loader can rewind its resource arena.
     kf_tim_compose({bytes, size}, store->words);
-    for (std::size_t i = 0; i < store->entries.size(); ++i)
-        store->entries[i].dirty = true;
     ++store->generation;
     return true;
 } catch (const codec::Error &error) {
@@ -36,8 +34,6 @@ bool texture_store_translate_tim(TextureStore *store, const u8 *before, std::siz
     for (std::size_t i = 0; i < texture_word_count; ++i)
         if (old_words[i] != new_words[i])
             store->words[i] = new_words[i];
-    for (std::size_t i = 0; i < store->entries.size(); ++i)
-        store->entries[i].dirty = true;
     ++store->generation;
     return true;
 } catch (const codec::Error &error) {
@@ -78,44 +74,5 @@ bool texture_decode(Image *image, TextureSource source, const u16 *words, std::s
     return true;
 } catch (const std::bad_alloc &) {
     return false;
-}
-
-static bool same_source(TextureSource a, TextureSource b) {
-    return a.x == b.x && a.y == b.y && a.palette_x == b.palette_x &&
-           a.palette_y == b.palette_y && a.format == b.format;
-}
-
-u32 texture_store_resolve(TextureStore *store, TextureSource source) try {
-    if (source.format == TextureFormat::Direct16)
-        source.palette_x = source.palette_y = 0;
-    std::size_t index = 0;
-    while (index < store->entries.size() && !same_source(store->entries[index].source, source))
-        ++index;
-    if (index == store->entries.size()) {
-        if (store->entries.size() == store->entries.max_size())
-            return 0;
-        store->entries.push_back({source, 0, true});
-    }
-    auto *entry = &store->entries[index];
-    if (entry->dirty) {
-        Image decoded{};
-        if (!texture_decode(&decoded, source, store->words.data(), store->words.size()))
-            return 0;
-        const auto texture = renderer_upload(&decoded);
-        if (!texture)
-            return 0;
-        renderer_delete_texture(entry->texture);
-        entry->texture = texture;
-        entry->dirty = false;
-    }
-    return entry->texture;
-} catch (const std::bad_alloc &) {
-    return 0;
-}
-
-void texture_store_release(TextureStore *store) {
-    for (std::size_t i = 0; i < store->entries.size(); ++i)
-        renderer_delete_texture(store->entries[i].texture);
-    *store = {};
 }
 }

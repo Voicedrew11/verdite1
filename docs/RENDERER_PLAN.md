@@ -1,9 +1,9 @@
 # Renderer plan
 
 The plan for the decomp ports' rendering stack, as discussed 2026-10-22. It
-replaces kf1-enhanced's GLES 3 renderer, which stays as a reference to check
-the new one against. Why the current renderer draws fewer frames than the
-recompilations is in [RUNTIME.md](RUNTIME.md).
+replaced kf1-enhanced's GLES 3 renderer, deleted on 2026-10-23 (it is in the
+history before that day, and in kf1-enhanced, to check against). Why that
+renderer drew fewer frames than the recompilations is in [RUNTIME.md](RUNTIME.md).
 
 ## Platforms
 
@@ -92,7 +92,7 @@ read the screen back: ½B+½F (constant factor 0.5), B+F (additive), B−F
 (reverse subtract), B+¼F (constant factor 0.25).
 
 Decided 2026-10-23: Classic blends with the hardware too, into a 15-bit target
-with the source cut to 5 bits first, though the GL renderer copies the screen
+with the source cut to 5 bits first, though the GL renderer copied the screen
 per translucent triangle to match the PS1's truncation exactly. The rest is a
 rounding difference of at most one 15-bit step, and a readback path would be
 Vulkan-only (the 3DS cannot read back) and slow. If a case shows in play (a
@@ -151,8 +151,7 @@ judged, carries nothing; a warp of the camera carries nothing at all.
 
 Not needed in the decomp, since its game logic runs once per update: the
 flipbook sprites stepping on every drawn frame, the item display's hold, tints
-and textures. The GL renderer keeps kf1-enhanced's rigid per-entity smoothing
-(`host_report_entity`).
+and textures.
 
 ### The exact view rotation
 
@@ -167,7 +166,7 @@ it with its true inverse and sees the world through the exact rotation for the
 same angles (`view_rotation.h`), for the map, models and lights alike; with
 smoothing off, sub-pixel pictures are reprojected the same way
 (`ViewSmoothing::view_exact`), and whole-pixel (Classic) ones keep the game's
-matrix. The GL renderer still draws with the game's matrix.
+matrix.
 
 ### Detailed distant walls
 
@@ -249,7 +248,7 @@ and bilinear, a checker squeezed 16 to 1 averages to grey under nearest and
 sharp, and nearest draws a face whose texels cover a pixel or more as it does
 without mipmaps.
 
-Sharp filtering (Texture filtering > Sharp, the default; GL and Vulkan) is
+Sharp filtering (Texture filtering > Sharp, the default) is
 nearest without its uneven texels. A texel magnified to a fraction of a pixel
 per texel, say 2.4, comes out 2 or 3 pixels wide under nearest, and the wide
 ones read as chunky clumps. Sharp takes the bilinear taps but keeps each weight flat
@@ -291,12 +290,13 @@ What carries over is decisions and references, not code:
    Shaders are GLSL, compiled to SPIR-V with glslang at build time.
 2. The Vulkan backend on Linux, validation layers on: reach Classic (judged
    in play), then Balanced, then Enhanced at the judged values. Batched from the
-   start (see [RUNTIME.md](RUNTIME.md)). The GL renderer keeps drawing until
-   Vulkan reaches Classic, chosen by the Renderer setting (Display, applies on
-   restart; `KF_RENDERER=gl|vulkan` overrides it); then GL is deleted.
+   start (see [RUNTIME.md](RUNTIME.md)). The GL renderer was to keep drawing
+   until Vulkan reached Classic; 2026-10-23 the user judged Vulkan better than
+   GL in play, gaps still to fix, and GL was deleted with the Renderer setting
+   and `KF_RENDERER`. Headless runs draw through the null backend.
    2026-10-23: `port/renderer/vulkan/` draws Classic and the Balanced options, offscreen-tested in `kf_vulkan_tests` on
    RADV and llvmpipe with validation on, and the game draws with it, overlay
-   included, when Renderer is Vulkan; Classic waits to be judged in play.
+   included.
    Supersampling draws the target N times larger and averages each N x N block
    before the window (`vulkan_downsample.h`); captures keep the full target.
    It needs dynamic rendering (`VK_KHR_dynamic_rendering`); render-pass

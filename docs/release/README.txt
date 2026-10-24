@@ -78,7 +78,7 @@ Menus, mods and console inspired by Verdite2 by Voicedrew11 (MIT):
   https://github.com/Voicedrew11/verdite2
 English translation by John Osborne (weissvulf / HwitVlf); it is applied to
 your own disc, not included.
-Uses Dear ImGui, Lua, cJSON, SDL3 and the Khronos OpenGL ES headers; their
+Uses Dear ImGui, Lua, cJSON and SDL3; their
 licenses are in the "licenses" folder.
 
 King's Field is by FromSoftware. This is an unofficial fan project, not

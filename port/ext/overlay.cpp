@@ -1,7 +1,6 @@
 // F1 overlay: menu bar with Settings, Mods and Console windows, drawn with Dear
 // ImGui over the game's frame. The game pauses while it is open (configurable).
 #include "internal.hpp"
-#include <backends/imgui_impl_opengl3.h>
 #include <backends/imgui_impl_sdl3.h>
 #include <imgui.h>
 #include <imgui_internal.h>   // FindRenderedTextEnd
@@ -22,7 +21,6 @@ namespace {
 SDL_Window *main_window;
 bool running;
 bool imgui;   // false when headless
-OverlayRenderer overlay_renderer = OverlayRenderer::None;
 bool open;
 bool show_settings, show_mods = true, show_console, show_about;
 bool console_autoscroll = true;
@@ -258,16 +256,6 @@ void draw_settings_window() {
             changed = true;
         }
         changed |= ImGui::Checkbox("Show FPS", &s.show_fps);
-        const char *renderer_values[] = {"opengl", "vulkan"};
-        const char *renderer_labels[] = {"OpenGL", "Vulkan (in progress)"};
-        int renderer_index = s.renderer == "vulkan" ? 1 : 0;
-        if (ImGui::Combo("Renderer", &renderer_index, renderer_labels, 2)) {
-            s.renderer = renderer_values[renderer_index];
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Applies when the game is restarted. Vulkan draws the original picture\nthe Balanced options and ambient occlusion; dynamic lights, shadows,\nglow and FXAA are not in it yet. If Vulkan cannot start, the game draws with OpenGL.");
-        ImGui::SameLine();
-        ImGui::TextDisabled("now: %s", frontend_draws_overlay() ? "Vulkan" : "OpenGL");
         ImGui::BeginDisabled(s.classic);   // Classic mode overrides the rest
         const int rates[] = {20, 0, 60, 120, 144, 165, 240, -1};
         const char *rate_labels[] = {"One per update (original)", "Match display refresh", "60 fps", "120 fps", "144 fps",
@@ -682,14 +670,11 @@ ViewRect original_view() {
             column * static_cast<float>(render_width), whole.h};
 }
 
-bool frontend_draws_overlay() { return overlay_renderer == OverlayRenderer::Frontend; }
-
-bool start(SDL_Window *handle, OverlayRenderer renderer, SDL_GLContext context) {
+bool start(SDL_Window *handle, Overlay overlay) {
     main_window = handle;
     settings_load();
     // Headless: settings and mods, no Dear ImGui (nothing draws it).
-    overlay_renderer = renderer;
-    imgui = renderer != OverlayRenderer::None;
+    imgui = overlay == Overlay::Drawn;
     if (!imgui) {
         running = true;
         apply_audio_settings();
@@ -706,10 +691,7 @@ bool start(SDL_Window *handle, OverlayRenderer renderer, SDL_GLContext context) 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     load_font();
     apply_style();
-    const bool started = renderer == OverlayRenderer::OpenGL
-        ? ImGui_ImplSDL3_InitForOpenGL(handle, context) && ImGui_ImplOpenGL3_Init("#version 300 es")
-        : ImGui_ImplSDL3_InitForVulkan(handle) && renderer_overlay_start();
-    if (!started) {
+    if (!ImGui_ImplSDL3_InitForVulkan(handle) || !renderer_overlay_start()) {
         std::printf("[overlay] cannot initialize Dear ImGui\n");
         return false;
     }
@@ -736,10 +718,7 @@ void shutdown() {
     running = false;
     if (!imgui)
         return;
-    if (overlay_renderer == OverlayRenderer::OpenGL)
-        ImGui_ImplOpenGL3_Shutdown();
-    else
-        renderer_overlay_stop();
+    renderer_overlay_stop();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 }
@@ -826,9 +805,7 @@ ImDrawData *build_overlay(int width, int height) {
         fps_frames = 0;
         fps_started = now;
     }
-    // The Vulkan renderer's NewFrame only checks that it was started.
-    if (overlay_renderer == OverlayRenderer::OpenGL)
-        ImGui_ImplOpenGL3_NewFrame();
+    // The Vulkan renderer's NewFrame only checks that it was started, so it is not called.
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     // KF_TEST_SETTINGS=<page>: opens Settings on that page, for captures.
@@ -865,10 +842,5 @@ ImDrawData *build_overlay(int width, int height) {
     }
     ImGui::Render();
     return ImGui::GetDrawData();
-}
-
-void draw(int width, int height) {
-    if (ImDrawData *data = build_overlay(width, height))
-        ImGui_ImplOpenGL3_RenderDrawData(data);
 }
 }

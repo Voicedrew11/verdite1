@@ -5,7 +5,7 @@ project(kings_field VERSION 0.1.0 LANGUAGES C CXX)
 #   patches/      Verdite's edits to its game code, one diff per copied directory (tools/patches.py)
 #   port/         the platform layer, renderer and PC extensions: Verdite's own, edited in place
 #   libverdite/   the game-agnostic C++ library the Verdite ports share, to become a subtree; knows no game
-#   third_party/  imgui, lua, cjson, the GLES headers and loader
+#   third_party/  imgui, lua, cjson
 # At configure time the decomp's game code (KF_COPIED) is copied, the patches are applied to the
 # copy, and the copy (build/<preset>/decomp_src/) is compiled with port/.
 set(CMAKE_CXX_STANDARD 20)
@@ -167,15 +167,8 @@ if(WIN32)
     endif()
     find_package(SDL3 CONFIG REQUIRED PATHS "${KF_SDL3_ROOT}/x86_64-w64-mingw32" NO_DEFAULT_PATH)
   endif()
-  # Windows has no system libGLESv2: GLES 3.0 is resolved through SDL (third_party/glshim).
-  add_library(kf_glshim STATIC third_party/glshim/glshim.c)
-  target_include_directories(kf_glshim PUBLIC third_party/gles)
-  target_compile_definitions(kf_glshim PUBLIC KHRONOS_STATIC)
-  target_link_libraries(kf_glshim PUBLIC SDL3::SDL3)
-  set(KF_GLES_LIBRARY kf_glshim)
 else()
   find_package(SDL3 CONFIG REQUIRED)
-  find_library(KF_GLES_LIBRARY GLESv2 REQUIRED)
 endif()
 
 # PC extensions: overlay (Dear ImGui), console, settings and Lua mods.
@@ -190,11 +183,10 @@ target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
 target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp ${KF_IMGUI}/backends/imgui_impl_opengl3.cpp
-  ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
+  port/ext/item_text.cpp port/ext/discord.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
-target_compile_definitions(kf_ext PUBLIC KF_EXT=1 PRIVATE IMGUI_IMPL_OPENGL_ES3)
-target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 ${KF_GLES_LIBRARY} verdite)
+target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
+target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)
 
 # libverdite: nothing from the game on its include path.
 find_package(Threads REQUIRED)
@@ -259,17 +251,13 @@ target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
-  port/platform/automap.cpp port/platform/screen.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp
-  port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
+  port/platform/automap.cpp port/platform/screen.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES})
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)
-if(WIN32)
-  target_link_libraries(kf_host PUBLIC kf_glshim)
-endif()
 target_compile_options(kf_host PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(kings-field port/platform/entry.cpp ${KF_GAME_SOURCES})
-target_link_libraries(kings-field PRIVATE kf_host ${KF_GLES_LIBRARY})
+target_link_libraries(kings-field PRIVATE kf_host)
 target_compile_options(kings-field PRIVATE -Wall -Wextra)
 if(WIN32)
   # Static C++ runtime: the game folder needs only SDL3.dll beside the exe.
