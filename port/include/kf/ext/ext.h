@@ -7,6 +7,7 @@
 #include <string>
 
 struct ImDrawData;
+namespace verdite { class CrashWriter; }
 
 namespace kf::ext {
 // Whether Dear ImGui is drawn: not headless, where nothing is.
@@ -38,6 +39,9 @@ void game_frame(int input_context);
 ImDrawData *build_overlay(int width, int height);
 // A brief centred message, such as "Quick saved".
 void show_message(const std::string &text);
+// For a crash report: the settings that change how the game plays or draws. Runs in the crash
+// handler, so it only reads.
+void crash_write_settings(verdite::CrashWriter &out);
 }
 
 #endif // KF_EXT_EXT_H

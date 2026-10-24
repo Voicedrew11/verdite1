@@ -6,6 +6,7 @@
 #include <kf/platform/analog.h>
 #include <kf/platform/controls.h>
 #include <kf/platform/agent.h>
+#include <kf/platform/crash.h>
 #include <kf/renderer/backend.h>
 #include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
@@ -489,6 +490,7 @@ void host_poll() {
             process_event(event);
         refresh_mouse_capture();
         agent_poll();
+        crash_poll();
         sound_poll();
 #if KF_EXT
         ext::poll();

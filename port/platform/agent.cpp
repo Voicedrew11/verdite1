@@ -3,6 +3,7 @@
 #include <kf/platform/input.h>
 #include <kf/game/player.h>
 #include <verdite/agent.h>
+#include <verdite/crash.h>
 #include <SDL3/SDL.h>
 #include <array>
 #include <cstdio>
@@ -27,16 +28,6 @@ constexpr std::array<ButtonName, 14> button_names = {{
     {"attack", Button::Attack}, {"magic", Button::Magic}, {"confirm", Button::Confirm},
     {"back", Button::Back}, {"start", Button::Start}, {"select", Button::Select}}};
 
-const char *context_name(InputContext context) {
-    switch (context) {
-    case InputContext::Opening: return "opening";
-    case InputContext::Gameplay: return "gameplay";
-    case InputContext::Menu: return "menu";
-    case InputContext::Scripted: return "scripted";
-    }
-    return "unknown";
-}
-
 std::string snapshot() {
     const InputContext context = host_input_context();
     const auto &vitals = player_state.vitals;
@@ -44,7 +35,7 @@ std::string snapshot() {
     // The player block is filled by a new game or a load; the opening leaves it stale.
     const bool in_game = context != InputContext::Opening && vitals.maximum_hp != 0;
     int n = std::snprintf(text, sizeof text, "{\"context\":\"%s\",\"inGame\":%s,\"clockMs\":%llu,\"frames\":%llu",
-        context_name(context), in_game ? "true" : "false",
+        input_context_name(context), in_game ? "true" : "false",
         static_cast<unsigned long long>(host_clock_ns() / ns_per_ms),
         static_cast<unsigned long long>(host_frames_presented()));
     if (in_game) {
@@ -88,6 +79,7 @@ std::string do_press(verdite::AgentArgs args) {
             return verdite::json_error("holdMs must be 1..600000");
     }
     press = {buttons, host_clock_ns() + static_cast<std::uint64_t>(hold) * ns_per_ms};
+    verdite::crash_event("agent: press " + names + " " + std::to_string(hold) + " ms");
     return verdite::json_ok("press", ",\"button\":" + verdite::json_quote(names) + ",\"holdMs\":" + std::to_string(hold));
 }
 

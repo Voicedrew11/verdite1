@@ -10,6 +10,7 @@
 #include <kf/platform/language_runtime.h>
 #include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
+#include <verdite/crash.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -457,5 +458,25 @@ void apply_control_settings() {
 
 void apply_audio_settings() {
     sound_set_output_gain(static_cast<float>(current.volume) / 100.0f);
+}
+
+void crash_write_settings(verdite::CrashWriter &out) {
+    const Settings &s = current;
+    out.line("classic mode", s.classic);
+    out.line("tick rate", s.tick_rate);
+    out.line("frame rate", s.frame_rate);
+    out.line("enemy turn percent", static_cast<std::int64_t>(s.enemy_turn * 100.0f));
+    out.line("enemy track", s.enemy_track);
+    out.line("fix ceiling fall", s.fix_ceiling_fall);
+    out.line("auto keys", s.auto_keys);
+    out.line("aspect", s.aspect);
+    out.line("resolution", s.resolution);
+    out.line("antialiasing", s.antialiasing);
+    out.line("depth buffer", s.depth_buffer);
+    out.line("pixel lighting", s.pixel_lighting);
+    out.line("ambient occlusion", s.ambient_occlusion);
+    out.line("fog", s.fog);
+    out.line("enhanced distance", s.enhanced_distance);
+    out.line("language", s.language);
 }
 }

@@ -15,6 +15,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
 option(KF_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
+# Crash reports name the shipped binary's stack from its own line tables (libverdite/crash.h).
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  add_compile_options(-gline-tables-only)
+endif()
 if(KF_SANITIZE)
   add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
@@ -263,8 +267,16 @@ target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
-target_include_directories(kf_host PUBLIC ${KF_INCLUDES})
+target_sources(kf_host PRIVATE port/platform/crash.cpp)
+target_include_directories(kf_host PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)
+# The build a crash report names: the version, the commit (checked on every build) and the type.
+add_custom_target(kf_build_info
+  COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${CMAKE_BINARY_DIR}/generated/build_info.h
+    -P ${CMAKE_SOURCE_DIR}/cmake/build_info.cmake
+  BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/build_info.h" VERBATIM)
+add_dependencies(kf_host kf_build_info)
+target_compile_definitions(kf_host PRIVATE KF_VERSION="${PROJECT_VERSION}" KF_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 target_compile_options(kf_host PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(kings-field port/platform/entry.cpp ${KF_GAME_SOURCES})

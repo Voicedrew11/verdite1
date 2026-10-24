@@ -22,6 +22,15 @@ constexpr bool button_pressed(u32 current, u32 previous, Button button)
 }
 
 enum class InputContext : u8 { Opening, Gameplay, Menu, Scripted };
+constexpr const char *input_context_name(InputContext context) {
+    switch (context) {
+    case InputContext::Opening: return "opening";
+    case InputContext::Gameplay: return "gameplay";
+    case InputContext::Menu: return "menu";
+    case InputContext::Scripted: return "scripted";
+    }
+    return "unknown";
+}
 struct LookDelta { s32 yaw, pitch; };
 
 u32 host_read_buttons();

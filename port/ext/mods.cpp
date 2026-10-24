@@ -5,6 +5,7 @@
 #include "internal.hpp"
 #include <cJSON.h>
 #include <imgui.h>
+#include <verdite/crash.h>
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -440,6 +441,7 @@ void unload(Mod &mod, bool call_unload = true);
 void fail(Mod &mod, const std::string &message) {
     mod.error = message;
     mod_log(mod, "error: " + message);
+    verdite::crash_event("mod " + mod.id + " failed: " + message);
     unload(mod, false);
 }
 

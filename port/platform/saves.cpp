@@ -1,10 +1,13 @@
 #include <kf/platform/saves.h>
 
 #include <SDL3/SDL.h>
+#include <verdite/crash.h>
 
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -152,6 +155,24 @@ static bool valid_slot(SaveSlot slot) {
     return slot >= SaveSlot::First && slot <= SaveSlot::Quick;
 }
 
+#ifndef __EMSCRIPTEN__
+// Each crash report carries a copy of the saves, so it can be replayed from the player's state.
+static void keep_saves_in_crash_reports(const char *directory) {
+    for (const SaveSlot slot : {SaveSlot::First, SaveSlot::Second, SaveSlot::Third, SaveSlot::Quick}) {
+#if defined(_WIN32)
+        const std::string name = slot == SaveSlot::Quick ? "quicksave.kfs" : "slot" + std::to_string(static_cast<unsigned>(slot)) + ".kfs";
+#else
+        const std::string name = "slot" + std::to_string(static_cast<unsigned>(slot)) + ".kfs";
+#endif
+        verdite::crash_keep_file((std::filesystem::path(reinterpret_cast<const char8_t *>(directory)) / name).string());
+    }
+}
+#endif
+
+static void note_save(const char *what, SaveSlot slot) {
+    verdite::crash_event(std::string(what) + " save slot " + std::to_string(static_cast<unsigned>(slot)));
+}
+
 bool save_storage_start(const char *directory) {
 #ifdef __EMSCRIPTEN__
     // Browser slots are file byte streams in a dedicated IndexedDB transaction.
@@ -161,8 +182,10 @@ bool save_storage_start(const char *directory) {
     char *default_path = directory ? nullptr : SDL_GetPrefPath("KingsField", "SLPS00017");
     const char *path = directory ? directory : default_path;
     std::error_code error;
-    if (path && std::filesystem::is_directory(std::filesystem::path(reinterpret_cast<const char8_t *>(path)), error))
+    if (path && std::filesystem::is_directory(std::filesystem::path(reinterpret_cast<const char8_t *>(path)), error)) {
         save_directory = new std::filesystem::path(std::filesystem::path(reinterpret_cast<const char8_t *>(path)));
+        keep_saves_in_crash_reports(path);
+    }
     SDL_free(default_path);
     if (!save_directory)
         std::fprintf(stderr, "Cannot open save directory: %s\n", directory ? directory : "default user storage");
@@ -172,6 +195,8 @@ bool save_storage_start(const char *directory) {
     const char *path = directory ? directory : default_path;
     if (path)
         save_directory = ::open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (save_directory >= 0)
+        keep_saves_in_crash_reports(path);
     SDL_free(default_path);
     // SDL may have created several preference directories. Publish their parent
     // entries before claiming that a first save in the leaf can be durable.
@@ -203,6 +228,7 @@ SaveFileResult save_file_read(SaveSlot slot, u8 *data, std::size_t capacity, std
         *size = 0;
     if (!valid_slot(slot) || !data || !size || !capacity || capacity > save_file_capacity)
         return SaveFileResult::Invalid;
+    note_save("reading", slot);
 #ifdef __EMSCRIPTEN__
     unsigned loaded = 0;
     const auto result = static_cast<SaveFileResult>(browser_save_read(static_cast<int>(slot), data, capacity, &loaded));
@@ -271,6 +297,7 @@ SaveFileResult save_file_read(SaveSlot slot, u8 *data, std::size_t capacity, std
 SaveFileResult save_file_write(SaveSlot slot, const u8 *data, std::size_t size) {
     if (!valid_slot(slot) || !data || !size || size > save_file_capacity)
         return SaveFileResult::Invalid;
+    note_save("writing", slot);
 #ifdef __EMSCRIPTEN__
     return static_cast<SaveFileResult>(browser_save_write(static_cast<int>(slot), data, size));
 #elif defined(_WIN32)

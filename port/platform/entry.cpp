@@ -7,6 +7,8 @@
 #include <kf/platform/language_runtime.h>
 #include <kf/platform/translation_ppf.h>
 #include <kf/platform/saves.h>
+#include <kf/platform/crash.h>
+#include <verdite/crash.h>
 #if KF_EXT
 #include <kf/ext/ext.h>
 #endif
@@ -256,9 +258,13 @@ bool prepare_release_data(const char *dropped) {
 }
 
 int main(int argc, char **argv) {
+    // Started again by a crash to name the stack in its report.
+    if (const auto code = verdite::crash_helper_run(argc, argv))
+        return *code;
 #if KF_EXT
     kf::ext::console_start();
 #endif
+    kf::crash_start();
     const char *data = nullptr;
     const char *saves = nullptr;
     const char *disc = nullptr;
