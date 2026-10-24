@@ -220,7 +220,7 @@ if(TARGET zstd::libzstd_shared)
   target_compile_definitions(chdr-static PRIVATE CHDR_SYSTEM_ZSTD)
 endif()
 add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp libverdite/src/crash_helper.cpp
-  libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/places.cpp libverdite/src/stick.cpp)
+  libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/memory_card.cpp libverdite/src/places.cpp libverdite/src/stick.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
 target_link_libraries(verdite PUBLIC Threads::Threads PRIVATE cpptrace::cpptrace chdr-static)
 if(WIN32)
@@ -233,7 +233,7 @@ find_package(doctest CONFIG QUIET)
 if(doctest_FOUND)
   enable_testing()
   add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp libverdite/tests/crash.cpp
-    libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp
+    libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp libverdite/tests/memory_card.cpp
     libverdite/tests/places.cpp libverdite/tests/stick.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_DATA="${CMAKE_SOURCE_DIR}/libverdite/tests/data")
