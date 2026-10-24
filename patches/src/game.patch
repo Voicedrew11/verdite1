@@ -530,10 +530,38 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..3eb27e70cda87cacd07d4f474c30cfde
  }
  
 diff --git a/src/game/geometry_render.cpp b/src/game/geometry_render.cpp
-index f58a963c5e5f732356d11c95dce5045be497cba6..4204c2cb8606a052fb29d2afcd365edc5f65d64d 100644
+index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe77d71614b 100644
 --- a/src/game/geometry_render.cpp
 +++ b/src/game/geometry_render.cpp
-@@ -106,6 +106,12 @@ void render_hud_models(const MATRIX *lights)
+@@ -78,6 +78,18 @@ void render_weapon(void)
+     }
+ }
+ 
++// PC extension (widescreen, HUD at the screen edges): how far a HUD record at
++// screen X moves, out by the widescreen columns towards its side of the middle.
++// By X rather than the middle, so a gauge whose width changes never changes side.
++static s32 render_hud_edge_shift(s32 x)
++{
++    if (!kf::render_hud_at_edges) {
++        return 0;
++    }
++    const s32 columns = kf::host_extra_columns();
++    return x < kf::render_width / 2 ? -columns : columns;
++}
++
+ void render_hud_models(const MATRIX *lights)
+ {
+     MATRIX model;
+@@ -91,7 +103,7 @@ void render_hud_models(const MATRIX *lights)
+     scale.vz = KF_FIXED12_ONE;
+     entry = hud_models.data();
+     while (entry->state == KF_SPRITE_VISIBLE) {
+-        model.t[0] = entry->translation_x;
++        model.t[0] = entry->translation_x + render_hud_edge_shift(entry->translation_x);
+         model.t[1] = entry->translation_y;
+         model.t[2] = entry->translation_z;
+         kf::matrix_set_rotation_xyz(entry->rotation, model);
+@@ -106,6 +118,12 @@ void render_hud_models(const MATRIX *lights)
                  entry->animation_clip, entry->animation_phase,
                  object.vertex_count)) {
              tmd_transform_vertices(tmd_context(), object.vertex_count, &model);
@@ -546,14 +574,17 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4204c2cb8606a052fb29d2afcd365edc
              render_enqueue_tmd(0, 0, lights);
          }
          entry++;
-@@ -123,10 +129,14 @@ void render_hud_sprites(KfHudSprite *table)
+@@ -123,10 +141,16 @@ void render_hud_sprites(KfHudSprite *table)
      }
      do {
          if (entry->state == KF_SPRITE_VISIBLE) {
+-            render_screen_sprite(&entry->sprite);
 +            // PC extension (frame smoothing): the bars fill between updates.
 +            kf::render_entity_tag = static_cast<u16>(KF_RENDER_TAG_HUD_SPRITES + (entry - table));
 +            kf::render_entity_identity = 0;
-             render_screen_sprite(&entry->sprite);
++            KfSpriteQuad sprite = entry->sprite;
++            sprite.x = static_cast<u16>(sprite.x + render_hud_edge_shift(entry->sprite.x));
++            render_screen_sprite(&sprite);
          }
          entry++;
      } while (entry->state != KF_SPRITE_END);

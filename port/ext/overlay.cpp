@@ -335,7 +335,14 @@ void draw_settings_window() {
             apply_render_settings();
             changed = true;
         }
-        ImGui::SetItemTooltip("Wider aspects show more of the world to each side.\nMenus and the HUD stay in the centre.");
+        ImGui::SetItemTooltip("Wider aspects show more of the world to each side.\nMenus stay in the centre.");
+        ImGui::BeginDisabled(s.aspect == "4:3");
+        if (ImGui::Checkbox("HUD at the screen edges", &s.hud_at_edges)) {
+            apply_render_settings();
+            changed = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("In a wider aspect, the gauges move out to the left edge and the compass to the right,\nas far from the edges as in 4:3. Off: the HUD stays in its 4:3 box.");
         const char *resolution_labels[] = {"Native (match window)", "1x (320x240)", "2x", "3x", "4x", "5x", "6x", "7x", "8x"};
         int resolution_index = std::clamp(s.resolution, 0, 8);
         if (ImGui::Combo("Resolution", &resolution_index, resolution_labels, 9)) {

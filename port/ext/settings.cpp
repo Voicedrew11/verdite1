@@ -140,6 +140,7 @@ void settings_load() {
     current.vsync = read_bool(display, "vsync", current.vsync);
     current.show_fps = read_bool(display, "show_fps", current.show_fps);
     current.aspect = read_string(display, "aspect", current.aspect);
+    current.hud_at_edges = read_bool(display, "hud_at_edges", current.hud_at_edges);
     current.resolution = static_cast<int>(read_number(display, "resolution", current.resolution));
     current.subpixel = read_bool(display, "subpixel", current.subpixel);
     current.perspective = read_bool(display, "perspective", current.perspective);
@@ -224,6 +225,7 @@ void settings_save_if_dirty() {
     write_value(display, "vsync", cJSON_CreateBool(current.vsync));
     write_value(display, "show_fps", cJSON_CreateBool(current.show_fps));
     write_value(display, "aspect", cJSON_CreateString(current.aspect.c_str()));
+    write_value(display, "hud_at_edges", cJSON_CreateBool(current.hud_at_edges));
     write_value(display, "resolution", cJSON_CreateNumber(current.resolution));
     write_value(display, "subpixel", cJSON_CreateBool(current.subpixel));
     write_value(display, "perspective", cJSON_CreateBool(current.perspective));
@@ -316,6 +318,7 @@ const Settings &effective_settings() {
     static Settings classic;
     classic = current;
     classic.aspect = "4:3";
+    classic.hud_at_edges = false;
     classic.resolution = 1;           // 320x240, scaled up to the window
     classic.subpixel = false;         // polygon wiggle
     classic.perspective = false;      // affine texture warping
@@ -388,6 +391,7 @@ void apply_render_settings() {
     render_subpixel = e.subpixel;
     render_perspective = e.perspective;
     render_detailed_map = e.detailed_map;
+    render_hud_at_edges = e.hud_at_edges;
     render_dynamic_lights = e.dynamic_lights;
     render_light_occlusion = e.light_occlusion;
     render_supersample = e.antialiasing == 2 ? 2 : e.antialiasing == 3 ? 3 : 1;

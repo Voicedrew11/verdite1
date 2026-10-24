@@ -250,7 +250,7 @@ branch point.
 
 | Verdite1 | kf1-enhanced | to check |
 |---|---|---|
-| widescreen, HUD/menu/tints widened, cull cone | aspect setting | the widened cull, tints at the edge |
+| widescreen, HUD/menu/tints widened, cull cone | aspect setting | the widened cull, tints at the edge. HUD at the screen edges done (2026-10-24): Display > *HUD at the screen edges* (`display.hud_at_edges`, on; off in Classic mode, dimmed at 4:3). `render_hud_sprites` and `render_hud_models` draw each record moved out by the widescreen columns, left of X 160 to the left and right of it to the right, by X and not the middle because the gauges change width; the records are not touched, so nothing needs putting back. At 16:9 (54 columns) the gauges land at -23, the attack/magic gauges at 75, the panels at -44 and 40, the compass dial at 323 and its needle at 340, as main's RAM dump had them. Not judged by eye |
 | frame pacing, view/model/HUD smoothing | frame smoothing | carried on Vulkan: models, poses, the arm, HUD bars, item display, compass (`RENDERER_PLAN.md`) |
 | no dither, true colour, perspective, sub-pixel | `true_color`, `perspective`, `subpixel` | |
 | Z-buffer | `depth_buffer` | |

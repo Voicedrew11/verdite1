@@ -41,6 +41,7 @@ inline u32 render_entity_identity = 0;
 inline bool render_subpixel = true;     // keep projected positions' fractions
 inline bool render_perspective = true;  // perspective-correct textures and shading
 inline bool render_detailed_map = true; // distant map cells drawn with their near (detailed) meshes
+inline bool render_hud_at_edges = true; // in widescreen, the HUD moved out to the picture's edges
 inline bool render_dynamic_lights = false; // per-pixel point lights from torches and spells
 inline bool render_light_occlusion = false; // walls (solid map cells) block dynamic light
 inline int render_supersample = 1;         // render N x N pixels per output pixel and average

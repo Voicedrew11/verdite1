@@ -33,6 +33,7 @@ struct Settings {
     bool show_fps = false;
     int volume = 100;           // percent
     std::string aspect = "4:3"; // "4:3", "16:9", "16:10", "21:9" or "window"
+    bool hud_at_edges = true;   // in widescreen, the HUD at the picture's edges, not in its 4:3 box
     int resolution = 0;         // 0: native (match the window), else whole multiple of 320x240
     bool subpixel = true;       // smooth vertex positions (less polygon jitter)
     bool perspective = true;    // perspective-correct textures (no warping)
