@@ -12,11 +12,12 @@ here is its own commit.
 | file | what |
 |---|---|
 | `include/verdite/agent.h`, `src/agent.cpp` | the state beacon (a JSON line a second on stdout) and the command channel (TCP on 127.0.0.1, one request per line, one JSON line back, run on the game thread) |
+| `include/verdite/crash.h`, `src/crash.cpp`, `src/crash_helper.cpp` | crash reports: on a fatal signal, an unhandled Windows exception or `std::terminate`, a report with the stack named to functions and lines (captured raw in the handler, named by the same binary started again as a helper, with cpptrace), the game's sections, the last events and copies of its files; soft faults the game survives (`docs/CRASH_REPORTS.md`) |
 | `include/verdite/discord.h`, `src/discord.cpp` | Discord Rich Presence over the Discord app's local IPC (Unix socket or named pipe), no SDK: a thread of its own connects, retries and sends the latest activity, paced so a counting value does not flood Discord |
 | `include/verdite/places.h`, `src/places.cpp` | place names over a floor's grid of cells, spread from named seed cells through walkable cells |
 
 Tests are in `tests/` (doctest), built as `verdite_tests` when doctest is installed (the nix
 shell has it) and run with `ctest --preset linux`. New logic here comes with tests.
 
-Built as the `verdite` CMake target (`libverdite.a`); it needs only the C++
-standard library and the platform's sockets (and, for Discord, its named pipes).
+Built as the `verdite` CMake target (`libverdite.a`); it needs the C++ standard library, the
+platform's sockets (and, for Discord, its named pipes) and cpptrace (crash reports).

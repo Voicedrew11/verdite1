@@ -31,7 +31,7 @@
     in {
       devShells.${system}.default = (pkgs.mkShell.override { stdenv = pkgs.clangStdenv; }) {
         # clang-tools first: its clang-tidy is wrapped to find the standard headers
-        packages = with pkgs; [ clang-tools cmake ninja pkg-config clang python3 git sdl3 doctest
+        packages = with pkgs; [ clang-tools cmake ninja pkg-config clang python3 git sdl3 doctest cpptrace
           vulkan-headers vulkan-memory-allocator vulkan-volk vk-bootstrap glslang vulkan-validation-layers ];
         KF_ENGLISH_PATCH = "${englishDelta}";
         # The game loads the host's Vulkan loader and drivers (run-linux.sh); the layers come from here.

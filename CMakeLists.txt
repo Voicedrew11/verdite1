@@ -190,10 +190,19 @@ target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)
 
 # libverdite: nothing from the game on its include path.
 find_package(Threads REQUIRED)
-add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/discord.cpp libverdite/src/places.cpp
-  libverdite/src/stick.cpp)
+# cpptrace names a crash report's stack (libverdite/src/crash*.cpp). The nix shell has it; Windows
+# builds it from its release, with libdwarf, to read the line tables the exe carries.
+find_package(cpptrace CONFIG QUIET)
+if(NOT cpptrace_FOUND)
+  include(FetchContent)
+  FetchContent_Declare(cpptrace GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
+    GIT_TAG v1.0.4 GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(cpptrace)
+endif()
+add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp libverdite/src/crash_helper.cpp
+  libverdite/src/discord.cpp libverdite/src/places.cpp libverdite/src/stick.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
-target_link_libraries(verdite PUBLIC Threads::Threads)
+target_link_libraries(verdite PUBLIC Threads::Threads PRIVATE cpptrace::cpptrace)
 if(WIN32)
   target_link_libraries(verdite PUBLIC ws2_32)
 endif()
@@ -203,7 +212,8 @@ target_compile_options(verdite PRIVATE -Wall -Wextra -Wpedantic -Werror)
 find_package(doctest CONFIG QUIET)
 if(doctest_FOUND)
   enable_testing()
-  add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp libverdite/tests/discord.cpp
+  add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp libverdite/tests/crash.cpp
+    libverdite/tests/discord.cpp
     libverdite/tests/places.cpp libverdite/tests/stick.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
