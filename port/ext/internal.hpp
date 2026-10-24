@@ -1,5 +1,6 @@
 #pragma once
 #include <kf/ext/ext.h>
+#include <kf/platform/analog.h>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -60,6 +61,7 @@ struct Settings {
     bool run_toggle = false;    // Shift toggles running instead of being held
     int look_limit = 70;        // degrees the camera may tilt up or down (original: 17)
     std::string pad_layout = "west";   // gamepad face buttons: "west" (the US game's) or "jp"
+    AnalogOptions analog;       // the sticks, saved as "analog"
     std::string language = "en";   // game language when both are set up: "en" or "ja"
     bool auto_keys = true;          // interacting with a lock uses a carried key
     bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump

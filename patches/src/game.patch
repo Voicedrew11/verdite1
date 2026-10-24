@@ -1196,10 +1196,18 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..f5823ec3c0a5cdad674bd09554386c36
  
  void player_increment_physical_power_training(void)
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index a30de1fda381916646ae0970dd325eae46425ce7..0c98a7f2a79c3d82c2bccd055a23fd17e65af702 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..bf2e802457c7d5b64f406180186b48f699ae22e0 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
-@@ -349,6 +349,9 @@ static void player_update_movement_input(u32 input)
+@@ -7,6 +7,7 @@
+ #include <kf/game/session.h>
+ #include <kf/lib/null.h>
+ #include <kf/lib/random.h>
++#include <kf/platform/analog.h>
+ #include <kf/platform/input.h>
+ 
+ #include <algorithm>
+@@ -349,9 +350,17 @@ static void player_update_movement_input(u32 input)
          player_turn_step_limit = PLAYER_SLOWED_TURN_LIMIT;
      } else {
          player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
@@ -1208,8 +1216,54 @@ index a30de1fda381916646ae0970dd325eae46425ce7..0c98a7f2a79c3d82c2bccd055a23fd17
 +        }
          player_turn_step_limit = PLAYER_NORMAL_TURN_LIMIT;
      }
-     if (input & kf::Button::Up) {
-@@ -455,11 +458,11 @@ static void player_update_view_input(u32 input)
+-    if (input & kf::Button::Up) {
++    // PC extension (analog sticks): a pushed stick sets each velocity; centred,
++    // the D-pad's branches run as before, so a released stick decays as a button does.
++    if (const auto stick = kf::host_analog_velocity(kf::AnalogAxis::Forward, motion.forward_velocity,
++            {player_movement_velocity_limit, player_movement_velocity_limit >> PLAYER_FORWARD_ACCEL_SHIFT})) {
++        motion.forward_velocity = *stick;
++    } else if (input & kf::Button::Up) {
+         forward = motion.forward_velocity
+             + (player_movement_velocity_limit >> PLAYER_FORWARD_ACCEL_SHIFT);
+         motion.forward_velocity = std::min<s32>(forward, player_movement_velocity_limit);
+@@ -368,7 +377,10 @@ static void player_update_movement_input(u32 input)
+             player_movement_velocity_limit >> PLAYER_FORWARD_DECEL_SHIFT;
+         motion.forward_velocity = std::min<s32>(motion.forward_velocity, 0);
+     }
+-    if (input & kf::Button::StrafeRight) {
++    if (const auto stick = kf::host_analog_velocity(kf::AnalogAxis::Strafe, motion.strafe_velocity,
++            {player_movement_velocity_limit, player_movement_velocity_limit >> PLAYER_STRAFE_ACCEL_DECEL_SHIFT})) {
++        motion.strafe_velocity = *stick;
++    } else if (input & kf::Button::StrafeRight) {
+         strafe = motion.strafe_velocity
+             + (player_movement_velocity_limit >> PLAYER_STRAFE_ACCEL_DECEL_SHIFT);
+         motion.strafe_velocity = std::min<s32>(strafe, player_movement_velocity_limit);
+@@ -424,7 +436,11 @@ static void player_update_view_input(u32 input)
+ {
+     auto &motion = player_state.motion_state;
+ 
+-    if (input & kf::Button::Left) {
++    // PC extension (analog sticks): as in player_update_movement_input.
++    if (const auto stick = kf::host_analog_velocity(kf::AnalogAxis::Turn, motion.yaw_step,
++            {player_turn_step_limit, player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT})) {
++        motion.yaw_step = *stick;
++    } else if (input & kf::Button::Left) {
+         motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
+         motion.yaw_step = std::min<s32>(motion.yaw_step, player_turn_step_limit);
+     } else if (input & kf::Button::Right) {
+@@ -439,7 +455,10 @@ static void player_update_view_input(u32 input)
+     }
+     player_state.camera_rotation.vy =
+         (player_state.camera_rotation.vy + motion.yaw_step) & KF_ANGLE_WRAP_MASK;
+-    if (input & kf::Button::LookDown) {
++    if (const auto stick = kf::host_analog_velocity(kf::AnalogAxis::Pitch, motion.pitch_step,
++            {PLAYER_PITCH_STEP_LIMIT, PLAYER_PITCH_ACCEL})) {
++        motion.pitch_step = *stick;
++    } else if (input & kf::Button::LookDown) {
+         motion.pitch_step += PLAYER_PITCH_ACCEL;
+         motion.pitch_step = std::min<s32>(motion.pitch_step, PLAYER_PITCH_STEP_LIMIT);
+     } else if (input & kf::Button::LookUp) {
+@@ -455,11 +474,11 @@ static void player_update_view_input(u32 input)
      if (motion.pitch_step > 0) {
          player_state.camera_rotation.vx += motion.pitch_step;
          player_state.camera_rotation.vx =
@@ -1223,7 +1277,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..0c98a7f2a79c3d82c2bccd055a23fd17
      }
  }
  
-@@ -642,6 +645,42 @@ static void player_restore_loaded_game()
+@@ -642,6 +661,42 @@ static void player_restore_loaded_game()
      player_select_magic(player_state.selected_magic_id);
  }
  
@@ -1266,7 +1320,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..0c98a7f2a79c3d82c2bccd055a23fd17
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -649,6 +688,18 @@ void player_update(void)
+@@ -649,6 +704,18 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -1285,7 +1339,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..0c98a7f2a79c3d82c2bccd055a23fd17
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
          player_death_update();
          return;
-@@ -662,7 +713,7 @@ void player_update(void)
+@@ -662,7 +729,7 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,

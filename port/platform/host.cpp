@@ -3,6 +3,7 @@
 #include <kf/platform/saves.h>
 #include <kf/audio/sound.h>
 #include <kf/platform/input.h>
+#include <kf/platform/analog.h>
 #include <kf/platform/controls.h>
 #include <kf/platform/agent.h>
 #include <kf/renderer/backend.h>
@@ -151,6 +152,30 @@ static void bind_inputs() {
     input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_LEFTY * 2}, Action::backward);
     input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_LEFT_TRIGGER * 2}, Action::look_up);
     input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_RIGHT_TRIGGER * 2}, Action::look_down);
+}
+
+static bool left_stick_axis(SDL_GamepadAxis axis) {
+    return axis == SDL_GAMEPAD_AXIS_LEFTX || axis == SDL_GAMEPAD_AXIS_LEFTY;
+}
+
+// An axis pushed past the deadzone holds its direction's binding, except the
+// left stick during gameplay while analog movement drives the player.
+static void push_axis_buttons(SDL_GamepadAxis axis, Sint16 value) {
+    const bool analog = left_stick_axis(axis) && host.input_context == InputContext::Gameplay
+        && host_analog_owns_left_stick();
+    input_button(&host.input, {InputDevice::gamepad, gamepad_axis_control_first + axis * 2u},
+                 !analog && value < -gamepad_axis_deadzone);
+    input_button(&host.input, {InputDevice::gamepad, gamepad_axis_positive_first + axis * 2u},
+                 !analog && value > gamepad_axis_deadzone);
+}
+
+// After the context or the analog options change, a held left stick moves to
+// or from its D-pad bindings without waiting for its next motion.
+static void refresh_left_stick_buttons() {
+    if (!host.focused || !host.gamepad)
+        return;
+    for (const auto axis : {SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY})
+        push_axis_buttons(axis, SDL_GetGamepadAxis(host.gamepad, axis));
 }
 
 static void open_available_gamepad() {
@@ -369,10 +394,8 @@ static void process_event(const SDL_Event &event) {
             input_button(&host.input, {InputDevice::gamepad, event.gbutton.button}, event.gbutton.down);
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-        if (host.focused && host.gamepad && event.gaxis.which == SDL_GetGamepadID(host.gamepad)) {
-            input_button(&host.input, {InputDevice::gamepad, gamepad_axis_control_first + event.gaxis.axis * 2u}, event.gaxis.value < -gamepad_axis_deadzone);
-            input_button(&host.input, {InputDevice::gamepad, gamepad_axis_positive_first + event.gaxis.axis * 2u}, event.gaxis.value > gamepad_axis_deadzone);
-        }
+        if (host.focused && host.gamepad && event.gaxis.which == SDL_GetGamepadID(host.gamepad))
+            push_axis_buttons(static_cast<SDL_GamepadAxis>(event.gaxis.axis), event.gaxis.value);
         break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         if (host.focused) {
@@ -701,6 +724,7 @@ InputContext host_set_input_context(InputContext context) {
     if (context == InputContext::Opening)
         host.resume_mouse_capture = false;
     host.input_context = context;
+    refresh_left_stick_buttons();
     host.input.pending.look_x = host.input.pending.look_y = 0;
     host.look_remainder_x = host.look_remainder_y = 0;
     if ((context == InputContext::Opening || context == InputContext::Menu) && host.window)
@@ -717,6 +741,29 @@ InputContext host_set_input_context(InputContext context) {
 }
 
 InputContext host_input_context() { return host.input_context; }
+
+RawSticks host_gamepad_sticks() {
+    if (host.overlay_was_open)
+        return {};
+    // KF_TEST_STICK=<lx>,<ly>,<rx>,<ry>: held sticks for automated tests, read once.
+    static const std::optional<RawSticks> test_sticks = []() -> std::optional<RawSticks> {
+        const char *text = std::getenv("KF_TEST_STICK");
+        RawSticks sticks{};
+        if (!text || std::sscanf(text, "%f,%f,%f,%f", &sticks.left_x, &sticks.left_y, &sticks.right_x, &sticks.right_y) != 4)
+            return std::nullopt;
+        return sticks;
+    }();
+    if (test_sticks)
+        return *test_sticks;
+    if (!host.focused || !host.gamepad)
+        return {};
+    constexpr float full_deflection = 32767.0f;
+    const auto axis = [](SDL_GamepadAxis which) {
+        return std::clamp(static_cast<float>(SDL_GetGamepadAxis(host.gamepad, which)) / full_deflection, -1.0f, 1.0f);
+    };
+    return {axis(SDL_GAMEPAD_AXIS_LEFTX), axis(SDL_GAMEPAD_AXIS_LEFTY), axis(SDL_GAMEPAD_AXIS_RIGHTX),
+            axis(SDL_GAMEPAD_AXIS_RIGHTY)};
+}
 
 void host_set_pad_layout(PadLayout layout) {
     host.pad_layout = layout;

@@ -211,6 +211,59 @@ void language_settings_page(bool &changed) {
     }
 }
 
+// Controls > Analog sticks. Every change applies at once.
+void analog_settings_section(AnalogOptions &a, bool &changed) {
+    bool edited = false;
+    ImGui::SeparatorText("Analog sticks");
+    edited |= ImGui::Checkbox("Analog sticks", &a.enabled);
+    ImGui::SetItemTooltip("Walk, turn and look with the gamepad's sticks, at up to the D-pad's speed.\n"
+                          "Off, the left stick works as the D-pad.");
+    ImGui::BeginDisabled(!a.enabled);
+    const char *modes[] = {"Twin stick", "One stick (tank)"};
+    int mode = a.mode == StickMode::Tank ? 1 : 0;
+    if (ImGui::Combo("Sticks", &mode, modes, 2)) {
+        a.mode = mode == 1 ? StickMode::Tank : StickMode::Twin;
+        edited = true;
+    }
+    ImGui::SetItemTooltip("Twin stick: the left stick walks and strafes, the right turns and looks.\n"
+                          "One stick: the left stick walks and turns; L1 and R1 strafe.");
+    edited |= ImGui::Checkbox("Left stick moves", &a.move);
+    ImGui::BeginDisabled(a.mode == StickMode::Tank);
+    edited |= ImGui::Checkbox("Right stick turns and looks", &a.look);
+    ImGui::EndDisabled();
+    edited |= slider_input("Turn speed", &a.turn_sensitivity, 0.1f, 2.0f, "%.2fx", 0.05f);
+    edited |= slider_input("Look up/down speed", &a.pitch_sensitivity, 0.1f, 2.0f, "%.2fx", 0.05f);
+    edited |= slider_input("Walk speed", &a.move_sensitivity, 0.1f, 1.0f, "%.2fx", 0.05f);
+    ImGui::SetItemTooltip("1x at full deflection is the D-pad's speed (and running's while running).");
+    edited |= slider_input("Look deadzone", &a.look_deadzone, 0.0f, 0.5f, "%.2f", 0.01f);
+    edited |= slider_input("Move deadzone", &a.move_deadzone, 0.0f, 0.5f, "%.2f", 0.01f);
+    edited |= slider_input("Look curve", &a.look_curve, 0.5f, 3.0f, "%.2f", 0.05f);
+    ImGui::SetItemTooltip("Above 1: finer control near the centre, the full speed still at the edge.");
+    edited |= slider_input("Move curve", &a.move_curve, 0.5f, 3.0f, "%.2f", 0.05f);
+    edited |= ImGui::Checkbox("Ease the look in and out", &a.ease);
+    ImGui::SetItemTooltip("The view speeds up and slows down by the game's own step, as with the D-pad.\n"
+                          "Off, it follows the stick directly.");
+    edited |= ImGui::Checkbox("Stop the look on release", &a.instant_stop);
+    edited |= ImGui::Checkbox("Look acceleration", &a.look_acceleration);
+    ImGui::SetItemTooltip("Holding the right stick near the edge turns faster over time.\n"
+                          "Off by default: the fights are built on how fast the player can turn.");
+    ImGui::BeginDisabled(!a.look_acceleration);
+    edited |= slider_input("Acceleration up to", &a.acceleration_max, 1.0f, 4.0f, "%.1fx", 0.1f);
+    edited |= slider_input("Acceleration time", &a.acceleration_time_s, 0.1f, 2.0f, "%.2f s", 0.05f);
+    ImGui::EndDisabled();
+    edited |= ImGui::Checkbox("Invert turn", &a.invert_turn);
+    ImGui::SameLine();
+    edited |= ImGui::Checkbox("Invert look up/down", &a.invert_pitch);
+    edited |= ImGui::Checkbox("Invert strafe", &a.invert_strafe);
+    ImGui::SameLine();
+    edited |= ImGui::Checkbox("Invert walk", &a.invert_forward);
+    ImGui::EndDisabled();
+    if (edited) {
+        apply_control_settings();
+        changed = true;
+    }
+}
+
 void draw_settings_window() {
     ImGui::SetNextWindowSize(ImVec2(560, 420), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Settings", &show_settings)) {
@@ -505,6 +558,9 @@ void draw_settings_window() {
                               "Triangle uses the item or spell.\n"
                               "Japanese: Triangle attacks, Circle examines and confirms, Cross opens the menu and backs out,\n"
                               "Square uses the item or spell.");
+        ImGui::BeginDisabled(s.classic);
+        analog_settings_section(s.analog, changed);
+        ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::TextWrapped("Current bindings (rebinding is planned):");
         const char *rows[][2] = {

@@ -5,6 +5,7 @@
 #include <kf/audio/sound.h>
 #include <kf/lib/map_types.h>
 #include <kf/platform/host.h>
+#include <kf/platform/analog.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
 #include <kf/renderer/frontend.h>
@@ -36,6 +37,35 @@ std::string read_string(const cJSON *object, const char *key, const std::string 
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
     return cJSON_IsString(item) ? item->valuestring : fallback;
 }
+float read_float(const cJSON *object, const char *key, float fallback) {
+    return static_cast<float>(read_number(object, key, fallback));
+}
+
+AnalogOptions read_analog(const cJSON *analog, AnalogOptions o) {
+    o.enabled = read_bool(analog, "enabled", o.enabled);
+    o.look = read_bool(analog, "look", o.look);
+    o.move = read_bool(analog, "move", o.move);
+    o.mode = read_string(analog, "sticks", o.mode == StickMode::Tank ? "tank" : "twin") == "tank" ? StickMode::Tank
+                                                                                                   : StickMode::Twin;
+    o.turn_sensitivity = read_float(analog, "turn_sensitivity", o.turn_sensitivity);
+    o.pitch_sensitivity = read_float(analog, "pitch_sensitivity", o.pitch_sensitivity);
+    o.move_sensitivity = read_float(analog, "move_sensitivity", o.move_sensitivity);
+    o.look_deadzone = read_float(analog, "look_deadzone", o.look_deadzone);
+    o.move_deadzone = read_float(analog, "move_deadzone", o.move_deadzone);
+    o.look_curve = read_float(analog, "look_curve", o.look_curve);
+    o.move_curve = read_float(analog, "move_curve", o.move_curve);
+    o.invert_turn = read_bool(analog, "invert_turn", o.invert_turn);
+    o.invert_pitch = read_bool(analog, "invert_pitch", o.invert_pitch);
+    o.invert_strafe = read_bool(analog, "invert_strafe", o.invert_strafe);
+    o.invert_forward = read_bool(analog, "invert_forward", o.invert_forward);
+    o.ease = read_bool(analog, "ease", o.ease);
+    o.instant_stop = read_bool(analog, "instant_stop", o.instant_stop);
+    o.look_acceleration = read_bool(analog, "look_acceleration", o.look_acceleration);
+    o.acceleration_max = read_float(analog, "acceleration_max", o.acceleration_max);
+    o.acceleration_time_s = read_float(analog, "acceleration_time_s", o.acceleration_time_s);
+    return o;
+}
+
 cJSON *object_entry(cJSON *parent, const char *key) {
     cJSON *item = cJSON_GetObjectItemCaseSensitive(parent, key);
     if (!cJSON_IsObject(item)) {
@@ -49,6 +79,29 @@ void write_value(cJSON *parent, const char *key, cJSON *value) {
         cJSON_ReplaceItemInObjectCaseSensitive(parent, key, value);
     else
         cJSON_AddItemToObject(parent, key, value);
+}
+
+void write_analog(cJSON *analog, const AnalogOptions &o) {
+    write_value(analog, "enabled", cJSON_CreateBool(o.enabled));
+    write_value(analog, "look", cJSON_CreateBool(o.look));
+    write_value(analog, "move", cJSON_CreateBool(o.move));
+    write_value(analog, "sticks", cJSON_CreateString(o.mode == StickMode::Tank ? "tank" : "twin"));
+    write_value(analog, "turn_sensitivity", cJSON_CreateNumber(o.turn_sensitivity));
+    write_value(analog, "pitch_sensitivity", cJSON_CreateNumber(o.pitch_sensitivity));
+    write_value(analog, "move_sensitivity", cJSON_CreateNumber(o.move_sensitivity));
+    write_value(analog, "look_deadzone", cJSON_CreateNumber(o.look_deadzone));
+    write_value(analog, "move_deadzone", cJSON_CreateNumber(o.move_deadzone));
+    write_value(analog, "look_curve", cJSON_CreateNumber(o.look_curve));
+    write_value(analog, "move_curve", cJSON_CreateNumber(o.move_curve));
+    write_value(analog, "invert_turn", cJSON_CreateBool(o.invert_turn));
+    write_value(analog, "invert_pitch", cJSON_CreateBool(o.invert_pitch));
+    write_value(analog, "invert_strafe", cJSON_CreateBool(o.invert_strafe));
+    write_value(analog, "invert_forward", cJSON_CreateBool(o.invert_forward));
+    write_value(analog, "ease", cJSON_CreateBool(o.ease));
+    write_value(analog, "instant_stop", cJSON_CreateBool(o.instant_stop));
+    write_value(analog, "look_acceleration", cJSON_CreateBool(o.look_acceleration));
+    write_value(analog, "acceleration_max", cJSON_CreateNumber(o.acceleration_max));
+    write_value(analog, "acceleration_time_s", cJSON_CreateNumber(o.acceleration_time_s));
 }
 }
 
@@ -118,6 +171,7 @@ void settings_load() {
     current.run_toggle = read_bool(controls, "run_toggle", current.run_toggle);
     current.look_limit = static_cast<int>(read_number(controls, "look_limit", current.look_limit));
     current.pad_layout = read_string(controls, "pad_layout", current.pad_layout);
+    current.analog = read_analog(cJSON_GetObjectItemCaseSensitive(document, "analog"), current.analog);
     const cJSON *gameplay = cJSON_GetObjectItemCaseSensitive(document, "gameplay");
     current.language = read_string(gameplay, "language", current.language);
     current.classic = read_bool(gameplay, "classic_mode", current.classic);
@@ -197,6 +251,7 @@ void settings_save_if_dirty() {
     write_value(controls, "run_toggle", cJSON_CreateBool(current.run_toggle));
     write_value(controls, "look_limit", cJSON_CreateNumber(current.look_limit));
     write_value(controls, "pad_layout", cJSON_CreateString(current.pad_layout.c_str()));
+    write_analog(object_entry(document, "analog"), current.analog);
     cJSON *gameplay = object_entry(document, "gameplay");
     write_value(gameplay, "language", cJSON_CreateString(current.language.c_str()));
     write_value(gameplay, "classic_mode", cJSON_CreateBool(current.classic));
@@ -275,6 +330,7 @@ const Settings &effective_settings() {
     classic.run_speed = 100;          // no run key
     classic.look_limit = 17;
     classic.auto_keys = false;
+    classic.analog.enabled = false;   // the game came out before the DualShock
     classic.fix_ceiling_fall = false;
     classic.fix_spatial_panning = false;
     classic.minimap = false;
@@ -375,6 +431,7 @@ void apply_control_settings() {
     fix_actor_ceiling_fall = e.fix_ceiling_fall;
     auto_use_keys = e.auto_keys;
     host_set_pad_layout(e.pad_layout == "jp" ? PadLayout::Japanese : PadLayout::West);
+    host_set_analog_options(e.analog);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.
     world_update_vblanks = std::clamp(60 / std::max(e.tick_rate, 1), 2, 5);
     Language language;

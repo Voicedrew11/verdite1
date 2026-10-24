@@ -210,6 +210,13 @@ KF_AGENT=1 KF_SHELL=1 nix develop -c build/linux/kings-field --data data/en \
   --saves /tmp/kf-saves --headless --turbo --skip-intro
 ```
 
+`KF_TEST_STICK=<lx>,<ly>,<rx>,<ry>` holds the gamepad's sticks (-1..1, right
+and down positive) with no pad connected. Checked 2026-10-23 from `--skip-intro`,
+at 15 updates a second: the right stick full right turns 28 an update (the
+D-pad's rate), half right 8.5 (the curve predicts 8.45), full down pitches 10 an
+update (L2/R2's limit); the left stick forward walks about 181 an update, and
+centred sticks move nothing.
+
 `--skip-intro` starts a new game straight away (area 1, HP 30/30, at
 (31000, -11500, 4000)). Checked 2026-10-23: `press up 5000` walks to z 22302,
 `press right 1000` turns, `quit` exits. Use a separate `--saves` folder; the
@@ -260,7 +267,7 @@ branch point.
 | Discord Rich Presence, 41 place names | `DiscordIpc.cs`, `DiscordPresence.cs`, `DiscordPlaces.cs` | done (2026-10-23): `verdite/discord.h` and `verdite/places.h` in libverdite, the text and place table in `port/ext/discord.cpp`; the walkable cells come from the automap snapshot, the menu, shop and save screens from `kf/platform/screen.h`; no "Loading", which was guessed from a stalled tick |
 | render distance + fade, models past the game's reach | `RenderDistance.cs`, `CullCone.cs` | the decomp's stencil/cell loop can be widened directly |
 | distance fog, anisotropic, mipmaps, enhance distance | `KF1_FOG`, `KF1_ANISO`, `KF1_MIPMAPS`, `KF1_ENHANCEDIST` | done on Vulkan (2026-10-23, `RENDERER_PLAN.md`); enhanced distance leaves dynamic lights alone |
-| analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | kf1-enhanced has one deadzone |
+| analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | done (2026-10-23): the shaping in libverdite (`verdite/stick.h`), the options and per-axis state in `port/platform/analog.cpp`, and a line in each of the player update's four velocity branches asking it for the velocity (`host_analog_velocity`), so nothing is pre-loaded to steer the game's own branch; centred, the D-pad's branches run. Twin stick by default; off in Classic mode. Not carried: `AnalogProbe` |
 | pad layout `jp`/`west` | `PadLayout.cs` | done (2026-10-23): two face-button tables in `port/platform/host.cpp`, chosen by `controls.pad_layout` (West by default); only the gamepad's bindings change, so the keyboard, mouse and agent need no subtraction |
 | rumble, gyro aim | Verdite Core `Rumble.cs`, `GyroAim.cs` | SDL3 has both |
 | debug: noclip, god mode, infinite MP, peaceful, speed, warp | `Menu/`, `Warp.cs` | candidates for a Lua mod |
@@ -299,7 +306,7 @@ The branch is pushed to `origin/decomp`.
 4. The renderer frontend and the Vulkan backend, in the order of
    [RENDERER_PLAN.md](RENDERER_PLAN.md). That also fixes the frame-rate gap
    ([RUNTIME.md](RUNTIME.md)).
-5. User-facing features, cheapest first: ~~Discord~~ (done 2026-10-23), ~~pad layout~~ (done 2026-10-23), analog tuning,
+5. User-facing features, cheapest first: ~~Discord~~ (done 2026-10-23), ~~pad layout~~ (done 2026-10-23), ~~analog tuning~~ (done 2026-10-23),
    debug mod (on the modding API's first two steps), render distance, picture options.
 6. Extract the shared parts into the C++ core subtree. Then KF2 on the same
    core once its US decomp and port layer exist; KF3's decomp starts.
