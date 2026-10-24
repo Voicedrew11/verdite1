@@ -144,6 +144,12 @@ void settings_load() {
     current.ui_scale = static_cast<float>(read_number(overlay, "ui_scale", current.ui_scale));
     current.ui_font = read_string(overlay, "font", current.ui_font);
     current.item_descriptions = read_bool(overlay, "item_descriptions", current.item_descriptions);
+    const cJSON *discord = cJSON_GetObjectItemCaseSensitive(document, "discord");
+    current.discord = read_bool(discord, "enabled", current.discord);
+    current.discord_level = read_bool(discord, "level", current.discord_level);
+    current.discord_location = read_bool(discord, "location", current.discord_location);
+    current.discord_vitals = read_bool(discord, "vitals", current.discord_vitals);
+    current.discord_exp = read_bool(discord, "exp", current.discord_exp);
 }
 
 void settings_mark_dirty() {
@@ -217,6 +223,12 @@ void settings_save_if_dirty() {
     write_value(overlay, "ui_scale", cJSON_CreateNumber(current.ui_scale));
     write_value(overlay, "font", cJSON_CreateString(current.ui_font.c_str()));
     write_value(overlay, "item_descriptions", cJSON_CreateBool(current.item_descriptions));
+    cJSON *discord = object_entry(document, "discord");
+    write_value(discord, "enabled", cJSON_CreateBool(current.discord));
+    write_value(discord, "level", cJSON_CreateBool(current.discord_level));
+    write_value(discord, "location", cJSON_CreateBool(current.discord_location));
+    write_value(discord, "vitals", cJSON_CreateBool(current.discord_vitals));
+    write_value(discord, "exp", cJSON_CreateBool(current.discord_exp));
     char *text = cJSON_Print(document);
     if (!text)
         return;

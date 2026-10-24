@@ -537,6 +537,7 @@ void draw_settings_window() {
             apply_style();
             changed = true;
         }
+        discord_settings_section(changed);
     }
     ImGui::EndChild();
     if (changed)
@@ -720,6 +721,7 @@ bool start(SDL_Window *handle, OverlayRenderer renderer, SDL_GLContext context) 
     std::printf("[overlay] ready - press F1 for settings, mods and console. User folder: %s\n",
                 user_dir().string().c_str());
     mods_start();
+    discord_start();
     fps_started = SDL_GetTicks();
     return true;
 }
@@ -728,6 +730,7 @@ void shutdown() {
     if (!running)
         return;
     mods_shutdown();
+    discord_stop();
     settings_mark_dirty();
     settings_save_if_dirty();
     running = false;
@@ -777,6 +780,8 @@ void poll() {
     if (!running)
         return;
     mods_poll();
+    if (imgui)
+        discord_poll();
     settings_save_if_dirty();
 }
 

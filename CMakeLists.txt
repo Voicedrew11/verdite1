@@ -190,11 +190,11 @@ target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
 target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp ${KF_IMGUI}/backends/imgui_impl_opengl3.cpp
+  port/ext/item_text.cpp port/ext/discord.cpp ${KF_IMGUI}/backends/imgui_impl_opengl3.cpp
   ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1 PRIVATE IMGUI_IMPL_OPENGL_ES3)
-target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 ${KF_GLES_LIBRARY})
+target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 ${KF_GLES_LIBRARY} verdite)
 
 # libverdite: nothing from the game on its include path.
 find_package(Threads REQUIRED)
@@ -259,7 +259,7 @@ target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
-  port/platform/automap.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp
+  port/platform/automap.cpp port/platform/screen.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/renderer.cpp
   port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES})
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)

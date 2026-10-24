@@ -257,7 +257,7 @@ branch point.
 
 | Verdite1 | where on `main` | notes |
 |---|---|---|
-| Discord Rich Presence, 41 place names | `DiscordIpc.cs`, `DiscordPresence.cs`, `DiscordPlaces.cs` | IPC over the Discord socket; place table is data, carries as is; collision grid `0x80098018` is a named global in the decomp |
+| Discord Rich Presence, 41 place names | `DiscordIpc.cs`, `DiscordPresence.cs`, `DiscordPlaces.cs` | done (2026-10-23): `verdite/discord.h` and `verdite/places.h` in libverdite, the text and place table in `port/ext/discord.cpp`; the walkable cells come from the automap snapshot, the menu, shop and save screens from `kf/platform/screen.h`; no "Loading", which was guessed from a stalled tick |
 | render distance + fade, models past the game's reach | `RenderDistance.cs`, `CullCone.cs` | the decomp's stencil/cell loop can be widened directly |
 | distance fog, anisotropic, mipmaps, enhance distance | `KF1_FOG`, `KF1_ANISO`, `KF1_MIPMAPS`, `KF1_ENHANCEDIST` | done on Vulkan (2026-10-23, `RENDERER_PLAN.md`); enhanced distance leaves dynamic lights alone |
 | analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | kf1-enhanced has one deadzone |
@@ -298,7 +298,7 @@ The branch is pushed to `origin/decomp`.
 4. The renderer frontend and the Vulkan backend, in the order of
    [RENDERER_PLAN.md](RENDERER_PLAN.md). That also fixes the frame-rate gap
    ([RUNTIME.md](RUNTIME.md)).
-5. User-facing features, cheapest first: Discord, pad layout, analog tuning,
+5. User-facing features, cheapest first: ~~Discord~~ (done 2026-10-23), pad layout, analog tuning,
    debug mod, render distance, picture options.
 6. Extract the shared parts into the C++ core subtree. Then KF2 on the same
    core once its US decomp and port layer exist; KF3's decomp starts.

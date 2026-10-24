@@ -79,6 +79,11 @@ struct Settings {
     bool item_descriptions = true;  // what an item does, in the game's item menus
     std::string ui_font;        // empty: first available system font
     std::string renderer = "opengl";   // "opengl" or "vulkan"; applies on restart
+    bool discord = true;        // Discord Rich Presence, while Discord is running
+    bool discord_level = true;
+    bool discord_location = true;   // floor and place
+    bool discord_vitals = true;     // HP and MP
+    bool discord_exp = true;        // EXP to the next level
 };
 Settings &settings();
 // The settings in effect: the player's, or with Classic mode on, the player's
@@ -103,6 +108,12 @@ bool frontend_draws_overlay();
 std::string item_description(std::uint8_t id);
 // Draws the description of the item in the game menu's preview panel, if any.
 void item_description_draw();
+
+// ---- Discord Rich Presence ----
+void discord_start();     // reads KF_DISCORD and KF_DISCORD_APP
+void discord_poll();      // on every host poll: composes the presence and hands it over
+void discord_stop();      // takes the presence down
+void discord_settings_section(bool &changed);
 
 // ---- automap ----
 void automap_draw(int input_context);   // minimap or full map, before the overlay windows

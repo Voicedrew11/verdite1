@@ -579,6 +579,69 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..78266ab7cb4c93b2c113f200623a503c
                      break;
                  }
  
+diff --git a/src/game/menu.cpp b/src/game/menu.cpp
+index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..0c42a4cfbd6466bfe52a90fc0a2c79f12981bc18 100644
+--- a/src/game/menu.cpp
++++ b/src/game/menu.cpp
+@@ -3,6 +3,7 @@
+ #include <kf/game/menu.h>
+ #include <kf/lib/null.h>
+ #include <kf/platform/input.h>
++#include <kf/platform/screen.h>
+ 
+ #include <array>
+ #include <optional>
+@@ -15,6 +16,8 @@ static std::optional<KfObjectId> menu_use_item_panel(void);
+ void menu_save_confirm(void)
+ {
+     const auto input_context = kf::host_set_input_context(kf::InputContext::Menu);
++    // PC extension: which screen is up, for Discord (kf/platform/screen.h).
++    const auto screen = kf::host_set_screen(kf::GameScreen::Save);
+     s32 i;
+ 
+     i = 0;
+@@ -28,6 +31,7 @@ void menu_save_confirm(void)
+     menu_play_input_sound(MENU_SOUND_CURSOR);
+     kf::host_wait_buttons_released();
+     menu_save_panel();
++    kf::host_set_screen(screen);
+     kf::host_set_input_context(input_context);
+ }
+ 
+diff --git a/src/game/menu_enter_mode.cpp b/src/game/menu_enter_mode.cpp
+index 28e999d5981c92f4abd18339b757abc90913a319..8dafb49fe21ff6410a8f57186d1a36a9907df98d 100644
+--- a/src/game/menu_enter_mode.cpp
++++ b/src/game/menu_enter_mode.cpp
+@@ -1,6 +1,7 @@
+ #include <kf/platform/prelude.h>
+ #include <kf/game/game.h>
+ #include <kf/game/menu.h>
++#include <kf/platform/screen.h>
+ 
+ namespace {
+ class MenuSession {
+@@ -24,7 +25,11 @@ private:
+ KfMenuOutcome menu_open_root()
+ {
+     const MenuSession session;
+-    return menu_root();
++    // PC extension: which screen is up, for Discord (kf/platform/screen.h).
++    const auto screen = kf::host_set_screen(kf::GameScreen::Menu);
++    const auto outcome = menu_root();
++    kf::host_set_screen(screen);
++    return outcome;
+ }
+ 
+ KfMenuResult menu_confirm_pickup(KfObjectId item)
+@@ -36,5 +41,8 @@ KfMenuResult menu_confirm_pickup(KfObjectId item)
+ void menu_open_shop(KfItemStockBank bank)
+ {
+     const MenuSession session;
++    // PC extension: which screen is up, for Discord (kf/platform/screen.h).
++    const auto screen = kf::host_set_screen(kf::GameScreen::Shop);
+     shop_menu_root(bank);
++    kf::host_set_screen(screen);
+ }
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
 index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e076a71b41974c0fba2da66d781b0e2e071c938d 100644
 --- a/src/game/menu_runtime.cpp
