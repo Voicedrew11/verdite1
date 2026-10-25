@@ -1,15 +1,41 @@
 #include "vulkan_swapchain.h"
 
+#include <SDL3/SDL_vulkan.h>
 #include <VkBootstrap.h>
 
 #include <cstdio>
 
 namespace kf {
-VulkanSwapchain::~VulkanSwapchain() {
+VulkanSwapchain::~VulkanSwapchain() { drop_surface(); }
+
+void VulkanSwapchain::drop_surface() {
     vkDeviceWaitIdle(device_.device());
     release_images();
     if (swapchain_)
         vkDestroySwapchainKHR(device_.device(), swapchain_, nullptr);
+    swapchain_ = VK_NULL_HANDLE;
+    if (surface_)
+        SDL_Vulkan_DestroySurface(device_.instance(), surface_, nullptr);
+    surface_ = VK_NULL_HANDLE;
+    surface_lost_ = false;
+}
+
+// A new surface for the window, which the device's queue must present to.
+bool VulkanSwapchain::make_surface() {
+    if (!SDL_Vulkan_CreateSurface(window_, device_.instance(), nullptr, &surface_)) {
+        std::fprintf(stderr, "[vulkan] surface: %s\n", SDL_GetError());
+        surface_ = VK_NULL_HANDLE;
+        return false;
+    }
+    VkBool32 presents = VK_FALSE;
+    if (vkGetPhysicalDeviceSurfaceSupportKHR(device_.physical(), device_.queue_family(), surface_, &presents) !=
+            VK_SUCCESS ||
+        !presents) {
+        std::fprintf(stderr, "[vulkan] the graphics queue cannot present to the new surface\n");
+        drop_surface();
+        return false;
+    }
+    return true;
 }
 
 void VulkanSwapchain::release_images() {
@@ -24,10 +50,17 @@ void VulkanSwapchain::release_images() {
 }
 
 bool VulkanSwapchain::fit(uint32_t width, uint32_t height, PresentPacing pacing) {
+    if (surface_lost_)
+        drop_surface();
     if (swapchain_ && !stale_ && width == extent_.width && height == extent_.height && pacing == pacing_)
         return true;
+    if (!surface_) {
+        if (!make_surface())
+            return false;
+        std::printf("[vulkan] window surface made again\n");
+    }
     vkDeviceWaitIdle(device_.device());
-    vkb::SwapchainBuilder builder(device_.physical(), device_.device(), device_.surface(), device_.queue_family(),
+    vkb::SwapchainBuilder builder(device_.physical(), device_.device(), surface_, device_.queue_family(),
                                   device_.queue_family());
     // Unorm: the game's colours are not linear.
     builder.set_desired_format({VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
@@ -89,6 +122,7 @@ std::optional<SwapchainImage> VulkanSwapchain::acquire(VkSemaphore acquired) {
     if (result == VK_ERROR_OUT_OF_DATE_KHR || (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) ||
         index >= images_.size()) {
         stale_ = true;
+        surface_lost_ = result == VK_ERROR_SURFACE_LOST_KHR;
         return std::nullopt;
     }
     stale_ = result == VK_SUBOPTIMAL_KHR;
@@ -106,6 +140,8 @@ bool VulkanSwapchain::present(const SwapchainImage &image) {
     const VkResult result = vkQueuePresentKHR(device_.queue(), &info);
     if (result != VK_SUCCESS)
         stale_ = true;
+    if (result == VK_ERROR_SURFACE_LOST_KHR)
+        surface_lost_ = true;
     return result == VK_SUCCESS;
 }
 } // namespace kf

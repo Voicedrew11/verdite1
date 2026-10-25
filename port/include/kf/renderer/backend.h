@@ -196,14 +196,17 @@ public:
     // draws the overlay it is given. Stopped before the context is destroyed.
     [[nodiscard]] virtual bool start_overlay() = 0;
     virtual void stop_overlay() = 0;
+    // The window's drawing surface is being taken away (Android, going to the
+    // background): let go of everything that draws to it. The next present to a
+    // window makes it again.
+    virtual void release_window() = 0;
 };
 
 struct BackendStart {
     std::unique_ptr<RenderBackend> backend;   // null: error says why
     std::string error;
 };
-// Vulkan 1.1 with dynamic rendering where available; the window must have been
-// created with SDL_WINDOW_VULKAN. Validation layers on in debug builds.
+// Vulkan 1.1 core; the window must have been created with SDL_WINDOW_VULKAN. Validation layers on in debug builds.
 BackendStart make_vulkan_backend(SDL_Window *window);
 // Headless: keeps nothing, draws nothing.
 std::unique_ptr<RenderBackend> make_null_backend();

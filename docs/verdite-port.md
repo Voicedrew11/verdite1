@@ -254,6 +254,10 @@ centred sticks move nothing.
 `KF_TEST_CRASH=fault|abort|soft@<gameplay polls>` crashes the game once on purpose,
 to check crash reports ([CRASH_REPORTS.md](CRASH_REPORTS.md)).
 
+`KF_TEST_BACKGROUND=<polls>` sends Android's "going to the background" event once,
+on any platform: the renderer drops its surface and makes it again at the next
+present ([ANDROID_PLAN.md](ANDROID_PLAN.md) B2).
+
 `--skip-intro` starts a new game straight away (area 1, HP 30/30, at
 (31000, -11500, 4000)). Checked 2026-10-23: `press up 5000` walks to z 22302,
 `press right 1000` turns, `quit` exits. Use a separate `--saves` folder; the

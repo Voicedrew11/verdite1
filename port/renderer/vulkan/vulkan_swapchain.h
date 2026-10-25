@@ -1,8 +1,10 @@
 #ifndef KF_RENDERER_VULKAN_SWAPCHAIN_H
 #define KF_RENDERER_VULKAN_SWAPCHAIN_H
-// The window's swapchain: built for the window's size and the VSync choice,
-// rebuilt when either changes or the surface goes out of date. It also holds
-// the pass that draws over its images (the overlay), which keeps what is there.
+// The window's surface and swapchain: built for the window's size and the
+// VSync choice, rebuilt when either changes or the surface goes out of date.
+// The surface is dropped when the window's is taken away (Android, in the
+// background) or lost, and made again at the next fit. It also holds the pass
+// that draws over its images (the overlay), which keeps what is there.
 #include "vulkan_device.h"
 #include "vulkan_render_pass.h"
 
@@ -23,13 +25,18 @@ struct SwapchainImage {
 
 class VulkanSwapchain {
 public:
-    explicit VulkanSwapchain(const VulkanDevice &device) : device_(device) {}
+    // surface: VulkanDevice::take_surface, made for window; this owns it.
+    VulkanSwapchain(const VulkanDevice &device, SDL_Window *window, VkSurfaceKHR surface)
+        : device_(device), window_(window), surface_(surface) {}
     ~VulkanSwapchain();
     VulkanSwapchain(const VulkanSwapchain &) = delete;
     VulkanSwapchain &operator=(const VulkanSwapchain &) = delete;
 
-    // Builds or rebuilds it when the size or pacing differ from the current one.
+    // Builds or rebuilds it when the size or pacing differ from the current one,
+    // making the surface again first if it was dropped.
     [[nodiscard]] bool fit(uint32_t width, uint32_t height, PresentPacing pacing);
+    // Destroys the swapchain and the surface, waiting for the GPU first.
+    void drop_surface();
     // The next image, once acquired signals; none when the swapchain must be rebuilt.
     std::optional<SwapchainImage> acquire(VkSemaphore acquired);
     // False when the swapchain must be rebuilt.
@@ -42,7 +49,11 @@ public:
 
 private:
     void release_images();
+    bool make_surface();
     const VulkanDevice &device_;
+    SDL_Window *window_;
+    VkSurfaceKHR surface_;
+    bool surface_lost_ = false;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
     VkExtent2D extent_{0, 0};

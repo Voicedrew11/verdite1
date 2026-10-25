@@ -1,8 +1,9 @@
 #ifndef KF_RENDERER_VULKAN_DEVICE_H
 #define KF_RENDERER_VULKAN_DEVICE_H
 // The Vulkan instance, GPU, queue and memory allocator one backend draws with.
-// Vulkan 1.1 core and nothing more; validation layers when asked for. Without
-// a window it has no surface and draws offscreen only.
+// Vulkan 1.1 core and nothing more; validation layers when asked for. The GPU
+// is chosen for the window's first surface, which the swapchain then takes;
+// without a window it draws offscreen only.
 #include <volk.h>
 #include <vk_mem_alloc.h>
 
@@ -10,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 
 struct SDL_Window;
 
@@ -35,7 +37,8 @@ public:
     VkDevice device() const { return device_; }
     VkQueue queue() const { return queue_; }
     uint32_t queue_family() const { return queue_family_; }
-    VkSurfaceKHR surface() const { return surface_; }
+    // The surface the GPU was chosen for, once: the caller destroys it (SDL_Vulkan_DestroySurface).
+    VkSurfaceKHR take_surface() { return std::exchange(surface_, VK_NULL_HANDLE); }
     VmaAllocator allocator() const { return allocator_; }
     VkCommandPool command_pool() const { return command_pool_; }
     const std::string &name() const { return name_; }

@@ -157,7 +157,17 @@ The Retroid needs B1 first.
    validation on, and the game ran in a window with the overlay open and no
    validation error. Not yet run on a device without dynamic rendering. Each pass already has its load and store ops spelled out, so this is
    mechanical. `kf_vulkan_tests` runs on both paths on the desktop (llvmpipe and RADV).
-2. **Surface lifecycle.** The surface moves out of `VulkanDevice` into the
+2. **Surface lifecycle.** Done 2026-10-25, desktop-tested only: the device
+   chooses the GPU for the window's first surface and hands it to
+   `VulkanSwapchain`, which drops it (`RenderBackend::release_window`, from
+   `SDL_EVENT_WILL_ENTER_BACKGROUND` in the host) or on `SURFACE_LOST`, and makes
+   it again at the next present. SDL3 handles Android's pause on the game thread
+   inside its event pump and blocks only on the pump after, so the event is an
+   ordinary one; the surface holds its own reference to the native window, so a
+   present after Android takes it fails cleanly. `KF_TEST_BACKGROUND=60` sends
+   the event on the desktop: the log shows the surface released and made again,
+   the game goes on with the overlay open, and validation stays clean. The plan
+   was: The surface moves out of `VulkanDevice` into the
    swapchain's owner. The queue family is still checked against the first surface;
    a new surface is checked again. On `SDL_EVENT_WILL_ENTER_BACKGROUND`: wait
    idle, destroy the swapchain and surface. On `DID_ENTER_FOREGROUND`: create
@@ -240,7 +250,10 @@ touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has un
 
 ### D. Life on a phone
 
-- Save the settings on `WILL_ENTER_BACKGROUND`, not only on exit.
+- Save the settings on `WILL_ENTER_BACKGROUND`, not only on exit. Done 2026-10-25
+  (`settings_save` in the overlay's event handler). Exit had not saved either:
+  it marked the settings dirty and then asked for a debounced save, which waits
+  500 ms from the mark.
 - Audio pauses with focus (already) and with audio focus loss (a call).
 - Process death in the background loses the game since the last save point.
   See question 3.

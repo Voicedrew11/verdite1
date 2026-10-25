@@ -116,6 +116,12 @@ public:
     bool restore(const Image &picture) override;
     bool start_overlay() override;
     void stop_overlay() override;
+    void release_window() override {
+        if (!swapchain_)
+            return;
+        swapchain_->drop_surface();
+        std::printf("[vulkan] window surface released\n");
+    }
 
 private:
     VkFormat wanted_color_format() const;
@@ -214,7 +220,7 @@ bool VulkanBackend::start(std::string &error) {
     if (!format_supports(device_->physical(), depth_format_, depth_features))
         depth_format_ = VK_FORMAT_D16_UNORM;
     if (window_) {
-        swapchain_ = std::make_unique<VulkanSwapchain>(*device_);
+        swapchain_ = std::make_unique<VulkanSwapchain>(*device_, window_, device_->take_surface());
         downsample_ = Downsample::create(*device_);
         if (!downsample_) {
             error = "supersampling pipeline";

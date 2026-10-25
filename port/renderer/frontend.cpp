@@ -166,4 +166,9 @@ void renderer_overlay_stop() {
     if (frontend.backend)
         frontend.backend->stop_overlay();
 }
+
+void renderer_release_window() {
+    if (frontend.backend)
+        frontend.backend->release_window();
+}
 } // namespace kf

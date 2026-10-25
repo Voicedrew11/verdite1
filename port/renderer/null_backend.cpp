@@ -29,6 +29,7 @@ public:
     bool restore(const Image &picture) override { return picture.width == width_ && picture.height == height_; }
     bool start_overlay() override { return true; }
     void stop_overlay() override {}
+    void release_window() override {}
 
 private:
     u32 width_ = 0, height_ = 0;

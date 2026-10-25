@@ -351,6 +351,10 @@ static void process_event(const SDL_Event &event) {
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
         host_shutdown();
         std::exit(0);
+    case SDL_EVENT_WILL_ENTER_BACKGROUND:
+        // Android takes the window's surface while the app is in the background.
+        renderer_release_window();
+        break;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
         if (host.focused)
@@ -484,7 +488,21 @@ static void sync_overlay_input() {
 }
 #endif
 
+// KF_TEST_BACKGROUND=<polls>: sends Android's "going to the background" once, so the
+// surface is dropped and made again on any platform (docs/ANDROID_PLAN.md).
+static void test_background_poll() {
+    static const char *spec = std::getenv("KF_TEST_BACKGROUND");
+    static int polls;
+    if (!spec || ++polls != std::atoi(spec))
+        return;
+    SDL_Event event{};
+    event.type = SDL_EVENT_WILL_ENTER_BACKGROUND;
+    if (!SDL_PushEvent(&event))
+        std::fprintf(stderr, "KF_TEST_BACKGROUND: %s\n", SDL_GetError());
+}
+
 void host_poll() {
+    test_background_poll();
     // Only platform work runs here. In the browser each yield suspends the existing
     // game stack; event callbacks never enter a second gameplay call chain.
     for (;;) {

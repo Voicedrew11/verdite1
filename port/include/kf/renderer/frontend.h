@@ -191,6 +191,9 @@ std::optional<Image> renderer_capture();
 // The overlay's renderer: after Dear ImGui's context is made, before it is destroyed.
 [[nodiscard]] bool renderer_overlay_start();
 void renderer_overlay_stop();
+// The window's surface is going away (Android: SDL_EVENT_WILL_ENTER_BACKGROUND).
+// Presenting makes it again once the window is back.
+void renderer_release_window();
 } // namespace kf
 
 #endif // KF_RENDERER_FRONTEND_H
