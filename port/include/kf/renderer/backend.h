@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -206,8 +207,10 @@ struct BackendStart {
     std::unique_ptr<RenderBackend> backend;   // null: error says why
     std::string error;
 };
-// Vulkan 1.1 core; the window must have been created with SDL_WINDOW_VULKAN. Validation layers on in debug builds.
-BackendStart make_vulkan_backend(SDL_Window *window);
+// Vulkan 1.1 core; the window must have been created with SDL_WINDOW_VULKAN.
+// pipeline_cache_file keeps compiled pipelines between runs (empty: not kept),
+// which matters most on phones, whose drivers compile slowly. Validation layers on in debug builds.
+BackendStart make_vulkan_backend(SDL_Window *window, const std::filesystem::path &pipeline_cache_file);
 // Headless: keeps nothing, draws nothing.
 std::unique_ptr<RenderBackend> make_null_backend();
 } // namespace kf

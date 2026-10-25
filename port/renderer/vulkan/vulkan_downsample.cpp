@@ -64,7 +64,7 @@ std::unique_ptr<Downsample> Downsample::create(const VulkanDevice &device) {
     out->pass_ = RenderPass::create(handle, {picture_format, VK_FORMAT_UNDEFINED, ColorLoad::Discard});
     if (!out->pass_)
         return nullptr;
-    out->pipeline_ = create_fullscreen_pipeline(handle, out->layout_, downsample_frag, out->pass_);
+    out->pipeline_ = create_fullscreen_pipeline(device, out->layout_, downsample_frag, out->pass_);
     if (!out->pipeline_)
         return nullptr;
     return out;

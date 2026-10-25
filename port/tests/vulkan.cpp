@@ -13,6 +13,7 @@
 #include "vulkan_resources.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -743,8 +744,39 @@ TEST_CASE("vulkan: a floor reaching behind the camera is clipped at the shown ca
     CHECK(pixel(shown, 10, 10) == background);
 }
 
+TEST_CASE("vulkan: a saved pipeline cache is used only on the GPU and driver that made it") {
+    VkPhysicalDeviceProperties gpu{};
+    gpu.vendorID = 0x1002;
+    gpu.deviceID = 0x7550;
+    for (std::uint8_t i = 0; i < VK_UUID_SIZE; ++i)
+        gpu.pipelineCacheUUID[i] = i;
+    // VkPipelineCacheHeaderVersionOne, then a driver's own bytes.
+    std::vector<std::uint8_t> saved(32 + 8, 0xAB);
+    const std::array<std::uint32_t, 4> words = {32, VK_PIPELINE_CACHE_HEADER_VERSION_ONE, gpu.vendorID, gpu.deviceID};
+    std::memcpy(saved.data(), words.data(), sizeof words);
+    std::memcpy(saved.data() + 16, gpu.pipelineCacheUUID, VK_UUID_SIZE);
+    CHECK(pipeline_cache_fits(saved, gpu));
+
+    VkPhysicalDeviceProperties updated = gpu;
+    updated.pipelineCacheUUID[3] = 99;
+    CHECK_FALSE(pipeline_cache_fits(saved, updated));
+    VkPhysicalDeviceProperties other = gpu;
+    other.deviceID = 0x73bf;
+    CHECK_FALSE(pipeline_cache_fits(saved, other));
+    CHECK_FALSE(pipeline_cache_fits(std::span(saved).first(31), gpu));
+    std::vector<std::uint8_t> long_header = saved;
+    const std::uint32_t past_end = 41;
+    std::memcpy(long_header.data(), &past_end, sizeof past_end);
+    CHECK_FALSE(pipeline_cache_fits(long_header, gpu));
+    std::vector<std::uint8_t> version_two = saved;
+    const std::uint32_t two = 2;
+    std::memcpy(version_two.data() + 4, &two, sizeof two);
+    CHECK_FALSE(pipeline_cache_fits(version_two, gpu));
+    CHECK_FALSE(pipeline_cache_fits({}, gpu));
+}
+
 int main(int argc, char **argv) {
-    BackendStart started = make_vulkan_backend(nullptr);
+    BackendStart started = make_vulkan_backend(nullptr, {});
     if (!started.backend) {
         std::printf("skipped: %s\n", started.error.c_str());
         return 77;

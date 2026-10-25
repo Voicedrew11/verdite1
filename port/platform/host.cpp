@@ -209,7 +209,9 @@ static bool start_window() {
         std::fprintf(stderr, "[renderer] no Vulkan window: %s\n", SDL_GetError());
         return false;
     }
-    BackendStart started = make_vulkan_backend(host.window);
+    const auto &folder = user_folder();
+    BackendStart started =
+        make_vulkan_backend(host.window, folder.empty() ? std::filesystem::path{} : folder / "vulkan-pipelines.bin");
     if (started.backend && renderer_start(std::move(started.backend)))
         return true;
     std::fprintf(stderr, "[renderer] %s\n", started.error.empty() ? "Vulkan cannot draw" : started.error.c_str());

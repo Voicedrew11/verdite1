@@ -211,7 +211,12 @@ The Retroid needs B1 first.
    in the backend), temperature after 20 minutes, battery drawn. The Android
    defaults (scale, AO, supersampling off) come from that table.
 7. **Pipeline cache** saved to and loaded from the user folder, keyed by
-   driver version (`pipelineCacheUUID`).
+   driver version (`pipelineCacheUUID`). Done 2026-10-25: `vulkan-pipelines.bin`
+   in the user folder, read when the device is made and written when it is
+   destroyed; data whose header names another GPU or driver is dropped before the
+   driver sees it (`pipeline_cache_fits`, tested). Every pipeline and ImGui's go
+   through it. On the desktop it is 31 KB; RADV keeps its own disk cache, so the
+   gain is the phone's.
 8. **Tests on the device.** `kf_vulkan_tests` is a plain executable: it builds
    for Android and runs from `/data/local/tmp` over `adb shell`, offscreen, with
    validation on. Run on every test phone and the emulator.

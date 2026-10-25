@@ -62,8 +62,8 @@ VkSampler create_sampler(VkDevice device, VkFilter filter);
 // One triangle over the whole of a target of pass's format (fullscreen.vert),
 // drawn with fragment and no blending; viewport and scissor are dynamic.
 // VK_NULL_HANDLE on failure.
-VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, std::span<const uint32_t> fragment,
-                                      const RenderPass &pass);
+VkPipeline create_fullscreen_pipeline(const VulkanDevice &device, VkPipelineLayout layout,
+                                      std::span<const uint32_t> fragment, const RenderPass &pass);
 
 // Set 0 of every pipeline that draws faces: the texture pages through a
 // nearest sampler, the motions, the pages again through a trilinear one, and
@@ -89,8 +89,9 @@ public:
     WorldPipelines(Key, VkDevice device) : device_(device) {}
     // sets: the world set, then the occlusion set (vulkan_ambient_occlusion.h).
     // The pass they draw in keeps the colour target's contents. Null on failure.
-    static std::unique_ptr<WorldPipelines> create(VkDevice device, std::span<const VkDescriptorSetLayout> sets,
-                                                  VkFormat color, VkFormat depth);
+    static std::unique_ptr<WorldPipelines> create(const VulkanDevice &device,
+                                                  std::span<const VkDescriptorSetLayout> sets, VkFormat color,
+                                                  VkFormat depth);
     ~WorldPipelines();
     WorldPipelines(const WorldPipelines &) = delete;
     WorldPipelines &operator=(const WorldPipelines &) = delete;
@@ -104,6 +105,7 @@ public:
 private:
     VkPipeline build(PipelineKey key) const;
     VkDevice device_;
+    VkPipelineCache cache_ = VK_NULL_HANDLE;
     RenderPass pass_;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkShaderModule vertex_ = VK_NULL_HANDLE, fragment_ = VK_NULL_HANDLE;

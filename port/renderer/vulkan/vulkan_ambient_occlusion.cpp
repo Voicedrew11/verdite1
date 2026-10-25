@@ -96,8 +96,8 @@ std::unique_ptr<AmbientOcclusion> AmbientOcclusion::create(const VulkanDevice &d
     out->pass_ = RenderPass::create(handle, {occlusion_format, VK_FORMAT_UNDEFINED, ColorLoad::Discard});
     if (!out->pass_)
         return nullptr;
-    out->occlusion_pipeline_ = create_fullscreen_pipeline(handle, out->layout_, occlusion_frag, out->pass_);
-    out->blur_pipeline_ = create_fullscreen_pipeline(handle, out->layout_, occlusion_blur_frag, out->pass_);
+    out->occlusion_pipeline_ = create_fullscreen_pipeline(device, out->layout_, occlusion_frag, out->pass_);
+    out->blur_pipeline_ = create_fullscreen_pipeline(device, out->layout_, occlusion_blur_frag, out->pass_);
     if (!out->occlusion_pipeline_ || !out->blur_pipeline_)
         return nullptr;
 

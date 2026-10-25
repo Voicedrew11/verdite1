@@ -106,8 +106,9 @@ VkSampler create_sampler(VkDevice device, VkFilter filter) {
     return sampler;
 }
 
-VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, std::span<const uint32_t> fragment,
-                                      const RenderPass &pass) {
+VkPipeline create_fullscreen_pipeline(const VulkanDevice &owner, VkPipelineLayout layout,
+                                      std::span<const uint32_t> fragment, const RenderPass &pass) {
+    VkDevice device = owner.device();
     VkShaderModule vertex_module = create_shader_module(device, fullscreen_vert);
     VkShaderModule fragment_module = create_shader_module(device, fragment);
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -163,7 +164,7 @@ VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, 
         info.pDynamicState = &dynamic;
         info.layout = layout;
         info.renderPass = pass.handle();
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
+        if (vkCreateGraphicsPipelines(device, owner.pipeline_cache(), 1, &info, nullptr, &pipeline) != VK_SUCCESS)
             pipeline = VK_NULL_HANDLE;
     }
     if (vertex_module)
@@ -216,9 +217,12 @@ VkDescriptorSetLayout create_world_set_layout(VkDevice device) {
     return layout;
 }
 
-std::unique_ptr<WorldPipelines> WorldPipelines::create(VkDevice device, std::span<const VkDescriptorSetLayout> sets,
-                                                       VkFormat color, VkFormat depth) {
+std::unique_ptr<WorldPipelines> WorldPipelines::create(const VulkanDevice &owner,
+                                                       std::span<const VkDescriptorSetLayout> sets, VkFormat color,
+                                                       VkFormat depth) {
+    VkDevice device = owner.device();
     auto out = std::make_unique<WorldPipelines>(Key{}, device);
+    out->cache_ = owner.pipeline_cache();
     out->pass_ = RenderPass::create(device, {color, depth, ColorLoad::Keep});
     if (!out->pass_)
         return nullptr;
@@ -319,7 +323,7 @@ VkPipeline WorldPipelines::build(PipelineKey key) const {
     info.layout = layout_;
     info.renderPass = pass_.handle();
     VkPipeline pipeline = VK_NULL_HANDLE;
-    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
+    if (vkCreateGraphicsPipelines(device_, cache_, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
         return VK_NULL_HANDLE;
     return pipeline;
 }

@@ -275,7 +275,7 @@ bool VulkanBackend::make_target() {
         return false;
     if (!pipelines_ || pipelines_->color_format() != format) {
         const std::array<VkDescriptorSetLayout, 2> sets = {set_layout_, occlusion_->set_layout()};
-        auto made = WorldPipelines::create(device_->device(), sets, format, depth_format_);
+        auto made = WorldPipelines::create(*device_, sets, format, depth_format_);
         if (!made)
             return false;
         pipelines_ = std::move(made);
@@ -786,6 +786,7 @@ bool VulkanBackend::start_overlay() {
     info.Device = device_->device();
     info.QueueFamily = device_->queue_family();
     info.Queue = device_->queue();
+    info.PipelineCache = device_->pipeline_cache();
     info.DescriptorPoolSize = 16;
     info.MinImageCount = 2;
     info.ImageCount = std::max<uint32_t>(2, swapchain_->image_count());
@@ -941,8 +942,8 @@ bool VulkanBackend::restore(const Image &picture) {
 }
 } // namespace
 
-BackendStart make_vulkan_backend(SDL_Window *window) {
-    VulkanDeviceStart device = VulkanDevice::create(window);
+BackendStart make_vulkan_backend(SDL_Window *window, const std::filesystem::path &pipeline_cache_file) {
+    VulkanDeviceStart device = VulkanDevice::create(window, pipeline_cache_file);
     if (!device.device)
         return {nullptr, "Vulkan: " + device.error};
     auto backend = std::make_unique<VulkanBackend>(std::move(device.device), window);

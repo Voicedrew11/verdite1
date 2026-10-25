@@ -8,8 +8,11 @@
 #include <vk_mem_alloc.h>
 
 #include <atomic>
+#include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -27,7 +30,9 @@ public:
     explicit VulkanDevice(Key) {}
     // KF_VK_VALIDATION=1 turns on the validation layers (on by default in debug
     // builds); KF_VK_DEVICE=<name part> picks a GPU by name (llvmpipe, say).
-    static VulkanDeviceStart create(SDL_Window *window);
+    // pipeline_cache_file: where the compiled pipelines are kept between runs,
+    // read here and written when the device is destroyed; empty: not kept.
+    static VulkanDeviceStart create(SDL_Window *window, std::filesystem::path pipeline_cache_file = {});
     ~VulkanDevice();
     VulkanDevice(const VulkanDevice &) = delete;
     VulkanDevice &operator=(const VulkanDevice &) = delete;
@@ -41,6 +46,8 @@ public:
     VkSurfaceKHR take_surface() { return std::exchange(surface_, VK_NULL_HANDLE); }
     VmaAllocator allocator() const { return allocator_; }
     VkCommandPool command_pool() const { return command_pool_; }
+    // Every pipeline is made through it.
+    VkPipelineCache pipeline_cache() const { return pipeline_cache_; }
     const std::string &name() const { return name_; }
     // The most samples an anisotropic sampler may take; 1: the device has none.
     float max_anisotropy() const { return max_anisotropy_; }
@@ -67,7 +74,13 @@ private:
     std::string name_;
     float max_anisotropy_ = 1.0f;
     std::atomic<int> validation_errors_{0};
+    VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
+    std::filesystem::path pipeline_cache_file_;
 };
+
+// Whether saved pipeline cache data was made by this GPU and driver, by its
+// VkPipelineCacheHeaderVersionOne. Data that is not is never handed to the driver.
+bool pipeline_cache_fits(std::span<const std::uint8_t> data, const VkPhysicalDeviceProperties &gpu);
 
 struct VulkanDeviceStart {
     std::unique_ptr<VulkanDevice> device;   // null: error says why

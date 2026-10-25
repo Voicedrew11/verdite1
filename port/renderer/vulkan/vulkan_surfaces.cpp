@@ -9,7 +9,8 @@ namespace kf {
 namespace {
 constexpr VkFormat surface_format = VK_FORMAT_R32G32B32A32_SFLOAT;
 
-VkPipeline create_surface_pipeline(VkDevice device, VkPipelineLayout layout, const RenderPass &pass) {
+VkPipeline create_surface_pipeline(const VulkanDevice &owner, VkPipelineLayout layout, const RenderPass &pass) {
+    VkDevice device = owner.device();
     VkShaderModule vertex_module = create_shader_module(device, world_vert);
     VkShaderModule fragment_module = create_shader_module(device, surface_frag);
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -70,7 +71,7 @@ VkPipeline create_surface_pipeline(VkDevice device, VkPipelineLayout layout, con
         info.pDynamicState = &dynamic;
         info.layout = layout;
         info.renderPass = pass.handle();
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
+        if (vkCreateGraphicsPipelines(device, owner.pipeline_cache(), 1, &info, nullptr, &pipeline) != VK_SUCCESS)
             pipeline = VK_NULL_HANDLE;
     }
     if (vertex_module)
@@ -90,7 +91,7 @@ std::unique_ptr<SurfaceBuffer> SurfaceBuffer::create(const VulkanDevice &device,
     out->layout_ = create_face_pipeline_layout(handle, std::span(&world_set_layout, 1));
     if (!out->pass_ || !out->layout_)
         return nullptr;
-    out->pipeline_ = create_surface_pipeline(handle, out->layout_, out->pass_);
+    out->pipeline_ = create_surface_pipeline(device, out->layout_, out->pass_);
     if (!out->pipeline_)
         return nullptr;
     return out;

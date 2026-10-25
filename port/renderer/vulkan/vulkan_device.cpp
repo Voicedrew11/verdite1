@@ -4,9 +4,13 @@
 #include <VkBootstrap.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <system_error>
 #include <vector>
 
 namespace kf {
@@ -21,6 +25,44 @@ bool validation_wanted() {
 #endif
 }
 
+// A saved cache bigger than this is not read: the backend's pipelines take far less.
+constexpr std::uintmax_t pipeline_cache_limit_bytes = 64u << 20;
+// VkPipelineCacheHeaderVersionOne: size, version, vendor, device, UUID.
+constexpr std::size_t pipeline_cache_header_bytes = 16 + VK_UUID_SIZE;
+
+std::vector<std::uint8_t> read_pipeline_cache(const std::filesystem::path &file, const VkPhysicalDeviceProperties &gpu) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(file, error);
+    if (error || size > pipeline_cache_limit_bytes)
+        return {};
+    std::ifstream in(file, std::ios::binary);
+    std::vector<std::uint8_t> data{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    if (!in.eof() || !pipeline_cache_fits(data, gpu))
+        return {};
+    return data;
+}
+
+void write_pipeline_cache(VkDevice device, VkPipelineCache cache, const std::filesystem::path &file) {
+    std::size_t size = 0;
+    if (vkGetPipelineCacheData(device, cache, &size, nullptr) != VK_SUCCESS || size == 0)
+        return;
+    std::vector<std::uint8_t> data(size);
+    if (vkGetPipelineCacheData(device, cache, &size, data.data()) != VK_SUCCESS)
+        return;
+    auto temporary = file;
+    temporary += ".partial";
+    {
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(size));
+        if (!out)
+            return;
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, file, error);
+    if (error)
+        std::fprintf(stderr, "[vulkan] cannot keep the pipeline cache: %s\n", error.message().c_str());
+}
+
 std::vector<const char *> window_extensions(SDL_Window *window) {
     if (!window)
         return {};
@@ -31,6 +73,17 @@ std::vector<const char *> window_extensions(SDL_Window *window) {
     return {names, names + count};
 }
 } // namespace
+
+bool pipeline_cache_fits(std::span<const std::uint8_t> data, const VkPhysicalDeviceProperties &gpu) {
+    if (data.size() < pipeline_cache_header_bytes)
+        return false;
+    std::array<std::uint32_t, 4> words{};
+    std::memcpy(words.data(), data.data(), sizeof words);
+    const auto [header_bytes, version, vendor, device] = words;
+    return header_bytes >= pipeline_cache_header_bytes && header_bytes <= data.size() &&
+           version == VK_PIPELINE_CACHE_HEADER_VERSION_ONE && vendor == gpu.vendorID && device == gpu.deviceID &&
+           std::memcmp(data.data() + 16, gpu.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+}
 
 VKAPI_ATTR VkBool32 VKAPI_CALL VulkanDevice::on_validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT *data, void *self) {
@@ -43,7 +96,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanDevice::on_validation(VkDebugUtilsMessageSe
     return VK_FALSE;
 }
 
-VulkanDeviceStart VulkanDevice::create(SDL_Window *window) {
+VulkanDeviceStart VulkanDevice::create(SDL_Window *window, std::filesystem::path pipeline_cache_file) {
     if (volkInitialize() != VK_SUCCESS)
         return {nullptr, "no Vulkan loader (libvulkan.so.1)"};
     auto self = std::make_unique<VulkanDevice>(Key{});
@@ -132,12 +185,28 @@ VulkanDeviceStart VulkanDevice::create(SDL_Window *window) {
     pool_info.queueFamilyIndex = self->queue_family_;
     if (vkCreateCommandPool(self->device_, &pool_info, nullptr, &self->command_pool_) != VK_SUCCESS)
         return {nullptr, "command pool"};
+
+    const std::vector<std::uint8_t> saved = pipeline_cache_file.empty()
+                                                ? std::vector<std::uint8_t>{}
+                                                : read_pipeline_cache(pipeline_cache_file, chosen.properties);
+    VkPipelineCacheCreateInfo cache_info{};
+    cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    cache_info.initialDataSize = saved.size();
+    cache_info.pInitialData = saved.empty() ? nullptr : saved.data();
+    if (vkCreatePipelineCache(self->device_, &cache_info, nullptr, &self->pipeline_cache_) != VK_SUCCESS)
+        return {nullptr, "pipeline cache"};
+    self->pipeline_cache_file_ = std::move(pipeline_cache_file);
     return {std::move(self), {}};
 }
 
 VulkanDevice::~VulkanDevice() {
     if (device_) {
         vkDeviceWaitIdle(device_);
+        if (pipeline_cache_) {
+            if (!pipeline_cache_file_.empty())
+                write_pipeline_cache(device_, pipeline_cache_, pipeline_cache_file_);
+            vkDestroyPipelineCache(device_, pipeline_cache_, nullptr);
+        }
         if (command_pool_)
             vkDestroyCommandPool(device_, command_pool_, nullptr);
         if (allocator_)
