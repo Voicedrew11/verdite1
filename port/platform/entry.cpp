@@ -9,6 +9,7 @@
 #include <kf/platform/saves.h>
 #include <kf/platform/crash.h>
 #include <kf/platform/fuzz.h>
+#include <kf/platform/logcat.h>
 #include <kf/platform/user_folder.h>
 #include <verdite/crash.h>
 #if KF_EXT
@@ -293,6 +294,8 @@ bool prepare_release_data(const char *dropped) {
 }
 
 int main(int argc, char **argv) {
+    if (!kf::logcat_start())
+        std::fprintf(stderr, "Cannot send the game's output to logcat\n");
     // Started again by a crash to name the stack in its report.
     if (const auto code = verdite::crash_helper_run(argc, argv))
         return *code;

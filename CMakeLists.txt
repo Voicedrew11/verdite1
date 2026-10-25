@@ -14,6 +14,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # compile_commands.json, for clang-tidy (scripts/lint.py)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+# On Android the game is a shared library (libmain.so), and every static library goes into it.
+if(ANDROID)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 option(KF_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
 # Crash reports name the shipped binary's stack from its own line tables (libverdite/crash.h).
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -164,7 +168,24 @@ add_dependencies(kf_support kf_english_patch)
 target_compile_options(kf_support PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(kf_support PRIVATE verdite SDL3::SDL3)
 
-if(WIN32)
+# Android builds its libraries from the sources the android nix shell names (KF_*_SOURCE), the same
+# versions the desktop links; they would not be found as packages under the NDK's sysroot.
+if(ANDROID)
+  foreach(source KF_SDL3_SOURCE KF_VULKAN_HEADERS_SOURCE KF_VOLK_SOURCE KF_VMA_SOURCE KF_VK_BOOTSTRAP_SOURCE
+      KF_CPPTRACE_SOURCE)
+    if(NOT DEFINED ENV{${source}})
+      message(FATAL_ERROR "${source} is not set: configure Android in the android shell (nix develop .#android)")
+    endif()
+  endforeach()
+endif()
+
+if(ANDROID)
+  set(SDL_SHARED ON CACHE BOOL "" FORCE)
+  set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+  set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+  set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+  add_subdirectory($ENV{KF_SDL3_SOURCE} sdl3 EXCLUDE_FROM_ALL SYSTEM)
+elseif(WIN32)
   # Windows: the SDL3 MinGW development package is downloaded unless SDL3 is
   # already on CMAKE_PREFIX_PATH.
   find_package(SDL3 CONFIG QUIET)
@@ -209,8 +230,18 @@ target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)
 find_package(Threads REQUIRED)
 # cpptrace names a crash report's stack (libverdite/src/crash*.cpp). The nix shell has it; Windows
 # builds it from its release, with libdwarf, to read the line tables the exe carries.
-find_package(cpptrace CONFIG QUIET)
-if(NOT cpptrace_FOUND)
+if(ANDROID)
+  # No libdwarf on Android: symbols from the dynamic linker, the stack from the unwinder.
+  set(CPPTRACE_GET_SYMBOLS_WITH_LIBDL ON CACHE BOOL "" FORCE)
+  set(CPPTRACE_UNWIND_WITH_UNWIND ON CACHE BOOL "" FORCE)
+  set(CPPTRACE_DEMANGLE_WITH_CXXABI ON CACHE BOOL "" FORCE)
+  add_subdirectory($ENV{KF_CPPTRACE_SOURCE} cpptrace EXCLUDE_FROM_ALL SYSTEM)
+  # It names exception types with typeid; the rest of the build has no RTTI.
+  target_compile_options(cpptrace-lib PRIVATE -frtti)
+else()
+  find_package(cpptrace CONFIG QUIET)
+endif()
+if(NOT ANDROID AND NOT cpptrace_FOUND)
   include(FetchContent)
   FetchContent_Declare(cpptrace GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
     GIT_TAG v1.0.4 GIT_SHALLOW TRUE)
@@ -261,12 +292,24 @@ add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/textu
 target_link_libraries(kf_frontend PUBLIC kf_support)
 target_compile_options(kf_frontend PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-# The Vulkan backend: Vulkan 1.1 with dynamic rendering, through volk, VMA and vk-bootstrap. Its GLSL
-# shaders are compiled to SPIR-V and embedded as arrays (generated/shaders/<name>.h).
-find_package(VulkanHeaders CONFIG REQUIRED)
-find_package(volk CONFIG REQUIRED)
-find_package(VulkanMemoryAllocator CONFIG REQUIRED)
-find_package(vk-bootstrap CONFIG REQUIRED)
+# The Vulkan backend: Vulkan 1.1 core, through volk, VMA and vk-bootstrap. Its GLSL shaders are
+# compiled to SPIR-V and embedded as arrays (generated/shaders/<name>.h).
+if(ANDROID)
+  add_subdirectory($ENV{KF_VULKAN_HEADERS_SOURCE} vulkan-headers EXCLUDE_FROM_ALL SYSTEM)
+  set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
+  add_subdirectory($ENV{KF_VOLK_SOURCE} volk EXCLUDE_FROM_ALL SYSTEM)
+  target_link_libraries(volk PUBLIC Vulkan::Headers)
+  add_subdirectory($ENV{KF_VMA_SOURCE} vma EXCLUDE_FROM_ALL SYSTEM)
+  set(VK_BOOTSTRAP_TEST OFF CACHE BOOL "" FORCE)
+  set(VK_BOOTSTRAP_INSTALL OFF CACHE BOOL "" FORCE)
+  set(VK_BOOTSTRAP_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
+  add_subdirectory($ENV{KF_VK_BOOTSTRAP_SOURCE} vk-bootstrap EXCLUDE_FROM_ALL SYSTEM)
+else()
+  find_package(VulkanHeaders CONFIG REQUIRED)
+  find_package(volk CONFIG REQUIRED)
+  find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+  find_package(vk-bootstrap CONFIG REQUIRED)
+endif()
 find_program(KF_GLSLANG glslangValidator REQUIRED)
 set(KF_SHADER_DIR ${CMAKE_SOURCE_DIR}/port/renderer/vulkan/shaders)
 set(KF_SHADER_OUT ${CMAKE_BINARY_DIR}/generated/shaders)
@@ -297,9 +340,12 @@ target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/fuzz.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
-target_sources(kf_host PRIVATE port/platform/crash.cpp)
+target_sources(kf_host PRIVATE port/platform/crash.cpp port/platform/logcat.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)
+if(ANDROID)
+  target_link_libraries(kf_host PUBLIC log)
+endif()
 # The build a crash report names: the version, the commit (checked on every build) and the type.
 add_custom_target(kf_build_info
   COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${CMAKE_BINARY_DIR}/generated/build_info.h
@@ -309,9 +355,28 @@ add_dependencies(kf_host kf_build_info)
 target_compile_definitions(kf_host PRIVATE KF_VERSION="${PROJECT_VERSION}" KF_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 target_compile_options(kf_host PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-add_executable(verdite1 port/platform/entry.cpp ${KF_GAME_SOURCES})
+if(ANDROID)
+  # SDL's Java activity loads libSDL3.so and then libmain.so, and calls its SDL_main.
+  add_library(verdite1 SHARED port/platform/entry.cpp ${KF_GAME_SOURCES})
+  set_target_properties(verdite1 PROPERTIES OUTPUT_NAME main)
+else()
+  add_executable(verdite1 port/platform/entry.cpp ${KF_GAME_SOURCES})
+endif()
 target_link_libraries(verdite1 PRIVATE kf_host)
 target_compile_options(verdite1 PRIVATE -Wall -Wextra)
+if(ANDROID)
+  # The libraries the APK carries, where android/app/build.gradle picks them up: jni/<abi>/.
+  set(KF_JNI_DIR ${CMAKE_BINARY_DIR}/jni/${ANDROID_ABI})
+  # The NDK keeps each ABI's C++ runtime under its target triple.
+  set(KF_TRIPLE_arm64-v8a aarch64-linux-android)
+  set(KF_TRIPLE_x86_64 x86_64-linux-android)
+  set(KF_CXX_RUNTIME ${ANDROID_TOOLCHAIN_ROOT}/sysroot/usr/lib/${KF_TRIPLE_${ANDROID_ABI}}/libc++_shared.so)
+  add_custom_command(TARGET verdite1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${KF_JNI_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:verdite1> $<TARGET_FILE:SDL3::SDL3-shared>
+      ${KF_CXX_RUNTIME} ${KF_JNI_DIR}
+    VERBATIM)
+endif()
 if(WIN32)
   # Static C++ runtime: the game folder needs only SDL3.dll beside the exe.
   target_link_options(verdite1 PRIVATE -static)

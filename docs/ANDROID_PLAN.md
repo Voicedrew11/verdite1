@@ -90,6 +90,31 @@ Surveyed 2026-10-25 against `port/renderer/vulkan/` and `port/platform/`.
 - **The picture tiers stay the same.** On Android the defaults are chosen by
   measuring on the user's phones (step B6), not guessed.
 
+## Building
+
+```
+nix develop .#android -c cmake --preset android-arm64
+nix develop .#android -c cmake --build --preset android-arm64
+nix develop .#android -c gradle -p android assembleDebug     # android/app/build/outputs/apk/debug/
+nix develop .#android -c gradle -p android installDebug      # onto the phone over adb
+adb logcat -s Verdite1                                        # what the game prints
+```
+
+The android shell has the SDK and NDK (Google's SDK licence accepted by the user, 2026-10-25) and
+names the sources of SDL3, volk, VMA, vk-bootstrap, Vulkan-Headers and cpptrace, which CMake
+builds for the target: the same versions the desktop links. The preset builds `libmain.so` (the
+game, which SDL's Java activity loads), `libSDL3.so` and `libc++_shared.so` into
+`build/android-arm64/jni/arm64-v8a/`; `android/` is Gradle's half, SDL's Java from the same source
+and `VerditeActivity`, which takes the command line from an intent extra:
+`adb shell am start -n io.github.voicedrew11.verdite1/.VerditeActivity -e args "--skip-intro"`.
+The `android-x86_64` preset is for the emulator. A local build embeds the English delta from the
+nix shell, as the desktop's does: not for distribution.
+
+The emulator (`nix develop .#android-emulator -c scripts/android-emulator.sh`) does not run on
+the user's machine (2026-10-25: emulator 36.5.11, Linux 7.2, KVM usable): its virtual CPUs stop
+answering within a minute of starting and it crashes, with the host GPU and with SwiftShader,
+windowed and headless. The phone is the test device until that changes.
+
 ## Steps
 
 Each step ends with something checked. Anything judged by eye is the user's.
@@ -112,6 +137,9 @@ Each step ends with something checked. Anything judged by eye is the user's.
    settings already live in the pref path.
 4. Arguments: `--skip-intro` and the rest from intent extras
    (`adb shell am start ... -e args "--skip-intro"`), for agents and tests.
+
+Progress 2026-10-25: A1 builds (the debug APK is about 10 MB), and A2's logcat forwarding
+(`kf/platform/logcat.h`) and crash helper (none on Android) are done. Not run on a device yet.
 
 Done when: the game boots on the Pixel with a Bluetooth gamepad and on a
 Retroid with its built-in pad, draws through Vulkan with validation clean, and

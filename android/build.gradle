@@ -1,0 +1,4 @@
+plugins {
+    // The version SDL3's own android-project uses.
+    id 'com.android.application' version '8.7.3' apply false
+}

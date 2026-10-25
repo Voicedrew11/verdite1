@@ -1,0 +1,35 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The android nix shell names SDL3's source; its Java half must match the libSDL3.so built from it.
+def sdlSource = System.getenv('KF_SDL3_SOURCE')
+if (sdlSource == null)
+    throw new GradleException('KF_SDL3_SOURCE is not set: build in nix develop .#android')
+
+android {
+    namespace = 'io.github.voicedrew11.verdite1'
+    compileSdk = 35
+    buildToolsVersion = '35.0.0'
+    ndkVersion = System.getenv('KF_ANDROID_NDK_VERSION')
+    defaultConfig {
+        applicationId = 'io.github.voicedrew11.verdite1'
+        minSdk = 29
+        targetSdk = 35
+        versionCode = 1
+        versionName = '0.1.0'
+    }
+    sourceSets.main {
+        java.srcDirs += "${sdlSource}/android-project/app/src/main/java"
+        // Each preset's build leaves jni/<abi>/: libmain.so, libSDL3.so, libc++_shared.so.
+        jniLibs.srcDirs = ['../../build/android-arm64/jni', '../../build/android-x86_64/jni']
+    }
+    buildTypes {
+        release {
+            minifyEnabled = false
+        }
+    }
+    lint {
+        abortOnError = false
+    }
+}

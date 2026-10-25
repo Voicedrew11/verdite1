@@ -26,3 +26,8 @@ __pycache__/
 
 # scripts/fuzz.py runs and reports
 /fuzz/
+# Gradle's output for the Android APK
+android/.gradle/
+android/app/build/
+android/local.properties
+android/build/
