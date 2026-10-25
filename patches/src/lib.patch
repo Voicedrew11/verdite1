@@ -1,3 +1,22 @@
+diff --git a/src/lib/random.cpp b/src/lib/random.cpp
+index a611fa86e9e996156a45042722cec3a61331a22d..999f657bb9ae84fa9239970d3516984d1eb20df6 100644
+--- a/src/lib/random.cpp
++++ b/src/lib/random.cpp
+@@ -13,4 +13,14 @@ s32 random_next()
+     random_state = random_state * random_multiplier + random_increment;
+     return static_cast<s32>((random_state >> random_output_shift) & random_max);
+ }
++
++void random_seed(u32 seed)
++{
++    random_state = seed;
++}
++
++u32 random_peek()
++{
++    return random_state;
++}
+ }
 diff --git a/src/lib/render_face.cpp b/src/lib/render_face.cpp
 index 73127858d0c2cdbbcd38f21439991faa7fa502d9..8bca61a71c7db66571d850e10fed63d1cc7e3cf9 100644
 --- a/src/lib/render_face.cpp

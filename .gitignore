@@ -23,3 +23,6 @@ __pycache__/
 # except the made-up test images (no game data) from tools/make_disc_fixtures.py
 !/libverdite/tests/data/disc/*
 /dist/
+
+# scripts/fuzz.py runs and reports
+/fuzz/

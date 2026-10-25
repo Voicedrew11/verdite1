@@ -1,3 +1,18 @@
+diff --git a/include/kf/lib/random.h b/include/kf/lib/random.h
+index 0236cb657e7f5c29b631ed1b0b55de8d69afb163..8a8f1290081a9500104a48480d6ec7053b4c597b 100644
+--- a/include/kf/lib/random.h
++++ b/include/kf/lib/random.h
+@@ -6,6 +6,10 @@
+ namespace kf {
+ inline constexpr s32 random_max = 32767;
+ s32 random_next();
++// PC extension: restarts the stream, for seeded fuzz runs (the game starts at 1), and reads
++// it, for the fuzzer's state trace.
++void random_seed(u32 seed);
++u32 random_peek();
+ }
+ 
+ #endif // KF_LIB_RANDOM_H
 diff --git a/include/kf/lib/render_face.h b/include/kf/lib/render_face.h
 index 409f754f70e62a872b0541ff3bf4e6f1dac63f9d..ad18685d1019e0124d6d090f277f4649b0d2e0f9 100644
 --- a/include/kf/lib/render_face.h

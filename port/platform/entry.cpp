@@ -8,6 +8,7 @@
 #include <kf/platform/translation_ppf.h>
 #include <kf/platform/saves.h>
 #include <kf/platform/crash.h>
+#include <kf/platform/fuzz.h>
 #include <kf/platform/user_folder.h>
 #include <verdite/crash.h>
 #if KF_EXT
@@ -311,6 +312,8 @@ int main(int argc, char **argv) {
     bool language_selected = false;
     kf::Language language = kf::Language::English;
     const char *dropped = nullptr;
+    if (argc == 4 && std::strcmp(argv[1], "--compare-traces") == 0)
+        return kf::fuzz_compare_traces(argv[2], argv[3]);
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--data") == 0 && i + 1 < argc)
             data = argv[++i];
@@ -346,7 +349,8 @@ int main(int argc, char **argv) {
         else {
             std::fprintf(stderr, "Usage: verdite1 [--data DIRECTORY] [--data-ja DIRECTORY] [--data-en DIRECTORY] "
                                  "[--language ja|en] [--english-patch FILE|download] "
-                                 "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro] [--headless] [--turbo]\n");
+                                 "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro] [--headless] [--turbo]\n"
+                                 "       verdite1 --compare-traces TRACE TRACE\n");
             return 1;
         }
     }

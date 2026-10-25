@@ -460,7 +460,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..3eb27e70cda87cacd07d4f474c30cfdee3ded723 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..42ba9d5bc6816d9c6920539c6f4c457dedbc432b 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -12,7 +12,6 @@
@@ -483,7 +483,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..3eb27e70cda87cacd07d4f474c30cfde
      kf::language_apply_pending();
      game_graphics_runtime = {};
      actor_state = {};
-@@ -40,12 +42,26 @@ void game_main_loop(void)
+@@ -40,13 +42,29 @@ void game_main_loop(void)
      common_resources_load();
      kf::host_language_status("Language ready.");
      game_initialize_session();
@@ -508,9 +508,12 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..3eb27e70cda87cacd07d4f474c30cfde
 +        // Between updates no menu or dialogue holds text, so a language change
 +        // requested from the F1 overlay can be applied here.
          game_apply_language();
++        // PC extension: the fuzzer's checks and jumps run here, where the state is whole.
++        kf::host_between_updates();
          player_update();
          if (game_result != GameResult::Running) {
-@@ -59,6 +75,7 @@ void game_main_loop(void)
+             break;
+@@ -59,6 +77,7 @@ void game_main_loop(void)
          effect_pool_update();
          map_event_pool_update();
          render_frame(&player_position_snapshot, &player_rotation_snapshot);
@@ -518,7 +521,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..3eb27e70cda87cacd07d4f474c30cfde
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
-@@ -88,7 +105,9 @@ void game_shutdown(void)
+@@ -88,7 +107,9 @@ void game_shutdown(void)
  
  void frame_pacer_wait(void)
  {
@@ -739,7 +742,7 @@ index 28e999d5981c92f4abd18339b757abc90913a319..8dafb49fe21ff6410a8f57186d1a36a9
 +    kf::host_set_screen(screen);
  }
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..28bccade0c1f1ee9549c494a5cda671b61ec8b94 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f7d758747b4c6fcb58c98fa11d88637d0634fe79 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,10 @@
@@ -794,7 +797,17 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..28bccade0c1f1ee9549c494a5cda671b
  }
  
  static void menu_draw_backdrop_tile(s32 x, s32 y, bool flip_x, bool flip_y)
-@@ -634,7 +664,13 @@ void menu_config_panel(void)
+@@ -266,6 +296,9 @@ KfMenuAction menu_system_panel(void)
+         case KF_MENU_SYSTEM_ACTION_QUIT:
+             result = menu_two_option_prompt(
+                 KF_MENU_WINDOW_SYSTEM, KF_MENU_SYSTEM_ROW_COUNT, cursor, {});
++            // PC extension: the fuzzer answers No, since the power-off screen never returns.
++            if (result == KF_MENU_RESULT_ACCEPTED && !kf::host_allows_power_off())
++                result = KF_MENU_RESULT_CANCELLED;
+             if (result == KF_MENU_RESULT_ACCEPTED) {
+                 menu_load_texture(MENU_TEXTURE_POWER_OFF);
+                 audio_stop_sequence_fade();
+@@ -634,7 +667,13 @@ void menu_config_panel(void)
          menu_config_panel_draw(on_label, off_label, option_states);
          menu_draw_window(KF_MENU_WINDOW_CONFIG, KF_MENU_CONFIG_ROW_COUNT, row, confirm);
          if (language_failed) {
@@ -809,7 +822,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..28bccade0c1f1ee9549c494a5cda671b
              menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1173,6 +1209,212 @@ enum {
+@@ -1173,6 +1212,212 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -1022,7 +1035,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..28bccade0c1f1ee9549c494a5cda671b
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1180,10 +1422,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1425,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -1041,7 +1054,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..28bccade0c1f1ee9549c494a5cda671b
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1241,9 +1488,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1241,9 +1491,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -1058,7 +1071,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..28bccade0c1f1ee9549c494a5cda671b
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1854,6 +2105,11 @@ void menu_draw_number(
+@@ -1854,6 +2108,11 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);

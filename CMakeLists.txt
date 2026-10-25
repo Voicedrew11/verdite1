@@ -23,6 +23,17 @@ if(KF_SANITIZE)
   add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
 endif()
+# libstdc++'s checked operator[] and front/back on std::array, std::span and std::vector: an index
+# past an array inside a struct stays inside the global, where ASan does not see it (fuzz preset).
+option(KF_HARDEN "Check standard container bounds (_GLIBCXX_ASSERTIONS)" OFF)
+if(KF_HARDEN)
+  add_compile_definitions(_GLIBCXX_ASSERTIONS)
+endif()
+# libFuzzer targets (fuzz preset): everything carries its coverage, the targets link the fuzzer.
+option(KF_LIBFUZZER "Build the libFuzzer targets (fuzz_*)" OFF)
+if(KF_LIBFUZZER)
+  add_compile_options(-fsanitize=fuzzer-no-link)
+endif()
 
 # ---- The decomp's game code, patched ------------------------------------------------------------
 # From holyland: each configure builds the patched decomp in a staging directory, then copies into
@@ -284,7 +295,7 @@ target_include_directories(kf_vulkan PUBLIC ${KF_INCLUDES} PRIVATE ${KF_SHADER_O
 target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL3)
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
+add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/fuzz.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
   port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_sources(kf_host PRIVATE port/platform/crash.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
@@ -313,6 +324,22 @@ if(WIN32)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:verdite1>)
 endif()
 install(TARGETS verdite1 RUNTIME DESTINATION bin)
+
+# libFuzzer targets, for what comes from outside the game (docs/FUZZING_PLAN.md; run them with
+# python3 scripts/fuzz.py --targets). fuzz_codecs is the decomp's own, built against our patches.
+if(KF_LIBFUZZER)
+  add_executable(fuzz_memory_card libverdite/tests/fuzz/memory_card.cpp)
+  target_link_libraries(fuzz_memory_card PRIVATE verdite)
+  add_executable(fuzz_disc_image libverdite/tests/fuzz/disc_image.cpp)
+  target_link_libraries(fuzz_disc_image PRIVATE verdite)
+  add_executable(fuzz_codecs ${KF_DECOMP}/tests/fuzz_codecs.cpp)
+  target_link_libraries(fuzz_codecs PRIVATE kf_support verdite SDL3::SDL3)
+  add_executable(fuzz_save_card port/tests/fuzz/save_card.cpp ${KF_GAME_SOURCES})
+  target_link_libraries(fuzz_save_card PRIVATE kf_host)
+  foreach(target fuzz_memory_card fuzz_disc_image fuzz_codecs fuzz_save_card)
+    target_link_options(${target} PRIVATE -fsanitize=fuzzer)
+  endforeach()
+endif()
 
 # port/'s tests: the parts that run without a window or GPU.
 if(doctest_FOUND)

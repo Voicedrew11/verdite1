@@ -36,6 +36,12 @@ void host_poll();
 std::uint64_t host_clock_ns();
 std::uint64_t host_clock_tick();
 void host_wait_until_tick(std::uint64_t deadline);
+// PC extension: between two world updates, where the game state is whole (the fuzzer's
+// macros and invariants, the state trace).
+void host_between_updates();
+// PC extension: whether the system menu's Quit may show the power-off screen, which loops until
+// the console is switched off. False under the fuzzer.
+bool host_allows_power_off();
 // PC extension: the camera of the world frame being built (frame smoothing),
 // and the colour its depth cue tends to (fog drawn per pixel).
 void host_frame_camera(const VECTOR &position, const SVECTOR &rotation, const Projection &projection,

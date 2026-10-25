@@ -262,6 +262,86 @@ settings file is the player's, and is saved on exit.
 Not yet: `main`'s `peek`/`poke`/`dump` (there is no guest RAM; the decomp's
 named globals take their place, command by command), `warp`, `stick`, `view`.
 
+## Fuzzing
+
+`scripts/fuzz.py` plays the game many times at once, headless and seeded, and sorts what
+went wrong by where it went wrong: `main`'s fuzzer (2026-10-21), carried 2026-10-25. The
+plan and what comes next are [FUZZING_PLAN.md](FUZZING_PLAN.md).
+
+```bash
+nix develop -c cmake --build --preset linux        # fuzz.py refuses a stale build
+python3 scripts/fuzz.py --runs 36                  # half the CPUs at a time, 20 game minutes each
+python3 scripts/fuzz.py --budget 3600 --mix --vary # an hour of seeds, each started and set up differently
+python3 scripts/fuzz.py --replay fuzz/runs/000117 [--windowed]
+python3 scripts/fuzz.py --check-determinism --runs 6
+python3 scripts/fuzz.py --compare-setting          # every visual setting must leave play unchanged
+python3 scripts/fuzz.py --minimise fuzz/runs/000117
+python3 scripts/fuzz.py --preset fuzz --runs 12    # under ASan, UBSan and checked containers
+python3 scripts/fuzz.py --targets --seconds 600    # the libFuzzer targets (fuzz preset)
+```
+
+Every flag is in `python3 scripts/fuzz.py --help`; the switches they set, `KF_FUZZ_*` and
+`KF_TRACE`, are in `port/include/kf/platform/fuzz.h`. It writes `fuzz/report.md` and
+`report.json` (gitignored): outcome counts, a heading per signature with its seeds, the
+command that reruns it and the one that replays it, and the floors, cells and items the runs
+reached.
+
+- **The pieces.** libverdite's `verdite/fuzz.h` is the policy (weighted presses held for a
+  while, a release between them so each is an edge, a menu table, escape presses when no update
+  comes), the macros, the invariants, the recording and the `[KF1-FUZZ] {...}` lines;
+  `verdite/state_trace.h` hashes named state per update and compares two traces. KF1's half,
+  `port/platform/fuzz.cpp`, is tables: the presses (main's weights, in 60 Hz ticks), the macros,
+  the invariants and the trace regions. Game-code patches: `random_seed` and `random_peek`
+  (`src/lib/random.cpp`), `host_between_updates()` in the main loop, and
+  `host_allows_power_off()` in the system menu's Quit.
+- **A run** is `verdite1 --headless --turbo --skip-intro` with `KF_FUZZ=<seed>` in its own
+  directory under `fuzz/runs/`, with its own saves folder and its own user folder
+  (`XDG_DATA_HOME`), so settings, crash reports and mods are the run's, not the player's. The
+  seed seeds the policy and the game's `rand`. It is **crash** (a signal, an assertion or a
+  sanitizer report; the signature is the crash report's top frames), **fail** (`host_fail`),
+  **violation**, **timeout** or **ok**.
+- **Macros**, a few per ten thousand updates, run between updates: `warp <floor>`
+  (`player_warp_change_floor`, then a move to an open cell two updates later, since the warp
+  keeps the cell), `goto <x> <z>` (an open cell from the automap's snapshot: floor with four
+  floor neighbours; floor 5 by its own teleport, the others by moving the player as it does,
+  since only floor 5 has `CHR<variant>.MIM`), `save` and `load` (the quick save, through
+  `host_take_quick_request`), and, at the start, `kit` and `strong`. A run whose position has
+  not moved for 600 updates is moved to an open cell.
+- **Invariants**, between updates, resting 60 updates after a death, a floor change or a warp:
+  `vitals` (HP and MP within their maxima, the maxima within 9999 and 999), `progress` (floor 1-5,
+  highest floor at least the current, level non-zero), `position` (inside the grid), `cell`
+  (`motion_state.map_cell` is the cell of the position), `in-rock` (the player's cell is not
+  `KF_MAP_CELL_BLOCKED`), `items` (counts at most 99, the unused ids 0), `equipment`, `actors`
+  and `effects` (every record pointer null or inside its table; each live actor's definition and
+  tile in range), and `stall` (an update within 6000 ticks).
+- **Exact replay.** Under turbo the game clock moves only with the game's waits and the game
+  thread does all the work, so a run is a function of its seed. Checked 2026-10-25: seed 7 run
+  twice, and its recording replayed, gave equal traces in every region for all 4,147 updates. So
+  `--replay` reproduces a finding exactly, and `--minimise` cuts its recording down by delta
+  debugging. A recording replays the build that made it; one made before a change to the game
+  or the fuzzer may not.
+- **Speed**: 48 runs of 72,000 ticks (16 game hours) took 307 s eight at a time
+  (2026-10-25), about 1,400 ticks (300 updates) a second each.
+
+**The system menu's Quit is answered No** under the fuzzer: Yes shows the power-off screen,
+`menu_system_panel`'s loop that draws until the console is switched off, with no pad read and no
+way back (the original's design). Seed 104 sat there for the rest of its run (a `stall`, its
+stack taken with gdb from the exact replay, 2026-10-25). `main` found the same on its load screen.
+The decline is a `note`, `quit-declined`.
+
+**What it found** (2026-10-25):
+
+- Only the fuzzer's own mistakes so far, each fixed: a `goto` by the same-floor teleport on floor
+  1 failed on `B1/CHR0.MIM` (that teleport is floor 5's); a quick save between a floor warp and
+  the move to an open cell saved the player in rock (`in-rock` after the load, seed 100 of
+  `--mix --vary`).
+- 48 runs of `--mix --vary` reached all five floors, 7,844 cells (floor 1: 2,016, 2: 1,550,
+  3: 1,299, 4: 1,086, 5: 1,893) and 69 kinds of item; `main`'s first 12 barely left floor 1.
+- The libFuzzer targets ran three minutes each under ASan, UBSan and `_GLIBCXX_ASSERTIONS`
+  without a finding: `memory_card` (seeded with the C# build's `carda.sav`), `save_card` (with
+  a quick save the fuzzer wrote), `disc_image` (the made-up test discs) and the decomp's own
+  `codecs`.
+
 ## What changes in kind
 
 - **No recompiler.** The game is native C/C++ from the decomp. Everything on
@@ -313,7 +393,7 @@ branch point.
 | crash reports, hang watchdog, focus pause | Verdite Core | crash reports done (2026-10-24, [CRASH_REPORTS.md](CRASH_REPORTS.md)): `verdite/crash.h` in libverdite, the stack named by a helper process with cpptrace, KF1's sections (player, the actor being updated, the last effect, settings), the last 64 events and copies of the saves from `port/platform/crash.cpp`. Not yet: hang watchdog, focus pause |
 | modding API (Verdite's C# runtime mods) | Verdite Core | kf1-enhanced has Lua API 0.1 (player stats, keys, ImGui); 1.0 is planned in [MODDING.md](MODDING.md#the-plan-api-10): whole game reachable, sandboxed, host in libverdite |
 | state beacon + command channel (port 27901) | `AgentBeacon.cs`, `AgentServer.cs` | what lets an agent drive and measure the game |
-| fuzzer: seeded headless turbo play, invariants, report | `Fuzz.cs`, `scripts/fuzz.py` | needs a headless, uncapped mode first |
+| fuzzer: seeded headless turbo play, invariants, report | `Fuzz.cs`, `scripts/fuzz.py` | done (2026-10-25, "Fuzzing" above): `verdite/fuzz.h` and `verdite/state_trace.h` in libverdite, KF1's tables in `port/platform/fuzz.cpp`, exact replay, a state trace, the `fuzz` preset and libFuzzer targets ([FUZZING_PLAN.md](FUZZING_PLAN.md)) |
 | frame profiler | Verdite Core | |
 
 ### Not carried
@@ -340,7 +420,8 @@ The branch is pushed to `origin/decomp`.
    `sushi-shi/port`'s head and bring `port/` up to its interfaces.~~ Done
    2026-10-23 (`7bd4567c`, 37 commits with the readability pass).
 3. Infrastructure the rest leans on: ~~headless/turbo, state beacon + command
-   channel~~ (done 2026-10-23, "Driving the game" above), then the fuzzer.
+   channel~~ (done 2026-10-23, "Driving the game" above), ~~then the fuzzer~~ (done
+   2026-10-25, "Fuzzing" above).
 4. The renderer frontend and the Vulkan backend, in the order of
    [RENDERER_PLAN.md](RENDERER_PLAN.md). That also fixes the frame-rate gap
    ([RUNTIME.md](RUNTIME.md)).

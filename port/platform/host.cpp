@@ -6,6 +6,7 @@
 #include <kf/platform/analog.h>
 #include <kf/platform/controls.h>
 #include <kf/platform/agent.h>
+#include <kf/platform/fuzz.h>
 #include <kf/platform/crash.h>
 #include <kf/platform/user_folder.h>
 #include <kf/renderer/backend.h>
@@ -242,6 +243,7 @@ bool host_start() {
     ext::start(host.window, options.headless ? ext::Overlay::Hidden : ext::Overlay::Drawn);
 #endif
     agent_start();
+    fuzz_start();
     if (options.headless || options.turbo)
         std::printf("Host:%s%s\n", options.headless ? " headless" : "", options.turbo ? " turbo" : "");
     return true;
@@ -491,6 +493,7 @@ void host_poll() {
             process_event(event);
         refresh_mouse_capture();
         agent_poll();
+        fuzz_poll();
         crash_poll();
         sound_poll();
 #if KF_EXT
@@ -657,8 +660,12 @@ u32 host_read_buttons() {
         buttons |= button_mask(host.input_context == InputContext::Menu ? Button::Back : Button::Start);
     if (actions & action_bit(Action::pause_or_back))
         buttons |= button_mask(host.input_context == InputContext::Menu ? Button::Back : Button::Select);
-    return buttons | agent_buttons();
+    return buttons | agent_buttons() | fuzz_buttons();
 }
+
+void host_between_updates() { fuzz_between_updates(); }
+
+bool host_allows_power_off() { return fuzz_allows_power_off(); }
 
 bool host_run_held() {
     // KF_TEST_RUN: hold run for automated tests.
@@ -669,6 +676,8 @@ bool host_run_held() {
 }
 
 QuickRequest host_take_quick_request() {
+    if (const auto request = fuzz_quick_request(); request != QuickRequest::None)
+        return request;
     // KF_TEST_QUICK=save|load@<update>: one scripted request for automated tests.
     static const char *test = std::getenv("KF_TEST_QUICK");
     static int test_updates;

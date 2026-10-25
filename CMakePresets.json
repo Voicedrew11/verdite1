@@ -21,6 +21,17 @@
       }
     },
     {
+      "name": "fuzz",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build/fuzz",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "KF_SANITIZE": "ON",
+        "KF_HARDEN": "ON",
+        "KF_LIBFUZZER": "ON"
+      }
+    },
+    {
       "name": "windows",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/windows",
@@ -39,6 +50,10 @@
     {
       "name": "sanitize",
       "configurePreset": "sanitize"
+    },
+    {
+      "name": "fuzz",
+      "configurePreset": "fuzz"
     },
     {
       "name": "windows",
