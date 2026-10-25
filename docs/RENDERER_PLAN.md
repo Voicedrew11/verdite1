@@ -71,10 +71,13 @@ precision and filtering vary within the spec's tolerances), freedom from
 Android driver bugs (fewer, not none), or native macOS (MoltenVK).
 
 The cost is setup code, kept down with **volk** (function loading), **VMA**
-(memory), **vk-bootstrap** (instance and device), and **dynamic rendering**
-(no render-pass objects; core in 1.3, an extension on 1.1). Baseline: **Vulkan
-1.1, plus dynamic rendering where available**, which reaches most Android
-devices and works under MoltenVK. Validation layers on in development.
+(memory), **vk-bootstrap** (instance and device), and one-subpass render
+passes behind a small module (`vulkan_render_pass.h`). Baseline: **Vulkan 1.1
+core, no extensions**, which reaches the Android devices in
+[ANDROID_PLAN.md](ANDROID_PLAN.md) and works under MoltenVK. Validation layers
+on in development. The backend drew with dynamic rendering until 2026-10-25; it
+was replaced on every platform, not kept beside render passes, so that the path
+the Mali-G52 handhelds need is the one the desktop tests run.
 
 SDL_GPU (SDL3's own explicit API over Vulkan, D3D12 and Metal) was the
 alternative: less code and native Metal, but less control, and it does not
@@ -330,8 +333,7 @@ What carries over is decisions and references, not code:
    included.
    Supersampling draws the target N times larger and averages each N x N block
    before the window (`vulkan_downsample.h`); captures keep the full target.
-   It needs dynamic rendering (`VK_KHR_dynamic_rendering`); render-pass
-   objects for devices without it are not written.
+   Every pass is a Vulkan 1.0 render pass (2026-10-25).
 3. A second backend early, before the frontend sets in Vulkan-shaped habits.
    deko3d is the more useful second one; the 3DS is so limited it would bend
    the frontend.

@@ -12,6 +12,7 @@
 // glow's covering test), rather than measuring the world again.
 #include "vulkan_device.h"
 #include "vulkan_pipelines.h"
+#include "vulkan_render_pass.h"
 #include "vulkan_resources.h"
 
 #include <kf/renderer/backend.h>
@@ -56,10 +57,11 @@ public:
 private:
     VkDevice device_;
     VmaAllocator allocator_ = VK_NULL_HANDLE;
-    VkFormat depth_format_ = VK_FORMAT_UNDEFINED;
+    RenderPass pass_;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     GpuImage surfaces_, depth_;
+    Framebuffer framebuffer_;
 };
 } // namespace kf
 

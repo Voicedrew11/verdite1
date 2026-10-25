@@ -13,6 +13,7 @@ VulkanSwapchain::~VulkanSwapchain() {
 }
 
 void VulkanSwapchain::release_images() {
+    framebuffers_.clear();
     for (VkImageView view : views_)
         vkDestroyImageView(device_.device(), view, nullptr);
     for (VkSemaphore semaphore : ready_)
@@ -60,6 +61,15 @@ bool VulkanSwapchain::fit(uint32_t width, uint32_t height, PresentPacing pacing)
         return false;
     images_ = images.value();
     views_ = views.value();
+    if (!pass_ || pass_.shape().color != format_)
+        pass_ = RenderPass::create(device_.device(), {format_, VK_FORMAT_UNDEFINED, ColorLoad::Keep});
+    if (!pass_)
+        return false;
+    for (VkImageView view : views_) {
+        framebuffers_.push_back(Framebuffer::create(device_.device(), pass_, std::span(&view, 1), extent_));
+        if (!framebuffers_.back())
+            return false;
+    }
     VkSemaphoreCreateInfo semaphore_info{};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     for (std::size_t i = 0; i < images_.size(); ++i) {
@@ -82,7 +92,7 @@ std::optional<SwapchainImage> VulkanSwapchain::acquire(VkSemaphore acquired) {
         return std::nullopt;
     }
     stale_ = result == VK_SUBOPTIMAL_KHR;
-    return SwapchainImage{index, images_[index], views_[index], ready_[index]};
+    return SwapchainImage{index, images_[index], views_[index], ready_[index], &framebuffers_[index]};
 }
 
 bool VulkanSwapchain::present(const SwapchainImage &image) {

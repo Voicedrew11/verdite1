@@ -107,7 +107,7 @@ VkSampler create_sampler(VkDevice device, VkFilter filter) {
 }
 
 VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, std::span<const uint32_t> fragment,
-                                      VkFormat format) {
+                                      const RenderPass &pass) {
     VkShaderModule vertex_module = create_shader_module(device, fullscreen_vert);
     VkShaderModule fragment_module = create_shader_module(device, fragment);
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -150,13 +150,8 @@ VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, 
         dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
         dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
         dynamic.pDynamicStates = dynamic_states.data();
-        VkPipelineRenderingCreateInfoKHR rendering{};
-        rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-        rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachmentFormats = &format;
         VkGraphicsPipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        info.pNext = &rendering;
         info.stageCount = static_cast<uint32_t>(stages.size());
         info.pStages = stages.data();
         info.pVertexInputState = &vertex_input;
@@ -167,6 +162,7 @@ VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, 
         info.pColorBlendState = &blend;
         info.pDynamicState = &dynamic;
         info.layout = layout;
+        info.renderPass = pass.handle();
         if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
             pipeline = VK_NULL_HANDLE;
     }
@@ -223,8 +219,9 @@ VkDescriptorSetLayout create_world_set_layout(VkDevice device) {
 std::unique_ptr<WorldPipelines> WorldPipelines::create(VkDevice device, std::span<const VkDescriptorSetLayout> sets,
                                                        VkFormat color, VkFormat depth) {
     auto out = std::make_unique<WorldPipelines>(Key{}, device);
-    out->color_ = color;
-    out->depth_ = depth;
+    out->pass_ = RenderPass::create(device, {color, depth, ColorLoad::Keep});
+    if (!out->pass_)
+        return nullptr;
     out->layout_ = create_face_pipeline_layout(device, sets);
     if (!out->layout_)
         return nullptr;
@@ -307,15 +304,8 @@ VkPipeline WorldPipelines::build(PipelineKey key) const {
     dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
     dynamic.pDynamicStates = dynamic_states.data();
 
-    VkPipelineRenderingCreateInfoKHR rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachmentFormats = &color_;
-    rendering.depthAttachmentFormat = depth_;
-
     VkGraphicsPipelineCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    info.pNext = &rendering;
     info.stageCount = static_cast<uint32_t>(stages.size());
     info.pStages = stages.data();
     info.pVertexInputState = &vertex_input;
@@ -327,6 +317,7 @@ VkPipeline WorldPipelines::build(PipelineKey key) const {
     info.pColorBlendState = &blend;
     info.pDynamicState = &dynamic;
     info.layout = layout_;
+    info.renderPass = pass_.handle();
     VkPipeline pipeline = VK_NULL_HANDLE;
     if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
         return VK_NULL_HANDLE;

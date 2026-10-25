@@ -121,10 +121,13 @@ The Retroid needs B1 first.
 
 ### B. The renderer on Android
 
-1. **Render passes.** `VkRenderPass` objects replace dynamic rendering
-   everywhere (one path; the three extensions go from the required list;
-   ImGui's Vulkan backend takes a render pass), since the Mali-G52 handhelds
-   need them ("Devices"). Each pass already has its load and store ops spelled out, so this is
+1. **Render passes.** Done 2026-10-25: `VkRenderPass` objects replace dynamic
+   rendering everywhere (`vulkan_render_pass.h`: one subpass, attachments
+   entering and leaving in their attachment layouts, depth cleared and never
+   stored). The device asks for Vulkan 1.1 core and no extension; ImGui draws
+   in the swapchain's pass. `kf_vulkan_tests` passes on RADV and llvmpipe with
+   validation on, and the game ran in a window with the overlay open and no
+   validation error. Not yet run on a device without dynamic rendering. Each pass already has its load and store ops spelled out, so this is
    mechanical. `kf_vulkan_tests` runs on both paths on the desktop (llvmpipe and RADV).
 2. **Surface lifecycle.** The surface moves out of `VulkanDevice` into the
    swapchain's owner. The queue family is still checked against the first surface;
@@ -245,7 +248,7 @@ Decided 2026-10-25, with the plan approved:
    Mali-G52 floor is covered indirectly: the render-pass path is the only path,
    so `kf_vulkan_tests` on llvmpipe and RADV exercise it; the backend asks for
    nothing beyond Vulkan 1.1 core and what it checks for; the Android emulator
-   runs the arm64-less x86_64 build; and the Pixel runs at a Mali-G52-like
+   runs the x86_64 build; and the Pixel runs at a Mali-G52-like
    load with the resolution scale and frame cap set to the 2S's (640 x 480).
    A Mali-G52 driver bug can still get through; a Retroid user's report goes in
    the quirks list (B9).

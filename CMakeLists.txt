@@ -289,7 +289,7 @@ target_link_libraries(kf_vulkan_libraries PUBLIC Vulkan::Headers volk::volk GPUO
   vk-bootstrap::vk-bootstrap kf_imgui)
 add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/renderer/vulkan/vulkan_device.cpp
   port/renderer/vulkan/vulkan_ambient_occlusion.cpp port/renderer/vulkan/vulkan_downsample.cpp
-  port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_surfaces.cpp
+  port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_render_pass.cpp port/renderer/vulkan/vulkan_surfaces.cpp
   port/renderer/vulkan/vulkan_resources.cpp port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})
 target_include_directories(kf_vulkan PUBLIC ${KF_INCLUDES} PRIVATE ${KF_SHADER_OUT})
 target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL3)

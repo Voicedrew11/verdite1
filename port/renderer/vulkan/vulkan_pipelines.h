@@ -4,6 +4,7 @@
 // depth state, made when first needed, for one colour and depth format. Also
 // what the backend's other pipelines share with them.
 #include "vulkan_device.h"
+#include "vulkan_render_pass.h"
 
 #include <array>
 #include <cstdint>
@@ -58,11 +59,11 @@ VkPipelineVertexInputStateCreateInfo face_vertex_input();
 // Clamped to the edge, mipmaps unused. VK_NULL_HANDLE on failure.
 VkSampler create_sampler(VkDevice device, VkFilter filter);
 
-// One triangle over the whole of a target of this format (fullscreen.vert),
+// One triangle over the whole of a target of pass's format (fullscreen.vert),
 // drawn with fragment and no blending; viewport and scissor are dynamic.
 // VK_NULL_HANDLE on failure.
 VkPipeline create_fullscreen_pipeline(VkDevice device, VkPipelineLayout layout, std::span<const uint32_t> fragment,
-                                      VkFormat format);
+                                      const RenderPass &pass);
 
 // Set 0 of every pipeline that draws faces: the texture pages through a
 // nearest sampler, the motions, the pages again through a trilinear one, and
@@ -87,7 +88,7 @@ class WorldPipelines {
 public:
     WorldPipelines(Key, VkDevice device) : device_(device) {}
     // sets: the world set, then the occlusion set (vulkan_ambient_occlusion.h).
-    // Null on failure.
+    // The pass they draw in keeps the colour target's contents. Null on failure.
     static std::unique_ptr<WorldPipelines> create(VkDevice device, std::span<const VkDescriptorSetLayout> sets,
                                                   VkFormat color, VkFormat depth);
     ~WorldPipelines();
@@ -97,12 +98,13 @@ public:
     // VK_NULL_HANDLE if it cannot be made.
     VkPipeline pipeline(PipelineKey key);
     VkPipelineLayout layout() const { return layout_; }
-    VkFormat color_format() const { return color_; }
+    VkFormat color_format() const { return pass_.shape().color; }
+    const RenderPass &render_pass() const { return pass_; }
 
 private:
     VkPipeline build(PipelineKey key) const;
     VkDevice device_;
-    VkFormat color_ = VK_FORMAT_UNDEFINED, depth_ = VK_FORMAT_UNDEFINED;
+    RenderPass pass_;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkShaderModule vertex_ = VK_NULL_HANDLE, fragment_ = VK_NULL_HANDLE;
     struct Built {

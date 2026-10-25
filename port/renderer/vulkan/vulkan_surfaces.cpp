@@ -9,7 +9,7 @@ namespace kf {
 namespace {
 constexpr VkFormat surface_format = VK_FORMAT_R32G32B32A32_SFLOAT;
 
-VkPipeline create_surface_pipeline(VkDevice device, VkPipelineLayout layout, VkFormat depth_format) {
+VkPipeline create_surface_pipeline(VkDevice device, VkPipelineLayout layout, const RenderPass &pass) {
     VkShaderModule vertex_module = create_shader_module(device, world_vert);
     VkShaderModule fragment_module = create_shader_module(device, surface_frag);
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -56,14 +56,8 @@ VkPipeline create_surface_pipeline(VkDevice device, VkPipelineLayout layout, VkF
         dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
         dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
         dynamic.pDynamicStates = dynamic_states.data();
-        VkPipelineRenderingCreateInfoKHR rendering{};
-        rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-        rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachmentFormats = &surface_format;
-        rendering.depthAttachmentFormat = depth_format;
         VkGraphicsPipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        info.pNext = &rendering;
         info.stageCount = static_cast<uint32_t>(stages.size());
         info.pStages = stages.data();
         info.pVertexInputState = &vertex_input;
@@ -75,6 +69,7 @@ VkPipeline create_surface_pipeline(VkDevice device, VkPipelineLayout layout, VkF
         info.pColorBlendState = &blend;
         info.pDynamicState = &dynamic;
         info.layout = layout;
+        info.renderPass = pass.handle();
         if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
             pipeline = VK_NULL_HANDLE;
     }
@@ -91,11 +86,11 @@ std::unique_ptr<SurfaceBuffer> SurfaceBuffer::create(const VulkanDevice &device,
     VkDevice handle = device.device();
     auto out = std::make_unique<SurfaceBuffer>(Key{}, handle);
     out->allocator_ = device.allocator();
-    out->depth_format_ = depth_format;
+    out->pass_ = RenderPass::create(handle, {surface_format, depth_format, ColorLoad::Clear});
     out->layout_ = create_face_pipeline_layout(handle, std::span(&world_set_layout, 1));
-    if (!out->layout_)
+    if (!out->pass_ || !out->layout_)
         return nullptr;
-    out->pipeline_ = create_surface_pipeline(handle, out->layout_, depth_format);
+    out->pipeline_ = create_surface_pipeline(handle, out->layout_, out->pass_);
     if (!out->pipeline_)
         return nullptr;
     return out;
@@ -113,48 +108,28 @@ bool SurfaceBuffer::fit(uint32_t width, uint32_t height) {
         return true;
     const ImageShape color{width, height, 1, surface_format,
                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
-    const ImageShape depth{width, height, 1, depth_format_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+    const ImageShape depth{width, height, 1, pass_.shape().depth, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                            VK_IMAGE_ASPECT_DEPTH_BIT};
     GpuImage new_surfaces = GpuImage::create(device_, allocator_, color);
     GpuImage new_depth = GpuImage::create(device_, allocator_, depth);
     if (!new_surfaces || !new_depth)
         return false;
+    const std::array<VkImageView, 2> views = {new_surfaces.view(), new_depth.view()};
+    Framebuffer new_framebuffer = Framebuffer::create(device_, pass_, views, {width, height});
+    if (!new_framebuffer)
+        return false;
+    framebuffer_ = std::move(new_framebuffer);
     surfaces_ = std::move(new_surfaces);
     depth_ = std::move(new_depth);
     return true;
 }
 
 void SurfaceBuffer::record(VkCommandBuffer commands, const SurfaceFrame &frame) {
-    const ImageShape &shape = surfaces_.shape();
     transition(commands, surfaces_.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     transition(commands, depth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    VkRenderingAttachmentInfoKHR color{};
-    color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    color.imageView = surfaces_.view();
-    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingAttachmentInfoKHR depth{};
-    depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    depth.imageView = depth_.view();
-    depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth.clearValue.depthStencil = {1.0f, 0};
-    VkRenderingInfoKHR rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-    rendering.renderArea = {{0, 0}, {shape.width, shape.height}};
-    rendering.layerCount = 1;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachments = &color;
-    rendering.pDepthAttachment = &depth;
-    vkCmdBeginRenderingKHR(commands, &rendering);
-    const VkViewport viewport{0, 0, static_cast<float>(shape.width), static_cast<float>(shape.height), 0, 1};
-    const VkRect2D scissor{{0, 0}, {shape.width, shape.height}};
-    vkCmdSetViewport(commands, 0, 1, &viewport);
-    vkCmdSetScissor(commands, 0, 1, &scissor);
+    begin_pass(commands, pass_, framebuffer_);
     if (frame.vertices) {
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commands, 0, 1, &frame.vertices, &offset);
@@ -169,7 +144,7 @@ void SurfaceBuffer::record(VkCommandBuffer commands, const SurfaceFrame &frame) 
             if (run.state.blend == BlendMode::opaque)
                 vkCmdDraw(commands, run.vertex_count, 1, run.first_vertex, 0);
     }
-    vkCmdEndRenderingKHR(commands);
+    vkCmdEndRenderPass(commands);
     transition(commands, surfaces_.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }

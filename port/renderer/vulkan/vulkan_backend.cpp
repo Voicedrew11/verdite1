@@ -7,6 +7,7 @@
 #include "vulkan_device.h"
 #include "vulkan_downsample.h"
 #include "vulkan_pipelines.h"
+#include "vulkan_render_pass.h"
 #include "vulkan_resources.h"
 #include "vulkan_surfaces.h"
 #include "vulkan_swapchain.h"
@@ -154,6 +155,7 @@ private:
     std::unique_ptr<AmbientOcclusion> occlusion_;
     bool occlusion_ready_ = false;             // surfaces_ and occlusion_ fit the target
     GpuImage target_, depth_;
+    Framebuffer world_framebuffer_;   // target_ and depth_ in pipelines_'s pass
     VkImageLayout target_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     GpuImage pages_;
     VkSampler nearest_ = VK_NULL_HANDLE;
@@ -173,7 +175,6 @@ private:
     DepthCue cue_;
     bool frame_drawn_ = false;
     bool overlay_started_ = false;
-    VkFormat overlay_format_ = VK_FORMAT_UNDEFINED;
 };
 
 bool format_supports(VkPhysicalDevice physical, VkFormat format, VkFormatFeatureFlags features) {
@@ -273,6 +274,11 @@ bool VulkanBackend::make_target() {
             return false;
         pipelines_ = std::move(made);
     }
+    const std::array<VkImageView, 2> views = {new_target.view(), new_depth.view()};
+    Framebuffer new_framebuffer =
+        Framebuffer::create(device_->device(), pipelines_->render_pass(), views, {color.width, color.height});
+    if (!new_framebuffer)
+        return false;
     const bool cleared = device_->run_now([&](VkCommandBuffer commands) {
         transition(commands, new_target.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -284,6 +290,7 @@ bool VulkanBackend::make_target() {
     });
     if (!cleared)
         return false;
+    world_framebuffer_ = std::move(new_framebuffer);
     target_ = std::move(new_target);
     depth_ = std::move(new_depth);
     target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -653,33 +660,9 @@ void VulkanBackend::draw_world(VkCommandBuffer commands, const FrameView &view, 
     transition(commands, depth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     target_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    const ImageShape &shape = target_.shape();
-    VkRenderingAttachmentInfoKHR color{};
-    color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    color.imageView = target_.view();
-    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    // Each update is a complete face list, so depth starts empty.
-    VkRenderingAttachmentInfoKHR depth{};
-    depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    depth.imageView = depth_.view();
-    depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth.clearValue.depthStencil = {1.0f, 0};
-    VkRenderingInfoKHR rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-    rendering.renderArea = {{0, 0}, {shape.width, shape.height}};
-    rendering.layerCount = 1;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachments = &color;
-    rendering.pDepthAttachment = &depth;
-    vkCmdBeginRenderingKHR(commands, &rendering);
-
-    const VkViewport viewport{0, 0, static_cast<float>(shape.width), static_cast<float>(shape.height), 0, 1};
+    // The pass keeps the target and starts depth empty: each update is a complete face list.
+    begin_pass(commands, pipelines_->render_pass(), world_framebuffer_);
     const VkRect2D clip = clip_rect();
-    vkCmdSetViewport(commands, 0, 1, &viewport);
     vkCmdSetScissor(commands, 0, 1, &clip);
     if (style_.clear == FrameClear::Clear && clip.extent.width && clip.extent.height) {
         VkClearAttachment clear{};
@@ -690,7 +673,7 @@ void VulkanBackend::draw_world(VkCommandBuffer commands, const FrameView &view, 
     }
     if (!runs_.empty() && vertices_)
         draw_runs(commands, constants, slot);
-    vkCmdEndRenderingKHR(commands);
+    vkCmdEndRenderPass(commands);
 }
 
 void VulkanBackend::draw_runs(VkCommandBuffer commands, DrawConstants constants, const FrameSlot &slot) {
@@ -769,21 +752,9 @@ void VulkanBackend::draw_overlay(VkCommandBuffer commands, const SwapchainImage 
     }
     transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    VkRenderingAttachmentInfoKHR color{};
-    color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    color.imageView = image.view;
-    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfoKHR rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-    rendering.renderArea = {{0, 0}, swapchain_->extent()};
-    rendering.layerCount = 1;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachments = &color;
-    vkCmdBeginRenderingKHR(commands, &rendering);
+    begin_pass(commands, swapchain_->render_pass(), *image.framebuffer);
     ImGui_ImplVulkan_RenderDrawData(overlay, commands);
-    vkCmdEndRenderingKHR(commands);
+    vkCmdEndRenderPass(commands);
     transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 }
@@ -802,7 +773,6 @@ bool VulkanBackend::start_overlay() {
     const PresentPacing pacing = options_.vsync ? PresentPacing::Vsync : PresentPacing::Immediate;
     if (!swapchain_->fit(static_cast<uint32_t>(width), static_cast<uint32_t>(height), pacing))
         return false;
-    overlay_format_ = swapchain_->format();
     ImGui_ImplVulkan_InitInfo info{};
     info.ApiVersion = VK_API_VERSION_1_1;
     info.Instance = device_->instance();
@@ -813,10 +783,7 @@ bool VulkanBackend::start_overlay() {
     info.DescriptorPoolSize = 16;
     info.MinImageCount = 2;
     info.ImageCount = std::max<uint32_t>(2, swapchain_->image_count());
-    info.UseDynamicRendering = true;
-    info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-    info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &overlay_format_;
+    info.PipelineInfoMain.RenderPass = swapchain_->render_pass().handle();
     info.CheckVkResultFn = report_overlay_result;
     overlay_started_ = ImGui_ImplVulkan_Init(&info);
     return overlay_started_;

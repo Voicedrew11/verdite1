@@ -93,8 +93,11 @@ std::unique_ptr<AmbientOcclusion> AmbientOcclusion::create(const VulkanDevice &d
     layout.pPushConstantRanges = &constants;
     if (vkCreatePipelineLayout(handle, &layout, nullptr, &out->layout_) != VK_SUCCESS)
         return nullptr;
-    out->occlusion_pipeline_ = create_fullscreen_pipeline(handle, out->layout_, occlusion_frag, occlusion_format);
-    out->blur_pipeline_ = create_fullscreen_pipeline(handle, out->layout_, occlusion_blur_frag, occlusion_format);
+    out->pass_ = RenderPass::create(handle, {occlusion_format, VK_FORMAT_UNDEFINED, ColorLoad::Discard});
+    if (!out->pass_)
+        return nullptr;
+    out->occlusion_pipeline_ = create_fullscreen_pipeline(handle, out->layout_, occlusion_frag, out->pass_);
+    out->blur_pipeline_ = create_fullscreen_pipeline(handle, out->layout_, occlusion_blur_frag, out->pass_);
     if (!out->occlusion_pipeline_ || !out->blur_pipeline_)
         return nullptr;
 
@@ -174,6 +177,14 @@ bool AmbientOcclusion::fit(const GpuImage &surfaces, int logical_width, int scal
         GpuImage blurred = make_unoccluded_image(width, height);
         if (!occlusion || !blurred)
             return false;
+        VkImageView occlusion_view = occlusion.view(), blurred_view = blurred.view();
+        Framebuffer occlusion_framebuffer =
+            Framebuffer::create(device_, pass_, std::span(&occlusion_view, 1), {width, height});
+        Framebuffer blurred_framebuffer = Framebuffer::create(device_, pass_, std::span(&blurred_view, 1), {width, height});
+        if (!occlusion_framebuffer || !blurred_framebuffer)
+            return false;
+        occlusion_framebuffer_ = std::move(occlusion_framebuffer);
+        blurred_framebuffer_ = std::move(blurred_framebuffer);
         occlusion_ = std::move(occlusion);
         blurred_ = std::move(blurred);
     }
@@ -189,35 +200,18 @@ bool AmbientOcclusion::fit(const GpuImage &surfaces, int logical_width, int scal
 }
 
 void AmbientOcclusion::draw_pass(VkCommandBuffer commands, VkPipeline pipeline, VkDescriptorSet inputs,
-                                 const GpuImage &output, VkImageLayout output_layout,
+                                 const GpuImage &output, const Framebuffer &framebuffer, VkImageLayout output_layout,
                                  std::span<const std::byte> constants) const {
-    const ImageShape &shape = output.shape();
     transition(commands, output.image(), VK_IMAGE_ASPECT_COLOR_BIT, output_layout,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    VkRenderingAttachmentInfoKHR color{};
-    color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    color.imageView = output.view();
-    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfoKHR rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-    rendering.renderArea = {{0, 0}, {shape.width, shape.height}};
-    rendering.layerCount = 1;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachments = &color;
-    vkCmdBeginRenderingKHR(commands, &rendering);
-    const VkViewport viewport{0, 0, static_cast<float>(shape.width), static_cast<float>(shape.height), 0, 1};
-    const VkRect2D scissor{{0, 0}, {shape.width, shape.height}};
-    vkCmdSetViewport(commands, 0, 1, &viewport);
-    vkCmdSetScissor(commands, 0, 1, &scissor);
+    begin_pass(commands, pass_, framebuffer);
     vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &inputs, 0, nullptr);
     if (!constants.empty())
         vkCmdPushConstants(commands, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, static_cast<uint32_t>(constants.size()),
                            constants.data());
     vkCmdDraw(commands, 3, 1, 0, 0);
-    vkCmdEndRenderingKHR(commands);
+    vkCmdEndRenderPass(commands);
     transition(commands, output.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
@@ -233,8 +227,9 @@ void AmbientOcclusion::record(VkCommandBuffer commands, const DrawConstants &con
     occlusion.projection_distance = constants.projection_distance;
     occlusion.strength = judged_strength * std::clamp(strength, 0.0f, 2.0f);
     occlusion.samples = samples_for(quality_);
-    draw_pass(commands, occlusion_pipeline_, occlusion_inputs_, occlusion_, VK_IMAGE_LAYOUT_UNDEFINED,
-              std::as_bytes(std::span(&occlusion, 1)));
-    draw_pass(commands, blur_pipeline_, blur_inputs_, blurred_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, {});
+    draw_pass(commands, occlusion_pipeline_, occlusion_inputs_, occlusion_, occlusion_framebuffer_,
+              VK_IMAGE_LAYOUT_UNDEFINED, std::as_bytes(std::span(&occlusion, 1)));
+    draw_pass(commands, blur_pipeline_, blur_inputs_, blurred_, blurred_framebuffer_,
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, {});
 }
 } // namespace kf

@@ -61,7 +61,10 @@ std::unique_ptr<Downsample> Downsample::create(const VulkanDevice &device) {
     layout.pPushConstantRanges = &constants;
     if (vkCreatePipelineLayout(handle, &layout, nullptr, &out->layout_) != VK_SUCCESS)
         return nullptr;
-    out->pipeline_ = create_fullscreen_pipeline(handle, out->layout_, downsample_frag, picture_format);
+    out->pass_ = RenderPass::create(handle, {picture_format, VK_FORMAT_UNDEFINED, ColorLoad::Discard});
+    if (!out->pass_)
+        return nullptr;
+    out->pipeline_ = create_fullscreen_pipeline(handle, out->layout_, downsample_frag, out->pass_);
     if (!out->pipeline_)
         return nullptr;
     return out;
@@ -89,9 +92,15 @@ bool Downsample::fit(const GpuImage &target, uint32_t factor) {
         const ImageShape shape{width, height, 1, picture_format,
                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                                VK_IMAGE_ASPECT_COLOR_BIT};
-        picture_ = GpuImage::create(device_, allocator_, shape);
-        if (!picture_)
+        GpuImage picture = GpuImage::create(device_, allocator_, shape);
+        if (!picture)
             return false;
+        VkImageView view = picture.view();
+        Framebuffer framebuffer = Framebuffer::create(device_, pass_, std::span(&view, 1), {width, height});
+        if (!framebuffer)
+            return false;
+        framebuffer_ = std::move(framebuffer);
+        picture_ = std::move(picture);
     }
     // Written every time: a remade target can come back with the old view's handle.
     const VkDescriptorImageInfo image{sampler_, target.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -108,32 +117,15 @@ bool Downsample::fit(const GpuImage &target, uint32_t factor) {
 }
 
 void Downsample::record(VkCommandBuffer commands) {
-    const ImageShape &shape = picture_.shape();
     transition(commands, picture_.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    VkRenderingAttachmentInfoKHR color{};
-    color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    color.imageView = picture_.view();
-    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfoKHR rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-    rendering.renderArea = {{0, 0}, {shape.width, shape.height}};
-    rendering.layerCount = 1;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachments = &color;
-    vkCmdBeginRenderingKHR(commands, &rendering);
-    const VkViewport viewport{0, 0, static_cast<float>(shape.width), static_cast<float>(shape.height), 0, 1};
-    const VkRect2D scissor{{0, 0}, {shape.width, shape.height}};
-    vkCmdSetViewport(commands, 0, 1, &viewport);
-    vkCmdSetScissor(commands, 0, 1, &scissor);
+    begin_pass(commands, pass_, framebuffer_);
     vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &set_, 0, nullptr);
     const DownsampleConstants constants{factor_};
     vkCmdPushConstants(commands, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof constants, &constants);
     vkCmdDraw(commands, 3, 1, 0, 0);
-    vkCmdEndRenderingKHR(commands);
+    vkCmdEndRenderPass(commands);
     transition(commands, picture_.image(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 }

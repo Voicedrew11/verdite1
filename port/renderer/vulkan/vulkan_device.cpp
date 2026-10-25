@@ -67,15 +67,8 @@ VulkanDeviceStart VulkanDevice::create(SDL_Window *window) {
     if (window && !SDL_Vulkan_CreateSurface(window, self->instance_, nullptr, &self->surface_))
         return {nullptr, std::string("surface: ") + SDL_GetError()};
 
-    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering{};
-    dynamic_rendering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
-    dynamic_rendering.dynamicRendering = VK_TRUE;
     vkb::PhysicalDeviceSelector selector(instance.value());
     selector.set_minimum_version(1, 1)
-        .add_required_extension(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME)
-        .add_required_extension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME)
-        .add_required_extension(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)
-        .add_required_extension_features(dynamic_rendering)
         .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
         .allow_any_gpu_device_type();
     if (self->surface_)

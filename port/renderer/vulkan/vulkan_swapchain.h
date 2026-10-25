@@ -1,8 +1,10 @@
 #ifndef KF_RENDERER_VULKAN_SWAPCHAIN_H
 #define KF_RENDERER_VULKAN_SWAPCHAIN_H
 // The window's swapchain: built for the window's size and the VSync choice,
-// rebuilt when either changes or the surface goes out of date.
+// rebuilt when either changes or the surface goes out of date. It also holds
+// the pass that draws over its images (the overlay), which keeps what is there.
 #include "vulkan_device.h"
+#include "vulkan_render_pass.h"
 
 #include <cstdint>
 #include <optional>
@@ -16,6 +18,7 @@ struct SwapchainImage {
     VkImage image;
     VkImageView view;
     VkSemaphore ready_to_present;   // signal it when the image is drawn
+    const Framebuffer *framebuffer; // the image in render_pass()
 };
 
 class VulkanSwapchain {
@@ -32,6 +35,8 @@ public:
     // False when the swapchain must be rebuilt.
     bool present(const SwapchainImage &image);
     VkFormat format() const { return format_; }
+    // The pass that draws over an image; made with the first swapchain, for its format.
+    const RenderPass &render_pass() const { return pass_; }
     VkExtent2D extent() const { return extent_; }
     uint32_t image_count() const { return static_cast<uint32_t>(images_.size()); }
 
@@ -46,6 +51,8 @@ private:
     std::vector<VkImage> images_;
     std::vector<VkImageView> views_;
     std::vector<VkSemaphore> ready_;
+    RenderPass pass_;
+    std::vector<Framebuffer> framebuffers_;
 };
 } // namespace kf
 

@@ -4,6 +4,7 @@
 // into one pixel of a picture N times smaller, which is what the window shows.
 // Captures still read the target itself, at its full size.
 #include "vulkan_device.h"
+#include "vulkan_render_pass.h"
 #include "vulkan_resources.h"
 
 #include <cstdint>
@@ -40,8 +41,10 @@ private:
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     VkDescriptorSet set_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
+    RenderPass pass_;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     GpuImage picture_;
+    Framebuffer framebuffer_;
     uint32_t factor_ = 0;
 };
 } // namespace kf

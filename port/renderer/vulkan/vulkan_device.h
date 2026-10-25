@@ -1,7 +1,7 @@
 #ifndef KF_RENDERER_VULKAN_DEVICE_H
 #define KF_RENDERER_VULKAN_DEVICE_H
 // The Vulkan instance, GPU, queue and memory allocator one backend draws with.
-// Vulkan 1.1 with dynamic rendering; validation layers when asked for. Without
+// Vulkan 1.1 core and nothing more; validation layers when asked for. Without
 // a window it has no surface and draws offscreen only.
 #include <volk.h>
 #include <vk_mem_alloc.h>

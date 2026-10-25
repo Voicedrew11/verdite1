@@ -13,6 +13,7 @@
 // GteDepth, patches 0040 and 0058. Its floor-plan term (AoWorld) is left out.
 #include "vulkan_device.h"
 #include "vulkan_pipelines.h"
+#include "vulkan_render_pass.h"
 #include "vulkan_resources.h"
 
 #include <kf/renderer/frontend.h>
@@ -56,7 +57,8 @@ private:
     [[nodiscard]] GpuImage make_unoccluded_image(uint32_t width, uint32_t height) const;
     void point_set(VkDescriptorSet set, VkImageView view) const;
     void draw_pass(VkCommandBuffer commands, VkPipeline pipeline, VkDescriptorSet inputs, const GpuImage &output,
-                   VkImageLayout output_layout, std::span<const std::byte> constants) const;
+                   const Framebuffer &framebuffer, VkImageLayout output_layout,
+                   std::span<const std::byte> constants) const;
 
     VkDevice device_;
     const VulkanDevice *owner_ = nullptr;
@@ -66,10 +68,12 @@ private:
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     VkDescriptorSet world_set_ = VK_NULL_HANDLE, occlusion_inputs_ = VK_NULL_HANDLE, blur_inputs_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
+    RenderPass pass_;   // both passes: every pixel drawn
     VkPipeline occlusion_pipeline_ = VK_NULL_HANDLE, blur_pipeline_ = VK_NULL_HANDLE;
     GpuImage unoccluded_;   // 1 x 1, what world.frag binds before the first fit
     GpuImage occlusion_;    // RG32F: light left, camera depth
     GpuImage blurred_;      // RG32F, what world.frag reads; kept in SHADER_READ_ONLY_OPTIMAL
+    Framebuffer occlusion_framebuffer_, blurred_framebuffer_;
     VkImageView surfaces_view_ = VK_NULL_HANDLE;
     int logical_width_ = 0, scale_ = 0;
     OcclusionQuality quality_ = OcclusionQuality::Medium;
