@@ -105,6 +105,46 @@ int ask(const char *text, std::initializer_list<const char *> labels) {
     return SDL_ShowMessageBox(&box, &pressed) ? pressed : -1;
 }
 
+// Where a file the picker gave as a content:// URI is copied to be read (readable_path).
+std::filesystem::path picked_copy_path() {
+    return kf::user_folder() / "picked-file";
+}
+
+// Android's file picker gives a content:// URI, which only SDL's streams open, while the disc
+// and patch readers open paths: such a file is copied into the user folder first (a .cue is
+// not enough there, since only the picked file is readable). Returns the path to read, or
+// empty when it could not be copied.
+std::string readable_path(const std::string &picked) {
+    if (picked.rfind("content://", 0) != 0)
+        return picked;
+    SDL_IOStream *in = SDL_IOFromFile(picked.c_str(), "rb");
+    if (!in) {
+        std::printf("Cannot open the chosen file: %s\n", SDL_GetError());
+        return {};
+    }
+    const auto copy = picked_copy_path();
+    std::ofstream out(copy, std::ios::binary | std::ios::trunc);
+    std::vector<char> chunk(std::size_t{1} << 20);
+    bool ok = out.good();
+    while (ok) {
+        const std::size_t got = SDL_ReadIO(in, chunk.data(), chunk.size());
+        if (got == 0) {
+            ok = SDL_GetIOStatus(in) == SDL_IO_STATUS_EOF;
+            break;
+        }
+        ok = static_cast<bool>(out.write(chunk.data(), static_cast<std::streamsize>(got)));
+    }
+    ok = SDL_CloseIO(in) && ok;
+    out.close();
+    if (!ok || out.fail()) {
+        std::printf("Cannot copy the chosen file into %s\n", utf8(copy).c_str());
+        std::error_code error;
+        std::filesystem::remove(copy, error);
+        return {};
+    }
+    return utf8(copy);
+}
+
 std::string choose_file(const char *kind, const char *extensions) {
     SDL_InitSubSystem(SDL_INIT_VIDEO);
     struct Pick { std::string path; bool done = false; } pick;
@@ -120,7 +160,7 @@ std::string choose_file(const char *kind, const char *extensions) {
         SDL_Delay(20);
     }
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    return pick.path;
+    return pick.path.empty() ? pick.path : readable_path(pick.path);
 }
 
 // Builds English from the Japanese files: `source` is a patch file, "download",
@@ -389,7 +429,10 @@ int main(int argc, char **argv) {
         kf::languages_add_folder(folder);
 #if !defined(__EMSCRIPTEN__)
     if (!data_selected && !disc) {
-        if (!prepare_release_data(dropped))
+        const bool prepared = prepare_release_data(dropped);
+        std::error_code error;
+        std::filesystem::remove(picked_copy_path(), error);
+        if (!prepared)
             return 1;
     } else {
         kf::languages_configure(utf8(release_directory() / "data"));

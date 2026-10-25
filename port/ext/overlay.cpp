@@ -37,7 +37,7 @@ const char *settings_page = "Display";
 void load_font() {
     ImGuiIO &io = ImGui::GetIO();
     const char *candidates[] = {"C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf",
-                                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"};
+                                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/system/fonts/Roboto-Regular.ttf"};
     if (!settings().ui_font.empty() && std::filesystem::exists(settings().ui_font)) {
         io.Fonts->AddFontFromFileTTF(settings().ui_font.c_str(), 18.0f);
         return;

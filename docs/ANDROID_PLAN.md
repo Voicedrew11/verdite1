@@ -138,8 +138,31 @@ Each step ends with something checked. Anything judged by eye is the user's.
 4. Arguments: `--skip-intro` and the rest from intent extras
    (`adb shell am start ... -e args "--skip-intro"`), for agents and tests.
 
-Progress 2026-10-25: A1 builds (the debug APK is about 10 MB), and A2's logcat forwarding
-(`kf/platform/logcat.h`) and crash helper (none on Android) are done. Not run on a device yet.
+Progress 2026-10-25, none of it run on a device yet:
+
+- A1 builds; the debug APK is about 10 MB.
+- A2: logcat forwarding (`kf/platform/logcat.h`), no crash helper on Android, and Android's
+  Roboto as the overlay's font. Not yet: the overlay scaled to the screen's density (with C).
+- A3: a picked `content://` file is copied into the user folder through SDL's stream and read
+  from there (`readable_path` in `entry.cpp`), then removed. The disc reader tells a CHD by its
+  header, so the copy's name does not matter; a `.cue` cannot work through the picker, since
+  only the picked file is readable, so a single `.bin`, `.iso` or `.chd` is what to pick. The
+  plan's stream reader was not needed. The English patch on Android is open: reading a `.rar`
+  runs `bsdtar`, which a phone does not have, and the download is a `.rar` too (a local build
+  embeds the English delta, so this is a release question).
+- A4: `VerditeActivity` passes the intent extra `args` as the command line.
+
+First run on the Pixel, in this order:
+
+1. Developer options and USB debugging on, the phone plugged in and the prompt accepted;
+   `adb devices` lists it.
+2. `gradle -p android installDebug`, then `scripts/android-push-data.sh`.
+3. `adb logcat -c; adb shell am start -n io.github.voicedrew11.verdite1/.VerditeActivity -e args "--skip-intro"`
+   and `adb logcat -s Verdite1`: the `[vulkan]` line names the GPU, and the game starts.
+4. The game played with a Bluetooth pad; home and back again (the log shows the surface
+   released and made again); a turn of the phone between the two landscapes.
+5. `adb forward tcp:27901 tcp:27901`: the agent channel, as on the desktop.
+6. A fresh install with no pushed data: the picker, a `.bin` or `.chd`, the import.
 
 Done when: the game boots on the Pixel with a Bluetooth gamepad and on a
 Retroid with its built-in pad, draws through Vulkan with validation clean, and
