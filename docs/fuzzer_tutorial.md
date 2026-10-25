@@ -9,7 +9,7 @@ plan: "Fuzzing" in [verdite-port.md](verdite-port.md) and [FUZZING_PLAN.md](FUZZ
 | flag | default | what it does |
 |---|---|---|
 | `--runs N` | 12 | how many seeds |
-| `--seed-base S` | 100 | the first seed; runs use S, S+1, … |
+| `--seed-base S` | random | the first seed; runs use S, S+1, …. Each batch picks a new one and prints it; pass it to play the same seeds again |
 | `--budget SECONDS` | — | keep launching seeds for this long, instead of `--runs` |
 | `--jobs J` | half your CPUs | runs at once |
 | `--ticks T` | 72000 | game-clock ticks per run, 60 a second (72000 is 20 game minutes) |

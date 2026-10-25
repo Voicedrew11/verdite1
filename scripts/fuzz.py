@@ -398,9 +398,11 @@ def group(runs: list[Run]) -> dict[tuple[str, str], list[tuple[Run, dict]]]:
     return groups
 
 
-def coverage(directory: Path) -> dict:
+def coverage(run_dirs: list[Path]) -> dict:
     floors, cells, items, runs = set(), set(), set(), 0
-    for path in sorted((directory / "runs").glob("*/fuzz-coverage.txt")):
+    for path in (d / "fuzz-coverage.txt" for d in sorted(run_dirs)):
+        if not path.exists():
+            continue
         runs += 1
         for line in path.read_text().splitlines():
             words = line.split()
@@ -427,10 +429,11 @@ def write_report(args, runs: list[Run], wall: float) -> None:
     out = Path(args.out)
     counts = Counter(r.outcome for r in runs)
     groups = group(runs)
-    cov = coverage(out)
+    cov = coverage([r.dir for r in runs])
     md = ["# Fuzz report", "",
           f"{len(runs)} runs of {args.ticks} ticks ({args.ticks / TICKS_PER_SECOND / 60:.1f} game minutes each) "
-          f"in {wall:.0f} s, {args.jobs} at a time, `{rel(binary(args))}`.", "",
+          f"in {wall:.0f} s, {args.jobs} at a time, `{rel(binary(args))}`, seeds "
+          f"{min(r.seed for r in runs)}-{max(r.seed for r in runs)}.", "",
           " | ".join(f"**{k}** {counts[k]}" for k in ("crash", "fail", "timeout", "violation", "ok") if counts[k]), ""]
     for (kind, sig), hits in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         run, finding = hits[0]
@@ -665,7 +668,7 @@ def main() -> int:
                                 epilog="The KF_FUZZ_* switches these set are in port/include/kf/platform/fuzz.h.")
     g = p.add_argument_group("what to run")
     g.add_argument("--runs", type=int, default=12, help="seeds to run (default 12)")
-    g.add_argument("--seed-base", type=int, default=100, help="the first seed (default 100)")
+    g.add_argument("--seed-base", type=int, help="the first seed (default: a new random one each time, printed)")
     g.add_argument("--budget", type=float, help="launch seeds for this many seconds instead of --runs")
     g.add_argument("--jobs", type=int, default=max((os.cpu_count() or 2) // 2, 1), help="runs at once (default: half the CPUs)")
     g.add_argument("--ticks", type=int, default=72000, help="game-clock ticks per run, 60 a second (default 72000: 20 minutes)")
@@ -719,7 +722,7 @@ def main() -> int:
     if args.load:
         args.load = str(Path(args.load).resolve())
     if args.coverage_only:
-        print("\n".join(coverage_markdown(coverage(Path(args.coverage_only)))))
+        print("\n".join(coverage_markdown(coverage(list((Path(args.coverage_only) / "runs").iterdir())))))
         return 0
     if args.targets is not None:
         if args.preset == "linux":
@@ -736,6 +739,11 @@ def main() -> int:
         return 2
     if args.preset == "sanitize":
         args.timeout = max(args.timeout, 3600)
+    if args.seed_base is None:
+        # A fixed base would play the same seeds, and so the same --mix and --vary picks, every time.
+        args.seed_base = random.SystemRandom().randrange(1, 1_000_000_000)
+        if not args.replay and not args.minimise:
+            print(f"fuzz: seeds from {args.seed_base} (--seed-base {args.seed_base} plays them again)")
     base_settings = json.loads(Path(args.settings).read_text()) if args.settings else {}
     Path(args.out).mkdir(parents=True, exist_ok=True)
 
