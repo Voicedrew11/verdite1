@@ -417,6 +417,45 @@ index 0000000000000000000000000000000000000000..a5ad45274cfa6ba796c7b87168323008
 +    }
 +    kf::automap_published();
 +}
+diff --git a/src/game/effect_map_collision.cpp b/src/game/effect_map_collision.cpp
+index 6379fd779cabcf6588bdddcec2e59e0e990b7262..d05909b793186ce3c156284a4c3e0f6258eafc66 100644
+--- a/src/game/effect_map_collision.cpp
++++ b/src/game/effect_map_collision.cpp
+@@ -59,6 +59,16 @@ static bool effect_within_height_rectangle(const KfCellHeightRecord *record,
+     return coordinate >= record->x_min && coordinate <= record->x_max;
+ }
+ 
++// PC fix: a blocked cell on the map's edge read its neighbour past the grid on
++// the PS1; outside the map is rock.
++static bool effect_neighbour_has_full_floor(s32 x, s32 z)
++{
++    if (x < 0 || x >= KF_MAP_COLUMNS || z < 0 || z >= KF_MAP_ROWS) {
++        return false;
++    }
++    return map_cell_has_full_floor(map_collision_grid.cells[z][x]);
++}
++
+ static KfCollisionResult effect_collision_in_cell(
+     VECTOR *position, s32 radius, s16 x, s16 z, s32 subz,
+     KfEffectRecord *effect)
+@@ -101,13 +111,13 @@ static KfCollisionResult effect_collision_in_cell(
+         // Full-floor cells need no diagonal/corner rejection.
+         break;
+     case KF_MAP_CELL_BLOCKED:
+-        if ((!map_cell_has_full_floor(map_collision_grid.cells[z + 1][x])
++        if ((!effect_neighbour_has_full_floor(x, z + 1)
+                 || position->vz % KF_MAP_TILE_SIZE < KF_MAP_TILE_CENTER) &&
+-            (!map_cell_has_full_floor(map_collision_grid.cells[z - 1][x])
++            (!effect_neighbour_has_full_floor(x, z - 1)
+                 || KF_MAP_TILE_CENTER < position->vz % KF_MAP_TILE_SIZE) &&
+-            (!map_cell_has_full_floor(map_collision_grid.cells[z][x + 1])
++            (!effect_neighbour_has_full_floor(x + 1, z)
+                 || position->vx % KF_MAP_TILE_SIZE < KF_MAP_TILE_CENTER)) {
+-            if (!map_cell_has_full_floor(map_collision_grid.cells[z][x - 1])) {
++            if (!effect_neighbour_has_full_floor(x - 1, z)) {
+                 return {KfCollisionKind::Terrain};
+             }
+             if (KF_MAP_TILE_CENTER < position->vx % KF_MAP_TILE_SIZE) {
 diff --git a/src/game/effect_update.cpp b/src/game/effect_update.cpp
 index b0d8a7376e2d4a10cf30719994b0a16271c57cca..9ad4a869ba594b39fe114291289538333ee1a94d 100644
 --- a/src/game/effect_update.cpp
