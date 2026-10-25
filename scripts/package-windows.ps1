@@ -24,7 +24,7 @@ Copy-Item "docs\MODDING.md" $stage
 Copy-Item "mods" (Join-Path $stage "mods") -Recurse
 
 $licenses = New-Item -ItemType Directory (Join-Path $stage "licenses")
-Copy-Item "LICENSE" (Join-Path $licenses "Verdite1-CC0.txt")
+Copy-Item "LICENSE" (Join-Path $licenses "Verdite1-MIT.txt")
 Copy-Item "third_party\imgui\LICENSE.txt" (Join-Path $licenses "DearImGui.txt")
 Copy-Item "third_party\lua\LICENSE" (Join-Path $licenses "Lua.txt")
 Copy-Item "third_party\cjson\LICENSE" (Join-Path $licenses "cJSON.txt")
