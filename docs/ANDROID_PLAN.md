@@ -166,13 +166,7 @@ The Retroid needs B1 first.
    ordinary one; the surface holds its own reference to the native window, so a
    present after Android takes it fails cleanly. `KF_TEST_BACKGROUND=60` sends
    the event on the desktop: the log shows the surface released and made again,
-   the game goes on with the overlay open, and validation stays clean. The plan
-   was: The surface moves out of `VulkanDevice` into the
-   swapchain's owner. The queue family is still checked against the first surface;
-   a new surface is checked again. On `SDL_EVENT_WILL_ENTER_BACKGROUND`: wait
-   idle, destroy the swapchain and surface. On `DID_ENTER_FOREGROUND`: create
-   them again. `SURFACE_LOST` takes the same path. Presentation from modal
-   waits (`frontend_present`) skips cleanly while there is no surface.
+   the game goes on with the overlay open, and validation stays clean.
 3. **Present by drawing.** `blit_to` becomes a fullscreen draw (the downsample
    pipeline is most of it): it letterboxes, scales nearest at whole multiples and
    smoothed otherwise as now, and rotates by `currentTransform`. ImGui and the
