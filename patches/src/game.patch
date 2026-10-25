@@ -647,6 +647,33 @@ index 660386288c157b2819409141f669eb2ae4d10af9..c99764840573dfed93d85ea3c02e9df7
      auto &config = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)];
      config.rows[KF_MENU_CONFIG_RETURN_ROW] = config.rows[KF_MENU_CONFIG_LANGUAGE_ROW];
      config.rows[KF_MENU_CONFIG_RETURN_ROW].position.y += config.rows[1].position.y - config.rows[0].position.y;
+diff --git a/src/game/map_object.cpp b/src/game/map_object.cpp
+index c4fee7aad3fff0d855e5f329a125281e6bba88a7..0b36c3f78a11d94f37474ee89c0334395e91dbcb 100644
+--- a/src/game/map_object.cpp
++++ b/src/game/map_object.cpp
+@@ -216,6 +216,11 @@ void map_object_pool_trigger_link(u8 link_id)
+             }
+             break;
+         default:
++            // PC fix: a picked-up item keeps its link; the PS1 read its definition
++            // past the table.
++            if (object.object_id == KF_OBJECT_NONE) {
++                break;
++            }
+             if (map_object_state.definitions.entries[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_TRIGGER_END
+                 && !(object.link.link_id < KF_MAP_LINK_REUSABLE_FIRST) && object.link.link_id == link_id) {
+                 map_object_start_action_if_idle(
+@@ -231,6 +236,10 @@ void map_object_pool_clear_link(u8 link_id)
+     KfMapObjectDefinition *definitions = map_object_state.definitions.entries;
+ 
+     for (auto &object : map_object_state.objects) {
++        // PC fix: as in map_object_pool_trigger_link.
++        if (object.object_id == KF_OBJECT_NONE) {
++            continue;
++        }
+         if ((definitions[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_CLEAR_LAST
+              || definitions[kf_enum_encode<u8>(object.object_id)].behavior_type == KF_MAP_OBJECT_OP_LINK_CLEAR_LAST)
+             && object.link.link_id == link_id) {
 diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
 index 1477de2e4583d114e5e02fb014b8e8263bb7510b..78266ab7cb4c93b2c113f200623a503cf2f960a9 100644
 --- a/src/game/map_scripts.cpp
