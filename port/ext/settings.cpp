@@ -214,7 +214,13 @@ void settings_mark_dirty() {
 
 void settings_save_if_dirty() {
     // Debounced: sliders dragged for a second write once.
-    if (!dirty || !document || SDL_GetTicks() - dirty_since < 500)
+    if (!dirty || SDL_GetTicks() - dirty_since < 500)
+        return;
+    settings_save();
+}
+
+void settings_save() {
+    if (!document)
         return;
     dirty = false;
     cJSON *display = object_entry(document, "display");

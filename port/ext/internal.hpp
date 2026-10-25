@@ -98,6 +98,8 @@ const Settings &effective_settings();
 void settings_load();
 void settings_mark_dirty();
 void settings_save_if_dirty();
+// Writes settings.json now (exit, or Android sending the app to the background).
+void settings_save();
 // mods.<id> object in settings.json, created on demand. Owned by the settings document.
 cJSON *settings_mod_entry(const std::string &id);
 void apply_display_settings();
