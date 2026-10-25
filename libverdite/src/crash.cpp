@@ -670,10 +670,11 @@ void on_sanitizer_death() {
 }
 #endif
 
-// The binary's own path, for the helper; empty where there is no /proc.
+// The binary's own path, for the helper; empty where there is no /proc, and on
+// Android, where it is the system's app_process and the game is a library in it.
 void find_binary() {
     state.binary.clear();
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
     std::array<char, path_capacity> path{};
     const ssize_t length = readlink("/proc/self/exe", path.data(), path.size() - 1);
     if (length > 0)

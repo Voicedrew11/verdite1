@@ -7,7 +7,8 @@
 //
 // The stack is captured in the handler without allocating and named afterwards by a
 // helper process started from the same binary (crash_helper_run), so the shipped game
-// carries its line tables. Under AddressSanitizer the sanitizer's own report is kept:
+// carries its line tables. On Android the game is a library inside the system's app
+// process, so there is no helper and the stack stays as addresses in each library. Under AddressSanitizer the sanitizer's own report is kept:
 // the report is written from its death callback, without a stack.
 #include <cstddef>
 #include <cstdint>
