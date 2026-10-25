@@ -335,4 +335,6 @@ What carries over is decisions and references, not code:
 3. A second backend early, before the frontend sets in Vulkan-shaped habits.
    deko3d is the more useful second one; the 3DS is so limited it would bend
    the frontend.
-4. The 3DS last, as Classic and Balanced.
+4. Android before the 3DS (decided 2026-10-25): the Vulkan backend on mobile
+   drivers, in [ANDROID_PLAN.md](ANDROID_PLAN.md).
+5. The 3DS last, as Classic and Balanced.
