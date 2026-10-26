@@ -205,6 +205,8 @@ static bool start_window() {
         }
         return renderer_start(make_null_backend());
     }
+    // Phones: SDL would otherwise allow portrait for a resizable window, over the manifest.
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
     host.window = SDL_CreateWindow(product_name, 960, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!host.window) {
         std::fprintf(stderr, "[renderer] no Vulkan window: %s\n", SDL_GetError());
