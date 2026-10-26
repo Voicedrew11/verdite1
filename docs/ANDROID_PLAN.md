@@ -161,8 +161,17 @@ First run on the Pixel, in this order:
    and `adb logcat -s Verdite1`: the `[vulkan]` line names the GPU, and the game starts.
 4. The game played with a Bluetooth pad; home and back again (the log shows the surface
    released and made again); a turn of the phone between the two landscapes.
-5. `adb forward tcp:27901 tcp:27901`: the agent channel, as on the desktop.
+5. `adb forward tcp:27901 tcp:27901`: the agent channel, as on the desktop. The environment
+   comes from the intent extra `env` (`-e env "KF_SHELL=1"`), set before the game's main.
 6. A fresh install with no pushed data: the picker, a `.bin` or `.chd`, the import.
+
+Run 2026-10-25 on the Pixel 8 Pro (Android 17, Mali-G715): steps 1-3 and 5 pass, and home and back
+again from step 4 (the surface made again, the world still at the tick rate's 15 updates a
+second). Found and fixed: SDL asked for any orientation for a resizable window, over the
+manifest, so the game turned to portrait (`SDL_HINT_ORIENTATIONS` now names the two landscapes);
+the saves would not open, since the save folder's parents are synced up to `/` and an app may not
+open `/data/data` (a parent we may not open now ends the walk). Not yet: the Bluetooth pad and a
+turn of the phone (the user's), the picker (step 6), validation layers on the device.
 
 Done when: the game boots on the Pixel with a Bluetooth gamepad and on a
 Retroid with its built-in pad, draws through Vulkan with validation clean, and

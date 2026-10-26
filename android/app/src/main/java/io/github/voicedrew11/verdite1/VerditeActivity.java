@@ -1,16 +1,34 @@
 package io.github.voicedrew11.verdite1;
 
+import android.system.ErrnoException;
+import android.system.Os;
+import android.util.Log;
+
 import org.libsdl.app.SDLActivity;
 
 // SDL's activity, which loads libSDL3.so and libmain.so and runs the game's main on its own thread.
 public class VerditeActivity extends SDLActivity {
-    // The command line, for agents and tests:
-    // adb shell am start -n io.github.voicedrew11.verdite1/.VerditeActivity -e args "--skip-intro"
+    // The command line and environment, for agents and tests:
+    // adb shell am start -n io.github.voicedrew11.verdite1/.VerditeActivity -e args "--skip-intro" -e env "KF_SHELL=1"
+    // SDL asks for the arguments on the game's thread just before main, so the environment is set by then.
     @Override
     protected String[] getArguments() {
-        String args = getIntent().getStringExtra("args");
-        if (args == null || args.trim().isEmpty())
+        for (String entry : words(getIntent().getStringExtra("env"))) {
+            int equals = entry.indexOf('=');
+            if (equals <= 0)
+                continue;
+            try {
+                Os.setenv(entry.substring(0, equals), entry.substring(equals + 1), true);
+            } catch (ErrnoException e) {
+                Log.w("Verdite1", "cannot set " + entry + ": " + e);
+            }
+        }
+        return words(getIntent().getStringExtra("args"));
+    }
+
+    private static String[] words(String text) {
+        if (text == null || text.trim().isEmpty())
             return new String[0];
-        return args.trim().split("\\s+");
+        return text.trim().split("\\s+");
     }
 }
