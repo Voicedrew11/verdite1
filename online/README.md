@@ -35,10 +35,29 @@ machine; local development never needs the key.
 
 The TURN key (`TURN_KEY_ID`, `TURN_KEY_API_TOKEN`) lives only in Cloudflare, as the deployed
 Worker's secrets. It is never in a file in this repo, not even an ignored one, and never reaches a
-client: clients get a TURN credential per room visit, for 6 hours, revoked when they leave.
+client: a client gets a TURN credential only when it has a peer to connect to, for an hour,
+revoked when it leaves or asks again.
 
-- Set it with `npx wrangler secret put TURN_KEY_ID` (and `TURN_KEY_API_TOKEN`) in your own
-  terminal, typing it at the prompt: not piped from `echo` (shell history), not in `.dev.vars`.
+## Abuse and cost
+
+The URL is public and anything can speak the protocol, so the service cannot tell the game from
+another program; it limits what anyone can take instead:
+
+- credentials only to a peer with another peer in its room, for an hour, revoked on leaving;
+- per address: 30 joins and 10 credentials a minute (approximate, per Cloudflare location);
+- the month's budget: a scheduled check every 10 minutes reads the TURN key's egress (what
+  Cloudflare bills, $0.05/GB past 1,000 GB a month) from the analytics API, and past
+  `TURN_BUDGET_GB` (500) rooms get `unavailable` instead of credentials. Cloudflare itself has
+  no cap and offers no usage alert on an account without usage-based billing.
+
+Still to come: a key per install, so limits and bans apply per player (`docs/NETWORKING_PLAN.md`).
+
+- Set each with `npx wrangler secret put <NAME>` in your own terminal, the name as the argument
+  and the value typed at the prompt: not on the command line, not piped from `echo` (shell
+  history), not in `.dev.vars`.
+- The budget's check needs two more: `CF_ACCOUNT_ID` (from `npx wrangler whoami`) and
+  `CF_ANALYTICS_TOKEN`, an API token with only Account → Account Analytics → Read. Without them
+  there is no cap.
 - wrangler's own login is in `~/.config/.wrangler`, outside the repo.
 - The guards: `.gitignore` leaves out `.dev.vars*`, `.env*`, `*.pem` and `.wrangler/`; the
   pre-commit hook (`git config core.hooksPath scripts/hooks`) refuses those files by name and

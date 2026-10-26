@@ -1,8 +1,9 @@
-// A room: up to ROOM_PEERS WebSockets of one build, relaying signals between them. One Durable
-// Object per (game, room); hibernates between frames, so each socket's state is its attachment.
+// A room: up to ROOM_PEERS WebSockets of one build, relaying signals between them and handing out
+// TURN credentials to peers that have someone to connect to. One Durable Object per (game, room);
+// hibernates between frames, so each socket's state is its attachment.
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
-import { issue, revoke } from "./turn";
+import { issue, revoke, CREDENTIAL_SECONDS } from "./turn";
 import {
   FRAME_BYTES,
   FRAMES_PER_SECOND,
@@ -15,8 +16,8 @@ import {
 interface Peer {
   peer: string;
   build: string;
-  welcomed: boolean; // has had its welcome; only welcomed peers are seen by the others
-  turnUser: string | null;
+  ip: string; // for the per-address credential limit
+  turnUser: string | null; // the live TURN credential, revoked when replaced or on leaving
 }
 
 interface Window {
@@ -32,14 +33,34 @@ function send(ws: WebSocket, frame: ServerFrame): void {
   }
 }
 
-function refuse(ws: WebSocket, code: ErrorCode, message: string): void {
+function fail(ws: WebSocket, code: ErrorCode, message: string): void {
   send(ws, { type: "error", code, message });
+}
+
+function refuse(ws: WebSocket, code: ErrorCode, message: string): void {
+  fail(ws, code, message);
   ws.close(1008, code);
 }
 
 function newPeerId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function attachment(ws: WebSocket): Peer | null {
+  try {
+    return ws.deserializeAttachment() as Peer | null;
+  } catch {
+    return null;
+  }
+}
+
+function store(ws: WebSocket, peer: Peer): void {
+  try {
+    ws.serializeAttachment(peer);
+  } catch {
+    // closed: its attachment is gone with it
+  }
 }
 
 export class Room extends DurableObject<Env> {
@@ -50,12 +71,13 @@ export class Room extends DurableObject<Env> {
     return this.ctx
       .getWebSockets()
       .filter((ws) => ws.readyState === WebSocket.OPEN)
-      .map((ws) => ({ ws, peer: ws.deserializeAttachment() as Peer | null }))
+      .map((ws) => ({ ws, peer: attachment(ws) }))
       .filter((entry): entry is { ws: WebSocket; peer: Peer } => entry.peer !== null);
   }
 
   async fetch(request: Request): Promise<Response> {
     const build = new URL(request.url).searchParams.get("build") ?? "";
+    const ip = request.headers.get("CF-Connecting-IP") ?? "local";
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     const present = this.peers();
 
@@ -71,44 +93,50 @@ export class Room extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    // Accepted before the credential is fetched, so a second join meanwhile counts this one.
+    // Nothing here waits, so each pair of peers is introduced once: the later one finds the
+    // other in its welcome and offers.
     const ids = new Set(present.map(({ peer }) => peer.peer));
     let id = newPeerId();
     while (ids.has(id)) id = newPeerId();
-    const self: Peer = { peer: id, build, welcomed: false, turnUser: null };
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment(self);
-    this.ctx.waitUntil(this.welcome(server, self));
+    store(server, { peer: id, build, ip, turnUser: null });
+    send(server, { type: "welcome", protocol: PROTOCOL, peer: id, peers: [...ids] });
+    for (const { ws: other } of present) send(other, { type: "join", peer: id });
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  private async welcome(ws: WebSocket, self: Peer): Promise<void> {
+  // A credential only for a peer with someone to connect to, within its address's limit and
+  // the month's budget; a new one replaces (and revokes) the peer's last.
+  private async turn(ws: WebSocket, self: Peer): Promise<void> {
+    if (!this.peers().some(({ ws: other }) => other !== ws)) {
+      fail(ws, "alone", "no other peer to connect to");
+      return;
+    }
+    if (!(await this.env.TURN_LIMIT.limit({ key: self.ip })).success) {
+      fail(ws, "rate_limited", "too many TURN credentials from this address");
+      return;
+    }
+    if (!(await this.env.BUDGET.get(this.env.BUDGET.idFromName("turn")).allowed())) {
+      fail(ws, "unavailable", "the service is over its TURN budget for the month");
+      return;
+    }
     let credential;
     try {
       credential = await issue(this.env);
     } catch (error) {
       console.error(String(error));
-      refuse(ws, "unavailable", "no TURN credentials");
+      fail(ws, "unavailable", "no TURN credentials");
       return;
     }
-    if (ws.readyState !== WebSocket.OPEN) {
+    const latest = attachment(ws);
+    if (ws.readyState !== WebSocket.OPEN || !latest) {
       if (credential.username) await revoke(this.env, credential.username);
       return;
     }
-    // From here to the end runs without a pause, so each pair of peers is introduced once: the
-    // one welcomed later finds the other in its welcome and offers.
-    const others = this.peers().filter(({ ws: other, peer }) => other !== ws && peer.welcomed);
-    self.welcomed = true;
-    self.turnUser = credential.username;
-    ws.serializeAttachment(self);
-    send(ws, {
-      type: "welcome",
-      protocol: PROTOCOL,
-      peer: self.peer,
-      peers: others.map(({ peer }) => peer.peer),
-      iceServers: credential.iceServers,
-    });
-    for (const { ws: other } of others) send(other, { type: "join", peer: self.peer });
+    const replaced = latest.turnUser;
+    store(ws, { ...latest, turnUser: credential.username });
+    send(ws, { type: "turn", iceServers: credential.iceServers, seconds: CREDENTIAL_SECONDS });
+    if (replaced) await revoke(this.env, replaced);
   }
 
   private overRate(ws: WebSocket): boolean {
@@ -123,30 +151,36 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const self = ws.deserializeAttachment() as Peer;
+    const self = attachment(ws);
+    if (!self) return; // a refused socket on its way out
     if (this.overRate(ws)) {
-      send(ws, { type: "error", code: "rate_limited", message: `over ${FRAMES_PER_SECOND} frames a second` });
+      fail(ws, "rate_limited", `over ${FRAMES_PER_SECOND} frames a second`);
       return;
     }
     if (typeof message !== "string" || message.length > FRAME_BYTES) {
-      send(ws, { type: "error", code: "bad_message", message: "frames are JSON text up to 64 KiB" });
+      fail(ws, "bad_message", "frames are JSON text up to 64 KiB");
       return;
     }
     let frame: unknown;
     try {
       frame = JSON.parse(message);
     } catch {
-      send(ws, { type: "error", code: "bad_message", message: "not JSON" });
+      fail(ws, "bad_message", "not JSON");
       return;
     }
-    if (!self.welcomed || typeof frame !== "object" || frame === null || (frame as { type?: unknown }).type !== "signal") {
-      send(ws, { type: "error", code: "bad_message", message: "expected a signal" });
+    const type = typeof frame === "object" && frame !== null ? (frame as { type?: unknown }).type : undefined;
+    if (type === "turn") {
+      await this.turn(ws, self);
+      return;
+    }
+    if (type !== "signal") {
+      fail(ws, "bad_message", "expected a signal or a turn request");
       return;
     }
     const { to, data } = frame as { to?: unknown; data?: unknown };
-    const target = this.peers().find(({ peer }) => peer.welcomed && peer.peer === to && peer.peer !== self.peer);
+    const target = this.peers().find(({ peer }) => peer.peer === to && peer.peer !== self.peer);
     if (!target) {
-      send(ws, { type: "error", code: "unknown_peer", message: `no peer ${String(to)} in the room` });
+      fail(ws, "unknown_peer", `no peer ${String(to)} in the room`);
       return;
     }
     send(target.ws, { type: "signal", from: self.peer, data });
@@ -166,16 +200,15 @@ export class Room extends DurableObject<Env> {
   }
 
   private async leave(ws: WebSocket): Promise<void> {
-    const self = ws.deserializeAttachment() as Peer | null;
-    if (!self?.welcomed) return;
-    self.welcomed = false; // a close after an error leaves only once
+    const self = attachment(ws);
+    if (!self) return;
     try {
-      ws.serializeAttachment(self);
+      ws.serializeAttachment(null); // a close after an error leaves only once
     } catch {
-      // closed: its attachment is gone with it
+      // closed
     }
-    for (const { ws: other, peer } of this.peers())
-      if (other !== ws && peer.welcomed) send(other, { type: "leave", peer: self.peer });
+    for (const { ws: other } of this.peers())
+      if (other !== ws) send(other, { type: "leave", peer: self.peer });
     if (self.turnUser) await revoke(this.env, self.turnUser);
   }
 }

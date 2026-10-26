@@ -50,7 +50,7 @@ const cases = {
     assert.equal(wa.protocol, 1);
     assert.match(wa.peer, /^[0-9a-f]{16}$/);
     assert.deepEqual(wa.peers, []);
-    assert.ok(Array.isArray(wa.iceServers));
+    assert.equal(wa.iceServers, undefined); // credentials only on request
 
     const b = connect(roomUrl("pair"));
     const wb = await b.next();
@@ -65,6 +65,24 @@ const cases = {
     b.close();
     assert.deepEqual(await a.next(), { type: "leave", peer: wb.peer });
     a.close();
+  },
+
+  async "a TURN credential only for a peer with someone to connect to"() {
+    const a = connect(roomUrl("turn"));
+    await a.next();
+    a.send({ type: "turn" });
+    assert.equal((await a.next()).code, "alone");
+
+    const b = connect(roomUrl("turn"));
+    await b.next();
+    assert.equal((await a.next()).type, "join");
+    b.send({ type: "turn" });
+    const turn = await b.next();
+    assert.equal(turn.type, "turn");
+    assert.ok(Array.isArray(turn.iceServers)); // empty on a service without a TURN key
+    assert.equal(turn.seconds, 3600);
+    a.close();
+    b.close();
   },
 
   async "a fifth peer is refused"() {

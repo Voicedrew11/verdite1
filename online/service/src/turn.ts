@@ -2,7 +2,7 @@
 // key is the service's secret; without it there are no ICE servers (local testing).
 
 const API = "https://rtc.live.cloudflare.com/v1/turn/keys";
-export const CREDENTIAL_SECONDS = 6 * 60 * 60;
+export const CREDENTIAL_SECONDS = 60 * 60; // a longer session asks again
 
 export interface TurnKey {
   TURN_KEY_ID?: string;

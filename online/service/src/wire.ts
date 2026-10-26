@@ -11,13 +11,15 @@ export type ErrorCode =
   | "bad_message"
   | "unknown_peer"
   | "rate_limited"
+  | "alone"
   | "unavailable";
 
 export type ServerFrame =
-  | { type: "welcome"; protocol: number; peer: string; peers: string[]; iceServers: unknown[] }
+  | { type: "welcome"; protocol: number; peer: string; peers: string[] }
   | { type: "join"; peer: string }
   | { type: "leave"; peer: string }
   | { type: "signal"; from: string; data: unknown }
+  | { type: "turn"; iceServers: unknown[]; seconds: number }
   | { type: "error"; code: ErrorCode; message: string };
 
 export function refusal(status: number, error: string, message: string): Response {
