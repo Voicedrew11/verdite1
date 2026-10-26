@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 struct ImDrawData;
 namespace verdite { class CrashWriter; }
@@ -39,6 +40,12 @@ void game_frame(int input_context);
 ImDrawData *build_overlay(int width, int height);
 // A brief centred message, such as "Quick saved".
 void show_message(const std::string &text);
+// The settings as this platform shows them, as JSON (verdite::options_json), for the
+// agent channel and Android's settings panel.
+std::string options_json();
+// Changes an option by id from typed text (verdite::option_value_from_text), or
+// presses an action given no text. Empty on success, else why not.
+std::string option_change(std::string_view id, std::string_view text);
 // For a crash report: the settings that change how the game plays or draws. Runs in the crash
 // handler, so it only reads.
 void crash_write_settings(verdite::CrashWriter &out);

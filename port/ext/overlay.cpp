@@ -6,14 +6,12 @@
 #include <imgui_internal.h>   // FindRenderedTextEnd
 #include <kf/platform/host.h>
 #include <kf/platform/language_runtime.h>
-#include <kf/platform/translation_ppf.h>
 #include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <mutex>
 #include <string>
 
 namespace kf::ext {
@@ -32,7 +30,7 @@ Uint64 fps_started;
 float fps_value;
 int last_context;
 float applied_scale = 1.0f;   // layout uses this, never the slider's live value
-const char *settings_page = "Display";
+std::string settings_page = "Display";
 
 void load_font() {
     ImGuiIO &io = ImGui::GetIO();
@@ -104,163 +102,108 @@ void set_open(bool value) {
         SDL_SetWindowRelativeMouseMode(main_window, false);
 }
 
-// A file chosen in a dialog. The dialog answers later, possibly on another
-// thread, so the page picks the result up on a later frame.
-enum class Pick { None, Patch, Disc };
-std::mutex pick_lock;
-Pick pick_pending = Pick::None, pick_done = Pick::None;
-std::string pick_path;
+// ---- Settings: the option table, drawn as it comes ----
 
-void pick_file(Pick purpose) {
-    static const SDL_DialogFileFilter patch_filter[] = {{"English patch (.rar or .ppf)", "rar;ppf;zip;7z"}};
-    static const SDL_DialogFileFilter disc_filter[] = {{"Disc images", "cue;bin;iso;chd"}};
-    {
-        std::lock_guard guard(pick_lock);
-        pick_pending = purpose;
-    }
-    SDL_ShowOpenFileDialog([](void *, const char *const *files, int) {
-        std::lock_guard guard(pick_lock);
-        pick_done = files && files[0] ? pick_pending : Pick::None;
-        pick_path = files && files[0] ? files[0] : "";
-        pick_pending = Pick::None;
-    }, nullptr, main_window, purpose == Pick::Patch ? patch_filter : disc_filter, 1, nullptr, false);
+// A number with settle set is held here while its slider is dragged.
+std::string settling_id;
+float settling_value;
+
+void show_help(const verdite::OptionRow &row) {
+    if (!row.help.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", row.help.c_str());
 }
 
-// Settings > Language: the game's language, and setting up the other one.
-void language_settings_page(bool &changed) {
-    auto &s = settings();
-    {
-        std::lock_guard guard(pick_lock);
-        if (pick_done == Pick::Patch)
-            language_task_patch_file(pick_path);
-        else if (pick_done == Pick::Disc)
-            language_task_add_disc(pick_path);
-        pick_done = Pick::None;
-    }
-    std::string message;
-    const auto task = language_task_state(&message);
-    const bool english = language_available(Language::English);
-    const bool japanese = language_available(Language::Japanese);
+void draw_choice(const verdite::OptionRowView &view) {
+    const verdite::OptionRow &row = *view.row;
+    const auto current = std::ranges::find(row.choices, view.value, &verdite::OptionChoice::value);
+    const char *preview = current != row.choices.end() ? current->label.c_str() : "";
+    if (!ImGui::BeginCombo(row.label.c_str(), preview))
+        return;
+    for (const auto &choice : row.choices)
+        if (ImGui::Selectable(choice.label.c_str(), choice.value == view.value))
+            options().set(row.id, choice.value);
+    ImGui::EndCombo();
+}
 
-    ImGui::TextWrapped("King's Field was released only in Japanese. The English version is John Osborne's fan "
-                       "translation (v1.0). Saves work in both languages.");
-    ImGui::Spacing();
-    int choice = language_requested() == Language::English ? 1 : 0;
-    ImGui::BeginDisabled(!english || !japanese);
-    bool picked = ImGui::RadioButton("English", &choice, 1);
-    ImGui::SameLine();
-    picked |= ImGui::RadioButton("Japanese", &choice, 0);
-    ImGui::EndDisabled();
-    if (picked) {
-        s.language = choice ? "en" : "ja";
-        language_preference = choice ? Language::English : Language::Japanese;
-        language_request(language_preference);
-        changed = true;
+void draw_number(const verdite::OptionRowView &view) {
+    const verdite::OptionRow &row = *view.row;
+    const bool settling = settling_id == row.id;
+    float value = settling ? settling_value : static_cast<float>(std::get<double>(view.value));
+    bool committed = false;
+    const bool moved = slider_input(row.label.c_str(), &value, static_cast<float>(row.min), static_cast<float>(row.max),
+                                    row.format.empty() ? "%.2f" : row.format.c_str(), static_cast<float>(row.step),
+                                    &committed);
+    if (!row.settle) {
+        if (moved)
+            options().set(row.id, static_cast<double>(value));
+        return;
     }
-    if (language_requested() != game_language())
-        ImGui::TextDisabled("Switches to %s when you return to the game.", language_name(language_requested()));
-    else
-        ImGui::TextDisabled("In use: %s. The game's Configuration menu can switch too.", language_name(game_language()));
-
-    ImGui::SeparatorText("Game files");
-    for (const auto language : {Language::English, Language::Japanese}) {
-        const bool ready = language_available(language);
-        ImGui::BulletText("%s: %s", language_name(language), ready ? "ready" : "not set up");
-        if (ready)
-            ImGui::SetItemTooltip("%s", language_folder(language).c_str());
+    if (moved) {
+        settling_id = row.id;
+        settling_value = value;
     }
-    ImGui::Spacing();
-    const bool working = task == LanguageTask::Working;
-    ImGui::BeginDisabled(working);
-    if (!english && japanese) {
-        ImGui::TextWrapped("Add English with the translator's patch, applied to your Japanese game files:");
-        if (ImGui::Button("Download English patch"))
-            language_task_download_english();
-        ImGui::SetItemTooltip("Downloads John Osborne's release (about 6 MB) from the Internet Archive copy of\n"
-                              "the translator's site, checks it, and builds English next to Japanese.");
-        ImGui::SameLine();
-        if (ImGui::Button("Choose patch file..."))
-            pick_file(Pick::Patch);
-        ImGui::SetItemTooltip("Kings_Field_Jap_to_Eng_v1.0.rar, or the .ppf inside it.");
-    }
-    if (!japanese) {
-        ImGui::TextWrapped("Japanese needs your original Japanese disc image (.cue/.bin, .iso or .chd); a disc with the "
-                           "English patch applied can't be turned back.");
-        if (ImGui::Button("Add Japanese disc..."))
-            pick_file(Pick::Disc);
-    }
-    ImGui::EndDisabled();
-    if (working) {
-        ImGui::TextDisabled("%s", message.c_str());
-    } else if (task == LanguageTask::Done) {
-        ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%s", message.c_str());
-        const auto other = game_language() == Language::English ? Language::Japanese : Language::English;
-        if (language_available(other) && ImGui::Button(other == Language::English ? "Switch to English" : "Switch to Japanese")) {
-            s.language = language_code(other);
-            language_preference = other;
-            language_request(other);
-            language_task_clear();
-            changed = true;
-        }
-    } else if (task == LanguageTask::Failed) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.45f, 1.0f), "%s", message.c_str());
-        ImGui::PopTextWrapPos();
-        if (ImGui::Button("OK"))
-            language_task_clear();
+    if (committed) {
+        options().set(row.id, static_cast<double>(value));
+        settling_id.clear();
     }
 }
 
-// Controls > Analog sticks. Every change applies at once.
-void analog_settings_section(AnalogOptions &a, bool &changed) {
-    bool edited = false;
-    ImGui::SeparatorText("Analog sticks");
-    edited |= ImGui::Checkbox("Analog sticks", &a.enabled);
-    ImGui::SetItemTooltip("Walk, turn and look with the gamepad's sticks, at up to the D-pad's speed.\n"
-                          "Off, the left stick works as the D-pad.");
-    ImGui::BeginDisabled(!a.enabled);
-    const char *modes[] = {"Twin stick", "One stick (tank)"};
-    int mode = a.mode == StickMode::Tank ? 1 : 0;
-    if (ImGui::Combo("Sticks", &mode, modes, 2)) {
-        a.mode = mode == 1 ? StickMode::Tank : StickMode::Twin;
-        edited = true;
+void draw_status(const verdite::OptionRowView &view) {
+    const std::string &text = std::get<std::string>(view.value);
+    if (view.row->label.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", text.c_str());
+        ImGui::PopStyleColor();
+        return;
     }
-    ImGui::SetItemTooltip("Twin stick: the left stick walks and strafes, the right turns and looks.\n"
-                          "One stick: the left stick walks and turns; L1 and R1 strafe.");
-    edited |= ImGui::Checkbox("Left stick moves", &a.move);
-    ImGui::BeginDisabled(a.mode == StickMode::Tank);
-    edited |= ImGui::Checkbox("Right stick turns and looks", &a.look);
+    ImGui::TextUnformatted(view.row->label.c_str());
+    ImGui::SameLine(180.0f * applied_scale);
+    ImGui::TextDisabled("%s", text.c_str());
+}
+
+void draw_option(const verdite::OptionRowView &view) {
+    const verdite::OptionRow &row = *view.row;
+    ImGui::PushID(row.id.c_str());
+    ImGui::BeginDisabled(!view.state.enabled);
+    switch (row.kind) {
+    case verdite::OptionKind::Toggle: {
+        bool on = std::get<bool>(view.value);
+        if (ImGui::Checkbox(row.label.c_str(), &on))
+            options().set(row.id, on);
+        break;
+    }
+    case verdite::OptionKind::Choice:
+        draw_choice(view);
+        break;
+    case verdite::OptionKind::Number:
+        draw_number(view);
+        break;
+    case verdite::OptionKind::Action:
+        if (ImGui::Button(row.label.c_str()))
+            options().run(row.id);
+        break;
+    case verdite::OptionKind::Status:
+        draw_status(view);
+        break;
+    }
+    show_help(row);
     ImGui::EndDisabled();
-    edited |= slider_input("Turn speed", &a.turn_sensitivity, 0.1f, 2.0f, "%.2fx", 0.05f);
-    edited |= slider_input("Look up/down speed", &a.pitch_sensitivity, 0.1f, 2.0f, "%.2fx", 0.05f);
-    edited |= slider_input("Walk speed", &a.move_sensitivity, 0.1f, 1.0f, "%.2fx", 0.05f);
-    ImGui::SetItemTooltip("1x at full deflection is the D-pad's speed (and running's while running).");
-    edited |= slider_input("Look deadzone", &a.look_deadzone, 0.0f, 0.5f, "%.2f", 0.01f);
-    edited |= slider_input("Move deadzone", &a.move_deadzone, 0.0f, 0.5f, "%.2f", 0.01f);
-    edited |= slider_input("Look curve", &a.look_curve, 0.5f, 3.0f, "%.2f", 0.05f);
-    ImGui::SetItemTooltip("Above 1: finer control near the centre, the full speed still at the edge.");
-    edited |= slider_input("Move curve", &a.move_curve, 0.5f, 3.0f, "%.2f", 0.05f);
-    edited |= ImGui::Checkbox("Ease the look in and out", &a.ease);
-    ImGui::SetItemTooltip("The view speeds up and slows down by the game's own step, as with the D-pad.\n"
-                          "Off, it follows the stick directly.");
-    edited |= ImGui::Checkbox("Stop the look on release", &a.instant_stop);
-    edited |= ImGui::Checkbox("Look acceleration", &a.look_acceleration);
-    ImGui::SetItemTooltip("Holding the right stick near the edge turns faster over time.\n"
-                          "Off by default: the fights are built on how fast the player can turn.");
-    ImGui::BeginDisabled(!a.look_acceleration);
-    edited |= slider_input("Acceleration up to", &a.acceleration_max, 1.0f, 4.0f, "%.1fx", 0.1f);
-    edited |= slider_input("Acceleration time", &a.acceleration_time_s, 0.1f, 2.0f, "%.2f s", 0.05f);
-    ImGui::EndDisabled();
-    edited |= ImGui::Checkbox("Invert turn", &a.invert_turn);
-    ImGui::SameLine();
-    edited |= ImGui::Checkbox("Invert look up/down", &a.invert_pitch);
-    edited |= ImGui::Checkbox("Invert strafe", &a.invert_strafe);
-    ImGui::SameLine();
-    edited |= ImGui::Checkbox("Invert walk", &a.invert_forward);
-    ImGui::EndDisabled();
-    if (edited) {
-        apply_control_settings();
-        changed = true;
+    if (!view.state.note.empty()) {
+        ImGui::Indent();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", view.state.note.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Unindent();
+    }
+    ImGui::PopID();
+}
+
+void draw_option_page(const verdite::OptionPageView &page) {
+    for (const auto &section : page.sections) {
+        if (!section.title.empty())
+            ImGui::SeparatorText(std::string(section.title).c_str());
+        for (const auto &row : section.rows)
+            draw_option(row);
     }
 }
 
@@ -270,370 +213,19 @@ void draw_settings_window() {
         ImGui::End();
         return;
     }
-    Settings &s = settings();
-    bool classic_changed = false;
-    if (ImGui::Checkbox("Classic mode", &s.classic)) {
-        apply_render_settings();
-        apply_control_settings();
-        classic_changed = true;
-    }
-    ImGui::SetItemTooltip("Play King's Field as it originally shipped: 4:3 at 320x240, 20 fps,\n"
-                          "polygon wiggle, texture warping, 15-bit colour with dithering, no added\n"
-                          "lighting or anti-aliasing, the original look range, no run key, no\n"
-                          "automap, equipment stats, quick save or bug fixes.\n\n"
-                          "Your own settings are kept and come back when Classic mode is off.\n"
-                          "Fullscreen, volume, controls, language and mods are unaffected.");
-    ImGui::SameLine();
-    if (s.classic)
-        ImGui::TextColored(ImVec4(0.95f, 0.8f, 0.45f, 1.0f), "On: as originally shipped. Your settings below are kept for later.");
-    else
-        ImGui::TextDisabled("(as originally shipped)");
-    ImGui::Separator();
-    const char *pages[] = {"Display", "Audio", "Controls", "Gameplay", "Language", "Map", "Interface"};
+    const auto pages = options().view(platform_features());
+    const auto shown = std::ranges::find(pages, std::string_view(settings_page), &verdite::OptionPageView::title);
+    const verdite::OptionPageView *page = shown != pages.end() ? &*shown : pages.empty() ? nullptr : &pages.front();
     ImGui::BeginChild("pages", ImVec2(130 * applied_scale, 0), ImGuiChildFlags_Borders);
-    for (const char *page : pages)
-        if (ImGui::Selectable(page, std::strcmp(settings_page, page) == 0))
-            settings_page = page;
+    for (const auto &each : pages)
+        if (ImGui::Selectable(std::string(each.title).c_str(), &each == page))
+            settings_page = each.title;
     ImGui::EndChild();
     ImGui::SameLine();
     ImGui::BeginChild("page");
-    bool changed = classic_changed;
-    if (std::strcmp(settings_page, "Display") == 0) {
-        if (ImGui::Checkbox("Fullscreen", &s.fullscreen)) {
-            apply_display_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Also Alt+Enter or F11");
-        if (ImGui::Checkbox("VSync", &s.vsync)) {
-            apply_display_settings();
-            changed = true;
-        }
-        changed |= ImGui::Checkbox("Show FPS", &s.show_fps);
-        ImGui::BeginDisabled(s.classic);   // Classic mode overrides the rest
-        const int rates[] = {20, 0, 60, 120, 144, 165, 240, -1};
-        const char *rate_labels[] = {"One per update (original)", "Match display refresh", "60 fps", "120 fps", "144 fps",
-                                     "165 fps", "240 fps", "Unlimited"};
-        int rate_index = 1;
-        for (int i = 0; i < 8; ++i)
-            if (s.frame_rate == rates[i])
-                rate_index = i;
-        if (ImGui::Combo("Frame rate", &rate_index, rate_labels, 8)) {
-            s.frame_rate = rates[rate_index];
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("The game still updates at its tick rate (Gameplay, 15 a second by default);\nextra frames are drawn between updates, so the view trails by one\nupdate (67 ms at 15).");
-        ImGui::Spacing();
-        const char *aspect_values[] = {"4:3", "16:9", "16:10", "21:9", "window"};
-        const char *aspect_labels[] = {"4:3 (original)", "16:9", "16:10", "21:9", "Match window"};
-        int aspect_index = 0;
-        for (int i = 0; i < 5; ++i)
-            if (s.aspect == aspect_values[i])
-                aspect_index = i;
-        if (ImGui::Combo("Aspect ratio", &aspect_index, aspect_labels, 5)) {
-            s.aspect = aspect_values[aspect_index];
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Wider aspects show more of the world to each side.\nMenus stay in the centre.");
-        ImGui::BeginDisabled(s.aspect == "4:3");
-        if (ImGui::Checkbox("HUD at the screen edges", &s.hud_at_edges)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::EndDisabled();
-        ImGui::SetItemTooltip("In a wider aspect, the gauges move out to the left edge and the compass to the right,\nas far from the edges as in 4:3. Off: the HUD stays in its 4:3 box.");
-        const char *resolution_labels[] = {"Native (match window)", "1x (320x240)", "2x", "3x", "4x", "5x", "6x", "7x", "8x"};
-        int resolution_index = std::clamp(s.resolution, 0, 8);
-        if (ImGui::Combo("Resolution", &resolution_index, resolution_labels, 9)) {
-            s.resolution = resolution_index;
-            apply_render_settings();
-            changed = true;
-        }
-        const RenderTarget target = applied_render_target();
-        ImGui::TextDisabled("Rendering %dx%d", target.columns * target.scale, render_height * target.scale);
-        ImGui::Spacing();
-        ImGui::SeparatorText("PlayStation look");
-        // One switch for the whole effect; the parts stay adjustable below.
-        bool wiggle = !s.subpixel && !s.perspective;
-        if (ImGui::Checkbox("Polygon wiggle (original PS1 look)", &wiggle)) {
-            s.subpixel = s.perspective = !wiggle;
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("On: corners snap to the 320x240 grid and textures warp, as on the PlayStation.\nOff: smooth, stable polygons.");
-        if (ImGui::TreeNode("Wiggle details")) {
-            if (ImGui::Checkbox("Sub-pixel vertices", &s.subpixel)) {
-                apply_render_settings();
-                changed = true;
-            }
-            ImGui::SetItemTooltip("Keeps corners between pixels instead of snapping them to the\n320x240 grid. Removes most of the jitter as the camera moves.");
-            if (ImGui::Checkbox("Perspective-correct textures", &s.perspective)) {
-                apply_render_settings();
-                changed = true;
-            }
-            ImGui::SetItemTooltip("Stops textures bending and swimming across large polygons.\nOff reproduces the PlayStation's affine texture mapping.");
-            ImGui::TreePop();
-        }
-        if (ImGui::Checkbox("Smooth colours", &s.true_color)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Full colour precision: smooth gradients in shadows and fog.\nOff: the PlayStation's 15-bit colour and its dither pattern.");
-        const char *filter_labels[] = {"Nearest (original)", "Bilinear (smooth)", "3-point (N64 style)",
-                                       "Sharp (even texels)"};
-        if (ImGui::Combo("Texture filtering", &s.texture_filter, filter_labels, 4)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Textures on walls, floors and models.\nSharp keeps the original blocky texels, all drawn the same size.\nThe HUD and menus stay pixel-sharp.");
-        if (ImGui::Checkbox("Mipmaps", &s.mipmaps)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Distant textures are averaged instead of shimmering as you move.\nVulkan only.");
-        if (ImGui::Checkbox("Detailed distant walls", &s.detailed_map)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Draws every map cell with its close-up model. The PlayStation used\ncoarse models past the nearest cells, so wall textures changed as you walked up.");
-        static const char *const anisotropy_labels[] = {"Off", "2x", "4x", "8x", "16x"};
-        int anisotropy_index = 0;
-        while (anisotropy_index < 4 && (2 << anisotropy_index) <= s.anisotropy)
-            ++anisotropy_index;
-        if (ImGui::Combo("Anisotropic filtering", &anisotropy_index, anisotropy_labels, 5)) {
-            s.anisotropy = 1 << anisotropy_index;
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Keeps floors and walls seen at a slant sharp into the distance.\nNeeds mipmaps; not with 3-point filtering. Vulkan only.");
-        const char *fog_labels[] = {"Corners (original)", "Per pixel, by depth", "Per pixel, by distance"};
-        if (ImGui::Combo("Fog", &s.fog, fog_labels, 3)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Where the darkness that swallows distant walls is measured.\nCorners: blended across each polygon, as on the PlayStation.\nPer pixel: smooth on large floors and walls; by distance it also\nstays put as the view turns. Vulkan only.");
-        if (slider_input("Enhanced distance", &s.enhanced_distance, 0, 16, s.enhanced_distance ? "%d cells" : "Everywhere")) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Past this many map cells, walls and floors are drawn the PlayStation's way:\nsharp texels, no ambient occlusion, fog at the corners. Vulkan only.");
-        const char *aa_labels[] = {"Off", "FXAA (fast)", "4x SSAA (sharp, heavier)", "9x SSAA (best, heavy)"};
-        if (ImGui::Combo("Anti-aliasing", &s.antialiasing, aa_labels, 4)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Smooths jagged polygon edges. FXAA is nearly free and leaves the HUD sharp.\nSSAA renders 4 or 9 times the pixels and averages them: cleanest, but costly.");
-        ImGui::SeparatorText("Lighting");
-        if (ImGui::Checkbox("Per-pixel lighting", &s.pixel_lighting)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("The game's own lights worked out at every pixel of a model, not\nblended from its corners: smooth shading over curved creatures, and\nlight that turns with them between game updates. Vulkan only.");
-        if (ImGui::Checkbox("Dynamic lighting", &s.dynamic_lights)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Torches cast flickering light on nearby walls and floors,\nand fire and lightning spells light up what they pass.");
-        if (s.dynamic_lights && slider_input("Light strength", &s.light_strength, 0, 200, "%d%%")) {
-            apply_render_settings();
-            changed = true;
-        }
-        if (s.dynamic_lights && ImGui::Checkbox("Walls block light", &s.light_occlusion)) {
-            apply_render_settings();
-            changed = true;
-        }
-        if (s.dynamic_lights)
-            ImGui::SetItemTooltip("Stops torchlight reaching through solid walls into the next room.\nDoors and diagonal walls do not block it yet.");
-        if (s.dynamic_lights && ImGui::Checkbox("Flame glow", &s.flame_glow)) {
-            apply_render_settings();
-            changed = true;
-        }
-        if (s.dynamic_lights)
-            ImGui::SetItemTooltip("A soft halo around torch flames and fire or lightning spells.\nHidden when something is in front of the flame.");
-        if (s.dynamic_lights && s.flame_glow && slider_input("Glow strength", &s.glow_strength, 0, 200, "%d%%")) {
-            apply_render_settings();
-            changed = true;
-        }
-        if (s.dynamic_lights && ImGui::Checkbox("Shadows", &s.shadows)) {
-            apply_render_settings();
-            changed = true;
-        }
-        if (s.dynamic_lights)
-            ImGui::SetItemTooltip("The four nearest lights cast shadows. Shadows only remove the added\ntorchlight, so nothing gets darker than in the original game.");
-        if (s.dynamic_lights && s.shadows && slider_input("Shadow strength", &s.shadow_strength, 0, 100, "%d%%")) {
-            apply_render_settings();
-            changed = true;
-        }
-        if (ImGui::Checkbox("Ambient occlusion", &s.ambient_occlusion)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Soft shadowing in corners, where walls meet floors and under ledges.");
-        if (s.ambient_occlusion && slider_input("Occlusion strength", &s.ao_strength, 0, 200, "%d%%")) {
-            apply_render_settings();
-            changed = true;
-        }
-        static const char *const ao_quality_labels[] = {"Low", "Medium", "High"};
-        if (s.ambient_occlusion && ImGui::Combo("Occlusion quality", &s.ao_quality, ao_quality_labels, 3)) {
-            apply_render_settings();
-            changed = true;
-        }
-        if (s.ambient_occlusion)
-            ImGui::SetItemTooltip("Low measures at the game's own pixels, Medium at twice that,\nHigh at the full resolution. Vulkan only.");
-        ImGui::SeparatorText("Accuracy");
-        if (ImGui::Checkbox("Depth buffer (experimental)", &s.depth_buffer)) {
-            apply_render_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Stops parts of objects showing through walls at some angles.\nThe PlayStation sorted whole polygons instead; some effects may\nlook different with this on.");
-        ImGui::EndDisabled();
-    } else if (std::strcmp(settings_page, "Audio") == 0) {
-        if (slider_input("Volume", &s.volume, 0, 100, "%d%%")) {
-            apply_audio_settings();
-            changed = true;
-        }
-    } else if (std::strcmp(settings_page, "Map") == 0) {
-        ImGui::BeginDisabled(s.classic);
-        automap_settings_page(changed);
-        ImGui::EndDisabled();
-    } else if (std::strcmp(settings_page, "Language") == 0) {
-        language_settings_page(changed);
-    } else if (std::strcmp(settings_page, "Gameplay") == 0) {
-        ImGui::BeginDisabled(s.classic);
-        const int tick_rates[] = {30, 20, 15, 12};
-        const char *tick_rate_labels[] = {"30 a second (fast)", "20 a second (the game's limit)",
-                                          "15 a second (default)", "12 a second (slower)"};
-        int tick_rate_index = 2;
-        for (int i = 0; i < 4; ++i)
-            if (s.tick_rate == tick_rates[i])
-                tick_rate_index = i;
-        if (ImGui::Combo("Tick rate", &tick_rate_index, tick_rate_labels, 4)) {
-            s.tick_rate = tick_rates[tick_rate_index];
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("How often the world updates. The PlayStation's frame gate allows at most 20 a\n"
-                              "second, and the console fell below that wherever a scene took longer to draw;\n"
-                              "15 stands for a typical rate on the console. The game counts updates,\n"
-                              "not time, so walking, turning, enemies and timers all slow down or speed up\n"
-                              "with it; the music does not.");
-        if (ImGui::Checkbox("Use carried keys on locked doors and chests", &s.auto_keys)) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Interacting with a lock unlocks it (with the unlock sound) when you carry\n"
-                              "its key, instead of having to choose the key from the item menu.");
-        ImGui::SeparatorText("Enemies");
-        if (slider_input("Enemy turn speed", &s.enemy_turn, 1.0f, 4.0f, "%.2fx", 0.25f)) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("How much faster an enemy turns while it chases you or backs away from you.\n"
-                              "Its wandering keeps the game's pace. The sticks, the mouse and the run key\n"
-                              "let you circle an enemy faster than the D-pad did; this lets it keep up.\n"
-                              "x1 is the original game.");
-        ImGui::BeginDisabled(s.enemy_turn <= 1.0f);
-        if (ImGui::Checkbox("Enemies keep you in sight", &s.enemy_track)) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("A chasing enemy aims at where you are every update. The original\n"
-                              "re-aimed on about one update in eight, so it ran on at where you had been.\n"
-                              "Off at x1.");
-        ImGui::EndDisabled();
-        ImGui::SeparatorText("Bug fixes");
-        ImGui::TextWrapped("Fixes for bugs in the original game. Turn them off to play exactly as on the PlayStation.");
-        ImGui::Spacing();
-        if (ImGui::Checkbox("Enemies fall after hitting a ceiling mid-jump", &s.fix_ceiling_fall)) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("The original meant jumping enemies that bump a low ceiling to drop back down,\nbut the check never matched, so they could be left hovering.");
-        if (ImGui::Checkbox("Stereo panning for flagged sounds", &s.fix_spatial_panning)) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Some floor 5 enemy sounds are marked for a panning volume adjustment\nthat the original never applied.");
-        ImGui::EndDisabled();
-    } else if (std::strcmp(settings_page, "Controls") == 0) {
-        ImGui::BeginDisabled(s.classic);
-        const char *run_modes[] = {"Hold to run", "Toggle run"};
-        int run_mode = s.run_toggle ? 1 : 0;
-        if (ImGui::Combo("Run key (Shift)", &run_mode, run_modes, 2)) {
-            s.run_toggle = run_mode == 1;
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Hold: run while Shift is held.\nToggle: each press switches between running and walking.");
-        if (slider_input("Run speed", &s.run_speed, 100, 250, "%d%%")) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("How fast you move while holding Shift (or clicking the left stick),\nas a percentage of walking speed. 100%% turns running off.");
-        if (slider_input("Look up/down limit", &s.look_limit, 17, 85, "%d deg")) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("How far the camera can tilt up or down. The original game allows about 17 degrees.");
-        ImGui::EndDisabled();
-        const char *pad_layouts[] = {"West (US King's Field)", "Japanese (this disc's)"};
-        int pad_layout = s.pad_layout == "jp" ? 1 : 0;
-        if (ImGui::Combo("Gamepad buttons", &pad_layout, pad_layouts, 2)) {
-            s.pad_layout = pad_layout == 1 ? "jp" : "west";
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("West: Square attacks, Cross examines and confirms, Circle opens the menu and backs out,\n"
-                              "Triangle uses the item or spell.\n"
-                              "Japanese: Triangle attacks, Circle examines and confirms, Cross opens the menu and backs out,\n"
-                              "Square uses the item or spell.");
-        if (ImGui::Checkbox("Mouse in menus", &s.menu_pointer)) {
-            apply_control_settings();
-            changed = true;
-        }
-        ImGui::SetItemTooltip("Point at a menu item to select it and click to choose it.\n"
-                              "Right click, or a click away from the menu, backs out; the wheel moves the selection.\n"
-                              "On a touch screen a finger always does this, and a drag up or down moves the selection.");
-        ImGui::BeginDisabled(s.classic);
-        analog_settings_section(s.analog, changed);
-        ImGui::EndDisabled();
-        ImGui::Spacing();
-        ImGui::TextWrapped("Current bindings (rebinding is planned):");
-        const char *rows[][2] = {
-            {"Move / strafe", "W A S D"}, {"Run", "Shift (hold or toggle)"}, {"Turn", "Left / Right arrows"}, {"Look", "Mouse, Page Up / Page Down"},
-            {"Attack", "Space, left mouse"}, {"Magic", "Q, right mouse"}, {"Interact", "E, Enter"},
-            {"Menu", "Tab (opens and backs out)"}, {"Back", "Backspace, Tab, right mouse in menus"},
-            {"Quick save", "F2"}, {"Full map", "M"}, {"Quick load", "F4 (also on the title screen)"}, {"Pause", "P, Escape"}, {"Overlay", "F1"},
-            {"Fullscreen", "F11, Alt+Enter"}};
-        if (ImGui::BeginTable("bindings", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
-            for (const auto &row : rows) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextUnformatted(row[0]);
-                ImGui::TableNextColumn();
-                ImGui::TextUnformatted(row[1]);
-            }
-            ImGui::EndTable();
-        }
-    } else {
-        changed |= ImGui::Checkbox("Pause the game while the overlay is open", &s.pause_when_open);
-        changed |= ImGui::Checkbox("Item descriptions in the game's menus", &s.item_descriptions);
-        ImGui::SetItemTooltip("Under the item preview: what the item does, such as healing or an equipment effect.");
-        // Applied when the edit finishes, so the window does not resize under the cursor.
-        bool committed = false;
-        slider_input("Interface scale", &s.ui_scale, 0.75f, 2.5f, "%.2f", 0.05f, &committed);
-        ImGui::TextDisabled("Applies when you release the slider or press Enter. Mods are not scaled.");
-        if (committed && s.ui_scale != applied_scale) {
-            ImGui::GetStyle() = ImGuiStyle();
-            apply_style();
-            changed = true;
-        }
-        discord_settings_section(changed);
-    }
+    if (page)
+        draw_option_page(*page);
     ImGui::EndChild();
-    if (changed)
-        settings_mark_dirty();
     ImGui::End();
 }
 
@@ -750,6 +342,13 @@ bool slider_input(const char *label, int *value, int min, int max, const char *f
 SDL_Window *window() { return main_window; }
 
 void overlay_set_open(bool value) { set_open(value); }
+
+void overlay_restyle() {
+    if (!imgui)
+        return;
+    ImGui::GetStyle() = ImGuiStyle();
+    apply_style();
+}
 
 bool overlay_open() { return open; }
 bool overlay_captures_input() { return open; }
@@ -870,6 +469,7 @@ void poll() {
     if (!running)
         return;
     mods_poll();
+    options_poll();
     if (imgui) {
         discord_poll();
         touch_commands_poll();

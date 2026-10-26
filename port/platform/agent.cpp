@@ -1,4 +1,5 @@
 #include <kf/platform/agent.h>
+#include <kf/ext/ext.h>
 #include <kf/platform/host.h>
 #include <kf/platform/input.h>
 #include <kf/platform/menu_pointer.h>
@@ -144,6 +145,15 @@ std::string do_click(verdite::AgentArgs args) {
     return verdite::json_ok("click");
 }
 
+std::string do_options(verdite::AgentArgs) { return verdite::json_ok("options", ",\"options\":" + ext::options_json()); }
+
+std::string do_option(verdite::AgentArgs args) {
+    if (args.empty() || args.size() > 2)
+        return verdite::json_error("option <id> [value]");
+    const std::string why = ext::option_change(args[0], args.size() == 2 ? args[1] : std::string());
+    return why.empty() ? verdite::json_ok("option") : verdite::json_error(args[0] + ": " + why);
+}
+
 std::string do_quit(verdite::AgentArgs) {
     quit_requested = true;
     return verdite::json_ok("quit");
@@ -166,6 +176,8 @@ void agent_start() {
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
         {"point", "point <x> <y> - move the mouse over a menu (game pixels)", do_point},
         {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},
+        {"options", "options - the settings this platform shows, with their values, as JSON", do_options},
+        {"option", "option <id> [value] - change a setting (true/false, a number, a choice's value), or press an action", do_option},
         {"quit", "quit - exit the game", do_quit},
     });
 }

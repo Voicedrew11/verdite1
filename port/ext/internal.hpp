@@ -1,6 +1,7 @@
 #pragma once
 #include <kf/ext/ext.h>
 #include <kf/platform/analog.h>
+#include <verdite/options.h>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -116,6 +117,11 @@ void apply_display_settings();
 void apply_audio_settings();
 void apply_control_settings();
 void apply_render_settings();   // also on window resize
+// The settings as option rows (options.cpp): what the overlay's Settings window
+// and Android's settings panel draw.
+verdite::OptionTable &options();
+verdite::PlatformFeatures platform_features();   // what this build's platform has
+void options_poll();   // on every host poll: a file the Language page asked for
 // The render target apply_render_settings last set: logical columns and scale.
 struct RenderTarget { int columns, scale; };
 RenderTarget applied_render_target();
@@ -129,18 +135,19 @@ void item_description_draw();
 void discord_start();     // reads KF_DISCORD and KF_DISCORD_APP
 void discord_poll();      // on every host poll: composes the presence and hands it over
 void discord_stop();      // takes the presence down
-void discord_settings_section(bool &changed);
+bool discord_forced();    // KF_DISCORD decides for this run
+bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
 
 // ---- automap ----
 void automap_draw(int input_context);   // minimap or full map, before the overlay windows
 void automap_toggle_full();
 bool automap_full_open();
-void automap_settings_page(bool &changed);
 
 // ---- touch controls ----
 void touch_controls_draw();   // inside the ImGui frame
 void touch_commands_poll();   // the gear and the map button, on every host poll
 void overlay_set_open(bool open);
+void overlay_restyle();   // after the interface scale changes
 
 // ---- mods ----
 void mods_start();

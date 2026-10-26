@@ -575,38 +575,4 @@ void automap_draw(int input_context) {
     else if (s.minimap)
         draw_minimap(map);
 }
-
-void automap_settings_page(bool &changed) {
-    Settings &s = settings();
-    ImGui::SeparatorText("Minimap");
-    changed |= ImGui::Checkbox("Show minimap", &s.minimap);
-    if (s.minimap) {
-        const char *corners[] = {"Top right", "Bottom right", "Top left", "Bottom left"};
-        changed |= ImGui::Combo("Corner", &s.minimap_corner, corners, 4);
-        changed |= slider_input("Size", &s.minimap_size, 10, 50, "%d%%");
-        ImGui::SetItemTooltip("Minimap size as a percentage of the picture's height.");
-        changed |= slider_input("Zoom", &s.minimap_zoom, 4, 30, "%d cells");
-        ImGui::SetItemTooltip("How many map cells the minimap shows from the centre to its edge.");
-        changed |= slider_input("Opacity", &s.minimap_opacity, 20, 100, "%d%%");
-    }
-    ImGui::TextDisabled("Press M in game for the full floor map.");
-    changed |= ImGui::Checkbox("Pause the game while the full map is open", &s.map_pause);
-    ImGui::SetItemTooltip("Off: the game keeps running, so you can walk around with the map open.");
-    ImGui::BeginDisabled(!s.map_pause);
-    ImGui::Indent();
-    changed |= ImGui::Checkbox("Keep the music playing", &s.map_keep_music);
-    ImGui::SetItemTooltip("While the map pauses the game, the music carries on; sound effects\nwait and continue when you close the map.");
-    ImGui::Unindent();
-    ImGui::EndDisabled();
-    ImGui::SeparatorText("Exploration");
-    changed |= ImGui::Checkbox("Fog of war", &s.map_fog);
-    ImGui::SetItemTooltip("On: only places you have seen are drawn (the Keeper's or Magician's Map\nreveals the whole floor). Off: the whole floor is always shown.");
-    ImGui::SeparatorText("Extra markers (cheats)");
-    changed |= ImGui::Checkbox("Items on the ground", &s.map_items);
-    changed |= ImGui::Checkbox("Chests with something inside", &s.map_chests);
-    changed |= ImGui::Checkbox("Enemies", &s.map_enemies);
-    changed |= ImGui::Checkbox("Which key opens locked doors and chests", &s.map_key_hints);
-    ImGui::SetItemTooltip("Shown when pointing at a locked door or chest on the full map.");
-    ImGui::TextDisabled("Doors, warps, save points, fountains and people always show once seen.");
-}
 }

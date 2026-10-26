@@ -5,7 +5,6 @@
 //   KF_DISCORD=1|0       on or off for this run, over the setting
 //   KF_DISCORD_APP=id    the Discord application, over application_id
 #include "internal.hpp"
-#include <imgui.h>
 #include <kf/platform/prelude.h>
 #include <kf/game/player.h>
 #include <kf/platform/automap.h>
@@ -242,24 +241,6 @@ void discord_poll() {
 
 void discord_stop() { verdite::discord_stop(); }
 
-void discord_settings_section(bool &changed) {
-    auto &s = settings();
-    ImGui::SeparatorText("Discord");
-    ImGui::BeginDisabled(presence.forced.has_value());
-    changed |= ImGui::Checkbox("Discord Rich Presence", &s.discord);
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Shows what you are doing in the game on your Discord profile, while Discord is running.");
-    ImGui::BeginDisabled(!enabled());
-    changed |= ImGui::Checkbox("Level", &s.discord_level);
-    ImGui::SameLine();
-    changed |= ImGui::Checkbox("Location", &s.discord_location);
-    ImGui::SameLine();
-    changed |= ImGui::Checkbox("HP and MP", &s.discord_vitals);
-    ImGui::SameLine();
-    changed |= ImGui::Checkbox("EXP", &s.discord_exp);
-    ImGui::EndDisabled();
-    if (presence.forced)
-        ImGui::TextDisabled("Set by KF_DISCORD for this run.");
-}
+bool discord_forced() { return presence.forced.has_value(); }
+bool discord_enabled() { return enabled(); }
 }
