@@ -9,8 +9,8 @@
 //   opening, scripted   a tap anywhere is Confirm
 //
 // Only gameplay's controls are drawn, and only while the player is on the
-// touch screen: a gamepad, a keyboard or a mouse in use hides them and a touch
-// brings them back. The overlay (F1) takes every touch while it is open.
+// touch screen: a gamepad, a keyboard or a mouse in use fades them out and a
+// touch brings them back. The overlay (F1) takes every touch while it is open.
 #include <kf/lib/types.h>
 #include <kf/platform/analog.h>
 
@@ -54,6 +54,8 @@ struct TouchShown {
     float knob_x_px, knob_y_px;    // a stick's thumb
 };
 std::span<const TouchShown> host_touch_shown();
+// How visible they are, 0..1: they fade rather than vanish.
+float host_touch_opacity();
 
 } // namespace kf
 

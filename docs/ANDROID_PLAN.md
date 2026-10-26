@@ -297,7 +297,8 @@ the Pixel (it was locked):
   down steps the cursor, and a tap on a menu with no rows (the pause screen) is Confirm. The
   opening and scripted scenes take a tap anywhere as Confirm. Nothing is drawn outside gameplay.
 - Shown only while the touch screen is in use: hidden at start without a touch device, by a key
-  (not the Android back button), a mouse or a gamepad; a touch brings them back. The overlay takes
+  (not the Android back button), a mouse or a gamepad; a touch brings them back. They fade out
+  over 0.6 s and back in over 0.15 s rather than vanishing (2026-10-26). The overlay takes
   every touch while open and gained a Close item in its menu bar; the full map leaves only the Map
   button. SDL's mouse events made from touches no longer reach the game (they captured the mouse
   and attacked).

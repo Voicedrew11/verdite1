@@ -25,6 +25,9 @@ constexpr float stick_button_throw = 0.5f;
 constexpr Sint16 gamepad_axis_in_use = 16000;
 // A button takes a finger a little outside the circle drawn.
 constexpr float button_reach = 1.25f;
+// The controls fade out when another device takes over, and back in at a touch.
+constexpr std::uint64_t fade_out_ns = 600'000'000;
+constexpr std::uint64_t fade_in_ns = 150'000'000;
 
 enum class Edge : u8 { Left, Right };
 
@@ -98,6 +101,8 @@ struct TouchScreen {
     RawSticks sticks{};
     TouchCommand command = TouchCommand::None;
     std::vector<TouchShown> shown;
+    float opacity = 0;                      // of the controls drawn, 0..1
+    std::uint64_t faded_at_ns = 0;
 };
 TouchScreen screen;
 
@@ -209,6 +214,17 @@ void show(const Kf1Control &control, const verdite::TouchState &state) {
     screen.shown.push_back(shown);
 }
 
+// Moves the controls' opacity toward shown or hidden.
+void fade() {
+    const std::uint64_t now_ns = SDL_GetTicksNS();
+    const std::uint64_t since_ns = screen.faded_at_ns ? now_ns - screen.faded_at_ns : 0;
+    screen.faded_at_ns = now_ns;
+    if (wanted())
+        screen.opacity = std::min(1.0f, screen.opacity + static_cast<float>(since_ns) / fade_in_ns);
+    else
+        screen.opacity = std::max(0.0f, screen.opacity - static_cast<float>(since_ns) / fade_out_ns);
+}
+
 // The frame's controls as the game's actions, the stick, the look and commands.
 TouchLook read_frame() {
     const auto frame = screen.controls.take_frame();
@@ -216,6 +232,7 @@ TouchLook read_frame() {
     screen.held = 0;
     screen.sticks = {};
     screen.shown.clear();
+    fade();
     for (std::size_t i = 0; i < frame.size() && i < screen.rows.size(); ++i) {
         const Kf1Control &control = *screen.rows[i];
         const verdite::TouchState &state = frame[i];
@@ -236,7 +253,7 @@ TouchLook read_frame() {
             look.yaw_degrees += state.drag_x_px / screen.area.height_px * look_degrees_per_height;
             look.pitch_degrees += state.drag_y_px / screen.area.height_px * look_degrees_per_height;
         }
-        if (drawn(screen.layout) && wanted() && control.kind != TouchKind::Drag)
+        if (drawn(screen.layout) && screen.opacity > 0 && control.kind != TouchKind::Drag)
             show(control, state);
     }
     if (!host_analog_owns_left_stick())
@@ -359,5 +376,7 @@ RawSticks host_touch_sticks() { return screen.sticks; }
 TouchCommand host_touch_take_command() { return std::exchange(screen.command, TouchCommand::None); }
 
 std::span<const TouchShown> host_touch_shown() { return screen.shown; }
+
+float host_touch_opacity() { return screen.opacity; }
 
 } // namespace kf
