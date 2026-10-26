@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -79,9 +80,14 @@ private:
         float down_x_px, down_y_px;   // where it landed
         float last_x_px, last_y_px;
         std::uint64_t down_ms;
+        bool strayed;                 // Tap: moved too far to be one
     };
+    std::optional<std::size_t> control_at(float x_px, float y_px) const;
+    void aim(const Finger &finger);
+    void refresh_held(std::size_t control);
     std::vector<TouchControl> controls_;
     std::vector<TouchState> states_;
+    std::vector<TouchState> frame_;   // what take_frame last handed out
     std::vector<Finger> fingers_;
     float area_x_px_ = 0, area_y_px_ = 0, area_width_px_ = 1, area_height_px_ = 1;
 };
