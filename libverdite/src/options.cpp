@@ -4,8 +4,8 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -93,10 +93,12 @@ void append_row_json(std::string &out, const OptionRowView &view) {
     out += "}";
 }
 
+// strtod, as Android's libc++ has no from_chars for doubles; the C locale's '.' is the point.
 std::optional<double> parse_number(std::string_view text) {
-    double number = 0;
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
-    if (error != std::errc() || end != text.data() + text.size())
+    const std::string copy(text);
+    char *end = nullptr;
+    const double number = std::strtod(copy.c_str(), &end);
+    if (copy.empty() || end != copy.c_str() + copy.size())
         return std::nullopt;
     return number;
 }
