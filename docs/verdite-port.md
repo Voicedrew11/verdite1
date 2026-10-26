@@ -237,7 +237,9 @@ For an agent or a script, without a person or a screen:
   `state`, `press <button>[+<button>...] [holdMs]` (the game's buttons: up,
   down, left, right, strafe_left, strafe_right, look_up, look_down, attack,
   magic, confirm, back, start, select; held for game-clock milliseconds, so a
-  hold means the same under turbo), `release`, `quit`.
+  hold means the same under turbo), `release`, `quit`. In a menu, `menu` (the
+  rows on screen: widget, row, box in game pixels, cursor, input), `point <x>
+  <y>` and `click <x> <y>` / `click right` drive the mouse on the menus.
 
 ```bash
 KF_AGENT=1 KF_SHELL=1 nix develop -c build/linux/verdite1 --data data/en \
@@ -390,6 +392,7 @@ branch point.
 | distance fog, anisotropic, mipmaps, enhance distance | `KF1_FOG`, `KF1_ANISO`, `KF1_MIPMAPS`, `KF1_ENHANCEDIST` | done on Vulkan (2026-10-23, `RENDERER_PLAN.md`); enhanced distance leaves dynamic lights alone |
 | analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | done (2026-10-23): the shaping in libverdite (`verdite/stick.h`), the options and per-axis state in `port/platform/analog.cpp`, and a line in each of the player update's four velocity branches asking it for the velocity (`host_analog_velocity`), so nothing is pre-loaded to steer the game's own branch; centred, the D-pad's branches run. Twin stick by default; off in Classic mode. Not carried: `AnalogProbe` |
 | pad layout `jp`/`west` | `PadLayout.cs` | done (2026-10-23): two face-button tables in `port/platform/host.cpp`, chosen by `controls.pad_layout` (West by default); only the gamepad's bindings change, so the keyboard, mouse and agent need no subtraction |
+| mouse on the menus | Verdite2's `patches/MenuMouse.cs` (KF2; KF1's main had none) | done (2026-10-25): `verdite/menu_pointer.h` in libverdite (game-agnostic, unit-tested), `port/platform/menu_pointer.cpp` (SDL to game pixels, the presses into `host_read_buttons`), Controls > *Mouse in menus* (`controls.menu_pointer`, on, kept in Classic mode as mouse look is). See "The mouse on the menus" below |
 | enemy turn speed | Verdite2's `EnemyTurn.cs` (KF2, `81c02db` there) | done (2026-10-23), reworked for KF1: its enemies already turn 60-80 a tick (32, 48 and 10 for a few) against the D-pad's 28, so the turn rate alone was not what let a player circle them; the pursuit re-aims at the player on only one update in eight, and a retreat only as it starts. Gameplay > *Enemy turn speed* (x1-x4, x1.5 by default, x1 in Classic mode, `gameplay.enemy_turn`) multiplies the turn of a pursuit or a retreat, not a wander or the way home; above x1, *Enemies keep you in sight* (`gameplay.enemy_track`, on) re-aims both every update, the random draw kept so the sequence is the game's. Staged on floor 1 (an enemy of turn 80 put 2,500 ahead, the player strafing round it at 180 a tick, three runs each): at x1 it lost the player in every run and wandered off, with 4-5 melee attacks; at x1.5 with tracking it stayed at about 2,550 and started 8-10, at x2 7-15; x1.5 without tracking lost the player too. Not carried: V2's tracking while standing, since a KF1 enemy near the player is pursuing, not standing |
 | rumble, gyro aim | Verdite Core `Rumble.cs`, `GyroAim.cs` | SDL3 has both |
 | debug: noclip, god mode, infinite MP, peaceful, speed, warp | `Menu/`, `Warp.cs` | candidates for a Lua mod |
@@ -405,6 +408,51 @@ branch point.
 Everything that measures or replaces recompiled code: `Literal`, `GpuWorld`,
 `Retained*`, `*Probe`, `*Census`, `VBlankPacing`, `OpenPacing`, `LoopPacing`,
 `FramelessWaits`, `PictureDepth`, `PacketMatch`, `ProfilerKnown`, `Prejit`.
+
+## The mouse on the menus
+
+Done 2026-10-25. Point at a menu row and the game's own cursor goes there (the
+`selection_cursor` sprite in a window or prompt, the selected tile in a list);
+click it to confirm; right click, or a click more than 8 game pixels clear of
+every row, backs out; the wheel steps the cursor. While the button is held on a
+window row or a prompt choice, it is drawn with the game's confirmed background.
+
+KF2's version (`patches/MenuMouse.cs` on `main`'s history) met each widget from
+outside: a stepper's return value, a descriptor's bytes, a synthetic Up into the
+pad read for the prompt whose cursor lives in a register. With the source, the
+game says what it draws instead:
+
+- **The drawing names the rows.** `menu_draw_window`, `menu_list_render` and
+  `menu_draw_two_option` call `host_menu_widget` and then `host_menu_row` for
+  each row, with the box the row's sprite covers. A frame's rows become the
+  ones the pointer is tested against when `host_present_frame` shows it; a
+  frame with none (play, a message page) ends any press.
+- **The widget drawn last takes input**, as a prompt is drawn over the list or
+  window it asks about. A loop asks for its own widget kind, so a list's loop
+  does not take a row from the prompt it just closed.
+- **Hover is the one per-loop line**: an `else if` after each loop's Back arm
+  moves its cursor (seven windows, three prompts), and `menu_list_handle_navigation`
+  does it for all seven lists. Only a move or a press takes the cursor, so a
+  resting mouse never takes it back from the keyboard.
+- **Confirm, Back and the wheel are pad presses** in `host_read_buttons`, so each
+  loop's own arm runs: its sound, "confirming Return cancels", the screens with
+  no cancel, "any button" panels. A click's Confirm waits until the cursor is
+  drawn on the clicked row (up to three frames), so a click that arrives with
+  its move cannot confirm the row the cursor was on. Each press is one read, and
+  never two reads in a row, since the loops detect edges.
+- The left click still sends Attack, so a message page or the status panel
+  advances on a click as before.
+
+Touch is the same pointer with no hover: a finger landing on a row takes the
+cursor, sliding moves it, lifting on the row it landed on confirms, and a tap
+clear of the rows backs out. SDL's mouse events made from touches are ignored
+here; the touch controls feed `MenuPointer` themselves (`ANDROID_PLAN.md`, C).
+
+Driven through the command channel (`menu`, `point`, `click`): the root menu,
+Status and out, Use Item and its Use/Cancel prompt, Equipment and the weapon
+list, a click clear of the list, one within the margin, right clicks out to play.
+The window-to-game conversion (the letterbox, the widescreen columns, the pixel
+density) is not exercised by that and is the user's to judge in play.
 
 ## Open questions
 

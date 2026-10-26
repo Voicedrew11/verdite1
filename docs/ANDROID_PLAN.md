@@ -250,7 +250,7 @@ KF1's layouts, chosen by `kf/platform/screen.h` as Discord already chooses:
 | screen | controls |
 |---|---|
 | walking | a floating move stick on the left half (it starts where the thumb lands); drag on the right half to look (the mouse-look path, its own sensitivity); Attack (large), Magic, Interact and Run at the right thumb; Inventory and Pause at the top; a gear for the settings overlay |
-| menus, shops, save screen | a D-pad, Confirm and Back. The menus are pad menus; tapping items directly is not added |
+| menus, shops, save screen | tap a row to choose it (a finger landing on a row moves the cursor, lifting on it confirms, a tap clear of the rows backs out: `verdite/menu_pointer.h`, as the mouse does), plus a D-pad, Confirm and Back. A finger landing on no control goes to the menu pointer, so `TouchControls::finger_down` says whether it took one |
 | messages, cutscenes | a tap anywhere is Confirm |
 
 - The Android back button is `pause_or_back`. A long press opens the overlay.

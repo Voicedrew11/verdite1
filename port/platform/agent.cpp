@@ -1,13 +1,16 @@
 #include <kf/platform/agent.h>
 #include <kf/platform/host.h>
 #include <kf/platform/input.h>
+#include <kf/platform/menu_pointer.h>
 #include <kf/game/player.h>
 #include <verdite/agent.h>
 #include <verdite/crash.h>
+#include <verdite/menu_pointer.h>
 #include <SDL3/SDL.h>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 namespace kf {
@@ -88,6 +91,59 @@ std::string do_release(verdite::AgentArgs) {
     return verdite::json_ok("release");
 }
 
+// The menu frame on screen: each row's widget (0 window, 1 list, 2 choice), box, and
+// whether it is the cursor's and of the widget taking input.
+std::string do_menu(verdite::AgentArgs) {
+    std::string rows;
+    for (const auto &row : host_menu_pointer().shown_rows()) {
+        char text[160];
+        std::snprintf(text, sizeof text, "%s{\"widget\":%u,\"row\":%d,\"box\":[%g,%g,%g,%g],\"cursor\":%s,\"input\":%s}",
+            rows.empty() ? "" : ",", row.widget, row.row, row.box.x, row.box.y, row.box.width, row.box.height,
+            row.cursor ? "true" : "false", row.input ? "true" : "false");
+        rows += text;
+    }
+    return verdite::json_ok("menu", ",\"rows\":[" + rows + "]");
+}
+
+// A position in the original 320 x 240 pixels, from "<x> <y>".
+std::optional<std::array<float, 2>> menu_position(verdite::AgentArgs args) {
+    if (args.size() != 2)
+        return std::nullopt;
+    char *end_x = nullptr, *end_y = nullptr;
+    const float x = std::strtof(args[0].c_str(), &end_x);
+    const float y = std::strtof(args[1].c_str(), &end_y);
+    if (*end_x || *end_y)
+        return std::nullopt;
+    return std::array{x, y};
+}
+
+std::string do_point(verdite::AgentArgs args) {
+    if (host_input_context() != InputContext::Menu)
+        return verdite::json_error("no menu is up");
+    const auto position = menu_position(args);
+    if (!position)
+        return verdite::json_error("point <x> <y>");
+    host_menu_pointer().moved((*position)[0], (*position)[1]);
+    return verdite::json_ok("point");
+}
+
+std::string do_click(verdite::AgentArgs args) {
+    if (host_input_context() != InputContext::Menu)
+        return verdite::json_error("no menu is up");
+    if (args.size() == 1 && args[0] == "right") {
+        host_menu_pointer().back();
+        verdite::crash_event("agent: click right");
+        return verdite::json_ok("click");
+    }
+    const auto position = menu_position(args);
+    if (!position)
+        return verdite::json_error("click <x> <y> | click right");
+    host_menu_pointer().pressed((*position)[0], (*position)[1]);
+    host_menu_pointer().released((*position)[0], (*position)[1]);
+    verdite::crash_event("agent: click " + args[0] + " " + args[1]);
+    return verdite::json_ok("click");
+}
+
 std::string do_quit(verdite::AgentArgs) {
     quit_requested = true;
     return verdite::json_ok("quit");
@@ -107,6 +163,9 @@ void agent_start() {
         {"state", "state - the player and phase as JSON", do_state},
         {"press", "press <button>[+<button>...] [holdMs=150] - hold game buttons for game-clock ms, replacing the last press: " + buttons, do_press},
         {"release", "release - let go of the pressed buttons", do_release},
+        {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
+        {"point", "point <x> <y> - move the mouse over a menu (game pixels)", do_point},
+        {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},
         {"quit", "quit - exit the game", do_quit},
     });
 }

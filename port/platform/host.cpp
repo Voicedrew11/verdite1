@@ -4,6 +4,7 @@
 #include <kf/audio/sound.h>
 #include <kf/platform/input.h>
 #include <kf/platform/analog.h>
+#include <kf/platform/menu_pointer.h>
 #include <kf/platform/controls.h>
 #include <kf/platform/agent.h>
 #include <kf/platform/fuzz.h>
@@ -366,6 +367,8 @@ static void process_event(const SDL_Event &event) {
     case SDL_EVENT_MOUSE_BUTTON_UP:
         if (!host.focused)
             break;
+        if (host.input_context == InputContext::Menu)
+            host_menu_pointer_event(host.window, event);
         if (event.button.down && host.input_context == InputContext::Gameplay &&
                 (!host.mouse_captured || !mouse_is_captured())) {
             SDL_SetWindowRelativeMouseMode(host.window, true);
@@ -374,6 +377,8 @@ static void process_event(const SDL_Event &event) {
         input_button(&host.input, {InputDevice::mouse, event.button.button}, event.button.down);
         break;
     case SDL_EVENT_MOUSE_MOTION:
+        if (host.focused && host.input_context == InputContext::Menu)
+            host_menu_pointer_event(host.window, event);
         if (host.focused && host.input_context == InputContext::Gameplay &&
                 mouse_is_captured()) {
             double x = event.motion.xrel, y = event.motion.yrel;
@@ -388,6 +393,13 @@ static void process_event(const SDL_Event &event) {
 #endif
             input_motion(&host.input, x, y);
         }
+        break;
+    case SDL_EVENT_MOUSE_WHEEL:
+        if (host.focused && host.input_context == InputContext::Menu)
+            host_menu_pointer_event(host.window, event);
+        break;
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+        host_menu_pointer_event(host.window, event);
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
         if (!host.gamepad)
@@ -414,6 +426,7 @@ static void process_event(const SDL_Event &event) {
         if (host.focused) {
             host.focused = false;
             host.resume_mouse_capture = false;
+            host_menu_pointer_gone();
             input_clear(&host.input);
             host.pressed_keys.fill(SDLK_UNKNOWN);
             host.look_remainder_x = host.look_remainder_y = 0;
@@ -680,6 +693,9 @@ u32 host_read_buttons() {
         buttons |= button_mask(host.input_context == InputContext::Menu ? Button::Back : Button::Start);
     if (actions & action_bit(Action::pause_or_back))
         buttons |= button_mask(host.input_context == InputContext::Menu ? Button::Back : Button::Select);
+    // The mouse on a menu: a click's Confirm, a Back, a step of the wheel.
+    if (host.input_context == InputContext::Menu)
+        buttons |= host_menu_pointer_buttons();
     return buttons | agent_buttons() | fuzz_buttons();
 }
 
@@ -758,6 +774,8 @@ InputContext host_set_input_context(InputContext context) {
     if (context == InputContext::Opening)
         host.resume_mouse_capture = false;
     host.input_context = context;
+    if (previous == InputContext::Menu && context != InputContext::Menu)
+        host_menu_pointer_gone();
     refresh_left_stick_buttons();
     host.input.pending.look_x = host.input.pending.look_y = 0;
     host.look_remainder_x = host.look_remainder_y = 0;
@@ -849,6 +867,7 @@ void host_begin_frame() {
     host.frame_light_count = 0;
     host.frame_light_sets.clear();
     render_entity_tag = 0;
+    host_menu_frame_begin();
 }
 
 CarriedModel host_carry_model(const MATRIX &model, std::span<const SVECTOR> vertices) {
@@ -879,6 +898,7 @@ void host_enqueue_face(const DrawFace &face) {
 void host_present_frame(const FrameStyle &style) {
     const FaceList faces{host.frame_faces.data(), host.frame_faces.size(), style};
     host_present_faces(&faces);
+    host_menu_frame_shown();
 }
 
 void host_add_light(float x, float y, float z, float radius, float r, float g, float b, float flicker, u32 seed) {

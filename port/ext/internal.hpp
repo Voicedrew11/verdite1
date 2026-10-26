@@ -63,6 +63,7 @@ struct Settings {
     bool run_toggle = false;    // Shift toggles running instead of being held
     int look_limit = 70;        // degrees the camera may tilt up or down (original: 17)
     std::string pad_layout = "west";   // gamepad face buttons: "west" (the US game's) or "jp"
+    bool menu_pointer = true;   // point at and click the game's menus with the mouse
     AnalogOptions analog;       // the sticks, saved as "analog"
     std::string language = "en";   // game language when both are set up: "en" or "ja"
     bool auto_keys = true;          // interacting with a lock uses a carried key

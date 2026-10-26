@@ -588,6 +588,12 @@ void draw_settings_window() {
                               "Triangle uses the item or spell.\n"
                               "Japanese: Triangle attacks, Circle examines and confirms, Cross opens the menu and backs out,\n"
                               "Square uses the item or spell.");
+        if (ImGui::Checkbox("Mouse in menus", &s.menu_pointer)) {
+            apply_control_settings();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("Point at a menu item to select it and click to choose it.\n"
+                              "Right click, or a click away from the menu, backs out; the wheel moves the selection.");
         ImGui::BeginDisabled(s.classic);
         analog_settings_section(s.analog, changed);
         ImGui::EndDisabled();
@@ -596,7 +602,7 @@ void draw_settings_window() {
         const char *rows[][2] = {
             {"Move / strafe", "W A S D"}, {"Run", "Shift (hold or toggle)"}, {"Turn", "Left / Right arrows"}, {"Look", "Mouse, Page Up / Page Down"},
             {"Attack", "Space, left mouse"}, {"Magic", "Q, right mouse"}, {"Interact", "E, Enter"},
-            {"Menu", "Tab (opens and backs out)"}, {"Back", "Backspace, Tab"},
+            {"Menu", "Tab (opens and backs out)"}, {"Back", "Backspace, Tab, right mouse in menus"},
             {"Quick save", "F2"}, {"Full map", "M"}, {"Quick load", "F4 (also on the title screen)"}, {"Pause", "P, Escape"}, {"Overlay", "F1"},
             {"Fullscreen", "F11, Alt+Enter"}};
         if (ImGui::BeginTable("bindings", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
