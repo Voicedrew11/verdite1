@@ -369,18 +369,29 @@ void draw_markers(const MapView &view, const AutomapSnapshot &map, bool labels) 
     }
 }
 
-void draw_player(const MapView &view, const AutomapSnapshot &map) {
-    const ImVec2 p = view.at(map.player_x, map.player_z);
+void draw_arrow(const MapView &view, float x, float z, float yaw, ImU32 fill) {
+    const ImVec2 p = view.at(x, z);
     // Facing (-sin yaw, +cos yaw) in map x/z; screen y points south.
-    const float fx = -std::sin(map.player_yaw), fz = std::cos(map.player_yaw);
+    const float fx = -std::sin(yaw), fz = std::cos(yaw);
     const ImVec2 forward(fx, -fz), side(fz, fx);
     const float size = std::max(5.0f, view.scale * 0.9f);
     const ImVec2 tip(p.x + forward.x * size, p.y + forward.y * size);
     const ImVec2 back(p.x - forward.x * size * 0.45f, p.y - forward.y * size * 0.45f);
     const ImVec2 left(p.x - forward.x * size * 0.7f + side.x * size * 0.65f, p.y - forward.y * size * 0.7f + side.y * size * 0.65f);
     const ImVec2 right(p.x - forward.x * size * 0.7f - side.x * size * 0.65f, p.y - forward.y * size * 0.7f - side.y * size * 0.65f);
-    view.draw->AddQuadFilled(tip, left, back, right, view.colour(255, 250, 220));
+    view.draw->AddQuadFilled(tip, left, back, right, fill);
     view.draw->AddQuad(tip, left, back, right, view.colour(0, 0, 0), 1.5f);
+}
+
+void draw_player(const MapView &view, const AutomapSnapshot &map) {
+    draw_arrow(view, map.player_x, map.player_z, map.player_yaw, view.colour(255, 250, 220));
+}
+
+// The other players in the online room who are on this floor.
+void draw_online_players(const MapView &view, const AutomapSnapshot &map) {
+    for (const OnlinePose &other : online_players())
+        if (other.floor == map.floor)
+            draw_arrow(view, other.x, other.z, other.yaw, view.colour(90, 200, 255));
 }
 
 void draw_minimap(const AutomapSnapshot &map) {
@@ -402,6 +413,7 @@ void draw_minimap(const AutomapSnapshot &map) {
     const int cx = static_cast<int>(map.player_x), cz = static_cast<int>(map.player_z);
     draw_cells(view, map, cx - radius, cz - radius, cx + radius, cz + radius);
     draw_markers(view, map, false);
+    draw_online_players(view, map);
     draw_player(view, map);
     view.draw->PopClipRect();
     view.draw->AddRect(lo, hi, view.colour(200, 180, 130, 0.8f), size * 0.04f, 0, 1.5f);
@@ -507,6 +519,7 @@ void draw_full_map(const AutomapSnapshot &map) {
     draw_cells(view, map, static_cast<int>(view.centre_x - half_w), static_cast<int>(view.centre_z - half_h),
                static_cast<int>(view.centre_x + half_w), static_cast<int>(view.centre_z + half_h));
     draw_markers(view, map, true);
+    draw_online_players(view, map);
     draw_player(view, map);
     draw->PopClipRect();
     if (inside)

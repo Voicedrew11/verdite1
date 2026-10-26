@@ -17,6 +17,8 @@ enum class Overlay : std::uint8_t { Hidden, Drawn };
 void console_start();
 void console_line(const std::string &line);
 
+// --online-room: the room to join once start() has run.
+void online_join_at_start(std::string_view room);
 // After the window and renderer exist.
 bool start(SDL_Window *window, Overlay overlay);
 void shutdown();

@@ -1,6 +1,7 @@
 #pragma once
 #include <kf/ext/ext.h>
 #include <kf/platform/analog.h>
+#include "online_pose.h"
 #include <verdite/options.h>
 #include <filesystem>
 #include <string>
@@ -151,6 +152,17 @@ void discord_poll();      // on every host poll: composes the presence and hands
 void discord_stop();      // takes the presence down
 bool discord_forced();    // KF_DISCORD decides for this run
 bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
+
+// ---- online play (online.cpp, on online/client) ----
+// Opt-in: nothing touches the network until a room is joined, from the overlay's Online window
+// or --online-room (online_join_at_start). The service is the deployed one, or KF_ONLINE_SERVICE
+// (a local wrangler dev). Peers must have the same build (KF_VERSION and KF_BUILD_COMMIT).
+void online_start();   // joins the room given on the command line, if any
+void online_poll();    // on every host poll: the session's events, and our pose 20 times a second
+void online_stop();    // leaves the room
+void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
+// The other players in the room, as last heard from, for the automap.
+std::vector<OnlinePose> online_players();
 
 // ---- automap ----
 void automap_draw(int input_context);   // minimap or full map, before the overlay windows

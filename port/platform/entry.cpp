@@ -379,6 +379,10 @@ int main(int argc, char **argv) {
             saves = argv[++i];
         else if (std::strcmp(argv[i], "--skip-intro") == 0)
             skip_intro = true;
+#if KF_EXT
+        else if (std::strcmp(argv[i], "--online-room") == 0 && i + 1 < argc)
+            kf::ext::online_join_at_start(argv[++i]);
+#endif
         else if (std::strcmp(argv[i], "--headless") == 0)
             host_options.headless = true;
         else if (std::strcmp(argv[i], "--turbo") == 0)
@@ -392,7 +396,7 @@ int main(int argc, char **argv) {
         else {
             std::fprintf(stderr, "Usage: verdite1 [--data DIRECTORY] [--data-ja DIRECTORY] [--data-en DIRECTORY] "
                                  "[--language ja|en] [--english-patch FILE|download] "
-                                 "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro] [--headless] [--turbo]\n"
+                                 "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro] [--online-room ROOM] [--headless] [--turbo]\n"
                                  "       verdite1 --compare-traces TRACE TRACE\n");
             return 1;
         }

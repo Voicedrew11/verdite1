@@ -219,12 +219,23 @@ add_library(kf_imgui STATIC
   ${KF_IMGUI}/backends/imgui_impl_sdl3.cpp)
 target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
 target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
+# Online play (online/client) where libdatachannel's source is at hand: the nix shell, desktop only
+# for now. Without it, port/ext/online.cpp says the build has none.
+set(KF_ONLINE OFF)
+if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE} AND NOT ANDROID)
+  set(KF_ONLINE ON)
+endif()
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
 target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)
+target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}")
+target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated")
+if(KF_ONLINE)
+  target_link_libraries(kf_ext PRIVATE verdite_online)
+endif()
 
 # libverdite: nothing from the game on its include path.
 find_package(Threads REQUIRED)
@@ -287,9 +298,8 @@ if(doctest_FOUND)
   add_test(NAME verdite COMMAND verdite_tests)
 endif()
 
-# verdite-online, the client library for online play (online/client), where libdatachannel's
-# source is at hand: the nix shell, desktop only for now
-if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE} AND NOT ANDROID)
+# verdite-online, the client library for online play (online/client)
+if(KF_ONLINE)
   add_subdirectory(online/client)
 endif()
 
@@ -360,6 +370,7 @@ add_custom_target(kf_build_info
     -P ${CMAKE_SOURCE_DIR}/cmake/build_info.cmake
   BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/build_info.h" VERBATIM)
 add_dependencies(kf_host kf_build_info)
+add_dependencies(kf_ext kf_build_info)   # online play names the build to its room
 target_compile_definitions(kf_host PRIVATE KF_VERSION="${PROJECT_VERSION}" KF_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 target_compile_options(kf_host PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
@@ -416,7 +427,8 @@ endif()
 
 # port/'s tests: the parts that run without a window or GPU.
 if(doctest_FOUND)
-  add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp)
+  add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp
+    port/tests/online_pose.cpp port/ext/online_pose.cpp)
   target_link_libraries(kf_port_tests PRIVATE kf_frontend doctest::doctest)
   target_compile_options(kf_port_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME port COMMAND kf_port_tests)
