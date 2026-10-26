@@ -124,6 +124,12 @@ static bool sync_directory_path(int directory) {
         return false;
     for (;;) {
         const int parent = ::openat(child, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        // A parent we may not open is not one SDL made for us (Android's /data/data).
+        if (parent < 0 && errno == EACCES) {
+            const bool synced = sync_file(child);
+            ::close(child);
+            return synced;
+        }
         struct stat child_info{}, parent_info{};
         const bool ok = parent >= 0 && ::fstat(child, &child_info) == 0
             && ::fstat(parent, &parent_info) == 0 && sync_file(child);
