@@ -2,7 +2,9 @@
 
 **Draft, 2026-10-22. Subject to change** as considerations come up; when one
 changes the plan, edit the section and add a line to "Changes" at the end
-rather than leaving the old text standing. Nothing here is built yet.
+rather than leaving the old text standing. Built so far: the signaling service
+(`online/service`), its protocol (`online/protocol/PROTOCOL.md`) and the client's
+interface, not yet implemented (`online/client/include/verdite_online.h`).
 
 The goal: Demon's Souls-style online play in the Verdite ports, namely
 **messages** left on the ground, **bloodstains** that replay another player's
@@ -21,7 +23,10 @@ meant for every Verdite game, not only KF1.
 
 The service and the client library share one protocol definition, so they
 live together (one networking repo) or side by side. The repo name
-`verdite-online` is a placeholder.
+`verdite-online` is a placeholder. **For now both live in this repo, under
+`online/`** (`online/README.md`): `protocol/`, `service/` and `client/`, none
+depending on `libverdite/` or the game, so they move out unchanged once the
+protocol settles.
 
 ### Why the client library is not in the core
 
@@ -138,3 +143,8 @@ get online play by writing only their own game layer.
 
 - 2026-10-22: first draft, from the discussion that set the four layers and
   the separate repo.
+- 2026-10-26: the service and the client start in this repo, under `online/`,
+  until the protocol settles. The realtime tier's signaling and TURN come
+  first, ahead of the order above, since exact replay (step 1) is done: rooms
+  of up to 4 peers of one build, the later peer offering, relay-only, the TURN
+  credential issued per peer for 6 hours and revoked when it leaves.
