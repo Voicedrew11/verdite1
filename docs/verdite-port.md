@@ -454,6 +454,30 @@ list, a click clear of the list, one within the margin, right clicks out to play
 The window-to-game conversion (the letterbox, the widescreen columns, the pixel
 density) is not exercised by that and is the user's to judge in play.
 
+## The first-run setup
+
+Built 2026-10-26: Verdite2 and Verdite3's onboarding, carried over in C++. libverdite's
+`verdite/setup.h` holds the steps and what is staged; KF1's pages and the Dear ImGui screen are
+`port/ext/setup.cpp`.
+
+- **Welcome**: Original, Balanced, Modern and Custom. Each is a starting point: it fills the
+  pages, and the player walks every page to a summary before anything is set.
+- **Pages**: Display (suggested for the monitor), Picture, Controls, Turning, Gameplay. A group is
+  one row with a choice per tier; Picture, Controls and Gameplay offer "Set everything to".
+- **Presets write ordinary settings.** Finish sets each value through the option table, so all of
+  it can be changed afterwards. Classic mode is not a preset: every preset turns it off.
+- **Shown** while `overlay.setup_seen` in settings.json is below the spec's version (1); Finish and
+  Skip write it, closing the window does not. Again from Settings > Interface > *Run setup again*.
+- **Each platform draws it its own way** (`SetupScreen`). The desktop's is Dear ImGui; Android has
+  none yet, so there it is neither shown nor marked seen. The agent channel's `setup` drives it
+  (`setup start`, `preset <id>`, `choose <group> <n>`, `tier <id>`, `option <id> <value>`, `next`,
+  `back`, `finish`, `skip`), and `scripts/smoke.py` walks it with Modern.
+- At start, `[setup] check: N value(s), M problem(s)` holds the spec to the option table.
+
+What each tier picks is a first judgement, to be played: Balanced keeps 4:3-era pacing choices
+(no AO, no anti-aliasing, no minimap) and fixes what the hardware got wrong; Modern is the
+defaults. Dynamic lights, glow and shadows are not in it while Vulkan does not draw them.
+
 ## Automatic enemy turn
 
 Gameplay > *Enemy turn speed*: Automatic (default) or Fixed (the slider, as before). The fights

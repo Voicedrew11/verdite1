@@ -202,6 +202,7 @@ void settings_load() {
     const cJSON *overlay = cJSON_GetObjectItemCaseSensitive(document, "overlay");
     current.pause_when_open = read_bool(overlay, "pause_when_open", current.pause_when_open);
     current.ui_scale = static_cast<float>(read_number(overlay, "ui_scale", current.ui_scale));
+    current.setup_seen = static_cast<int>(read_number(overlay, "setup_seen", current.setup_seen));
     current.ui_font = read_string(overlay, "font", current.ui_font);
     current.item_descriptions = read_bool(overlay, "item_descriptions", current.item_descriptions);
     const cJSON *discord = cJSON_GetObjectItemCaseSensitive(document, "discord");
@@ -295,6 +296,7 @@ void settings_save() {
     cJSON *overlay = object_entry(document, "overlay");
     write_value(overlay, "pause_when_open", cJSON_CreateBool(current.pause_when_open));
     write_value(overlay, "ui_scale", cJSON_CreateNumber(current.ui_scale));
+    write_value(overlay, "setup_seen", cJSON_CreateNumber(current.setup_seen));
     write_value(overlay, "font", cJSON_CreateString(current.ui_font.c_str()));
     write_value(overlay, "item_descriptions", cJSON_CreateBool(current.item_descriptions));
     cJSON *discord = object_entry(document, "discord");

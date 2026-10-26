@@ -46,6 +46,10 @@ std::string options_json();
 // Changes an option by id from typed text (verdite::option_value_from_text), or
 // presses an action given no text. Empty on success, else why not.
 std::string option_change(std::string_view id, std::string_view text);
+// The first-run setup for the agent channel: its view as JSON (null when closed), and a
+// control ("start", or one verdite::Setup::command takes). Empty on success, else why not.
+std::string setup_json();
+std::string setup_command(std::string_view line);
 // For a crash report: the settings that change how the game plays or draws. Runs in the crash
 // handler, so it only reads.
 void crash_write_settings(verdite::CrashWriter &out);

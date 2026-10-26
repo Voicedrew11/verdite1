@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the game headless at turbo speed, walk a little and try every setting through the command channel, quit.
+"""Boot the game headless at turbo speed, walk the first-run setup, walk a little and try every setting through the command channel, quit.
 
 Fails if the game does not start, a command fails, the player does not move, a setting does not
 take each of its values, the game does not exit cleanly, or a sanitizer reports anything. The
@@ -83,6 +83,21 @@ def try_options(channel, reader):
     return None
 
 
+def walk_setup(channel, reader):
+    """Walks the first-run setup with the Modern preset to its summary and finishes. A drawn run
+    starts with it open (a new user folder); a headless one is started here."""
+    if command(channel, reader, "setup")["setup"] is None:
+        command(channel, reader, "setup start")
+    view = command(channel, reader, "setup preset modern")["setup"]
+    while view["step"] == "page":
+        view = command(channel, reader, "setup next")["setup"]
+    if view["step"] != "summary":
+        return f"setup ended on {view['step']}, not the summary"
+    if command(channel, reader, "setup finish")["setup"] is not None:
+        return "setup still open after finish"
+    return None
+
+
 def drive():
     """Returns a description of what went wrong, or None."""
     deadline = time.monotonic() + TIMEOUT
@@ -95,6 +110,8 @@ def drive():
                 return "the command channel never opened"
             time.sleep(0.2)
     with channel, channel.makefile("r") as reader:
+        if problem := walk_setup(channel, reader):
+            return problem
         # The arrival is scripted for 54 updates; walking waits for the player to have control.
         while state(channel, reader).get("context") != "gameplay":
             if time.monotonic() > deadline:

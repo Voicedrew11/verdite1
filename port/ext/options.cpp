@@ -703,6 +703,11 @@ OptionSection interface_overlay() {
                              {0.75, 2.5, 0.05, "%.2f"}, overlay_restyle);
     scale.settle = true;
     return {"", {
+        shown_if(action("overlay.run_setup", "Run setup again",
+                        "The first-run setup: presets, then a page per part of the game, then a summary before "
+                        "anything changes.",
+                        setup_run),
+                 setup_available),
         toggle("overlay.pause_when_open", "Pause the game while the overlay is open", "", s.pause_when_open, store_only),
         toggle("overlay.item_descriptions", "Item descriptions in the game's menus",
                "Under the item preview: what the item does, such as healing or an equipment effect.",

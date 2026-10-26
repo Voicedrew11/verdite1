@@ -147,6 +147,15 @@ std::string do_click(verdite::AgentArgs args) {
 
 std::string do_options(verdite::AgentArgs) { return verdite::json_ok("options", ",\"options\":" + ext::options_json()); }
 
+std::string do_setup(verdite::AgentArgs args) {
+    std::string line;
+    for (const std::string &arg : args)
+        line += (line.empty() ? "" : " ") + arg;
+    if (const std::string why = ext::setup_command(line); !why.empty())
+        return verdite::json_error(why);
+    return verdite::json_ok("setup", ",\"setup\":" + ext::setup_json());
+}
+
 std::string do_option(verdite::AgentArgs args) {
     if (args.empty() || args.size() > 2)
         return verdite::json_error("option <id> [value]");
@@ -178,6 +187,7 @@ void agent_start() {
         {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},
         {"options", "options - the settings this platform shows, with their values, as JSON", do_options},
         {"option", "option <id> [value] - change a setting (true/false, a number, a choice's value), or press an action", do_option},
+        {"setup", "setup [start | preset <id> | choose <group> <n> | tier <id> | option <id> <value> | next | back | finish | skip] - drive the first-run setup; its view as JSON", do_setup},
         {"quit", "quit - exit the game", do_quit},
     });
 }

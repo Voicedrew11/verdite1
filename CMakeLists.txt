@@ -221,7 +221,7 @@ target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
 target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_panel.cpp port/ext/touch_overlay.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
 target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)

@@ -351,13 +351,13 @@ void overlay_restyle() {
 }
 
 // The overlay's windows or Android's settings panel cover the game.
-static bool covered() { return open || settings_panel_open(); }
+static bool covered() { return open || settings_panel_open() || setup_open(); }
 
 bool overlay_open() { return covered(); }
 bool overlay_captures_input() { return covered(); }
 // Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
-    return settings_panel_open() || (open && settings().pause_when_open)
+    return settings_panel_open() || setup_open() || (open && settings().pause_when_open)
         || (automap_full_open() && settings().map_pause);
 }
 bool pause_keeps_music() {
@@ -365,7 +365,7 @@ bool pause_keeps_music() {
         && settings().map_keep_music;
 }
 // Nothing of the game shows under Android's panel, so it is not redrawn.
-bool redraw_while_paused() { return open || automap_full_open(); }
+bool redraw_while_paused() { return open || setup_open() || automap_full_open(); }
 bool wants_cursor() { return covered() || automap_full_open(); }
 
 ViewRect game_view() {
@@ -396,6 +396,7 @@ bool start(SDL_Window *handle, Overlay overlay) {
         apply_control_settings();
         apply_render_settings();
         mods_start();
+        setup_begin(overlay);
         return true;
     }
     IMGUI_CHECKVERSION();
@@ -403,7 +404,7 @@ bool start(SDL_Window *handle, Overlay overlay) {
     ImGuiIO &io = ImGui::GetIO();
     static std::string ini_path = (user_dir() / "overlay.ini").string();
     io.IniFilename = ini_path.c_str();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     load_font();
     apply_style();
     if (!ImGui_ImplSDL3_InitForVulkan(handle) || !renderer_overlay_start()) {
@@ -419,6 +420,7 @@ bool start(SDL_Window *handle, Overlay overlay) {
                 user_dir().string().c_str());
     mods_start();
     discord_start();
+    setup_begin(overlay);
     fps_started = SDL_GetTicks();
     return true;
 }
@@ -563,6 +565,7 @@ ImDrawData *build_overlay(int width, int height) {
         if (show_about)
             draw_about_window();
     }
+    setup_draw();
     ImGui::Render();
     return ImGui::GetDrawData();
 }

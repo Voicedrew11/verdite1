@@ -103,6 +103,7 @@ struct Settings {
     bool discord_location = true;   // floor and place
     bool discord_vitals = true;     // HP and MP
     bool discord_exp = true;        // EXP to the next level
+    int setup_seen = 0;             // the first-run setup's version last finished or skipped
 };
 Settings &settings();
 // The settings in effect: the player's, or with Classic mode on, the player's
@@ -132,6 +133,13 @@ RenderTarget applied_render_target();
 std::string item_description(std::uint8_t id);
 // Draws the description of the item in the game menu's preview panel, if any.
 void item_description_draw();
+
+// ---- the first-run setup (setup.cpp) ----
+bool setup_available();            // this platform has a screen for it
+void setup_begin(Overlay overlay); // at start: shown if due and drawn
+void setup_run();                  // from the start, again
+bool setup_open();
+void setup_draw();                 // inside the ImGui frame (setup_json, setup_command: ext.h)
 
 // ---- Discord Rich Presence ----
 void discord_start();     // reads KF_DISCORD and KF_DISCORD_APP
