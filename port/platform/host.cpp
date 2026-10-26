@@ -5,6 +5,7 @@
 #include <kf/platform/input.h>
 #include <kf/platform/analog.h>
 #include <kf/platform/menu_pointer.h>
+#include <kf/platform/touch.h>
 #include <kf/platform/controls.h>
 #include <kf/platform/agent.h>
 #include <kf/platform/fuzz.h>
@@ -123,7 +124,7 @@ static void bind_gamepad_buttons(std::span<const GamepadBinding> buttons) {
 static void bind_inputs() {
     auto *input = &host.input;
     struct KeyBinding { SDL_Keycode code; Action action; };
-    constexpr std::array<KeyBinding, 23> keys = {
+    constexpr std::array<KeyBinding, 24> keys = {
         KeyBinding{SDLK_W, Action::forward}, KeyBinding{SDLK_UP, Action::forward},
         KeyBinding{SDLK_S, Action::backward}, KeyBinding{SDLK_DOWN, Action::backward},
         KeyBinding{SDLK_A, Action::strafe_left}, KeyBinding{SDLK_D, Action::strafe_right},
@@ -135,7 +136,7 @@ static void bind_inputs() {
         KeyBinding{SDLK_ESCAPE, Action::pause_or_back}, KeyBinding{SDLK_P, Action::pause},
         KeyBinding{SDLK_LSHIFT, Action::run}, KeyBinding{SDLK_RSHIFT, Action::run},
         KeyBinding{SDLK_F2, Action::quick_save}, KeyBinding{SDLK_F4, Action::quick_load},
-        KeyBinding{SDLK_R, Action::compare_language}
+        KeyBinding{SDLK_R, Action::compare_language}, KeyBinding{SDLK_AC_BACK, Action::pause_or_back}
     };
     for (const auto &key : keys)
         input_bind(input, {InputDevice::keyboard, static_cast<u32>(key.code)}, key.action);
@@ -351,6 +352,7 @@ static void process_event(const SDL_Event &event) {
     if (ext::process_event(event))
         return;
 #endif
+    host_touch_event(host.window, event);
     switch (event.type) {
     case SDL_EVENT_QUIT:
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -367,7 +369,8 @@ static void process_event(const SDL_Event &event) {
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP:
-        if (!host.focused)
+        // A touch's mouse events are left to the touch controls.
+        if (!host.focused || event.button.which == SDL_TOUCH_MOUSEID)
             break;
         if (host.input_context == InputContext::Menu)
             host_menu_pointer_event(host.window, event);
@@ -379,6 +382,8 @@ static void process_event(const SDL_Event &event) {
         input_button(&host.input, {InputDevice::mouse, event.button.button}, event.button.down);
         break;
     case SDL_EVENT_MOUSE_MOTION:
+        if (event.motion.which == SDL_TOUCH_MOUSEID)
+            break;
         if (host.focused && host.input_context == InputContext::Menu)
             host_menu_pointer_event(host.window, event);
         if (host.focused && host.input_context == InputContext::Gameplay &&
@@ -518,6 +523,20 @@ static void test_background_poll() {
         std::fprintf(stderr, "KF_TEST_BACKGROUND: %s\n", SDL_GetError());
 }
 
+// The touch controls for what covers the game, and their look into the mouse's.
+static void poll_touch() {
+    TouchCover cover = TouchCover::None;
+#if KF_EXT
+    if (ext::overlay_open())
+        cover = TouchCover::Overlay;
+    else if (ext::wants_cursor())
+        cover = TouchCover::FullMap;
+#endif
+    const TouchLook look = host_touch_poll(host.window, cover);
+    if (look.yaw_degrees != 0 || look.pitch_degrees != 0)
+        input_motion(&host.input, look.yaw_degrees / mouse_degrees_per_pixel, look.pitch_degrees / mouse_degrees_per_pixel);
+}
+
 void host_poll() {
     test_background_poll();
     // Only platform work runs here. In the browser each yield suspends the existing
@@ -535,6 +554,7 @@ void host_poll() {
         ext::poll();
         sync_overlay_input();
 #endif
+        poll_touch();
         update_pause();
         if (!host.paused)
             return;
@@ -658,23 +678,25 @@ static u32 test_input_actions() {
 
 bool host_action_held(Action action) {
     host_poll();
-    return (host.input.pending.held & action_bit(action)) != 0;
+    return ((host.input.pending.held | host_touch_held_actions()) & action_bit(action)) != 0;
 }
 
 u32 host_read_buttons() {
     host_poll();
     // Original game code samples held buttons and derives its own edges.
-    const u32 actions = host.input.pending.held | test_input_actions();
+    const TouchActions touch = host_touch_take_actions();
+    const u32 actions = host.input.pending.held | touch.held | test_input_actions();
+    const u32 pressed = host.input.pending.pressed | touch.pressed;
     // Quick save/load only act in gameplay; presses in menus or scenes are dropped.
     if (host.input_context == InputContext::Gameplay)
-        host.quick_pressed |= host.input.pending.pressed & (action_bit(Action::quick_save) | action_bit(Action::quick_load));
+        host.quick_pressed |= pressed & (action_bit(Action::quick_save) | action_bit(Action::quick_load));
     if (host.input_context == InputContext::Gameplay && player_run_toggle
-            && (host.input.pending.pressed & action_bit(Action::run))) {
+            && (pressed & action_bit(Action::run))) {
         host.run_toggled = !host.run_toggled;
         host_show_message(host.run_toggled ? "Running" : "Walking");
     }
     if (host.input_context == InputContext::Opening)
-        host.opening_load_pressed |= (host.input.pending.pressed & action_bit(Action::quick_load)) != 0;
+        host.opening_load_pressed |= (pressed & action_bit(Action::quick_load)) != 0;
     host.input.pending.pressed = host.input.pending.released = 0;
     struct ButtonAction { Action action; Button button; };
     constexpr std::array<ButtonAction, 14> mapping = {
@@ -710,7 +732,7 @@ bool host_run_held() {
     static const bool test_run = std::getenv("KF_TEST_RUN") != nullptr;
     if (player_run_toggle)
         return test_run || host.run_toggled;
-    return test_run || (host.input.pending.held & action_bit(Action::run)) != 0;
+    return test_run || ((host.input.pending.held | host_touch_held_actions()) & action_bit(Action::run)) != 0;
 }
 
 QuickRequest host_take_quick_request() {
@@ -809,14 +831,17 @@ RawSticks host_gamepad_sticks() {
     }();
     if (test_sticks)
         return *test_sticks;
-    if (!host.focused || !host.gamepad)
+    if (!host.focused)
         return {};
+    // The pad's sticks and the touch screen's, as one.
+    const RawSticks touch = host_touch_sticks();
     constexpr float full_deflection = 32767.0f;
-    const auto axis = [](SDL_GamepadAxis which) {
-        return std::clamp(static_cast<float>(SDL_GetGamepadAxis(host.gamepad, which)) / full_deflection, -1.0f, 1.0f);
+    const auto axis = [](SDL_GamepadAxis which, float added) {
+        const float pad = host.gamepad ? static_cast<float>(SDL_GetGamepadAxis(host.gamepad, which)) / full_deflection : 0.0f;
+        return std::clamp(pad + added, -1.0f, 1.0f);
     };
-    return {axis(SDL_GAMEPAD_AXIS_LEFTX), axis(SDL_GAMEPAD_AXIS_LEFTY), axis(SDL_GAMEPAD_AXIS_RIGHTX),
-            axis(SDL_GAMEPAD_AXIS_RIGHTY)};
+    return {axis(SDL_GAMEPAD_AXIS_LEFTX, touch.left_x), axis(SDL_GAMEPAD_AXIS_LEFTY, touch.left_y),
+            axis(SDL_GAMEPAD_AXIS_RIGHTX, touch.right_x), axis(SDL_GAMEPAD_AXIS_RIGHTY, touch.right_y)};
 }
 
 void host_set_pad_layout(PadLayout layout) {

@@ -281,6 +281,30 @@ KF1's layouts, chosen by `kf/platform/screen.h` as Discord already chooses:
   Phones are 19.5:9 to 21:9, wider than the 16:9 the widescreen work was probed at.
   The cull, HUD-at-edges and menu tiling need a check at 20:9.
 
+Progress 2026-10-25, built and checked on the desktop (`scripts/check.sh`), not yet played on
+the Pixel (it was locked):
+
+- `touch.h` implemented, with the tests below. `finger_down` stayed `void`: the port routes a
+  finger to the menu pointer before the controls see it, so it does not need the answer.
+- `port/platform/touch.cpp` (`kf/platform/touch.h`): gameplay has the floating stick on the left
+  45%, the look drag on the rest (110 degrees a screen height, through the mouse-look path),
+  Attack, Examine, Magic and Run at the right thumb, Menu, Pause, Map and a gear (the overlay)
+  along the top. Buttons are placed in heights from an edge, so they stay at the thumbs at 4:3
+  and 20:9. The stick is added to the pad's in `host_gamepad_sticks`; with analog movement off
+  it holds the D-pad's directions. A press shorter than an update still reaches one pad read.
+  Rather than `InputDevice::touch`, the actions are ORed into the pad read beside the bindings.
+- Menus draw no controls: a finger on a menu with rows goes to the menu pointer, a drag up or
+  down steps the cursor, and a tap on a menu with no rows (the pause screen) is Confirm. The
+  opening and scripted scenes take a tap anywhere as Confirm. Nothing is drawn outside gameplay.
+- Shown only while the touch screen is in use: hidden at start without a touch device, by a key
+  (not the Android back button), a mouse or a gamepad; a touch brings them back. The overlay takes
+  every touch while open and gained a Close item in its menu bar; the full map leaves only the Map
+  button. SDL's mouse events made from touches no longer reach the game (they captured the mouse
+  and attacked).
+- The Android back button is `pause_or_back`.
+- Not yet: the Controls > Touch options (opacity, size, left-handed, vibration), the overlay
+  scaled for a phone, the long press for the overlay.
+
 Done when: floor 1 is played from the start to the first save point on
 touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has unit tests
 (two fingers on one control, a finger sliding off a button, lift order).

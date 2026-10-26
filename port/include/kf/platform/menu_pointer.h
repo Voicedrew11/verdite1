@@ -1,6 +1,6 @@
 #ifndef KF_PLATFORM_MENU_POINTER_H
 #define KF_PLATFORM_MENU_POINTER_H
-// The mouse (later a finger) on the game's menus, through verdite/menu_pointer.h.
+// The mouse or a finger on the game's menus, through verdite/menu_pointer.h.
 // The game's drawing names each selectable row as it draws it, and each menu
 // loop asks for the row the pointer took beside its Up and Down; Confirm, Back
 // and the wheel arrive through host_read_buttons, so every loop's own arms run
@@ -27,12 +27,20 @@ bool host_menu_row(s32 row, s32 x, s32 y, s32 width, s32 height);
 // on screen taking input.
 std::optional<s32> host_menu_pointed_row(MenuWidget widget);
 
-// Settings: Controls > Mouse in menus (controls.menu_pointer).
+// Settings: Controls > Mouse in menus (controls.menu_pointer). A finger points
+// either way: on a touch screen it is the only way through the menus.
 inline bool menu_pointer_enabled = true;
 
 // The host's side. Mouse events while a menu is up and the mouse is free; SDL's
 // mouse events made from touches are left to the touch controls.
 void host_menu_pointer_event(SDL_Window *window, const SDL_Event &event);
+// A finger, in window points (SDL's): it points and presses as the left
+// button does, and a drag up or down moves the cursor a row a step instead.
+void host_menu_touch_down(SDL_Window *window, float x, float y);
+void host_menu_touch_moved(SDL_Window *window, float x, float y);
+void host_menu_touch_up(SDL_Window *window, float x, float y);
+// Whether the menu on screen has rows to point at.
+bool host_menu_has_rows();
 // Focus lost or no menu up any more: no pointer, and nothing it asked for is delivered.
 void host_menu_pointer_gone();
 void host_menu_frame_begin();

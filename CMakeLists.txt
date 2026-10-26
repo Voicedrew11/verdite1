@@ -221,7 +221,7 @@ target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
 target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/touch_overlay.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
 target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)
@@ -341,7 +341,7 @@ target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/fuzz.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
-  port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp port/platform/menu_pointer.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
+  port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp port/platform/menu_pointer.cpp port/platform/touch.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_sources(kf_host PRIVATE port/platform/crash.cpp port/platform/logcat.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)

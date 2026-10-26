@@ -593,7 +593,8 @@ void draw_settings_window() {
             changed = true;
         }
         ImGui::SetItemTooltip("Point at a menu item to select it and click to choose it.\n"
-                              "Right click, or a click away from the menu, backs out; the wheel moves the selection.");
+                              "Right click, or a click away from the menu, backs out; the wheel moves the selection.\n"
+                              "On a touch screen a finger always does this, and a drag up or down moves the selection.");
         ImGui::BeginDisabled(s.classic);
         analog_settings_section(s.analog, changed);
         ImGui::EndDisabled();
@@ -711,6 +712,9 @@ void draw_menu_bar() {
     ImGui::MenuItem("Mods", nullptr, &show_mods);
     ImGui::MenuItem("Console", nullptr, &show_console);
     ImGui::MenuItem("About", nullptr, &show_about);
+    // F1 on a keyboard; on a touch screen this is the way out.
+    if (ImGui::MenuItem("Close"))
+        set_open(false);
     char status[96];
     std::snprintf(status, sizeof status, "%d mod%s running   F1 to close%s", mods_loaded_count(),
                   mods_loaded_count() == 1 ? "" : "s", settings().pause_when_open ? "   (paused)" : "");
@@ -744,6 +748,8 @@ bool slider_input(const char *label, int *value, int min, int max, const char *f
 }
 
 SDL_Window *window() { return main_window; }
+
+void overlay_set_open(bool value) { set_open(value); }
 
 bool overlay_open() { return open; }
 bool overlay_captures_input() { return open; }
@@ -864,8 +870,10 @@ void poll() {
     if (!running)
         return;
     mods_poll();
-    if (imgui)
+    if (imgui) {
         discord_poll();
+        touch_commands_poll();
+    }
     settings_save_if_dirty();
 }
 
@@ -928,6 +936,7 @@ ImDrawData *build_overlay(int width, int height) {
     mods_draw_hud();
     automap_draw(last_context);
     item_description_draw();
+    touch_controls_draw();
     draw_message(width, height);
     if (settings().show_fps) {
         char text[32];

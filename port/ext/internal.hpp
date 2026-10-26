@@ -137,6 +137,11 @@ void automap_toggle_full();
 bool automap_full_open();
 void automap_settings_page(bool &changed);
 
+// ---- touch controls ----
+void touch_controls_draw();   // inside the ImGui frame
+void touch_commands_poll();   // the gear and the map button, on every host poll
+void overlay_set_open(bool open);
+
 // ---- mods ----
 void mods_start();
 void mods_shutdown();

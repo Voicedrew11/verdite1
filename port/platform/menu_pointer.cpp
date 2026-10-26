@@ -14,6 +14,15 @@ namespace {
 
 verdite::MenuPointer pointer;
 
+// A drag this far (game pixels, about a row) is a step of the list, not a press.
+constexpr float touch_step = 16;
+struct TouchDrag {
+    float down_y = 0;
+    int steps = 0;
+    bool scrolling = false;
+};
+TouchDrag touch;
+
 // A window position (SDL's, in points) in the original 320 x 240 pixels.
 std::array<float, 2> game_position(SDL_Window *window, float x, float y) {
     int width_px = 0, height_px = 0;
@@ -85,7 +94,40 @@ void host_menu_pointer_event(SDL_Window *window, const SDL_Event &event) {
     }
 }
 
-void host_menu_pointer_gone() { pointer = {}; }
+void host_menu_touch_down(SDL_Window *window, float x, float y) {
+    const auto [game_x, game_y] = game_position(window, x, y);
+    touch = {game_y, 0, false};
+    pointer.pressed(game_x, game_y);
+}
+
+void host_menu_touch_moved(SDL_Window *window, float x, float y) {
+    const auto [game_x, game_y] = game_position(window, x, y);
+    // Up the screen is down the list, as a list dragged by the finger moves.
+    const int steps = static_cast<int>((touch.down_y - game_y) / touch_step);
+    if (steps != touch.steps) {
+        if (!touch.scrolling)
+            pointer.gone();
+        touch.scrolling = true;
+        pointer.scroll(steps - touch.steps);
+        touch.steps = steps;
+    }
+    if (!touch.scrolling)
+        pointer.moved(game_x, game_y);
+}
+
+void host_menu_touch_up(SDL_Window *window, float x, float y) {
+    if (touch.scrolling)
+        return;
+    const auto [game_x, game_y] = game_position(window, x, y);
+    pointer.released(game_x, game_y);
+}
+
+bool host_menu_has_rows() { return !pointer.shown_rows().empty(); }
+
+void host_menu_pointer_gone() {
+    pointer = {};
+    touch = {};
+}
 
 verdite::MenuPointer &host_menu_pointer() { return pointer; }
 
@@ -94,8 +136,6 @@ void host_menu_frame_begin() { pointer.begin_frame(); }
 void host_menu_frame_shown() { pointer.frame_shown(); }
 
 u32 host_menu_pointer_buttons() {
-    if (!menu_pointer_enabled)
-        return 0;
     switch (pointer.take_press()) {
     case verdite::MenuPress::None: return 0;
     case verdite::MenuPress::Confirm: return button_mask(Button::Confirm);
