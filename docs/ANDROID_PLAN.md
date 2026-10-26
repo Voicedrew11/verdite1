@@ -171,7 +171,13 @@ second). Found and fixed: SDL asked for any orientation for a resizable window, 
 manifest, so the game turned to portrait (`SDL_HINT_ORIENTATIONS` now names the two landscapes);
 the saves would not open, since the save folder's parents are synced up to `/` and an app may not
 open `/data/data` (a parent we may not open now ends the walk). Not yet: the Bluetooth pad and a
-turn of the phone (the user's), the picker (step 6), validation layers on the device.
+turn of the phone (the user's), the picker (step 6), validation layers on the device. Then the picture
+was drawn on its side and squeezed: vk-bootstrap gave the swapchain the display's quarter turn as
+its transform, telling the compositor the image was already turned. `VulkanSwapchain` now makes
+the swapchain itself with the IDENTITY transform, so the compositor turns it, and takes the
+`SUBOPTIMAL` Android then answers every present with as success. The Pixel reports the surface's
+extent in the window's orientation, not the display's natural one, so it is used as given
+(swapping it rebuilt the swapchain every frame). Judged right by the user.
 
 Done when: the game boots on the Pixel with a Bluetooth gamepad and on a
 Retroid with its built-in pad, draws through Vulkan with validation clean, and

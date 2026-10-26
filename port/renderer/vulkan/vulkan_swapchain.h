@@ -49,6 +49,7 @@ public:
 
 private:
     void release_images();
+    bool get_images();
     bool make_surface();
     const VulkanDevice &device_;
     SDL_Window *window_;
@@ -59,6 +60,7 @@ private:
     VkExtent2D extent_{0, 0};
     PresentPacing pacing_ = PresentPacing::Vsync;
     bool stale_ = false;
+    bool turned_by_compositor_ = false;   // its transform is not the display's (Android, turned)
     std::vector<VkImage> images_;
     std::vector<VkImageView> views_;
     std::vector<VkSemaphore> ready_;
