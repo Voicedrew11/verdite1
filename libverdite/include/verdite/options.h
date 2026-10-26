@@ -15,6 +15,7 @@
 // ("display.frame_rate"), so the agent channel and tests can name options too.
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -120,6 +121,18 @@ public:
 private:
     std::vector<OptionPage> pages_;
 };
+
+// A view as JSON, for a frontend in another language (Android's Java) and the
+// agent channel: {"pages":[{"title","sections":[{"title","rows":[{"id","kind",
+// "label","help","value","enabled","note"}]}]}]}, where kind is "toggle",
+// "choice", "number", "action" or "status", a choice row adds "choices"
+// ([{"value","label"}]) and a number row "min", "max", "step", "format" and "settle".
+std::string options_json(std::span<const OptionPageView> pages);
+
+// A row's value from typed text: "true"/"false" (or "on"/"off") for a toggle, a
+// number, or a choice's value as options_json writes it ("60", "true", "16:9").
+// Nothing when the text is none of these; set still checks the range.
+std::optional<OptionValue> option_value_from_text(const OptionRow &row, std::string_view text);
 
 } // namespace verdite
 

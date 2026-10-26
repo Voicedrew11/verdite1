@@ -1,6 +1,11 @@
 #include <verdite/options.h>
 
+#include <verdite/agent.h>
+
 #include <algorithm>
+#include <array>
+#include <charconv>
+#include <cstdio>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -43,6 +48,57 @@ std::optional<OptionValue> accepted(const OptionRow &row, const OptionValue &val
         return std::nullopt;
     }
     return std::nullopt;
+}
+
+constexpr std::array<const char *, 5> kind_names = {"toggle", "choice", "number", "action", "status"};
+
+std::string number_text(double number) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.10g", number);
+    return text;
+}
+
+// A value as JSON, and as typed text: a string is quoted only in JSON.
+std::string value_json(const OptionValue &value) {
+    if (const bool *on = std::get_if<bool>(&value))
+        return *on ? "true" : "false";
+    if (const double *number = std::get_if<double>(&value))
+        return number_text(*number);
+    return json_quote(std::get<std::string>(value));
+}
+
+std::string value_text(const OptionValue &value) {
+    if (const std::string *text = std::get_if<std::string>(&value))
+        return *text;
+    return value_json(value);
+}
+
+void append_row_json(std::string &out, const OptionRowView &view) {
+    const OptionRow &row = *view.row;
+    out += "{\"id\":" + json_quote(row.id) + ",\"kind\":\"" + kind_names[static_cast<std::size_t>(row.kind)] +
+           "\",\"label\":" + json_quote(row.label) + ",\"help\":" + json_quote(row.help) +
+           ",\"value\":" + value_json(view.value) + ",\"enabled\":" + (view.state.enabled ? "true" : "false") +
+           ",\"note\":" + json_quote(view.state.note);
+    if (row.kind == OptionKind::Choice) {
+        out += ",\"choices\":[";
+        for (std::size_t i = 0; i < row.choices.size(); ++i)
+            out += std::string(i ? "," : "") + "{\"value\":" + value_json(row.choices[i].value) +
+                   ",\"label\":" + json_quote(row.choices[i].label) + "}";
+        out += "]";
+    }
+    if (row.kind == OptionKind::Number)
+        out += ",\"min\":" + number_text(row.min) + ",\"max\":" + number_text(row.max) +
+               ",\"step\":" + number_text(row.step) + ",\"format\":" + json_quote(row.format) +
+               ",\"settle\":" + (row.settle ? "true" : "false");
+    out += "}";
+}
+
+std::optional<double> parse_number(std::string_view text) {
+    double number = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
+    if (error != std::errc() || end != text.data() + text.size())
+        return std::nullopt;
+    return number;
 }
 
 } // namespace
@@ -98,6 +154,49 @@ const OptionRow *OptionTable::find(std::string_view id) const {
                 if (row.id == id)
                     return &row;
     return nullptr;
+}
+
+std::string options_json(std::span<const OptionPageView> pages) {
+    std::string out = "{\"pages\":[";
+    for (std::size_t p = 0; p < pages.size(); ++p) {
+        out += std::string(p ? "," : "") + "{\"title\":" + json_quote(pages[p].title) + ",\"sections\":[";
+        for (std::size_t s = 0; s < pages[p].sections.size(); ++s) {
+            const OptionSectionView &section = pages[p].sections[s];
+            out += std::string(s ? "," : "") + "{\"title\":" + json_quote(section.title) + ",\"rows\":[";
+            for (std::size_t r = 0; r < section.rows.size(); ++r) {
+                if (r)
+                    out += ",";
+                append_row_json(out, section.rows[r]);
+            }
+            out += "]}";
+        }
+        out += "]}";
+    }
+    return out + "]}";
+}
+
+std::optional<OptionValue> option_value_from_text(const OptionRow &row, std::string_view text) {
+    switch (row.kind) {
+    case OptionKind::Toggle:
+        if (text == "true" || text == "on")
+            return true;
+        if (text == "false" || text == "off")
+            return false;
+        return std::nullopt;
+    case OptionKind::Number:
+        if (const auto number = parse_number(text))
+            return *number;
+        return std::nullopt;
+    case OptionKind::Choice:
+        for (const OptionChoice &choice : row.choices)
+            if (value_text(choice.value) == text)
+                return choice.value;
+        return std::nullopt;
+    case OptionKind::Action:
+    case OptionKind::Status:
+        return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 } // namespace verdite

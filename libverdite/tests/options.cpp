@@ -140,3 +140,33 @@ TEST_CASE("a disabled row is not changed or run") {
     CHECK(game.resets == 1);
     CHECK_FALSE(table.run("display.aspect"));
 }
+
+TEST_CASE("the view as JSON names each row's kind, value and range") {
+    Game game;
+    const OptionTable table = table_for(game);
+    const std::string json = options_json(table.view(window));
+    CHECK(json.starts_with("{\"pages\":[{\"title\":\"Display\",\"sections\":[{\"title\":\"\",\"rows\":["));
+    CHECK(json.find("{\"id\":\"display.fullscreen\",\"kind\":\"toggle\",\"label\":\"display.fullscreen\","
+                    "\"help\":\"\",\"value\":false,\"enabled\":true,\"note\":\"\"}") != std::string::npos);
+    CHECK(json.find("\"choices\":[{\"value\":\"4:3\",\"label\":\"4:3\"},{\"value\":\"16:9\",\"label\":\"16:9\"}]") !=
+          std::string::npos);
+    CHECK(json.find("\"value\":100,\"enabled\":true,\"note\":\"\",\"min\":0,\"max\":200,\"step\":5,"
+                    "\"format\":\"\",\"settle\":false}") != std::string::npos);
+    CHECK(json.ends_with("]}]}]}"));
+}
+
+TEST_CASE("typed text becomes a row's value") {
+    Game game;
+    const OptionTable table = table_for(game);
+    const OptionRow &fullscreen = *table.find("display.fullscreen");
+    CHECK(option_value_from_text(fullscreen, "on") == OptionValue(true));
+    CHECK(option_value_from_text(fullscreen, "false") == OptionValue(false));
+    CHECK_FALSE(option_value_from_text(fullscreen, "1"));
+    const OptionRow &strength = *table.find("display.strength");
+    CHECK(option_value_from_text(strength, "42.5") == OptionValue(42.5));
+    CHECK_FALSE(option_value_from_text(strength, "42x"));
+    const OptionRow &aspect = *table.find("display.aspect");
+    CHECK(option_value_from_text(aspect, "16:9") == OptionValue(std::string("16:9")));
+    CHECK_FALSE(option_value_from_text(aspect, "21:9"));
+    CHECK_FALSE(option_value_from_text(*table.find("display.reset"), "true"));
+}
