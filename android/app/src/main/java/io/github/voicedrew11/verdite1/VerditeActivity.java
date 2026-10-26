@@ -8,6 +8,8 @@ import org.libsdl.app.SDLActivity;
 
 // SDL's activity, which loads libSDL3.so and libmain.so and runs the game's main on its own thread.
 public class VerditeActivity extends SDLActivity {
+    private SettingsPanel settings;
+
     // The command line and environment, for agents and tests:
     // adb shell am start -n io.github.voicedrew11.verdite1/.VerditeActivity -e args "--skip-intro" -e env "KF_SHELL=1"
     // SDL asks for the arguments on the game's thread just before main, so the environment is set by then.
@@ -24,6 +26,33 @@ public class VerditeActivity extends SDLActivity {
             }
         }
         return words(getIntent().getStringExtra("args"));
+    }
+
+    // From the game thread (port/ext/settings_panel.cpp); the panel lives on the UI thread.
+    public void showSettingsPanel() {
+        runOnUiThread(() -> {
+            if (settings == null)
+                settings = new SettingsPanel(this, mLayout, () -> mSurface.requestFocus());
+            settings.show();
+        });
+    }
+
+    // From the game thread: the settings' values or rows changed.
+    public void onOptionsChanged() {
+        runOnUiThread(() -> {
+            if (settings != null)
+                settings.refresh();
+        });
+    }
+
+    // Back (and a pad's B) closes the panel; otherwise SDL's, where the game takes it.
+    @Override
+    public void onBackPressed() {
+        if (settings != null && settings.isOpen()) {
+            settings.close(false);
+            return;
+        }
+        super.onBackPressed();
     }
 
     private static String[] words(String text) {

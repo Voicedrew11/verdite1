@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The settings panel's (SettingsPanel.java); the activity keeps SDL's plain full-screen theme. -->
+    <style name="Theme.Verdite.Settings" parent="Theme.Material3.Dark.NoActionBar" />
+</resources>

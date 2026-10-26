@@ -149,6 +149,12 @@ void touch_commands_poll();   // the gear and the map button, on every host poll
 void overlay_set_open(bool open);
 void overlay_restyle();   // after the interface scale changes
 
+// ---- Android's settings panel (settings_panel.cpp): native views over the game ----
+// Shows the panel in place of the overlay's windows; false where there is none.
+bool settings_panel_show();
+bool settings_panel_open();
+void settings_panel_poll();   // on every host poll: the panel's changes in, the new view out
+
 // ---- mods ----
 void mods_start();
 void mods_shutdown();

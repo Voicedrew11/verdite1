@@ -350,16 +350,19 @@ void overlay_restyle() {
     apply_style();
 }
 
-bool overlay_open() { return open; }
-bool overlay_captures_input() { return open; }
+// The overlay's windows or Android's settings panel cover the game.
+static bool covered() { return open || settings_panel_open(); }
+
+bool overlay_open() { return covered(); }
+bool overlay_captures_input() { return covered(); }
 bool pause_requested() {
-    return (open && settings().pause_when_open) || (automap_full_open() && settings().map_pause);
+    return (covered() && settings().pause_when_open) || (automap_full_open() && settings().map_pause);
 }
 bool pause_keeps_music() {
-    return !(open && settings().pause_when_open) && automap_full_open() && settings().map_keep_music;
+    return !(covered() && settings().pause_when_open) && automap_full_open() && settings().map_keep_music;
 }
-bool redraw_while_paused() { return open || automap_full_open(); }
-bool wants_cursor() { return open || automap_full_open(); }
+bool redraw_while_paused() { return covered() || automap_full_open(); }
+bool wants_cursor() { return covered() || automap_full_open(); }
 
 ViewRect game_view() {
     int width = 0, height = 0;
@@ -462,7 +465,7 @@ bool process_event(const SDL_Event &event) {
         || event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL;
     if (automap_full_open() && mouse_event)
         return true;
-    return open && is_input_event(event.type);
+    return covered() && is_input_event(event.type);
 }
 
 void poll() {
@@ -470,6 +473,7 @@ void poll() {
         return;
     mods_poll();
     options_poll();
+    settings_panel_poll();
     if (imgui) {
         discord_poll();
         touch_commands_poll();
@@ -521,10 +525,11 @@ ImDrawData *build_overlay(int width, int height) {
     // The Vulkan renderer's NewFrame only checks that it was started, so it is not called.
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
-    // KF_TEST_SETTINGS=<page>: opens Settings on that page, for captures.
+    // KF_TEST_SETTINGS=<page>: opens Settings on that page, for captures; Android's panel on its first page.
     static const char *test_page = std::getenv("KF_TEST_SETTINGS");
     if (test_page) {
-        open = show_settings = true;
+        if (!settings_panel_show())
+            open = show_settings = true;
         show_mods = false;
         settings_page = test_page;
         test_page = nullptr;

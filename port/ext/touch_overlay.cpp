@@ -65,7 +65,10 @@ void touch_controls_draw() {
 
 void touch_commands_poll() {
     switch (host_touch_take_command()) {
-    case TouchCommand::Settings: overlay_set_open(true); break;
+    case TouchCommand::Settings:
+        if (!settings_panel_show())
+            overlay_set_open(true);
+        break;
     case TouchCommand::FullMap: automap_toggle_full(); break;
     case TouchCommand::None: break;
     }

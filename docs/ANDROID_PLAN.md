@@ -305,6 +305,17 @@ the Pixel (it was locked):
 - Not yet: the Controls > Touch options (opacity, size, left-handed, vibration), the overlay
   scaled for a phone, the long press for the overlay.
 
+Settings, 2026-10-26: ImGui was too hard to use by finger, so on Android the gear opens a native
+Material 3 panel over the live game in place of the overlay's windows. The settings are one table
+(`verdite/options.h`; KF1's rows in `port/ext/options.cpp`), and each row names what a platform
+needs (window, mouse, keyboard, Discord...), so the phone never sees Fullscreen, VSync, the mouse
+or the key bindings. The overlay draws the same table on the desktop. `SettingsPanel.java` builds
+the panel from the table's JSON; a change crosses to the game thread through a queue and the new
+view comes back (`port/ext/settings_panel.cpp`). Back or a pad's B closes it; "Mods and console"
+opens the ImGui overlay for what has no row yet. `KF_TEST_SETTINGS=<page>` opens the panel. Found
+on the way: with the screen off at launch, Android takes the surface before the overlay starts,
+and the overlay gives up for the run ("cannot initialize Dear ImGui"); not fixed yet.
+
 Done when: floor 1 is played from the start to the first save point on
 touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has unit tests
 (two fingers on one control, a finger sliding off a button, lift order).
