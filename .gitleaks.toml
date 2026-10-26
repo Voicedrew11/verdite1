@@ -1,0 +1,12 @@
+# Secret scanning (scripts/hooks/pre-commit, scripts/check.sh): gitleaks' rules, less two kinds of
+# false positive. Keep this list narrow: a new allowance needs a reason, not a silenced finding.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "vendored code: numeric constants named like keys"
+paths = ['''^third_party/''', '''^vendor/''']
+
+[[allowlists]]
+description = "settings keys: FpsKey = \"kf2.framepacing.fps\""
+regexes = ['''^kf[0-9a-z]*(\.[A-Za-z0-9_]+)+$''']

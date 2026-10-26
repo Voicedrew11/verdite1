@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Refuses a commit that carries a secret: a secret's file by name, or anything gitleaks finds in
+# the staged changes (.gitleaks.toml). Installed by: git config core.hooksPath scripts/hooks
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+secret_names='(^|/)(\.dev\.vars.*|\.env(\..*)?|.*\.pem|.*\.p12|.*\.pfx)$'
+named=$(git diff --cached --name-only --diff-filter=ACMR | grep -E "$secret_names" || true)
+if [ -n "$named" ]; then
+    printf 'pre-commit: refusing files that hold secrets:\n%s\n' "$named" >&2
+    exit 1
+fi
+
+if command -v gitleaks >/dev/null; then
+    gitleaks git --staged --redact --no-banner --log-level warn .
+else
+    nix shell nixpkgs#gitleaks -c gitleaks git --staged --redact --no-banner --log-level warn .
+fi

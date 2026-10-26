@@ -31,3 +31,12 @@ android/.gradle/
 android/app/build/
 android/local.properties
 android/build/
+
+# Secrets never go in the repo (online/README.md, "Secrets"); the pre-commit hook also refuses them
+.dev.vars*
+.env
+.env.*
+*.pem
+*.p12
+*.pfx
+.wrangler/

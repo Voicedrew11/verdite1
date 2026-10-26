@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Before a commit: build, lint our code, run the tests, then the sanitizer build's tests and a
+# Before a commit: scan for secrets, build, lint our code, run the tests, then the sanitizer build's tests and a
 # smoke run (boot headless, walk, quit; then the same drawing with Vulkan offscreen) under ASan and
 # UBSan. Stops at the first failure.
 #   scripts/check.sh [--quick] [--base REF]
@@ -25,6 +25,10 @@ done
 
 step() { printf '\n== %s\n' "$1"; }
 
+step "secrets"
+# the history and the uncommitted changes (.gitleaks.toml); the pre-commit hook checks each commit
+gitleaks git --redact --no-banner --log-level warn .
+gitleaks git --pre-commit --redact --no-banner --log-level warn .
 step "build"
 cmake --preset linux >/dev/null
 cmake --build --preset linux

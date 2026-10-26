@@ -73,7 +73,8 @@
         # clang-tools first: its clang-tidy is wrapped to find the standard headers
         packages = with pkgs; [ clang-tools cmake ninja pkg-config clang python3 git sdl3 doctest cpptrace
           vulkan-headers vulkan-memory-allocator vulkan-volk vk-bootstrap glslang vulkan-validation-layers
-          libarchive ]; # bsdtar opens the English patch's .rar
+          libarchive # bsdtar opens the English patch's .rar
+          gitleaks ]; # secret scanning: scripts/check.sh and scripts/hooks/pre-commit
         KF_ENGLISH_PATCH = "${englishDelta}";
         # The game loads the host's Vulkan loader and drivers (run-linux.sh); the layers come from here.
         VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
