@@ -33,7 +33,8 @@ import java.util.IllegalFormatException;
 import java.util.Locale;
 import java.util.Map;
 
-// The game's settings as Material 3 views, in a sheet over the live game. The
+// The game's settings as Material 3 views, full screen, with the game suspended
+// under it (port/ext/overlay.cpp). The
 // rows come from the game's option table (port/ext/options.cpp) as JSON; a change
 // goes back as text and is applied on the game thread, which then sends the new
 // values, and the rows update in place. On the UI thread throughout.
@@ -82,11 +83,9 @@ final class SettingsPanel {
         open = true;
         root.setVisibility(View.VISIBLE);
         refresh();
-        int width = sheetWidth();
-        sheet.getLayoutParams().width = width;
-        sheet.requestLayout();
-        sheet.setTranslationX(width);
-        sheet.animate().translationX(0).setDuration(180).start();
+        root.animate().cancel();
+        root.setAlpha(0f);
+        root.animate().alpha(1f).setDuration(150).start();
         root.requestApplyInsets();
         if (rail.getChildCount() > 1)
             rail.getChildAt(1).requestFocus();
@@ -97,7 +96,7 @@ final class SettingsPanel {
             return;
         open = false;
         dragging = null;
-        sheet.animate().translationX(sheet.getWidth()).setDuration(150).withEndAction(() -> {
+        root.animate().alpha(0f).setDuration(120).withEndAction(() -> {
             if (!open)
                 root.setVisibility(View.GONE);
         }).start();
@@ -130,12 +129,11 @@ final class SettingsPanel {
         }
     }
 
-    // ---- the sheet ----
+    // ---- the panel ----
 
     private void build() {
         root = new FrameLayout(activity);
-        root.setClickable(true);   // a tap on the game beside the sheet closes it
-        root.setOnClickListener(v -> close(false));
+        root.setClickable(true);   // touches stay on the panel, off SDL's surface
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             fitCutout(insets);
             return insets;
@@ -144,9 +142,7 @@ final class SettingsPanel {
         sheet = new LinearLayout(ui);
         sheet.setOrientation(LinearLayout.HORIZONTAL);
         sheet.setBackgroundColor(color(com.google.android.material.R.attr.colorSurfaceContainer));
-        sheet.setElevation(dp(8));
-        sheet.setClickable(true);   // touches on the sheet stay on it
-        root.addView(sheet, new FrameLayout.LayoutParams(sheetWidth(), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END));
+        root.addView(sheet, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         ScrollView railScroll = new ScrollView(ui);
         rail = new LinearLayout(ui);
@@ -164,17 +160,13 @@ final class SettingsPanel {
         sheet.addView(scroll, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
     }
 
-    private int sheetWidth() {
-        int width = host.getWidth() > 0 ? host.getWidth() : activity.getResources().getDisplayMetrics().widthPixels;
-        return Math.min(width, Math.min(Math.max(width * 62 / 100, dp(480)), dp(860)));
-    }
-
-    // A cutout on the sheet's side, in landscape, would cover its edge.
+    // A cutout, on either side in landscape, would cover the rail or the rows.
     private void fitCutout(WindowInsets insets) {
         DisplayCutout cutout = insets.getDisplayCutout();
         if (cutout == null)
             return;
-        sheet.setPadding(0, cutout.getSafeInsetTop(), cutout.getSafeInsetRight(), cutout.getSafeInsetBottom());
+        sheet.setPadding(cutout.getSafeInsetLeft(), cutout.getSafeInsetTop(), cutout.getSafeInsetRight(),
+                cutout.getSafeInsetBottom());
     }
 
     private void showRail(JSONArray pages) throws JSONException {

@@ -306,7 +306,9 @@ the Pixel (it was locked):
   scaled for a phone, the long press for the overlay.
 
 Settings, 2026-10-26: ImGui was too hard to use by finger, so on Android the gear opens a native
-Material 3 panel over the live game in place of the overlay's windows. The settings are one table
+Material 3 panel in place of the overlay's windows. It fills the screen and the game is suspended
+under it, music included, whatever "Pause the game while the overlay is open" says (a sidebar over
+the running game was awkward to use). The settings are one table
 (`verdite/options.h`; KF1's rows in `port/ext/options.cpp`), and each row names what a platform
 needs (window, mouse, keyboard, Discord...), so the phone never sees Fullscreen, VSync, the mouse
 or the key bindings. The overlay draws the same table on the desktop. `SettingsPanel.java` builds
