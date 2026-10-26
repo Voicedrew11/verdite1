@@ -66,17 +66,21 @@ Error codes after the upgrade:
 | type | fields | meaning |
 |---|---|---|
 | `signal` | `to`, `data` | send `data` to peer `to`; it arrives as `signal` with your id as `from` |
-| `turn` | | ask for a TURN credential, answered by `turn` or an error. Only with another peer in the room; a new one revokes your last |
+| `turn` | | ask for a TURN credential, answered by `turn` or an error. Only with another peer in the room. A peer keeps its last two: a new one revokes the one before the last |
 
-`data` is opaque to the service, a JSON object the clients agree on:
+`data` is opaque to the service, a JSON object the clients agree on. Every one names `gen`, the
+generation of the pair's connection it belongs to (a whole number, 0 for the first; see "Moving to
+a new credential"):
 
 | `data.kind` | fields | |
 |---|---|---|
-| `offer` | `sdp` | the newer peer offers to each peer in its `welcome`'s `peers` |
-| `answer` | `sdp` | |
-| `candidate` | `candidate`, `mid` | a trickled ICE candidate |
+| `offer` | `gen`, `sdp` | the newer peer offers to each peer in its `welcome`'s `peers` |
+| `answer` | `gen`, `sdp` | |
+| `candidate` | `gen`, `candidate`, `mid` | a trickled ICE candidate |
+| `restart` | `gen` | from the older peer: please offer a new generation, at least `gen` |
 
 So the peer that joined later always offers, and two peers never offer to each other at once.
+A generation is never reused between a pair, and signals for one that is gone are ignored.
 
 Leaving is closing the socket. The service sends `leave` to the others and revokes the leaver's
 TURN credential.
@@ -89,7 +93,33 @@ TURN credential.
 - **Two data channels** per pair of peers, negotiated out of band (`negotiated`, created by both peers) with fixed
   ids: `0` reliable and ordered (`control`), `1` unreliable and unordered (`state`, no retransmits).
 - **TURN credentials on request.** A client asks with `turn` when it is about to connect to a
-  peer (on its `welcome` with peers, or on a `join`), not before. A credential lasts an hour; a
-  longer session asks again before it runs out, and the old one is revoked.
+  peer (on its `welcome` with peers, or on a `join`), not before. A credential lasts an hour
+  (`seconds`); a client asks again halfway through it, or 15 minutes before its end if sooner.
+
+## Moving to a new credential
+
+A connection keeps the TURN credentials it was made with, and the relay refuses its next refresh
+(every few minutes) once one of them is revoked or expired: measured on the deployed service,
+2026-10-26, with 2-minute credentials, data stopped at the first refresh 4.5 minutes in. So when a
+client gets a new credential, each of its connections moves to a new one made with it, and the
+service keeps the previous credential alive until the move is done (it revokes only the one
+before that, or both when the peer leaves).
+
+1. The newer peer offers generation `gen` + 1 (the older one asks it to with `restart`). The pair
+   connects it alongside the current one, with the same two channels.
+2. When the new connection's channels are open, each side sends the text message `moved` on the
+   current connection's `control` channel, after the last packet it sends there, and from then on
+   sends everything on the new connection.
+3. A side delivers `control` packets from the current connection until the peer's `moved`, holding
+   those from the new connection, then delivers what it held and carries on from the new one. It
+   answers `moved` with the text message `seen`.
+4. A side closes the old connection once it has sent `moved`, received the peer's `moved`, and
+   received `seen` for its own. A peer closing it after its own `moved` and ours is a finish too
+   (its `seen` can be lost in the close; nothing else can).
+
+`state` packets go on whichever connection is current for the sender; they are unordered anyway.
+A move whose new connection does not open within 30 seconds is dropped and tried again; one that
+fails after a side has sent `moved` loses the peer. Text messages on `control` are only these
+markers: the game's packets are binary.
 - **The budget.** The service stops issuing credentials once the month's TURN traffic passes its
   budget (`TURN_BUDGET_GB`, 500 by default), checked every 10 minutes.

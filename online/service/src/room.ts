@@ -3,7 +3,7 @@
 // hibernates between frames, so each socket's state is its attachment.
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
-import { issue, revoke, CREDENTIAL_SECONDS } from "./turn";
+import { credentialSeconds, issue, revoke } from "./turn";
 import {
   FRAME_BYTES,
   FRAMES_PER_SECOND,
@@ -13,11 +13,15 @@ import {
   type ServerFrame,
 } from "./wire";
 
+const TURN_CREDENTIALS_KEPT = 2;
+
 interface Peer {
   peer: string;
   build: string;
   ip: string; // for the per-address credential limit
-  turnUser: string | null; // the live TURN credential, revoked when replaced or on leaving
+  // The peer's live TURN credentials, newest last: its connections move to a new one only after
+  // it arrives, so the one before stays until the next, and both go when the peer leaves.
+  turnUsers: string[];
 }
 
 interface Window {
@@ -99,14 +103,14 @@ export class Room extends DurableObject<Env> {
     let id = newPeerId();
     while (ids.has(id)) id = newPeerId();
     this.ctx.acceptWebSocket(server);
-    store(server, { peer: id, build, ip, turnUser: null });
+    store(server, { peer: id, build, ip, turnUsers: [] });
     send(server, { type: "welcome", protocol: PROTOCOL, peer: id, peers: [...ids] });
     for (const { ws: other } of present) send(other, { type: "join", peer: id });
     return new Response(null, { status: 101, webSocket: client });
   }
 
   // A credential only for a peer with someone to connect to, within its address's limit and
-  // the month's budget; a new one replaces (and revokes) the peer's last.
+  // the month's budget. The peer keeps its last two: a third revokes the oldest.
   private async turn(ws: WebSocket, self: Peer): Promise<void> {
     if (!this.peers().some(({ ws: other }) => other !== ws)) {
       fail(ws, "alone", "no other peer to connect to");
@@ -133,10 +137,11 @@ export class Room extends DurableObject<Env> {
       if (credential.username) await revoke(this.env, credential.username);
       return;
     }
-    const replaced = latest.turnUser;
-    store(ws, { ...latest, turnUser: credential.username });
-    send(ws, { type: "turn", iceServers: credential.iceServers, seconds: CREDENTIAL_SECONDS });
-    if (replaced) await revoke(this.env, replaced);
+    const live = credential.username ? [...latest.turnUsers, credential.username] : latest.turnUsers;
+    const retired = live.slice(0, -TURN_CREDENTIALS_KEPT);
+    store(ws, { ...latest, turnUsers: live.slice(-TURN_CREDENTIALS_KEPT) });
+    send(ws, { type: "turn", iceServers: credential.iceServers, seconds: credentialSeconds(this.env) });
+    for (const username of retired) await revoke(this.env, username);
   }
 
   private overRate(ws: WebSocket): boolean {
@@ -209,6 +214,6 @@ export class Room extends DurableObject<Env> {
     }
     for (const { ws: other } of this.peers())
       if (other !== ws) send(other, { type: "leave", peer: self.peer });
-    if (self.turnUser) await revoke(this.env, self.turnUser);
+    for (const username of self.turnUsers ?? []) await revoke(this.env, username);
   }
 }

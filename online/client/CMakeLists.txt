@@ -1,0 +1,34 @@
+# verdite-online, the client library (online/README.md): knows neither libverdite nor the game, so
+# it can move out as a subtree. libdatachannel is built from its source with its submodules
+# (KF_LIBDATACHANNEL_SOURCE, from the nix shell): libjuice for ICE, usrsctp, OpenSSL for DTLS.
+# A plain variable, so libdatachannel's option() puts no global BUILD_SHARED_LIBS=ON in the cache
+# (libchdr, configured before it, would then build shared on the next configure).
+set(BUILD_SHARED_LIBS OFF)
+set(NO_EXAMPLES ON CACHE BOOL "libdatachannel's examples" FORCE)
+set(NO_TESTS ON CACHE BOOL "libdatachannel's tests" FORCE)
+set(NO_MEDIA ON CACHE BOOL "libdatachannel's media transport: data channels only" FORCE)
+add_subdirectory($ENV{KF_LIBDATACHANNEL_SOURCE} libdatachannel EXCLUDE_FROM_ALL SYSTEM)
+# libdatachannel needs RTTI, which the rest of the build turns off
+target_compile_options(datachannel-static PRIVATE -frtti)
+
+add_library(verdite_online STATIC src/handover.cpp src/session.cpp src/signaling.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)
+target_include_directories(verdite_online PUBLIC include
+  PRIVATE src ${CMAKE_SOURCE_DIR}/third_party/cjson)
+target_link_libraries(verdite_online PRIVATE LibDataChannel::LibDataChannelStatic)
+target_compile_options(verdite_online PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -Werror>)
+
+# vo_pair: two sessions through a running service (online/README.md)
+add_executable(vo_pair tests/pair.cpp)
+target_link_libraries(vo_pair PRIVATE verdite_online)
+target_compile_options(vo_pair PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+if(doctest_FOUND)
+  add_executable(verdite_online_tests tests/main.cpp tests/handover.cpp tests/signaling.cpp
+    src/handover.cpp src/signaling.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)
+  target_include_directories(verdite_online_tests PRIVATE src ${CMAKE_SOURCE_DIR}/third_party/cjson)
+  target_link_libraries(verdite_online_tests PRIVATE doctest::doctest)
+  target_compile_options(verdite_online_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -Werror>)
+  add_test(NAME verdite_online COMMAND verdite_online_tests)
+endif()

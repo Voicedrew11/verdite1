@@ -3,8 +3,9 @@
 **Draft, 2026-10-22. Subject to change** as considerations come up; when one
 changes the plan, edit the section and add a line to "Changes" at the end
 rather than leaving the old text standing. Built so far: the signaling service
-(`online/service`), its protocol (`online/protocol/PROTOCOL.md`) and the client's
-interface, not yet implemented (`online/client/include/verdite_online.h`).
+(`online/service`), its protocol (`online/protocol/PROTOCOL.md`) and the client library
+(`online/client`, interface `include/verdite_online.h`), tested in pairs through the deployed
+service; no game uses it yet.
 
 The goal: Demon's Souls-style online play in the Verdite ports, namely
 **messages** left on the ground, **bloodstains** that replay another player's
@@ -148,3 +149,16 @@ get online play by writing only their own game layer.
   first, ahead of the order above, since exact replay (step 1) is done: rooms
   of up to 4 peers of one build, the later peer offering, relay-only, the TURN
   credential issued per peer for 6 hours and revoked when it leaves.
+- 2026-10-26: the client library is built on libdatachannel (libjuice, so TURN over UDP only).
+  Its interface gained who joined first (`older`, for choosing a host), CONTROL packets up to
+  64 KiB (a world's state on joining), a CONTROL queue limit that fails a slow peer, and
+  `vo_link_of` (round trip, queued bytes). The client renews its one credential before it runs
+  out; whether a renewal's revocation, or an expiry, ends connections already using the old one
+  is to be measured with `TURN_CREDENTIAL_SECONDS`.
+- 2026-10-26: measured: it does. With 2-minute credentials on the deployed service, a pair's data
+  stopped at the relay's first refresh after the revocation, 4.5 minutes in. A connection now
+  moves to a new one at each renewal, with a handover that keeps CONTROL exactly once and in
+  order (`online/protocol/PROTOCOL.md`, "Moving to a new credential"), and the service keeps a
+  peer's previous credential until the next, so sessions have no length limit. Checked on the
+  deployed service with 2-minute credentials: 12 minutes relayed through TURN, 11 moves, all
+  14,365 CONTROL packets each way in order, no peer lost.

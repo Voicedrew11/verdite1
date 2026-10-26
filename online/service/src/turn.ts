@@ -2,11 +2,20 @@
 // key is the service's secret; without it there are no ICE servers (local testing).
 
 const API = "https://rtc.live.cloudflare.com/v1/turn/keys";
-export const CREDENTIAL_SECONDS = 60 * 60; // a longer session asks again
+const CREDENTIAL_SECONDS = 60 * 60; // a longer session asks again
 
 export interface TurnKey {
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
+  TURN_CREDENTIAL_SECONDS?: string;
+}
+
+// How long a credential lasts: an hour, or TURN_CREDENTIAL_SECONDS (60 to 3600) to test renewal.
+export function credentialSeconds(key: TurnKey): number {
+  const seconds = Number(key.TURN_CREDENTIAL_SECONDS);
+  return Number.isInteger(seconds) && seconds >= 60 && seconds <= CREDENTIAL_SECONDS
+    ? seconds
+    : CREDENTIAL_SECONDS;
 }
 
 export interface Credential {
@@ -37,7 +46,7 @@ export async function issue(key: TurnKey): Promise<Credential> {
   const response = await fetch(`${API}/${key.TURN_KEY_ID}/credentials/generate-ice-servers`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key.TURN_KEY_API_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ ttl: CREDENTIAL_SECONDS }),
+    body: JSON.stringify({ ttl: credentialSeconds(key) }),
   });
   if (!response.ok) throw new Error(`TURN credentials: HTTP ${response.status}`);
   const body = (await response.json()) as { iceServers?: RTCIceServerJson[] };

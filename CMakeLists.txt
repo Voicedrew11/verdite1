@@ -287,6 +287,12 @@ if(doctest_FOUND)
   add_test(NAME verdite COMMAND verdite_tests)
 endif()
 
+# verdite-online, the client library for online play (online/client), where libdatachannel's
+# source is at hand: the nix shell, desktop only for now
+if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE} AND NOT ANDROID)
+  add_subdirectory(online/client)
+endif()
+
 # The renderer frontend's API-free parts: batching, texture layers, smoothing. Tested on their own.
 add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/texture_layers.cpp
   port/renderer/view_smoothing.cpp port/renderer/view_rotation.cpp port/renderer/vertex_carry.cpp port/renderer/model_transform.cpp

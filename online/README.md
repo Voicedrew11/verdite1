@@ -8,7 +8,7 @@ knows a game; the game layer (vocabulary, ghosts, coop sync) stays in `port/` an
 |---|---|---|
 | `protocol/` | both | the wire protocol, the one definition the service and the client both follow |
 | `service/` | service | the Cloudflare Worker: TURN credentials and the signaling rooms (a Durable Object per room) |
-| `client/` | client library | `verdite-online`: WebRTC data channels through Cloudflare TURN, behind a C interface |
+| `client/` | client library | `verdite-online`: WebRTC data channels through Cloudflare TURN, behind a C interface (`include/verdite_online.h`) |
 
 The client depends on neither `libverdite/` nor the game, so it can move out as a subtree, and the
 C# recompilations can reach it through P/Invoke.
@@ -30,6 +30,41 @@ SERVICE=https://... npm run test:turn   # TURN servers come with credentials (ne
 
 Without a TURN key, rooms hand out no ICE servers, which is enough for two instances on one
 machine; local development never needs the key.
+
+`TURN_CREDENTIAL_SECONDS` (60 to 3600, default 3600) shortens the credentials a room hands out, to
+test their renewal; it is never set on the live service except for such a test. Locally:
+`npx wrangler dev --ip 127.0.0.1 --port 8787 --var TURN_CREDENTIAL_SECONDS:60`, then
+`TURN_CREDENTIAL_SECONDS=60 npm test` and `vo_pair --seconds 120` (a move every 30 seconds).
+
+## The client
+
+C++20 behind the C interface in `client/include/verdite_online.h`, on libdatachannel 0.24.1
+(libjuice, usrsctp, OpenSSL), built from source with its submodules: the nix shell gives
+`KF_LIBDATACHANNEL_SOURCE`, and the top-level CMake builds `online/client` when it is set
+(desktop only for now). libdatachannel's threads only post what they see to a mailbox; `vo_poll`
+acts on it on the game's thread, so the session has one thread. The client asks for a TURN
+credential when it first has a peer and again halfway through its life (15 minutes before its end
+at most), and moves each connection to a new one made with it, without losing or reordering a
+CONTROL packet (`protocol/PROTOCOL.md`, "Moving to a new credential"; the ordering rules are
+`src/handover.h`, unit-tested). A closed connection is kept until libdatachannel reports it
+closed, so `vo_close` waits for that, at most 2 seconds.
+
+```
+cmake --build --preset linux --target verdite_online vo_pair verdite_online_tests
+build/linux/online/client/verdite_online_tests             # the frames, read and written
+build/linux/online/client/vo_pair --service http://127.0.0.1:8787 --seconds 10
+build/linux/online/client/vo_pair --service https://verdite-online.voicedrew11.workers.dev
+```
+
+`vo_pair` opens two sessions in one room and sends CONTROL and STATE packets both ways at 20 a
+second, plus one 64 KiB CONTROL packet; it passes when every CONTROL packet arrived in order and
+neither side lost the other. The library logs each connection's route to stderr: `relayed`
+through TURN, or `direct` when the service has no TURN key.
+
+- libjuice speaks TURN over UDP only, so a network that blocks UDP cannot connect.
+- ThreadSanitizer reports races inside usrsctp (libdatachannel's SCTP) and a lock-order
+  inversion in libdatachannel's WebSocket, none in the client's own code; UBSan reports
+  function-pointer casts in libjuice's `picohash.h` (2026-10-26).
 
 ## Secrets
 

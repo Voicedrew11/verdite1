@@ -80,7 +80,7 @@ const cases = {
     const turn = await b.next();
     assert.equal(turn.type, "turn");
     assert.ok(Array.isArray(turn.iceServers)); // empty on a service without a TURN key
-    assert.equal(turn.seconds, 3600);
+    assert.equal(turn.seconds, Number(process.env.TURN_CREDENTIAL_SECONDS ?? 3600)); // the Worker's setting
     a.close();
     b.close();
   },

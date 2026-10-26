@@ -21,6 +21,15 @@
         rev = "7bd4567cf3ac285244d724bfb9945d92ad7abe4e";
         hash = "sha256-vUH4dUyahAl9MRQoudWAAWv2f2jUJ8rtrJR2KSCpNgQ=";
       };
+      # libdatachannel with its submodules (libjuice, usrsctp, plog): nixpkgs' build uses libnice,
+      # and online/client wants libjuice, as Windows and Android will build it.
+      libdatachannelSource = pkgs.fetchFromGitHub {
+        owner = "paullouisageneau";
+        repo = "libdatachannel";
+        rev = "v0.24.1";
+        fetchSubmodules = true;
+        hash = "sha256-bCBLpGKgMdMhMwzRcxy5viUr6Mlg0kEXz/4UX79JilM=";
+      };
       englishDelta = pkgs.runCommand "kings-field-english-v1.kfdelta" {
         nativeBuildInputs = [ pkgs.libarchive pkgs.python3 ];
       } ''
@@ -74,8 +83,10 @@
         packages = with pkgs; [ clang-tools cmake ninja pkg-config clang python3 git sdl3 doctest cpptrace
           vulkan-headers vulkan-memory-allocator vulkan-volk vk-bootstrap glslang vulkan-validation-layers
           libarchive # bsdtar opens the English patch's .rar
-          gitleaks ]; # secret scanning: scripts/check.sh and scripts/hooks/pre-commit
+          gitleaks # secret scanning: scripts/check.sh and scripts/hooks/pre-commit
+          openssl ]; # DTLS and wss:// for online/client
         KF_ENGLISH_PATCH = "${englishDelta}";
+        KF_LIBDATACHANNEL_SOURCE = "${libdatachannelSource}";
         # The game loads the host's Vulkan loader and drivers (run-linux.sh); the layers come from here.
         VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
       };

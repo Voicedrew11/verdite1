@@ -3,13 +3,16 @@
 /* verdite-online: a room of peers joined through the Verdite online service, and packets between
  * them over WebRTC data channels relayed by Cloudflare TURN (online/protocol/PROTOCOL.md).
  *
- * DRAFT for agreement: the interface only, nothing implements it yet.
- *
  * Plain C, so the C++ ports link it and the C# builds call it through P/Invoke. Knows no game:
  * the game names itself, its build and its room, and gives meaning to the bytes it sends.
  *
  * Threads: every function is called from one thread, the game's. The library runs its own
- * (signaling, ICE, SCTP) and hands what they see to the game as events, read with vo_poll. */
+ * (signaling, ICE, SCTP) and hands what they see to the game as events, read with vo_poll.
+ *
+ * TURN credentials are the library's business: it asks for one when it first has a peer to
+ * connect to, and for a new one halfway through its life, and moves each connection to a new one
+ * made with it. A move loses and reorders no CONTROL packet and is not an event: sessions have no
+ * length limit. */
 #include <stddef.h>
 #include <stdint.h>
 
@@ -29,7 +32,9 @@ typedef struct vo_config {
 /* Starts joining the room; the copy of config is the session's. NULL when config is malformed;
  * everything that can fail later (the network, the service) arrives as VO_EVENT_ERROR. */
 vo_session *vo_open(const vo_config *config);
-/* Leaves the room and closes every connection; the session is gone. NULL is ignored. */
+/* Leaves the room and closes every connection without waiting for the peers to acknowledge (it
+ * waits up to 2 seconds for its own threads to let go of them); the session is gone. NULL is
+ * ignored. */
 void vo_close(vo_session *session);
 
 typedef uint64_t vo_peer; /* the service's peer id, 16 hex digits as a number; 0 is no peer */
@@ -41,7 +46,8 @@ typedef enum vo_channel {
 
 typedef enum vo_event_kind {
     VO_EVENT_JOINED,       /* in the room as event.peer; PEER_OPEN for each other peer follows */
-    VO_EVENT_PEER_OPEN,    /* event.peer's channels are open: it can be sent to */
+    VO_EVENT_PEER_OPEN,    /* event.peer's channels are open: it can be sent to. event.older
+                            * says whether it joined the room before you */
     VO_EVENT_PEER_CLOSED,  /* event.peer left or its connection failed; never sent to again */
     VO_EVENT_PACKET,       /* event.peer sent event.data on event.channel */
     VO_EVENT_ERROR,        /* event.error; after a fatal one, the session only waits to be closed */
@@ -55,7 +61,9 @@ typedef enum vo_error {
     VO_ERROR_UNAVAILABLE,    /* fatal: the service has no TURN credential to give */
     VO_ERROR_PROTOCOL,       /* fatal: the service speaks another protocol version */
     VO_ERROR_DISCONNECTED,   /* fatal: the signaling connection dropped after joining */
-    VO_ERROR_PEER_FAILED,    /* not fatal: a connection to event.peer failed (PEER_CLOSED follows) */
+    VO_ERROR_PEER_FAILED,    /* not fatal: a connection to event.peer failed, or its CONTROL
+                              * queue passed VO_CONTROL_QUEUE_BYTES (PEER_CLOSED follows if it
+                              * was open) */
 } vo_error;
 
 typedef struct vo_event {
@@ -63,6 +71,8 @@ typedef struct vo_event {
     vo_peer peer;
     vo_channel channel;
     vo_error error;
+    int older;           /* PEER_OPEN: nonzero when event.peer joined the room before you */
+    const char *message; /* ERROR: what went wrong, for the log; valid as data is */
     const uint8_t *data; /* PACKET: valid until the next vo_poll or vo_close */
     size_t size;
 } vo_event;
@@ -70,13 +80,25 @@ typedef struct vo_event {
 /* The next event, oldest first; 0 when there is none. Call it each frame until it returns 0. */
 int vo_poll(vo_session *session, vo_event *event);
 
-/* At most VO_PACKET_BYTES, so a STATE packet fits one datagram through TURN. */
-enum { VO_PACKET_BYTES = 1100 };
-/* Queues data for peer; 0 when the peer is not open or data is too big. CONTROL packets arrive
- * in order, once each, unless the peer closes; STATE packets may not arrive at all. */
+enum {
+    VO_STATE_BYTES = 1100,           /* a STATE packet's most: one datagram through TURN */
+    VO_CONTROL_BYTES = 65536,        /* a CONTROL packet's most: a world's state on joining */
+    VO_CONTROL_QUEUE_BYTES = 1 << 20 /* CONTROL bytes queued for a peer before it is failed */
+};
+/* Queues data for peer; 0 when the peer is not open or data is too big for its channel. CONTROL
+ * packets arrive in order, once each, unless the peer closes; STATE packets may not arrive at
+ * all, and are dropped rather than queued behind a slow peer. */
 int vo_send(vo_session *session, vo_peer peer, vo_channel channel, const uint8_t *data, size_t size);
 /* vo_send to every open peer. */
 void vo_broadcast(vo_session *session, vo_channel channel, const uint8_t *data, size_t size);
+
+typedef struct vo_link {
+    int open;                     /* zero when the peer is not open, and the rest is zero too */
+    uint32_t round_trip_ms;       /* the latest measured; 0 before the first */
+    size_t control_queued_bytes;  /* queued but not yet sent, to slow down before failing */
+} vo_link;
+/* How the connection to peer is doing. */
+vo_link vo_link_of(const vo_session *session, vo_peer peer);
 
 #ifdef __cplusplus
 }

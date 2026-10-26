@@ -12,6 +12,7 @@ export interface Env {
   JOIN_LIMIT: RateLimit; // joins per address
   TURN_LIMIT: RateLimit; // TURN credentials per address
   TURN_BUDGET_GB?: string;
+  TURN_CREDENTIAL_SECONDS?: string; // 3600 when unset; shorter only to test renewal
   // secrets (online/README.md, "Secrets")
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
