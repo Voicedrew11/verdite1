@@ -7,6 +7,10 @@
 
 #include <SDL3/SDL.h>
 
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -214,6 +218,24 @@ void show(const Kf1Control &control, const verdite::TouchState &state) {
     screen.shown.push_back(shown);
 }
 
+// The click a phone's own keys give, through VerditeActivity.feelButtonPress.
+void feel_press() {
+#ifdef __ANDROID__
+    auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity)
+        return;
+    jclass type = env->GetObjectClass(activity);
+    jmethodID id = env->GetMethodID(type, "feelButtonPress", "()V");
+    if (id)
+        env->CallVoidMethod(activity, id);
+    if (env->ExceptionCheck())
+        env->ExceptionClear();
+    env->DeleteLocalRef(type);
+    env->DeleteLocalRef(activity);
+#endif
+}
+
 // Moves the controls' opacity toward shown or hidden.
 void fade() {
     const std::uint64_t now_ns = SDL_GetTicksNS();
@@ -245,6 +267,8 @@ TouchLook read_frame() {
             screen.pressed |= bit;
         if (pressed && control.command != TouchCommand::None)
             screen.command = control.command;
+        if (pressed && control.kind == TouchKind::Button && touch_button_haptics)
+            feel_press();
         if (control.kind == TouchKind::Stick) {
             screen.sticks.left_x = state.stick.x;
             screen.sticks.left_y = state.stick.y;

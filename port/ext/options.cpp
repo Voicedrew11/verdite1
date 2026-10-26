@@ -446,7 +446,19 @@ OptionSection controls_bindings() {
     return section;
 }
 
-OptionPage controls_page() { return {"Controls", {controls_movement(), controls_analog(), controls_bindings()}}; }
+OptionSection controls_touch() {
+    return {"Touch screen", {
+        needs(toggle("controls.touch_haptics", "Vibrate on button press",
+                     "A short click under your finger as an on-screen button goes down. Follows the phone's own "
+                     "touch feedback setting.",
+                     settings().touch_haptics, apply_control_settings),
+              PlatformFeature::Touch),
+    }};
+}
+
+OptionPage controls_page() {
+    return {"Controls", {controls_movement(), controls_touch(), controls_analog(), controls_bindings()}};
+}
 
 // ---- Gameplay ----
 

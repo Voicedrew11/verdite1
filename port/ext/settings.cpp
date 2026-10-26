@@ -9,6 +9,7 @@
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
 #include <kf/platform/menu_pointer.h>
+#include <kf/platform/touch.h>
 #include <kf/platform/user_folder.h>
 #include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
@@ -172,6 +173,7 @@ void settings_load() {
     current.look_limit = static_cast<int>(read_number(controls, "look_limit", current.look_limit));
     current.pad_layout = read_string(controls, "pad_layout", current.pad_layout);
     current.menu_pointer = read_bool(controls, "menu_pointer", current.menu_pointer);
+    current.touch_haptics = read_bool(controls, "touch_haptics", current.touch_haptics);
     current.analog = read_analog(cJSON_GetObjectItemCaseSensitive(document, "analog"), current.analog);
     const cJSON *gameplay = cJSON_GetObjectItemCaseSensitive(document, "gameplay");
     current.language = read_string(gameplay, "language", current.language);
@@ -263,6 +265,7 @@ void settings_save() {
     write_value(controls, "look_limit", cJSON_CreateNumber(current.look_limit));
     write_value(controls, "pad_layout", cJSON_CreateString(current.pad_layout.c_str()));
     write_value(controls, "menu_pointer", cJSON_CreateBool(current.menu_pointer));
+    write_value(controls, "touch_haptics", cJSON_CreateBool(current.touch_haptics));
     write_analog(object_entry(document, "analog"), current.analog);
     cJSON *gameplay = object_entry(document, "gameplay");
     write_value(gameplay, "language", cJSON_CreateString(current.language.c_str()));
@@ -453,6 +456,7 @@ void apply_control_settings() {
     enemy_tracks_player = e.enemy_track && enemy_turn_scale > 1.0f;
     host_set_pad_layout(e.pad_layout == "jp" ? PadLayout::Japanese : PadLayout::West);
     menu_pointer_enabled = e.menu_pointer;
+    touch_button_haptics = e.touch_haptics;
     host_set_analog_options(e.analog);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.
     world_update_vblanks = std::clamp(60 / std::max(e.tick_rate, 1), 2, 5);

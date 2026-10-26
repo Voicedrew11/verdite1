@@ -303,7 +303,11 @@ the Pixel (it was locked):
   button. SDL's mouse events made from touches no longer reach the game (they captured the mouse
   and attacked).
 - The Android back button is `pause_or_back`.
-- Not yet: the Controls > Touch options (opacity, size, left-handed, vibration), the overlay
+- A button going down clicks the phone's vibrator (2026-10-26): `VerditeActivity.feelButtonPress`
+  plays the system's `VIRTUAL_KEY` haptic, the crisp key click PPSSPP uses, not SDL's haptic,
+  which runs the vibrator for a length of time and buzzes. It follows the phone's own touch
+  feedback setting. On by default; "Vibrate on button press" under Controls > Touch screen.
+- Not yet: the other Controls > Touch options (opacity, size, left-handed), the overlay
   scaled for a phone, the long press for the overlay.
 
 Settings, 2026-10-26: ImGui was too hard to use by finger, so on Android the gear opens a native

@@ -3,6 +3,7 @@ package io.github.voicedrew11.verdite1;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.util.Log;
+import android.view.HapticFeedbackConstants;
 
 import org.libsdl.app.SDLActivity;
 
@@ -43,6 +44,12 @@ public class VerditeActivity extends SDLActivity {
             if (settings != null)
                 settings.refresh();
         });
+    }
+
+    // From the game thread (port/platform/touch.cpp): a button on the screen went down. The
+    // phone's own key click, as the system's "touch feedback" setting allows.
+    public void feelButtonPress() {
+        runOnUiThread(() -> mSurface.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY));
     }
 
     // Back (and a pad's B) closes the panel; otherwise SDL's, where the game takes it.

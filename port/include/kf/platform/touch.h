@@ -57,6 +57,9 @@ std::span<const TouchShown> host_touch_shown();
 // How visible they are, 0..1: they fade rather than vanish.
 float host_touch_opacity();
 
+// Port option (settings.json): a button going down clicks the phone's vibrator.
+inline bool touch_button_haptics = true;
+
 } // namespace kf
 
 #endif // KF_PLATFORM_TOUCH_H
