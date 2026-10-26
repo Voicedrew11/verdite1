@@ -4,6 +4,7 @@
 #include <kf/audio/sound.h>
 #include <kf/platform/input.h>
 #include <kf/platform/analog.h>
+#include <kf/platform/enemy_turn.h>
 #include <kf/platform/menu_pointer.h>
 #include <kf/platform/touch.h>
 #include <kf/platform/controls.h>
@@ -720,10 +721,16 @@ u32 host_read_buttons() {
     // The mouse on a menu: a click's Confirm, a Back, a step of the wheel.
     if (host.input_context == InputContext::Menu)
         buttons |= host_menu_pointer_buttons();
-    return buttons | agent_buttons() | fuzz_buttons();
+    buttons |= agent_buttons() | fuzz_buttons();
+    if (host.input_context == InputContext::Gameplay && (buttons & (button_mask(Button::Left) | button_mask(Button::Right))))
+        host_turned_with(TurnInput::Buttons);
+    return buttons;
 }
 
-void host_between_updates() { fuzz_between_updates(); }
+void host_between_updates() {
+    host_enemy_turn_between_updates();
+    fuzz_between_updates();
+}
 
 bool host_allows_power_off() { return fuzz_allows_power_off(); }
 
@@ -865,6 +872,8 @@ LookDelta host_take_look() {
     host.look_remainder_y = y - dy;
     host.input.pending.look_x = host.input.pending.look_y = 0;
     host.look_consumed = {-dx, dy};
+    if (dx != 0)
+        host_turned_with(TurnInput::Pointer);
     return host.look_consumed;
 }
 

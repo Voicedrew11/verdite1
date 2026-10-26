@@ -499,16 +499,22 @@ OptionSection gameplay_world() {
 OptionSection gameplay_enemies() {
     Settings &s = settings();
     return classic_locked({"Enemies", {
-        number("gameplay.enemy_turn", "Enemy turn speed",
-               "How much faster an enemy turns while it chases you or backs away from you. Its wandering keeps the "
-               "game's pace. The sticks, the mouse and running let you circle an enemy faster than the D-pad did; "
-               "this lets it keep up. x1 is the original game.",
-               s.enemy_turn, {1.0, 4.0, 0.25, "%.2fx"}, apply_control_settings),
-        enabled_if(toggle("gameplay.enemy_track", "Enemies keep you in sight",
-                          "A chasing enemy aims at where you are every update. The original re-aimed on about one "
-                          "update in eight, so it ran on at where you had been. Off at x1.",
-                          s.enemy_track, apply_control_settings),
-                   [] { return settings().enemy_turn > 1.0f; }),
+        choice<bool>("gameplay.enemy_turn_auto", "Enemy turn speed",
+                     "How fast an enemy turns while it chases you or backs away from you; its wandering keeps the "
+                     "game's pace. The fights were built on the D-pad's turn. Automatic: enemies keep up with how "
+                     "fast you can turn with what you last turned with: the D-pad and keys as the original, a stick "
+                     "by its turn speed and acceleration, the mouse or a touch drag at x3, and above x1 they keep "
+                     "you in sight. Fixed: the speed below, whatever you play with.",
+                     s.enemy_turn_auto, {{true, "Automatic"}, {false, "Fixed"}}, apply_control_settings),
+        shown_if(number("gameplay.enemy_turn", "Fixed enemy turn speed", "x1 is the original game.", s.enemy_turn,
+                        {1.0, 4.0, 0.25, "%.2fx"}, apply_control_settings),
+                 [] { return !settings().enemy_turn_auto; }),
+        shown_if(enabled_if(toggle("gameplay.enemy_track", "Enemies keep you in sight",
+                                   "A chasing enemy aims at where you are every update. The original re-aimed on "
+                                   "about one update in eight, so it ran on at where you had been. Off at x1.",
+                                   s.enemy_track, apply_control_settings),
+                            [] { return settings().enemy_turn > 1.0f; }),
+                 [] { return !settings().enemy_turn_auto; }),
     }});
 }
 

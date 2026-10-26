@@ -393,7 +393,7 @@ branch point.
 | analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | done (2026-10-23): the shaping in libverdite (`verdite/stick.h`), the options and per-axis state in `port/platform/analog.cpp`, and a line in each of the player update's four velocity branches asking it for the velocity (`host_analog_velocity`), so nothing is pre-loaded to steer the game's own branch; centred, the D-pad's branches run. Twin stick by default; off in Classic mode. Not carried: `AnalogProbe` |
 | pad layout `jp`/`west` | `PadLayout.cs` | done (2026-10-23): two face-button tables in `port/platform/host.cpp`, chosen by `controls.pad_layout` (West by default); only the gamepad's bindings change, so the keyboard, mouse and agent need no subtraction |
 | mouse on the menus | Verdite2's `patches/MenuMouse.cs` (KF2; KF1's main had none) | done (2026-10-25): `verdite/menu_pointer.h` in libverdite (game-agnostic, unit-tested), `port/platform/menu_pointer.cpp` (SDL to game pixels, the presses into `host_read_buttons`), Controls > *Mouse in menus* (`controls.menu_pointer`, on, kept in Classic mode as mouse look is). See "The mouse on the menus" below |
-| enemy turn speed | Verdite2's `EnemyTurn.cs` (KF2, `81c02db` there) | done (2026-10-23), reworked for KF1: its enemies already turn 60-80 a tick (32, 48 and 10 for a few) against the D-pad's 28, so the turn rate alone was not what let a player circle them; the pursuit re-aims at the player on only one update in eight, and a retreat only as it starts. Gameplay > *Enemy turn speed* (x1-x4, x1.5 by default, x1 in Classic mode, `gameplay.enemy_turn`) multiplies the turn of a pursuit or a retreat, not a wander or the way home; above x1, *Enemies keep you in sight* (`gameplay.enemy_track`, on) re-aims both every update, the random draw kept so the sequence is the game's. Staged on floor 1 (an enemy of turn 80 put 2,500 ahead, the player strafing round it at 180 a tick, three runs each): at x1 it lost the player in every run and wandered off, with 4-5 melee attacks; at x1.5 with tracking it stayed at about 2,550 and started 8-10, at x2 7-15; x1.5 without tracking lost the player too. Not carried: V2's tracking while standing, since a KF1 enemy near the player is pursuing, not standing |
+| enemy turn speed | Verdite2's `EnemyTurn.cs` (KF2, `81c02db` there) | done (2026-10-23), reworked for KF1: its enemies already turn 60-80 a tick (32, 48 and 10 for a few) against the D-pad's 28, so the turn rate alone was not what let a player circle them; the pursuit re-aims at the player on only one update in eight, and a retreat only as it starts. Gameplay > *Enemy turn speed* (x1-x4, x1.5 by default, x1 in Classic mode, `gameplay.enemy_turn`; since 2026-10-26 the Fixed mode beside the default Automatic, "Automatic enemy turn" below) multiplies the turn of a pursuit or a retreat, not a wander or the way home; above x1, *Enemies keep you in sight* (`gameplay.enemy_track`, on) re-aims both every update, the random draw kept so the sequence is the game's. Staged on floor 1 (an enemy of turn 80 put 2,500 ahead, the player strafing round it at 180 a tick, three runs each): at x1 it lost the player in every run and wandered off, with 4-5 melee attacks; at x1.5 with tracking it stayed at about 2,550 and started 8-10, at x2 7-15; x1.5 without tracking lost the player too. Not carried: V2's tracking while standing, since a KF1 enemy near the player is pursuing, not standing |
 | rumble, gyro aim | Verdite Core `Rumble.cs`, `GyroAim.cs` | SDL3 has both |
 | debug: noclip, god mode, infinite MP, peaceful, speed, warp | `Menu/`, `Warp.cs` | candidates for a Lua mod |
 | message text (dialogue pictures as glyph text) | `Text/` | may be moot if the decomp's English resources are text already |
@@ -453,6 +453,18 @@ Status and out, Use Item and its Use/Cancel prompt, Equipment and the weapon
 list, a click clear of the list, one within the margin, right clicks out to play.
 The window-to-game conversion (the letterbox, the widescreen columns, the pixel
 density) is not exercised by that and is the user's to judge in play.
+
+## Automatic enemy turn
+
+Gameplay > *Enemy turn speed*: Automatic (default) or Fixed (the slider, as before). The fights
+were built on the D-pad's fixed turn; what lets a player circle an enemy is turning faster than
+that, not the device. Automatic follows the input that last turned the view
+(`port/platform/enemy_turn.cpp`): the D-pad and keys x1; a stick its turn speed times its look
+acceleration's top (x1 at the defaults); the mouse and a touch look drag, which have no top speed,
+x3. Held to x1..x3, *keeps you in sight* above x1. Of the inputs that turned in one update the
+fastest counts, applied between updates, so keys and the mouse together do not flip it each
+update. Checked headless 2026-10-26: the D-pad stays x1, `KF_TEST_SPIN` goes to x3 with tracking,
+and the two at once switch once. The x3 is not judged in play.
 
 ## Open questions
 

@@ -341,7 +341,7 @@ target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/fuzz.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
-  port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp port/platform/menu_pointer.cpp port/platform/touch.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
+  port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp port/platform/enemy_turn.cpp port/platform/menu_pointer.cpp port/platform/touch.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_sources(kf_host PRIVATE port/platform/crash.cpp port/platform/logcat.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)
@@ -410,7 +410,7 @@ endif()
 
 # port/'s tests: the parts that run without a window or GPU.
 if(doctest_FOUND)
-  add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp)
+  add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp)
   target_link_libraries(kf_port_tests PRIVATE kf_frontend doctest::doctest)
   target_compile_options(kf_port_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME port COMMAND kf_port_tests)

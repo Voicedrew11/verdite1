@@ -1,5 +1,6 @@
 #include <kf/platform/analog.h>
 
+#include <kf/platform/enemy_turn.h>
 #include <kf/platform/input.h>
 #include <verdite/stick.h>
 
@@ -136,6 +137,8 @@ std::optional<s32> host_analog_velocity(AnalogAxis axis, s32 velocity, AnalogRat
         return std::nullopt;
     }
     state.active = true;
+    if (axis == AnalogAxis::Turn)
+        host_turned_with(TurnInput::Stick);
     const float wanted = amount * static_cast<float>(rates.limit) * sensitivity(axis);
     if (!is_look(axis))
         return state.carry.take(wanted, rates.limit);

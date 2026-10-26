@@ -78,8 +78,9 @@ struct Settings {
     AnalogOptions analog;       // the sticks, saved as "analog"
     std::string language = "en";   // game language when both are set up: "en" or "ja"
     bool auto_keys = true;          // interacting with a lock uses a carried key
-    float enemy_turn = 1.5f;        // an enemy's turn toward the player, times its own (1: original)
-    bool enemy_track = true;        // above x1, a pursuing enemy re-aims at the player every update
+    bool enemy_turn_auto = true;    // the enemy turn follows how fast the last input to turn can turn
+    float enemy_turn = 1.5f;        // fixed: an enemy's turn toward the player, times its own (1: original)
+    bool enemy_track = true;        // fixed, above x1: a pursuing enemy re-aims at the player every update
     bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump
     bool fix_spatial_panning = true; // bug fix: flagged sounds get their panning adjustment
     bool minimap = true;
