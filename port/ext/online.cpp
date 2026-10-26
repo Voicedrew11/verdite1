@@ -1,11 +1,12 @@
 // Online play: a room joined through the Verdite online service (online/README.md), our pose sent
-// to the others 20 times a second, and theirs kept for the automap. Opt-in: nothing touches the
+// to the others 20 times a second, and theirs kept for the automap and the world. Opt-in: nothing touches the
 // network until a room is joined.
 #include "internal.hpp"
 #include "online_pose.h"
 
 #include <imgui.h>
 #include <kf/platform/automap.h>
+#include <kf/platform/online_players.h>
 
 #include <array>
 #include <cctype>
@@ -227,5 +228,21 @@ std::vector<OnlinePose> online_players() {
 }
 
 #endif
+
+}
+
+namespace kf {
+
+std::vector<OnlinePlayer> online_players_on_floor(int floor) {
+    std::vector<OnlinePlayer> players;
+#if KF_ONLINE
+    for (const auto &[peer, pose] : ext::online.players)
+        if (pose && pose->floor == floor)
+            players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw});
+#else
+    (void)floor;
+#endif
+    return players;
+}
 
 }

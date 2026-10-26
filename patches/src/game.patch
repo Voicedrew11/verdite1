@@ -1840,6 +1840,108 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +    }
 +    kf::host_wait_buttons_released();
 +}
+diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..4d58ad488d9af9ecbf8badbc026d7497319145ca
+--- /dev/null
++++ b/src/game/online_player_render.cpp
+@@ -0,0 +1,96 @@
++// PC extension (online play): another player in the room, drawn in the world.
++// A stand-in until players have a model of their own: each borrows a player-sized enemy or
++// NPC model of the current floor, in its rest pose. Only the current floor's models can be
++// borrowed, as their textures are in VRAM only while their floor is loaded.
++#include <kf/platform/prelude.h>
++#include <kf/game/asset.h>
++#include <kf/game/graphics.h>
++#include <kf/game/render.h>
++#include <kf/lib/geometry_types.h>
++#include <kf/lib/map_data.h>
++#include <kf/lib/math.h>
++
++#include <algorithm>
++#include <cmath>
++#include <optional>
++
++struct OnlinePlayerStandIn {
++    u16 first_asset;    // the bank it is looked for in
++    u16 end_asset;
++    u32 vertex_count;   // which model it is: banks hold different models from floor to floor
++};
++
++// In order of preference; the first one loaded is borrowed. Player-sized (1500 to 1800 tall).
++static constexpr OnlinePlayerStandIn online_player_stand_ins[] = {
++    {KF_ASSET_ACTOR_FIRST, KF_ASSET_MAP_EVENT_FIRST, 334},   // an enemy of floors 1 to 3
++    {KF_ASSET_ACTOR_FIRST, KF_ASSET_MAP_EVENT_FIRST, 417},   // an enemy of floors 3 and 4
++    {KF_ASSET_ACTOR_FIRST, KF_ASSET_MAP_EVENT_FIRST, 328},   // an enemy of floors 4 and 5
++    {KF_ASSET_MAP_EVENT_FIRST, KF_ASSET_WEAPON, 314},        // an NPC of floors 2 and 5
++};
++
++static constexpr float ONLINE_PLAYER_TILE_SIZE = KF_MAP_TILE_SIZE;
++
++static s32 online_player_cell(float cells)
++{
++    return std::clamp(static_cast<s32>(cells), 0, KF_MAP_COLUMNS - 1);
++}
++
++static std::optional<u16> online_player_stand_in_asset(void)
++{
++    for (const auto &stand_in : online_player_stand_ins) {
++        for (u16 asset = stand_in.first_asset; asset < stand_in.end_asset; ++asset) {
++            if (!game_graphics_runtime.asset_registry_tmds[asset].data) {
++                continue;
++            }
++            asset_registry_select(asset);
++            if (tmd_read_object(tmd_context(), 0).vertex_count == stand_in.vertex_count) {
++                return asset;
++            }
++        }
++    }
++    return std::nullopt;
++}
++
++void render_online_player(const kf::OnlinePlayer &player)
++{
++    const auto asset = online_player_stand_in_asset();
++    if (!asset) {
++        return;
++    }
++    const s32 cell_x = online_player_cell(player.x);
++    const s32 cell_z = online_player_cell(player.z);
++    const VECTOR position = {
++        static_cast<s32>(player.x * ONLINE_PLAYER_TILE_SIZE),
++        map_base_floor_height(cell_x, cell_z),
++        static_cast<s32>(player.z * ONLINE_PLAYER_TILE_SIZE)};
++    // The automap's yaw, back in the game's angle units, is the camera's heading h; the player
++    // walks along (-sin h, cos h). Actors and map events walk along (-sin a, -cos a), their
++    // models' front, so the model faces where the camera looks at a = half turn - h.
++    const auto heading = static_cast<s32>(std::lround(player.yaw * (KF_ANGLE_FULL_TURN / 6.2831853f)));
++    const SVECTOR rotation = {0, static_cast<s16>((KF_ANGLE_HALF_TURN - heading) & KF_ANGLE_WRAP_MASK), 0};
++
++    SVECTOR relative_position;
++    MATRIX model;
++    MATRIX composed;
++    MATRIX light;
++    relative_position = VECTOR{
++        position.vx - game_graphics_runtime.render_state.view_position.vx,
++        position.vy - game_graphics_runtime.render_state.view_position.vy,
++        position.vz - game_graphics_runtime.render_state.view_position.vz}.narrowed();
++    kf::render_place_model(composed, game_graphics_runtime.render_state.view_matrix, relative_position);
++    kf::matrix_set_rotation_xyz(rotation, model);
++    // Lit as what it borrows from: an actor's lights turn with it, a map event's do not.
++    const MATRIX *lights = &game_graphics_runtime.map_event_light_matrix;
++    if (*asset < KF_ASSET_MAP_EVENT_FIRST) {
++        kf::matrix_multiply_rotation(render_light_matrices[KF_RENDER_LIGHT_ACTOR], model, light);
++        lights = &light;
++    }
++    kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, model, composed);
++    // The rest pose, as an actor or map event is drawn when the animation cache is full: the
++    // cache's records name their owner's slot, and a stand-in has none that outlives a reset.
++    asset_registry_select(*asset);
++    const auto object = tmd_read_object(tmd_context(), 0);
++    tmd_select_object_vertices(tmd_context(), 0);
++    tmd_project_vertices(object.vertex_count, &composed, game_graphics_runtime.render_state.projection);
++    render_enqueue_tmd(0, 0, lights);
++}
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
 index a85c41405b551858ed7cb706b062dbee0826b2a9..f5823ec3c0a5cdad674bd09554386c36b48821c6 100644
 --- a/src/game/player_death.cpp
@@ -2981,10 +3083,18 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..12e50f14e68aa812b552d6b6e982f04b97a8a4bd 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..7c46c9cd37389804fa6ca4a73d67c52b7ba3cdb0 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
-@@ -14,6 +14,22 @@ struct RenderCellOrigin {
+@@ -3,6 +3,7 @@
+ #include <kf/game/render.h>
+ #include <kf/game/state.h>
+ #include <kf/lib/map_data.h>
++#include <kf/game/player.h>
+ 
+ enum {
+     ACTOR_CULL_SQUARE_HALF_WIDTH = 12,
+@@ -14,6 +15,22 @@ struct RenderCellOrigin {
      u16 z;
  };
  
@@ -3007,7 +3117,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..12e50f14e68aa812b552d6b6e982f04b
  static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin origin)
  {
      // Narrow before checking bounds, including cells before the window origin.
-@@ -23,7 +39,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
+@@ -23,7 +40,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
          return false;
      }
      const u16 col = cell_x - origin.x;
@@ -3016,7 +3126,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..12e50f14e68aa812b552d6b6e982f04b
  }
  
  static bool render_actor_is_visible(const KfActor &actor, RenderCellOrigin origin)
-@@ -51,19 +67,30 @@ void render_entities(void)
+@@ -51,19 +68,30 @@ void render_entities(void)
  
      tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
  
@@ -3049,7 +3159,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..12e50f14e68aa812b552d6b6e982f04b
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +104,33 @@ void render_entities(void)
+@@ -77,23 +105,43 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -3083,6 +3193,16 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..12e50f14e68aa812b552d6b6e982f04b
              render_map_event(&event, &game_graphics_runtime.map_event_light_matrix);
          }
      }
++
++    // PC extension (online play): the other players in the room who are on this floor.
++    const auto players = kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor));
++    for (std::size_t i = 0; i < players.size(); ++i) {
++        const auto &player = players[i];
++        if (render_cell_is_visible(static_cast<s32>(player.x), static_cast<s32>(player.z), origin)) {
++            tag(KF_RENDER_TAG_ONLINE_PLAYERS, i, player.id);
++            render_online_player(player);
++        }
++    }
 +    kf::render_entity_tag = 0;
  }
 diff --git a/src/game/render_sprite.cpp b/src/game/render_sprite.cpp

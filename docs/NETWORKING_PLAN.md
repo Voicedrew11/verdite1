@@ -162,3 +162,14 @@ get online play by writing only their own game layer.
   peer's previous credential until the next, so sessions have no length limit. Checked on the
   deployed service with 2-minute credentials: 12 minutes relayed through TURN, 11 moves, all
   14,365 CONTROL packets each way in order, no peer lost.
+- 2026-10-26: other players in the room appear in the world, as a **stand-in** to be replaced
+  by a model of the player's own: each borrows a player-sized enemy or NPC model of the current
+  floor (`src/game/online_player_render.cpp` in `patches/src/game.patch`, a table in order of preference, matched by
+  vertex count since floor 5's variants put other models in the same slots): an enemy 1750 tall
+  on floors 1 to 3 (334 vertices), others on floors 4 and 5. Only the current floor's models can
+  be borrowed, since another floor's textures are not in VRAM. The model faces where the
+  player's camera looks: the camera walks along (-sin h, cos h), actors and map events along
+  (-sin a, -cos a), so a = half turn - h; checked on two headless instances through a quarter
+  turn. It is drawn in its rest pose: the animation cache's records name their owner's slot, and
+  a stand-in has none that outlives a game reset. The pose (floor, x, z, yaw) has no height, so
+  a player on a stair or in the air is drawn on the cell's floor.
