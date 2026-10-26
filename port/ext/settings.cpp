@@ -221,7 +221,7 @@ void settings_mark_dirty() {
 
 void settings_save_if_dirty() {
     // Debounced: sliders dragged for a second write once.
-    if (!dirty || SDL_GetTicks() - dirty_since < 500)
+    if (!dirty || SDL_GetTicks() - dirty_since < 500 || settings_page_holding())
         return;
     settings_save();
 }

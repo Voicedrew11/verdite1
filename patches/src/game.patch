@@ -635,7 +635,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
  
  enum {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
-index 660386288c157b2819409141f669eb2ae4d10af9..dcee0c4ae92f384d470256075b49643dd1831d4c 100644
+index 660386288c157b2819409141f669eb2ae4d10af9..791619bdce60bfed03fdf493c1f497ef56aedc6f 100644
 --- a/src/game/item.cpp
 +++ b/src/game/item.cpp
 @@ -11,6 +11,7 @@
@@ -646,7 +646,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..dcee0c4ae92f384d470256075b49643d
  
  #include <array>
  #include <cstdio>
-@@ -173,6 +174,8 @@ static void menu_resources_decode(std::span<const u8> bytes, KfMenuResources &re
+@@ -173,10 +174,18 @@ static void menu_resources_decode(std::span<const u8> bytes, KfMenuResources &re
      // label, moved into that removed row in the native menu description.
      auto &save_layout = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_SAVE)];
      save_layout.rows[KF_MENU_SAVE_RETURN_ROW].glyphs = save_layout.rows[stat_save_return_row].glyphs;
@@ -655,7 +655,17 @@ index 660386288c157b2819409141f669eb2ae4d10af9..dcee0c4ae92f384d470256075b49643d
      auto &config = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_CONFIG)];
      config.rows[KF_MENU_CONFIG_RETURN_ROW] = config.rows[KF_MENU_CONFIG_LANGUAGE_ROW];
      config.rows[KF_MENU_CONFIG_RETURN_ROW].position.y += config.rows[1].position.y - config.rows[0].position.y;
-@@ -297,6 +300,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
+     config.rows[KF_MENU_CONFIG_LANGUAGE_ROW].glyphs.codes[0] = MENU_TEXT_END;
++    // Port addition: the top menu gets a settings row where Return was, the same way.
++    const s32 settings_row = kf_enum_encode<s32>(KF_ROOT_CHOICE_SETTINGS);
++    auto &root = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_ROOT)];
++    root.rows[KF_MENU_ROOT_RETURN_ROW] = root.rows[settings_row];
++    root.rows[KF_MENU_ROOT_RETURN_ROW].position.y += root.rows[1].position.y - root.rows[0].position.y;
++    root.rows[settings_row].glyphs.codes[0] = MENU_TEXT_END;
+     for (auto &row : resources.items)
+         menu_data_glyphs(reader, &row);
+     for (auto &row : resources.magic)
+@@ -297,6 +306,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -666,7 +676,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..dcee0c4ae92f384d470256075b49643d
          }
          menu_draw_window(KF_MENU_WINDOW_SHOP, KF_SHOP_CHOICE_COUNT, cursor, confirm);
      }
-@@ -568,6 +575,10 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
+@@ -568,6 +581,10 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_DECLINED;
@@ -775,7 +785,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..78266ab7cb4c93b2c113f200623a503c
                  }
  
 diff --git a/src/game/menu.cpp b/src/game/menu.cpp
-index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..b661700ed1e905efe49703df83bf1d2fd05830e4 100644
+index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..27eb223583788e40059af1fde051b44ff8d9b6c6 100644
 --- a/src/game/menu.cpp
 +++ b/src/game/menu.cpp
 @@ -3,6 +3,8 @@
@@ -804,7 +814,18 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..b661700ed1e905efe49703df83bf1d2f
      kf::host_set_input_context(input_context);
  }
  
-@@ -121,6 +126,10 @@ KfMenuOutcome menu_root(void)
+@@ -89,6 +94,10 @@ KfMenuOutcome menu_root(void)
+         case KF_ROOT_CHOICE_CONFIG:
+             menu_config_panel();
+             break;
++        case KF_ROOT_CHOICE_SETTINGS:
++            // PC extension: the port's settings (kf/platform/settings_page.h).
++            menu_settings_panel();
++            break;
+         }
+         if (result) {
+             selection = KF_ROOT_CHOICE_NONE;
+@@ -121,6 +130,10 @@ KfMenuOutcome menu_root(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KfMenuOutcome{KfMenuAction::Close};
@@ -897,22 +918,23 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf00d90fd9 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..db959f77a9288e12c5a007c05a742dd6d1b0dc37 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
-@@ -7,8 +7,11 @@
+@@ -7,8 +7,12 @@
  #include <kf/game/resources.h>
  #include <kf/lib/null.h>
  #include <kf/lib/render_face.h>
 +#include <kf/platform/host.h>
  #include <kf/platform/input.h>
 +#include <kf/platform/menu_pointer.h>
++#include <kf/platform/settings_page.h>
  
 +#include <algorithm>
  #include <array>
  #include <cstdio>
  #include <cstdlib>
-@@ -94,12 +97,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
+@@ -94,12 +98,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
      kf::host_enqueue_face(face);
  }
  
@@ -953,7 +975,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
  }
  
  static void menu_draw_backdrop_tile(s32 x, s32 y, bool flip_x, bool flip_y)
-@@ -266,6 +297,9 @@ KfMenuAction menu_system_panel(void)
+@@ -266,6 +298,9 @@ KfMenuAction menu_system_panel(void)
          case KF_MENU_SYSTEM_ACTION_QUIT:
              result = menu_two_option_prompt(
                  KF_MENU_WINDOW_SYSTEM, KF_MENU_SYSTEM_ROW_COUNT, cursor, {});
@@ -963,7 +985,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
              if (result == KF_MENU_RESULT_ACCEPTED) {
                  menu_load_texture(MENU_TEXTURE_POWER_OFF);
                  audio_stop_sequence_fade();
-@@ -313,6 +347,10 @@ KfMenuAction menu_system_panel(void)
+@@ -313,6 +348,10 @@ KfMenuAction menu_system_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -974,7 +996,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
          }
  
          menu_frame_begin();
-@@ -415,6 +453,10 @@ KfMenuResult menu_save_panel(void)
+@@ -415,6 +454,10 @@ KfMenuResult menu_save_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -985,7 +1007,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
          }
  
          menu_frame_begin();
-@@ -518,6 +560,10 @@ KfMenuResult menu_load_panel(void)
+@@ -518,6 +561,10 @@ KfMenuResult menu_load_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -996,7 +1018,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
          }
  
          menu_frame_begin();
-@@ -630,11 +676,21 @@ void menu_config_panel(void)
+@@ -630,11 +677,21 @@ void menu_config_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1019,7 +1041,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
              menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1173,6 +1229,212 @@ enum {
+@@ -1173,6 +1230,212 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -1232,7 +1254,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1180,10 +1442,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1443,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -1251,7 +1273,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1241,9 +1508,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1241,9 +1509,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -1268,7 +1290,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1480,6 +1751,10 @@ static KfMenuResult menu_list_confirm_impl(
+@@ -1480,6 +1752,10 @@ static KfMenuResult menu_list_confirm_impl(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1279,7 +1301,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
          }
          draw_preview();
          menu_list_render(list);
-@@ -1546,6 +1821,10 @@ KfMenuResult menu_two_option_prompt(
+@@ -1546,6 +1822,10 @@ KfMenuResult menu_two_option_prompt(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1290,13 +1312,18 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
          }
  
          menu_frame_begin();
-@@ -1556,12 +1835,17 @@ KfMenuResult menu_two_option_prompt(
+@@ -1556,12 +1836,22 @@ KfMenuResult menu_two_option_prompt(
      }
  }
  
 +// PC extension: a row as the mouse sees it, the box its translucent sprite covers
 +// (kf/platform/menu_pointer.h). Returns whether the mouse holds it.
 +static bool menu_pointer_row(s32 row, const MenuSpriteDef *sprite, const MenuPoint *position);
++
++enum {
++    // PC extension: where a cell's letter starts in the game's own rows, for free text beside them.
++    MENU_SETTINGS_ENTRY_INSET = 3
++};
 +
  void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight_row, KfMenuConfirmState confirmation)
  {
@@ -1308,7 +1335,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
      if (layout->title.position.x != 0) {
          menu_blit_sprite_translucent(
              &menu_resources().assets.row_background, &layout->title.position);
-@@ -1570,7 +1854,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1570,7 +1860,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
      if (row_count > 0) {
          row = 0;
          do {
@@ -1319,7 +1346,20 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
                  menu_blit_sprite_translucent(&menu_resources().assets.row_confirmed_background,
                      &layout->rows[row].position);
              } else {
-@@ -1622,6 +1908,7 @@ void menu_list_render(const KfMenuList *list)
+@@ -1587,6 +1879,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+                 text.position.x = CONFIG_OPTION_ON_X;
+                 text.glyphs = menu_label(MenuLabel::LanguageName);
+                 menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
++            } else if (window_kind == KF_MENU_WINDOW_ROOT && row == kf_enum_encode<s32>(KF_ROOT_CHOICE_SETTINGS)) {
++                // Free text: PORT SETTINGS is longer than a row's ten cells.
++                MenuPoint at = layout->rows[row].position;
++                at.x += MENU_SETTINGS_ENTRY_INSET;
++                const auto language = game_text_language();
++                menu_draw_text(menu_spell(kf::settings_page_entry_text(language), language), at, 1.0f);
+             } else {
+                 menu_draw_string(&menu_resources().assets.glyph_atlas, &layout->rows[row]);
+             }
+@@ -1622,6 +1920,7 @@ void menu_list_render(const KfMenuList *list)
      u32 tens;
      u32 ones;
  
@@ -1327,7 +1367,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
      const MenuGlyphString title{list->title_position,
          menu_resources().windows[kf_enum_encode<s32>(list->title_window)].rows[list->title_row].glyphs};
      if (list->title_position.x != 0) {
-@@ -1637,6 +1924,10 @@ void menu_list_render(const KfMenuList *list)
+@@ -1637,6 +1936,10 @@ void menu_list_render(const KfMenuList *list)
              text.position.x = list->list_x + MENU_LIST_TEXT_INSET;
              text.position.y = list->list_y + MENU_LIST_TEXT_INSET;
              text.position.y += row * MENU_LIST_ROW_HEIGHT;
@@ -1338,7 +1378,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
              const auto index = list->scroll_offset + row;
              text.glyphs = std::visit([index](auto entries) {
                  const auto id = entries[index];
-@@ -1701,6 +1992,12 @@ enum {
+@@ -1701,6 +2004,12 @@ enum {
      MENU_PICKUP_BACKDROP_RIGHT_X = MENU_PICKUP_BACKDROP_LEFT_X + MENU_BACKDROP_COLUMN_STEP
  };
  
@@ -1351,7 +1391,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
  enum {
      MENU_FONT_COLUMNS = 16,
      MENU_FONT_CELL_WIDTH = 14,
-@@ -1716,6 +2013,16 @@ void menu_draw_two_option(
+@@ -1716,6 +2025,16 @@ void menu_draw_two_option(
      const MenuChoiceLabel *accept_label, const MenuChoiceLabel *decline_label,
      KfMenuConfirmChoice selected_choice, KfMenuConfirmState confirmation)
  {
@@ -1368,7 +1408,34 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
      if (selected_choice == KF_MENU_CHOICE_ACCEPT) {
          menu_blit_sprite(&menu_resources().assets.selection_cursor, &accept_label->position);
      } else {
-@@ -1854,6 +2161,11 @@ void menu_draw_number(
+@@ -1791,6 +2110,26 @@ void menu_blit_sprite_translucent(
+     menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
+ }
+ 
++void menu_blit_box_translucent(const MenuSpriteDef &sprite, MenuPoint position, s32 width)
++{
++    enum { MENU_BOX_END_WIDTH = 8 };
++    const s32 x = position.x - MENU_TRANSLUCENT_SPRITE_X_OFFSET;
++    const s32 y = position.y - MENU_TRANSLUCENT_SPRITE_Y_OFFSET;
++    const s32 end = std::min<s32>(MENU_BOX_END_WIDTH, sprite.width / 2);
++    // Left end, stretched middle, right end: {screen x, screen width, texture u, texture width}.
++    const std::array<std::array<s32, 4>, 3> parts = {{
++        {x, end, sprite.u, end},
++        {x + end, std::max(width - 2 * end, 0), sprite.u + end, sprite.width - 2 * end},
++        {x + std::max(width, 2 * end) - end, end, sprite.u + sprite.width - end, end},
++    }};
++    for (const auto &[screen_x, screen_width, u, texture_width] : parts) {
++        auto face = menu_textured_quad(sprite.material, screen_x, y, screen_width, sprite.height);
++        render_face_uv_rectangle(&face, u, sprite.v, u + texture_width, sprite.v + sprite.height);
++        face.transparency = kf::FaceTransparency::Blend;
++        menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
++    }
++}
++
+ void menu_blit_sprite(
+     const MenuSpriteDef *sprite, const MenuPoint *position)
+ {
+@@ -1854,10 +2193,52 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -1380,6 +1447,47 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..d63915634b01122f1feb257b220339cf
          menu_submit_template(face, MENU_CONTENT_OT_DEPTH);
      }
  }
+ 
++// PC extension: free text (kf/game/menu_text.h), each glyph as menu_draw_string
++// or menu_draw_number draws it; numbers sit a pixel lower, to share a baseline.
++void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade)
++{
++    const MenuSpriteDef &label_font = menu_resources().assets.glyph_atlas;
++    const MenuSpriteDef &number_font = menu_resources().assets.number_atlas;
++    s32 x = at.x;
++
++    for (const MenuTextGlyph &glyph : glyphs) {
++        const bool number = glyph.font == MenuTextFont::Number;
++        const MenuSpriteDef &font = number ? number_font : label_font;
++        std::array<std::array<s32, 2>, 3> uvs{};
++        s32 layers = 0;
++        if (number) {
++            uvs[layers++] = {font.u, glyph.code * MENU_NUMBER_CELL_HEIGHT};
++        } else {
++            const s32 cell = glyph.code & MENU_TEXT_GLYPH_MASK;
++            uvs[layers++] = {(cell % MENU_FONT_COLUMNS) * MENU_FONT_CELL_WIDTH, (cell / MENU_FONT_COLUMNS) * MENU_FONT_CELL_HEIGHT};
++            if (glyph.code & MENU_TEXT_DAKUTEN)
++                uvs[layers++] = {MENU_DAKUTEN_U, MENU_KANA_MARK_V};
++            if (glyph.code & MENU_TEXT_HANDAKUTEN)
++                uvs[layers++] = {MENU_HANDAKUTEN_U, MENU_KANA_MARK_V};
++        }
++        for (s32 i = 0; i < layers; i++) {
++            auto face = menu_textured_quad(font.material, x - glyph.left, at.y + (number ? 1 : 0), font.width, font.height);
++            render_face_uv_rectangle(&face, uvs[i][0], uvs[i][1], uvs[i][0] + font.width, uvs[i][1] + font.height);
++            for (auto &vertex : face.vertices) {
++                vertex.r *= shade;
++                vertex.g *= shade;
++                vertex.b *= shade;
++            }
++            menu_submit_template(face, MENU_CONTENT_OT_DEPTH);
++        }
++        x += glyph.advance;
++    }
++}
++
+ void menu_draw_window_backdrop(void)
+ {
+     menu_draw_backdrop_tile(MENU_BACKDROP_LEFT_X, MENU_BACKDROP_TOP_Y, false, false);
 diff --git a/src/game/menu_select.cpp b/src/game/menu_select.cpp
 index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..f018353051f116178257fb3471be0888a03c4811 100644
 --- a/src/game/menu_select.cpp
@@ -1412,6 +1520,326 @@ index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..f018353051f116178257fb3471be0888
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
          switch (equipment_category) {
+diff --git a/src/game/menu_settings.cpp b/src/game/menu_settings.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38601aa796
+--- /dev/null
++++ b/src/game/menu_settings.cpp
+@@ -0,0 +1,314 @@
++// PC extension: the port's SETTINGS page under System, drawn with the menu's own
++// boxes, cursor, font and sounds (kf/platform/settings_page.h has the settings).
++#include <kf/platform/prelude.h>
++#include <kf/game/menu.h>
++#include <kf/game/menu_text.h>
++#include <kf/game/resources.h>
++#include <kf/platform/host.h>
++#include <kf/platform/input.h>
++#include <kf/platform/menu_pointer.h>
++#include <kf/platform/settings_page.h>
++
++#include <algorithm>
++#include <array>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <vector>
++
++namespace {
++
++// The individual capitals A to Z in the English label font: the cell, the blank
++// columns at its left and the width of the letter, measured off COM/MIX.TIM.
++struct Capital {
++    s16 code;
++    s16 left;
++    s16 width;
++};
++constexpr std::array<Capital, 26> english_capitals = {{
++    {0xdc, 3, 9}, {0xdf, 4, 7}, {0x135, 3, 8}, {0x0b, 4, 7}, {0x138, 4, 6}, {0x02, 4, 6}, {0x146, 3, 8},
++    {0x03, 3, 7}, {0x04, 6, 2}, {0x05, 3, 6}, {0x06, 3, 7}, {0x136, 4, 6}, {0x0a, 2, 9}, {0x50, 3, 7},
++    {0x00, 3, 8}, {0x140, 4, 7}, {0x29, 3, 8}, {0x2c, 3, 8}, {0x134, 4, 7}, {0x10, 3, 10}, {0x11, 3, 7},
++    {0x137, 2, 9}, {0x08, 0, 13}, {0xc9, 3, 7}, {0x2f, 3, 8}, {0x12, 3, 7},
++}};
++
++// The Japanese label font's kana run in this order, hiragana from 0x40 and
++// katakana from 0x00; ー follows the katakana.
++constexpr std::u32string_view hiragana = U"あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよわんらりるれろ";
++constexpr std::u32string_view katakana = U"アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨワンラリルレロ";
++constexpr s16 hiragana_first = 0x40;
++constexpr s16 katakana_first = 0x00;
++constexpr s16 long_vowel = 0x2d;
++constexpr std::u32string_view voiced = U"がぎぐげござじずぜぞだぢづでどばびぶべぼガギグゲゴザジズゼゾダヂヅデドバビブベボヴ";
++constexpr std::u32string_view voiced_base = U"かきくけこさしすせそたちつてとはひふへほカキクケコサシスセソタチツテトハヒフヘホウ";
++constexpr std::u32string_view half_voiced = U"ぱぴぷぺぽパピプペポ";
++constexpr std::u32string_view half_voiced_base = U"はひふへほハヒフヘホ";
++
++constexpr s16 letter_gap = 2;
++constexpr s16 kana_advance = 13;
++constexpr s16 space_advance = 5;
++constexpr s16 number_slash = 11;
++
++std::u32string decode_utf8(std::string_view text)
++{
++    std::u32string out;
++    for (std::size_t i = 0; i < text.size();) {
++        const auto lead = static_cast<unsigned char>(text[i]);
++        const std::size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xe ? 3 : (lead >> 3) == 0x1e ? 4 : 0;
++        if (length == 0 || i + length > text.size()) {
++            i++;
++            continue;
++        }
++        char32_t c = length == 1 ? lead : lead & (0x7f >> length);
++        for (std::size_t k = 1; k < length; k++)
++            c = (c << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3f);
++        out.push_back(c);
++        i += length;
++    }
++    return out;
++}
++
++std::optional<s16> kana_code(char32_t c)
++{
++    if (const auto at = hiragana.find(c); at != std::u32string_view::npos)
++        return static_cast<s16>(hiragana_first + at);
++    if (const auto at = katakana.find(c); at != std::u32string_view::npos)
++        return static_cast<s16>(katakana_first + at);
++    if (c == U'ー')
++        return long_vowel;
++    if (const auto at = voiced.find(c); at != std::u32string_view::npos)
++        if (const auto base = kana_code(voiced_base[at]))
++            return static_cast<s16>(*base | MENU_TEXT_DAKUTEN);
++    if (const auto at = half_voiced.find(c); at != std::u32string_view::npos)
++        if (const auto base = kana_code(half_voiced_base[at]))
++            return static_cast<s16>(*base | MENU_TEXT_HANDAKUTEN);
++    return std::nullopt;
++}
++
++std::optional<MenuTextGlyph> spell_one(char32_t c, kf::Language language)
++{
++    if (c == U' ')
++        return MenuTextGlyph{MenuTextFont::Label, MENU_TEXT_BLANK, 0, space_advance};
++    if (c >= U'0' && c <= U'9')
++        return MenuTextGlyph{MenuTextFont::Number, static_cast<s16>(c - U'0'), 0, MENU_NUMBER_ADVANCE};
++    if (c == U'/')
++        return MenuTextGlyph{MenuTextFont::Number, number_slash, 0, MENU_NUMBER_ADVANCE};
++    if (language == kf::Language::English) {
++        if (c >= U'A' && c <= U'Z') {
++            const Capital &capital = english_capitals[c - U'A'];
++            return MenuTextGlyph{MenuTextFont::Label, capital.code, capital.left,
++                static_cast<s16>(capital.width + letter_gap)};
++        }
++        return std::nullopt;
++    }
++    if (const auto code = kana_code(c))
++        return MenuTextGlyph{MenuTextFont::Label, *code, 0, kana_advance};
++    return std::nullopt;
++}
++
++} // namespace
++
++std::vector<MenuTextGlyph> menu_spell(std::string_view text, kf::Language language)
++{
++    std::vector<MenuTextGlyph> glyphs;
++    for (const char32_t c : decode_utf8(text)) {
++        const auto glyph = spell_one(c, language);
++        if (!glyph)
++            continue;
++        if (glyph->code == MENU_TEXT_BLANK) {
++            // A space only moves on: the label font's blank cell is not empty in every language.
++            if (!glyphs.empty())
++                glyphs.back().advance += glyph->advance;
++            continue;
++        }
++        glyphs.push_back(*glyph);
++    }
++    return glyphs;
++}
++
++s32 menu_text_width(std::span<const MenuTextGlyph> glyphs)
++{
++    s32 width = 0;
++    for (const MenuTextGlyph &glyph : glyphs)
++        width += glyph.advance;
++    return glyphs.empty() ? 0 : width - letter_gap;
++}
++
++namespace {
++
++// The CONFIG panel's places: its title, rows and option boxes.
++enum {
++    SETTINGS_TITLE_X = 12,
++    SETTINGS_TITLE_Y = 19,
++    SETTINGS_ROW_X = 26,
++    SETTINGS_FIRST_ROW_Y = 41,
++    SETTINGS_ROW_STEP = 22,
++    SETTINGS_VALUE_X = 180,
++    SETTINGS_VALUE_WIDTH = 110,
++    SETTINGS_TEXT_INSET = 6,
++    // A translucent box sprite sits this far up and left of its text's place.
++    SETTINGS_BOX_X_OFFSET = 4,
++    SETTINGS_BOX_Y_OFFSET = 3
++};
++
++constexpr float settings_dim_shade = 0.45f;
++
++struct SettingsRowText {
++    std::string label;
++    std::string value;
++    bool enabled = true;
++};
++
++void settings_draw_centred(const std::vector<MenuTextGlyph> &glyphs, s32 x, s32 width, s32 y, float shade)
++{
++    const s32 left = x - SETTINGS_BOX_X_OFFSET + (width - menu_text_width(glyphs)) / 2;
++    menu_draw_text(glyphs, MenuPoint{static_cast<s16>(left), static_cast<s16>(y)}, shade);
++}
++
++// The title with the page number in its box, then the rows: each label in a row
++// box, its value in an option box, lit on the cursor's row.
++void settings_draw(const std::string &title, s32 page_number, s32 page_count,
++    const std::vector<SettingsRowText> &rows, s32 selected_row, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    const s32 box_width = assets.row_background.width;
++    const MenuPoint title_at{SETTINGS_TITLE_X, SETTINGS_TITLE_Y};
++    menu_blit_sprite_translucent(&assets.row_background, &title_at);
++    menu_draw_text(menu_spell(title, language), MenuPoint{SETTINGS_TITLE_X + SETTINGS_TEXT_INSET - SETTINGS_BOX_X_OFFSET, SETTINGS_TITLE_Y}, 1.0f);
++    if (page_count > 1) {
++        const auto pages = menu_spell(std::to_string(page_number) + "/" + std::to_string(page_count), language);
++        const s32 right = SETTINGS_TITLE_X - SETTINGS_BOX_X_OFFSET + box_width - SETTINGS_TEXT_INSET;
++        menu_draw_text(pages, MenuPoint{static_cast<s16>(right - menu_text_width(pages)), SETTINGS_TITLE_Y}, 1.0f);
++    }
++
++    kf::host_menu_widget(kf::MenuWidget::Window, selected_row);
++    for (s32 i = 0; i < static_cast<s32>(rows.size()); i++) {
++        const MenuPoint at{SETTINGS_ROW_X, static_cast<s16>(SETTINGS_FIRST_ROW_Y + i * SETTINGS_ROW_STEP)};
++        const auto label = menu_spell(rows[i].label, language);
++        const s32 label_width = std::max(box_width, menu_text_width(label) + 2 * SETTINGS_TEXT_INSET);
++        const bool held = kf::host_menu_row(i, at.x - SETTINGS_BOX_X_OFFSET,
++            at.y - SETTINGS_BOX_Y_OFFSET, SETTINGS_VALUE_X + SETTINGS_VALUE_WIDTH - at.x,
++            assets.row_background.height);
++        menu_blit_box_translucent(held ? assets.row_confirmed_background : assets.row_background, at, label_width);
++        if (i == selected_row)
++            menu_blit_sprite(&assets.selection_cursor, &at);
++        const float shade = rows[i].enabled ? 1.0f : settings_dim_shade;
++        menu_draw_text(label, MenuPoint{static_cast<s16>(at.x + SETTINGS_TEXT_INSET - SETTINGS_BOX_X_OFFSET), at.y}, shade);
++        if (rows[i].value.empty())
++            continue;
++        const MenuPoint value_at{SETTINGS_VALUE_X, at.y};
++        menu_blit_box_translucent(i == selected_row ? assets.option_highlight : assets.option_background,
++            value_at, SETTINGS_VALUE_WIDTH);
++        settings_draw_centred(menu_spell(rows[i].value, language), SETTINGS_VALUE_X, SETTINGS_VALUE_WIDTH,
++            at.y, shade);
++    }
++    menu_enqueue_background();
++}
++
++void settings_draw_page(kf::Language language)
++{
++    const kf::SettingsPageView view = kf::settings_page_view(language);
++    std::vector<SettingsRowText> rows;
++    s32 selected = 0;
++    for (const auto &row : view.rows) {
++        if (row.selected)
++            selected = static_cast<s32>(rows.size());
++        rows.push_back({row.label, row.value, row.enabled});
++    }
++    settings_draw(view.title, view.page_number, view.page_count, rows, selected, language);
++}
++
++// The question on leaving with changes: 0 saves, 1 discards.
++void settings_draw_question(s32 answer, kf::Language language)
++{
++    const kf::SettingsPageView view = kf::settings_page_view(language);
++    settings_draw(view.title, view.page_number, view.page_count,
++        {{kf::settings_page_save_text(language), {}, true}, {kf::settings_page_discard_text(language), {}, true}},
++        answer, language);
++}
++
++enum class SettingsLeave : u8 { Stay, Leave };
++
++// One pad read on the page. Leave once nothing is left to ask.
++SettingsLeave settings_page_input(u32 input, u32 prev, bool *asking)
++{
++    if (kf::button_pressed(input, prev, kf::Button::Up)) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        kf::settings_page_move_row(-1);
++    } else if (kf::button_pressed(input, prev, kf::Button::Down)) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        kf::settings_page_move_row(1);
++    } else if (kf::button_pressed(input, prev, kf::Button::StrafeLeft)) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        kf::settings_page_move_page(-1);
++    } else if (kf::button_pressed(input, prev, kf::Button::StrafeRight)) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        kf::settings_page_move_page(1);
++    } else if (kf::button_pressed(input, prev, kf::Button::Left) || kf::button_pressed(input, prev, kf::Button::Right)
++               || kf::button_pressed(input, prev, kf::Button::Confirm)) {
++        const s32 delta = kf::button_pressed(input, prev, kf::Button::Left) ? -1 : 1;
++        menu_play_input_sound(kf::settings_page_step(delta) ? MENU_SOUND_CONFIRM : MENU_SOUND_CANCEL_OR_ERROR);
++    } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
++        menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
++        if (!kf::settings_page_changed())
++            return SettingsLeave::Leave;
++        *asking = true;
++    } else if (const auto pointed = kf::host_menu_pointed_row(kf::MenuWidget::Window)) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        kf::settings_page_select_row(*pointed);
++    }
++    return SettingsLeave::Stay;
++}
++
++SettingsLeave settings_question_input(u32 input, u32 prev, s32 *answer, bool *asking)
++{
++    if (kf::button_pressed(input, prev, kf::Button::Up) || kf::button_pressed(input, prev, kf::Button::Down)) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        *answer = 1 - *answer;
++    } else if (kf::button_pressed(input, prev, kf::Button::Confirm)) {
++        menu_play_input_sound(MENU_SOUND_CONFIRM);
++        if (*answer == 0)
++            kf::settings_page_save();
++        else
++            kf::settings_page_discard();
++        return SettingsLeave::Leave;
++    } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
++        menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
++        *asking = false;
++    } else if (const auto pointed = kf::host_menu_pointed_row(kf::MenuWidget::Window)) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        *answer = *pointed;
++    }
++    return SettingsLeave::Stay;
++}
++
++} // namespace
++
++void menu_settings_panel(void)
++{
++    bool asking = false;
++    s32 answer = 0;
++    u32 input = 0;
++    u32 prev;
++
++    kf::settings_page_open();
++    kf::host_wait_buttons_released();
++    for (;;) {
++        const kf::Language language = game_text_language();
++        menu_frame_begin();
++        prev = input;
++        input = kf::host_read_buttons();
++        const SettingsLeave leave = asking ? settings_question_input(input, prev, &answer, &asking)
++                                           : settings_page_input(input, prev, &asking);
++        if (!asking)
++            answer = 0;
++        if (asking)
++            settings_draw_question(answer, language);
++        else
++            settings_draw_page(language);
++        menu_present_frame();
++        if (leave == SettingsLeave::Leave)
++            break;
++    }
++    kf::host_wait_buttons_released();
++}
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
 index a85c41405b551858ed7cb706b062dbee0826b2a9..f5823ec3c0a5cdad674bd09554386c36b48821c6 100644
 --- a/src/game/player_death.cpp

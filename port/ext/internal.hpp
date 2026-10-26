@@ -124,6 +124,10 @@ void apply_render_settings();   // also on window resize
 // and Android's settings panel draw.
 verdite::OptionTable &options();
 verdite::PlatformFeatures platform_features();   // what this build's platform has
+
+// ---- the SETTINGS page in the game's menu (kf/platform/settings_page.h) ----
+bool settings_page_holding();   // it has changes not yet saved: the settings file waits
+void settings_page_abandon();   // puts its changes back, as quitting with it open does
 void options_poll();   // on every host poll: a file the Language page asked for
 // The render target apply_render_settings last set: logical columns and scale.
 struct RenderTarget { int columns, scale; };

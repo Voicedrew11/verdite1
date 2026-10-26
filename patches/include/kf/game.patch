@@ -12,10 +12,30 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..c734d93227ffca1452fa03deb1f94d01
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..ab976acf9620f7497ae54fe0b7c602a8b047a4fe 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..2d890c4773ee7d08c0bb9fdac772cd6dda45211b 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
-@@ -55,6 +55,7 @@ enum {
+@@ -30,7 +30,9 @@ enum class KfMenuRootChoice : s32 {
+     KF_ROOT_CHOICE_STATUS = 3,
+     KF_ROOT_CHOICE_DROP_ITEM = 4,
+     KF_ROOT_CHOICE_SYSTEM = 5,
+-    KF_ROOT_CHOICE_CONFIG = 6
++    KF_ROOT_CHOICE_CONFIG = 6,
++    // Port addition: the port's settings page, between Config and Return.
++    KF_ROOT_CHOICE_SETTINGS = 7
+ }; using enum KfMenuRootChoice;
+ 
+ enum class KfEquipmentMenuCategory : s32 {
+@@ -46,7 +48,7 @@ enum class KfEquipmentMenuCategory : s32 {
+ }; using enum KfEquipmentMenuCategory;
+ 
+ enum {
+-    KF_MENU_ROOT_RETURN_ROW = kf_enum_encode<s32>(KF_ROOT_CHOICE_CONFIG) + 1,
++    KF_MENU_ROOT_RETURN_ROW = kf_enum_encode<s32>(KF_ROOT_CHOICE_SETTINGS) + 1,
+     KF_MENU_ROOT_ROW_COUNT = KF_MENU_ROOT_RETURN_ROW + 1,
+     KF_MENU_EQUIPMENT_RETURN_ROW = kf_enum_encode<s32>(KF_EQUIP_MENU_ACCESSORY) + 1,
+     KF_MENU_EQUIPMENT_ROW_COUNT = KF_MENU_EQUIPMENT_RETURN_ROW + 1,
+@@ -55,6 +57,7 @@ enum {
      KF_MENU_CONFIG_GAUGES_ROW = 2,
      KF_MENU_CONFIG_COMPASS_ROW = 3,
      KF_MENU_CONFIG_SETTING_COUNT = KF_MENU_CONFIG_COMPASS_ROW + 1,
@@ -23,7 +43,30 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..ab976acf9620f7497ae54fe0b7c602a8
      KF_MENU_CONFIG_LANGUAGE_ROW = KF_MENU_CONFIG_SETTING_COUNT,
      KF_MENU_CONFIG_RETURN_ROW = KF_MENU_CONFIG_LANGUAGE_ROW + 1,
      KF_MENU_CONFIG_ROW_COUNT = KF_MENU_CONFIG_RETURN_ROW + 1
-@@ -358,6 +359,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+@@ -329,7 +332,12 @@ extern void menu_blit_sprite(
+     const MenuSpriteDef *sprite, const MenuPoint *position);
+ extern void menu_blit_sprite_translucent(
+     const MenuSpriteDef *sprite, const MenuPoint *position);
++// PC extension: a translucent box sprite drawn width wide, its ends as they are and
++// its middle stretched.
++extern void menu_blit_box_translucent(const MenuSpriteDef &sprite, MenuPoint position, s32 width);
+ extern void menu_config_panel(void);
++// PC extension: the port's settings as pages (kf/platform/settings_page.h).
++extern void menu_settings_panel(void);
+ extern void menu_resources_reload(void);
+ extern void menu_draw_save_slots(
+     std::span<const KfSaveSlotSummary> summaries, KfSaveSlotOverlay slot_overlay);
+@@ -340,6 +348,9 @@ extern void menu_draw_number(
+     const MenuSpriteDef *font, const MenuGlyphString *string);
+ extern void menu_draw_string(
+     const MenuSpriteDef *font, const MenuGlyphString *string);
++struct MenuTextGlyph;
++// PC extension: text spelled by menu_spell, its colour scaled by shade (1 as drawn).
++extern void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade);
+ extern void menu_draw_equipment_names(void);
+ extern void menu_draw_status_summary(void);
+ extern void menu_draw_status_details(void);
+@@ -358,6 +369,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
  extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
  extern void menu_frame_begin(void);
  extern void menu_item_model_preview(KfObjectId item_id);
@@ -33,10 +76,21 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..ab976acf9620f7497ae54fe0b7c602a8
  extern KfMenuResult menu_list_confirm(
      const KfMenuList *list, KfMenuConfirmKind confirm_kind, KfMenuPreviewMode preview_mode,
 diff --git a/include/kf/game/menu_text.h b/include/kf/game/menu_text.h
-index 87ebaf4e17ad51009ffb9735cd87841961d6765f..8032d4dce45cfab9a7ec676f9c1edb702c40ac89 100644
+index 87ebaf4e17ad51009ffb9735cd87841961d6765f..af66c0d59f86e2537787f1f3aaabad037c3fb4b3 100644
 --- a/include/kf/game/menu_text.h
 +++ b/include/kf/game/menu_text.h
-@@ -27,17 +27,17 @@ inline MenuGlyphRow menu_label(MenuLabel label)
+@@ -5,6 +5,10 @@
+ #include <kf/game/resources.h>
+ #include <kf/platform/language.h>
+ 
++#include <span>
++#include <string_view>
++#include <vector>
++
+ // Authored atlas glyphs, not Unicode. Resource-owned rows still come from STAT.DAT.
+ // English v1.0's executable edits are recorded in docs/english-resources.md.
+ enum class MenuLabel {
+@@ -27,17 +31,17 @@ inline MenuGlyphRow menu_label(MenuLabel label)
      switch (label) {
      case MenuLabel::Language:
          // The translation's individual capitals also spell BACK and COMPASS.
@@ -58,6 +112,27 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..8032d4dce45cfab9a7ec676f9c1edb70
      case MenuLabel::Pickup:
          return english ? MenuGlyphRow{{0x00, 0x06, MENU_TEXT_END}}
                         : MenuGlyphRow{{0x53, 0x6a, MENU_TEXT_END}};
+@@ -123,4 +127,20 @@ inline MenuGlyphRow menu_label(MenuLabel label)
+     return {{MENU_TEXT_END}};
+ }
+ 
++// PC extension: free text in the menu font, for the port's SETTINGS page. The
++// label font holds English's individual capitals or Japanese's kana (without
++// small kana or を), not both; digits and '/' come from the number font in
++// either. Characters the language's font lacks are left out.
++enum class MenuTextFont : u8 { Label, Number };
++
++struct MenuTextGlyph {
++    MenuTextFont font;
++    s16 code;      // as MenuGlyphRow and menu_draw_number take it, dakuten bits included
++    s16 left;      // blank columns at the cell's left, skipped
++    s16 advance;   // pixels to the next glyph
++};
++
++std::vector<MenuTextGlyph> menu_spell(std::string_view text, kf::Language language);
++s32 menu_text_width(std::span<const MenuTextGlyph> glyphs);
++
+ #endif // KF_GAME_MENU_TEXT_H
 diff --git a/include/kf/game/player.h b/include/kf/game/player.h
 index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..fe73137f90e2f17a22f60d9af5369a9ca0c80d26 100644
 --- a/include/kf/game/player.h

@@ -381,7 +381,7 @@ branch point.
 | mouse look, free look | mouse look, `look_limit` | |
 | English translation | language switch, ppf/rar import | |
 | keyboard layout | controls | |
-| settings UI (Verdite Core) | F1 overlay | |
+| settings UI (Verdite Core) | F1 overlay | the settings in the game's own menu done (2026-10-26), as Verdite2's and Verdite3's PORT SETTINGS: see "The settings page in the game's menu" below |
 
 ### Missing: port
 
@@ -453,6 +453,40 @@ Status and out, Use Item and its Use/Cancel prompt, Equipment and the weapon
 list, a click clear of the list, one within the margin, right clicks out to play.
 The window-to-game conversion (the letterbox, the widescreen columns, the pixel
 density) is not exercised by that and is the user's to judge in play.
+
+## The settings page in the game's menu
+
+Done 2026-10-26. PORT SETTINGS, a row in the top menu between Config and Return (where the user asked
+for it; first under System), opens pages of the port's settings drawn with the menu's own boxes,
+cursor, font and sounds, as Verdite2's and Verdite3's PORT SETTINGS. Laid out as the CONFIG
+panel: the title box at (12, 19) with the page number at its right end, rows from (26, 41) 22
+apart, each label in a row box and its value centred in an option box at X 180, stretched to
+110 and lit on the cursor's row; no detail panel on the right.
+
+- **One model.** `verdite/menu_settings.h` in libverdite (unit-tested) is one more view of the
+  option table: rows are option ids, it keeps the cursor, the page and the visit's changes, and
+  holds no text. KF1's pages, labels and values are `port/ext/settings_page.cpp`; the loop and the
+  drawing are a patch (`menu_settings_panel` in `work/src/game/menu_settings.cpp`).
+- **Pad.** Up/Down the row, Left/Right or Confirm the value (round its ends), L1/R1 the page,
+  Back leaves; with changes it asks SAVE CHANGES or DISCARD first, and Back there returns to the
+  page. A dimmed row (Classic mode, or needing another setting on) refuses with the cancel sound.
+- **Staged.** Steps apply live; while they differ from what the page opened with, settings.json is
+  not written. Discard, or quitting with the page open, puts them back. Measured headless through
+  the command channel (2026-10-26): ASPECT stepped 4:3 to 16:9 and saved held 16:9 in the file;
+  stepped again and discarded went back to 16:9; stepped and quit with the page open left 4:3 in
+  the file, and nothing was written while staged.
+- **The text is the menu font's own, re-cut.** KF1's label font is not an alphabet the way
+  KF2's and KF3's are: the English translation's font page holds the 26 individual capitals among
+  its word pieces (one per 14 x 12 cell, the ones LANGUAGE is spelled with), and the Japanese
+  one kana (hiragana from 0x40, katakana from 0x00, ー at 0x2d). `menu_spell` turns text into those
+  codes and `menu_draw_text` draws them at their own widths (each capital's ink measured off the
+font page, 2 pixels apart; kana 13 apart),
+  with digits and '/' from the number font, so a row is not held to the font's 10 cells. In
+  Japanese the page is in kana: no small kana or を were seen, so none are used, and the Japanese
+  wording was not checked by a native speaker nor seen drawn (no Japanese data here).
+- **Boxes.** `menu_blit_box_translucent` draws a box sprite at any width: its 8-pixel ends as
+  they are and the middle stretched (two overlapping copies, first tried, showed a seam). Labels
+  are kept to the row box's 120 pixels inside.
 
 ## The first-run setup
 
