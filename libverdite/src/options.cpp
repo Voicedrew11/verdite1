@@ -73,7 +73,10 @@ std::string value_text(const OptionValue &value) {
     return value_json(value);
 }
 
-void append_row_json(std::string &out, const OptionRowView &view) {
+} // namespace
+
+std::string option_row_json(const OptionRowView &view) {
+    std::string out;
     const OptionRow &row = *view.row;
     out += "{\"id\":" + json_quote(row.id) + ",\"kind\":\"" + kind_names[static_cast<std::size_t>(row.kind)] +
            "\",\"label\":" + json_quote(row.label) + ",\"help\":" + json_quote(row.help) +
@@ -90,8 +93,26 @@ void append_row_json(std::string &out, const OptionRowView &view) {
         out += ",\"min\":" + number_text(row.min) + ",\"max\":" + number_text(row.max) +
                ",\"step\":" + number_text(row.step) + ",\"format\":" + json_quote(row.format) +
                ",\"settle\":" + (row.settle ? "true" : "false");
-    out += "}";
+    return out + "}";
 }
+
+std::string option_value_label(const OptionRow &row, const OptionValue &value) {
+    if (const bool *on = std::get_if<bool>(&value); on && row.kind == OptionKind::Toggle)
+        return *on ? "On" : "Off";
+    for (const OptionChoice &choice : row.choices)
+        if (choice.value == value)
+            return choice.label;
+    if (const double *number = std::get_if<double>(&value)) {
+        if (row.format.empty())
+            return number_text(*number);
+        char text[64];
+        std::snprintf(text, sizeof text, row.format.c_str(), *number);
+        return text;
+    }
+    return value_text(value);
+}
+
+namespace {
 
 // strtod, as Android's libc++ has no from_chars for doubles; the C locale's '.' is the point.
 std::optional<double> parse_number(std::string_view text) {
@@ -141,6 +162,13 @@ bool OptionTable::set(std::string_view id, const OptionValue &value) {
     return true;
 }
 
+std::optional<OptionValue> OptionTable::check(std::string_view id, const OptionValue &value) const {
+    const OptionRow *row = find(id);
+    if (!row || !row->set)
+        return std::nullopt;
+    return accepted(*row, value);
+}
+
 bool OptionTable::run(std::string_view id) {
     const OptionRow *row = find(id);
     if (!row || row->kind != OptionKind::Action || !row->run || !state_of(*row).enabled)
@@ -168,7 +196,7 @@ std::string options_json(std::span<const OptionPageView> pages) {
             for (std::size_t r = 0; r < section.rows.size(); ++r) {
                 if (r)
                     out += ",";
-                append_row_json(out, section.rows[r]);
+                out += option_row_json(section.rows[r]);
             }
             out += "]}";
         }

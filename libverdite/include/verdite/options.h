@@ -113,6 +113,10 @@ public:
     // snapped, a Choice must be one of its values. False, with nothing changed,
     // for an unknown id, a wrong kind or type, a disabled row, or an Action.
     bool set(std::string_view id, const OptionValue &value);
+    // The value set would store (clamped, snapped), without storing it and
+    // whether or not the row is enabled now. Nothing for an unknown id or a
+    // value the row cannot take.
+    std::optional<OptionValue> check(std::string_view id, const OptionValue &value) const;
     // Presses an Action. False for an unknown id, another kind or a disabled row.
     bool run(std::string_view id);
 
@@ -128,6 +132,12 @@ private:
 // "choice", "number", "action" or "status", a choice row adds "choices"
 // ([{"value","label"}]) and a number row "min", "max", "step", "format" and "settle".
 std::string options_json(std::span<const OptionPageView> pages);
+// One row of it.
+std::string option_row_json(const OptionRowView &row);
+
+// A value as the settings show it: "On"/"Off", a choice's label, a number in
+// the row's format.
+std::string option_value_label(const OptionRow &row, const OptionValue &value);
 
 // A row's value from typed text: "true"/"false" (or "on"/"off") for a toggle, a
 // number, or a choice's value as options_json writes it ("60", "true", "16:9").

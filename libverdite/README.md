@@ -17,6 +17,7 @@ here is its own commit.
 | `include/verdite/discord.h`, `src/discord.cpp` | Discord Rich Presence over the Discord app's local IPC (Unix socket or named pipe), no SDK: a thread of its own connects, retries and sends the latest activity, paced so a counting value does not flood Discord |
 | `include/verdite/memory_card.h`, `src/memory_card.cpp` | PlayStation memory card images (the raw 128 KB `.mcd`/`.mcr` dump, the C# builds' `carda.sav`): the files on a card by name, read along their block chains, and a formatted card written from files |
 | `include/verdite/places.h`, `src/places.cpp` | place names over a floor's grid of cells, spread from named seed cells through walkable cells |
+| `include/verdite/setup.h`, `src/setup.cpp` | the first-run setup: a welcome with presets, pages of groups (one choice per tier: Original, Balanced, Modern) and options over the option table, and a summary; nothing is set until Finish, and only as ordinary settings. A platform draws it by implementing `SetupScreen`; another language drives it as JSON and text commands |
 | `include/verdite/touch.h`, `src/touch.cpp` | on-screen controls for a touch screen: a layout as a table of sticks, buttons, D-pads, look areas and taps, each finger kept on the control it landed on, read back as a gamepad is |
 
 Tests are in `tests/` (doctest), built as `verdite_tests` when doctest is installed (the nix

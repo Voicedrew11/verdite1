@@ -170,3 +170,26 @@ TEST_CASE("typed text becomes a row's value") {
     CHECK_FALSE(option_value_from_text(aspect, "21:9"));
     CHECK_FALSE(option_value_from_text(*table.find("display.reset"), "true"));
 }
+
+TEST_CASE("check gives what set would store, without storing it") {
+    Game game;
+    const OptionTable table = table_for(game);
+    CHECK(table.check("display.strength", 42.0) == OptionValue(40.0));
+    CHECK(game.strength == 100);
+    game.lights = false;   // hides strength; check does not mind
+    CHECK(table.check("display.strength", 300.0) == OptionValue(200.0));
+    CHECK_FALSE(table.check("display.aspect", std::string("21:9")));
+    CHECK_FALSE(table.check("display.reset", true));
+    CHECK_FALSE(table.check("display.nothing", true));
+}
+
+TEST_CASE("a value reads as the settings show it") {
+    Game game;
+    const OptionTable table = table_for(game);
+    CHECK(option_value_label(*table.find("display.fullscreen"), true) == "On");
+    CHECK(option_value_label(*table.find("display.aspect"), std::string("16:9")) == "16:9");
+    OptionRow percent = row("percent", OptionKind::Number);
+    percent.format = "%.0f%%";
+    CHECK(option_value_label(percent, 42.0) == "42%");
+    CHECK(option_value_label(*table.find("display.strength"), 42.5) == "42.5");
+}
