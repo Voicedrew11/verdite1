@@ -264,7 +264,7 @@ if(TARGET zstd::libzstd_shared)
 endif()
 add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp libverdite/src/crash_helper.cpp
   libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/fuzz.cpp libverdite/src/memory_card.cpp
-  libverdite/src/menu_pointer.cpp libverdite/src/places.cpp libverdite/src/state_trace.cpp libverdite/src/stick.cpp
+  libverdite/src/menu_pointer.cpp libverdite/src/menu_settings.cpp libverdite/src/places.cpp libverdite/src/state_trace.cpp libverdite/src/stick.cpp
   libverdite/src/options.cpp libverdite/src/setup.cpp libverdite/src/touch.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
 target_link_libraries(verdite PUBLIC Threads::Threads PRIVATE cpptrace::cpptrace chdr-static)
@@ -279,7 +279,7 @@ if(doctest_FOUND)
   enable_testing()
   add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp libverdite/tests/crash.cpp
     libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp libverdite/tests/fuzz.cpp libverdite/tests/memory_card.cpp
-    libverdite/tests/menu_pointer.cpp libverdite/tests/places.cpp libverdite/tests/state_trace.cpp libverdite/tests/stick.cpp
+    libverdite/tests/menu_pointer.cpp libverdite/tests/menu_settings.cpp libverdite/tests/places.cpp libverdite/tests/state_trace.cpp libverdite/tests/stick.cpp
     libverdite/tests/options.cpp libverdite/tests/setup.cpp libverdite/tests/touch.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_DATA="${CMAKE_SOURCE_DIR}/libverdite/tests/data")
