@@ -23,16 +23,25 @@ void console_clear();
 void console_pump();   // drains captured output on the main thread
 
 // ---- settings (settings.json in user_dir) ----
+#ifdef __ANDROID__
+// A phone: the whole screen, with no status or navigation bar over the picture.
+inline constexpr bool default_fullscreen = true;
+inline constexpr const char *default_aspect = "window";
+#else
+inline constexpr bool default_fullscreen = false;
+inline constexpr const char *default_aspect = "4:3";
+#endif
+
 struct Settings {
     // Classic mode: play as originally shipped. Every enhancement below is
     // overridden (see effective_settings) while the player's values are kept.
     bool classic = false;
-    bool fullscreen = false;
+    bool fullscreen = default_fullscreen;
     bool vsync = false;
     bool pause_when_open = false;
     bool show_fps = false;
     int volume = 100;           // percent
-    std::string aspect = "4:3"; // "4:3", "16:9", "16:10", "21:9" or "window"
+    std::string aspect = default_aspect; // "4:3", "16:9", "16:10", "21:9" or "window"
     bool hud_at_edges = true;   // in widescreen, the HUD at the picture's edges, not in its 4:3 box
     int resolution = 0;         // 0: native (match the window), else whole multiple of 320x240
     bool subpixel = true;       // smooth vertex positions (less polygon jitter)
