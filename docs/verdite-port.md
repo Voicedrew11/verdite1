@@ -253,6 +253,9 @@ D-pad's rate), half right 8.5 (the curve predicts 8.45), full down pitches 10 an
 update (L2/R2's limit); the left stick forward walks about 181 an update, and
 centred sticks move nothing.
 
+`KF_TEST_NO_PAUSE=1` keeps the game running while its window is unfocused, which it otherwise
+pauses: for two windows on one machine in an online room, so each shows the other moving.
+
 `KF_TEST_CRASH=fault|abort|soft@<gameplay polls>` crashes the game once on purpose,
 to check crash reports ([CRASH_REPORTS.md](CRASH_REPORTS.md)).
 
