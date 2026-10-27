@@ -96,10 +96,10 @@ game:
   seconds, and played back as a ghost drawn with the game's own model.
 - **A remote player in the world**: patches so that actors, collision and
   damage know a second player exists.
-- **Coop sync**: authority goes with the floor: each player owns their
-  character, whoever is on a floor runs it, and the lasting world is a shared
-  record merged by union ([COOP_PLAN.md](COOP_PLAN.md), with the models
-  rejected and why).
+- **Coop sync**: a party of any size; authority goes with the cause: each
+  player owns their character and runs what they trigger, a shared floor is run
+  by its most senior player, and the lasting world is the host's save ([COOP_PLAN.md](COOP_PLAN.md), with
+  the models rejected and why).
 
 ## Order and dependencies
 

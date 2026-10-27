@@ -1,45 +1,72 @@
 # Coop plan
 
-**Draft, 2026-10-26, not yet reviewed.** Nothing here is built except the other players' knight
-([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to "Changes"
-at the end rather than leaving the old text standing. Transport, rooms and the service are
-[NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
+**Draft, 2026-10-26, red-teamed three times.** Nothing here is built except the other players'
+knight ([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to
+"Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
+are [NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
 
-The goal: **one seamless playthrough together**, start to end. Both players are equals in one
-world, either can be anywhere in it, including another floor, and each keeps what they find.
+The goal: **one seamless playthrough together**, start to end, for a party of any size. The
+players are equals in one world, each can be anywhere in it, including another floor, and they
+share one pack.
+
+## What players are told
+
+The test of the design: if a rule needs more than a line here, it is too complicated.
+
+- The party shares one pack and one purse. Whatever anyone finds goes into it, and the side of
+  the screen says who found what.
+- Wear anything in the pack that no one else is wearing. Gear is lent, not owned: when someone
+  leaves, what they wore goes back in the pack.
+- The world is shared: a chest anyone opens is empty for everyone, a door anyone opens is open
+  for everyone.
+- A kill on your floor gives you its full experience.
+- Menus do not pause the game in coop.
+- Die and you keep everything: you watch another player, and come back beside them once they
+  are out of a fight.
+- If everyone goes down, the party goes back to its last save, the world with it.
+- If the host leaves, the session ends; everything up to that moment is kept.
 
 ## Fixed
 
+- **Any number of players.** No rule below counts the players. How many a room holds is
+  measured, not chosen: the weakest platform's cost of drawing the knights and taking their
+  poses (the 3DS's, `RUNTIME.md`), and the host's upload. Four is the first number to test.
 - **One tick rate per room, the host's.** The game counts updates, not time, so the rate is its
   speed; players at different rates would walk and swing at different speeds. Joining a room
   sets the guest's `gameplay.tick_rate` to the host's for the session.
 - **Not a summon.** Joining the host's floor with the guest's own world set aside (Dark Souls)
-  starves the guest of items and makes them a visitor.
+  makes the guest a visitor, not a member of the playthrough.
 - **The coop world is the host's save,** separate from their single-player saves. It holds the
-  world and a character slot for each guest; a guest's character lives there and nowhere else
-  (the guest's machine keeps a backup copy). The host may play it alone between sessions; a guest
-  only plays it in the host's room.
-- **Late joiners start fresh:** level 1 and the starting gear (where they start is Question 3).
-  Chests and drops are per player, so every floor behind them is still full for them, and the
-  experience rule brings them up quickly on a deep floor. No hand-made catch-up.
+  world, the party's pack and purse, and a character slot for every guest who has joined; a
+  guest's character lives there and nowhere else (the guest's machine keeps only an export of
+  it). The host may play it alone between sessions; a guest only plays it in the host's room.
+- **Late joiners start fresh, beside the host:** level 1, adding the game's starting kit (a
+  Short Sword, a Medicinal Herb, 150 gold) to the party's pack and purse, and free to wear
+  whatever in the pack no one is wearing. On a deep floor a level-1 character dies often, but
+  death costs it nothing but time (Death), and the experience rule brings it up quickly. No
+  hand-made catch-up.
 - **Experience:** every player on the floor gets a kill's full experience.
-- **Death, per character** (`player_death_restart`). With the revival flag set and a Dragon King
-  Grass Fruit, the player revives on floor 1 keeping everything, as in single player. Without one,
-  the game calls `game_state_initialize()` (`player_death.cpp`), which is a new game: level 1,
-  starting gear, the world's flags and the shops reset. Coop cannot do that to a shared world, so
-  in a room the dead player's slot goes back to its last save (the last restore point), losing
-  what the character gained since. **This is a departure from the game, and softer than it**,
-  taken because the alternative wipes the partner's world. The world keeps its progress and the
-  partner loses nothing. A boss killed since that save stays dead, so its drop is lost to the dead
-  player as to one who missed the kill (see Weak points).
+- **Death is the party's, as in Halo's coop.** A player who dies keeps everything and watches
+  a living player through their eyes (the next one at a button press); they come back on a free
+  cell beside the one they are watching once that player is out of a fight (no hit taken or
+  dealt for a few seconds, and no enemy chasing them), on whatever floor that is. A dead player
+  is out of the world meanwhile: enemies do not target them, the collision grid does not count
+  them, and kills give them nothing.
+- **When everyone is down, the party goes back to the last save:** every character and the world
+  as they were when anyone last saved, all standing at that save point. The game's own death
+  paths (`player_death_restart`, `player_death.cpp`: the revival on floor 1, and the restart
+  through `game_state_initialize()`, a new game) never run in a room. **This is a departure
+  from the game**, chosen for fun: dying apart is the coop game's worst moment, and here a death
+  costs time, while the game's tension moves to the wipe. A host playing the coop world alone is
+  a party of one, so every death of theirs is a wipe.
 
 ## Rejected
 
 | model | what | why not |
 |---|---|---|
-| summon | the guest joins the host's world while there | item shortage; not a playthrough together |
-| lockstep (and rollback) | every machine simulates the whole world from everyone's inputs | the game holds one floor in memory, so both players would be held to the same floor; also input delay, the slowest player sets the pace, menus pause everyone, a desync is fatal and every platform must be bit-identical |
-| host-authoritative with prediction | the host simulates everyone, the guest predicts and is corrected | built for not trusting clients, which coop does not need; the guest's movement would be re-run against the host's collision and corrected |
+| summon | the guest joins the host's world while there | not a playthrough together |
+| lockstep (and rollback) | every machine simulates the whole world from everyone's inputs | the game holds one floor in memory, so every player would be held to the same floor; also input delay, the slowest player sets the pace, menus pause everyone, a desync is fatal and every platform must be bit-identical |
+| host-authoritative with prediction | the host simulates everyone, the guests predict and are corrected | built for not trusting clients, which coop does not need; a guest's movement would be re-run against the host's collision and corrected |
 
 ## The model: authority goes with the cause
 
@@ -47,13 +74,14 @@ The floor code knows one player, and not only in the enemies: floor scripts read
 and facing (`map_scripts.cpp`: the floor-3 healing tile, the floor-5 boss trigger), traps fire from
 the object pool (`map_object_pool.cpp`), the collision grid counts one occupant
 (`collision.cpp`, `collision_adjust_cell_occupancy`) and enemy projectiles test one camera
-(`effect_update.cpp`). A machine that ran a whole floor for two players would show the partner a
-floor that ignores them. So authority is split by what causes a thing, not by floor:
+(`effect_update.cpp`). A machine that ran a whole floor for several players would show the others
+a floor that ignores them. So authority is split by what causes a thing, not by floor:
 
-- **Each player owns their character:** movement, inventory, level, equipment, applied at once on
-  their own machine. Others see it as a puppet: poses numbered by game update, buffered and
-  interpolated, with actions (swings, spells, deaths) sent as events and animated locally at the
-  game's rate.
+- **Each player owns their character:** movement, level, vitals, magic and what they wear, applied
+  at once on their own machine (the pack is the party's, see Items). Others see it as a puppet:
+  poses numbered by game update, buffered and interpolated, with actions (swings, spells, deaths)
+  sent as events and animated locally at the game's rate. Poses go only to the players on the
+  same floor; the rest need only which floor a player is on.
 - **What a player triggers runs on that player's machine, against that player:** cell scripts
   (the healing tile, the boss trigger), pickups and chests, talking to an NPC and its exchanges,
   switches, doors opened by hand, restore points. These already read `player_state`, which on the
@@ -61,10 +89,24 @@ floor that ignores them. So authority is split by what causes a thing, not by fl
   flag, a door's link, an event's stage) is sent as a write to the floor's owner.
 - **What happens on its own is run by the floor's owner:** enemies, trap emitters, moving objects,
   timers. With one player on a floor, that player's machine is the owner and nothing changes.
-- **Two on a floor: one owns it** (see Questions). The other is sent a snapshot on arrival
-  (enemies' positions, HP and AI state, emitters, doors) and from then on draws those enemies as
-  puppets, as it draws the other player, while still running its own player's triggers. When the
-  owner leaves, ownership passes to someone still there, with a fresh snapshot.
+- **A shared floor is run by its most senior player:** the host, then the guests in the order
+  they joined the room. A dead player counts as on the floor of the player they are watching.
+  Whoever arrives on an occupied floor needs the live floor (enemies' positions, HP and AI state,
+  emitters, doors) as a snapshot anyway, so the snapshot is the handover: one who arrives more
+  senior than the owner is sent it and takes the floor; any other draws those enemies as
+  puppets, as it draws the other players, still running its own triggers and with the puppets
+  in its own collision grid so it cannot walk through them. An owner who leaves sends a fresh
+  snapshot to the next most senior player there, who takes the floor.
+- **An owner who drops takes the floor's live state with it.** The next most senior player on
+  the floor takes it from the floor's last record, kept by the host, as if everyone there had
+  just arrived: the players stay where they are, persistent actors killed stay dead, and the
+  floor's other enemies start again as on entering it. It loses a fight in progress and never
+  rebuilds a floor from puppets. A dropped host ends the room.
+- **The unit may be smaller than a floor.** Floor 5's gates swap the actor models
+  (`player_warp_same_floor` calls `map_variant_assets_load`, `player_warp.cpp`, `resources.cpp`)
+  and release the animation cache, so players on floor 5 in different variants hold different
+  models for the same actors. Whether a variant is a region of its own for ownership, or its
+  actors only ever meet a player in it, is for the table in Order.
 - **Enemies choose among the players on the floor.** The AI reads `actor_state.player_position`
   (`actor_behavior.cpp`), spawning near the player checks only `player_state`, and enemy
   projectiles are tested against `player_state.camera_position` (`effect_update.cpp`). On the
@@ -86,85 +128,106 @@ floor that ignores them. So authority is split by what causes a thing, not by fl
   every event's state and dialogue stage, which persistent actors are dead, each object slot's id
   (a taken item becomes none), door and container links, and gold and items dropped on the
   floor. Enemies that respawn are not in it.
-- **The coop save is on every machine.** The floor's owner is the only writer of that floor's
-  world records and script flags; a triggering player's world changes reach them through it. Each
-  write carries a version number and goes to every player. The host's copy is the one kept; a
-  guest's copy is a backup that keeps the writes the host never received, merged into the host's
-  copy at the next session. It is not playable on its own (what happens when the host drops is
-  Question 4). Key spends are not a floor's: they go through the host, the first claim wins and a
-  door refuses the second.
+- **The coop save keeps two states:** the live one, written continuously and kept when a session
+  ends, and the last save, a copy of the whole coop world (every character and the world) taken
+  when anyone saves at a save point. A wipe loads the last save; nothing else does.
+- **The coop save is the host's, and only the host's.** The floor's owner is the only writer of
+  that floor's world records and script flags; a triggering player's world changes reach them
+  through it. Every write, and every guest's character, goes to the host, and is kept when the
+  host acknowledges it. A guest is sent what it needs (its slot, the records of the floor it
+  loads) and keeps nothing but an export of its character. When the host drops, the room ends
+  and the guests lose only what the host had not yet acknowledged, a second or so; there is
+  never a second copy to merge, even when the host plays alone between sessions. Key spends are
+  not a floor's: they go through the host, the first claim wins and a door refuses the second.
 - **The game's own snapshot writes are guarded.** `map_world_state_persist` runs on revival
   (`player_death.cpp`), at a restore point (`map_scripts.cpp`) and on leaving a floor
   (`player_update.cpp`, `map_events.cpp`). On a machine that does not own the floor, those calls
-  write only its player's part; otherwise the partner's stale copy would overwrite the owner's.
-- **Each floor's snapshot splits in two:** the world's part (events, dead persistent actors,
-  doors) and each player's part (item slots and drops, see Items).
+  write only its player's part; otherwise its stale copy would overwrite the owner's.
 - **NPC progress comes from the world, not the loader.** On loading a floor the game sets each
   NPC's dialogue stage to the loading player's `highest_floor`, capped by the NPC's limit, and can
   lower it (`map_event_refresh_dialogue_stage`, `map_event.cpp`); `map_load.cpp` also disables the
-  floor-2 departing event by it. A level-1 guest who owns floor 1 would rewind the host's NPCs and
-  the versioned write would carry the rewind into the host's save. In a room these read the
-  world's highest floor (the highest any player has reached, kept in the coop save) and a stage
-  is never written lower.
+  floor-2 departing event by it. A level-1 guest who owns floor 1 would rewind the party's NPCs
+  and the write would carry the rewind into the host's save. In a room these read the world's
+  highest floor (the highest any player has reached, kept in the coop save) and a stage is never
+  written lower.
 
 ## The state map
 
-Every field of the save (`SavedGameState`, `save_system.cpp`) is the world's or a player's:
+Every field of the save (`SavedGameState`, `save_system.cpp`) is the world's, the party's or a
+player's:
 
 | field | whose | |
 |---|---|---|
-| `player` (`KfPlayerState`) | player | level, vitals, equipment, position, current floor |
-| `player.progress_state.highest_floor` | both | the player's own for warps; the world keeps the highest of all players for NPC stages and the floor-2 departing event |
+| `player` (`KfPlayerState`) | player | level, vitals, what they wear, position, current floor; `gold` is the party's |
+| `player.progress_state.highest_floor` | player and world | the player's own for warps; the world keeps the highest of all players for NPC stages and the floor-2 departing event |
 | `world.floor1`, `floor3`, `floor5` | world | the story flags above |
-| `world.floors[n].records` | split | events, dead persistent actors, doors: world; object slots and drops: player |
-| `stock`, player bank | player | the inventory |
-| `stock`, the two shop banks | see Question 2 | limited stock (the second shop holds one Gold Cross) |
+| `world.floors[n].records` | world | events, dead persistent actors, doors, object slots, drops |
+| `stock`, player bank | party | the pack; what each player wears is marked in it |
+| `stock`, the two shop banks | world | only the Gold Cross is limited (`shop_menu_buy`, `item.cpp`) |
 | `learned` (`KfMagicLearningState`) | player | magic learned |
 
 ## Items
 
-- **Chests and floor items are per player.** Opening a chest gives its contents and marks it
-  opened for that player; the partner still finds it full.
-- **Items from anything but a chest are per player too:** an NPC's gift or a boss's drop goes to
-  every player in the room; an enemy's drop appears for each player on the floor. No item races.
-- **Key items are held by the world** (ids 52 to 76: Gold Cross, the keys, the seal stones,
-  Demon King's Hand and so on). Once anyone gets one, it is in every player's inventory, a late
-  joiner's included; when a door or seal uses it up, it is gone for everyone. The coop save keeps
-  the ledger: per key, held or used.
-- **What changes the world is shared:** a door unlocked with a key opens for both.
-- **Exchanges cross the line between world and player** (`map_event_interact`,
-  `map_scripts.cpp`), so each is decided on its own. The leaning for each:
-
-  | exchange | spends | gives | leaning |
-  |---|---|---|---|
-  | Key of the Dead | Gold Cross (world) | Key of the Dead (world) | world: once, for everyone |
-  | Healing | Mirror of Truth (world) | Healing magic (player) | per player: the Mirror is not spent for the world, each player trades it once, or only one player could ever learn Healing |
-  | Harp | Dragon King Grass Fruit (player) | Harp (world) | the trader's Fruit, the world's Harp; the Fruit is also the revival item, so it costs that player alone |
-  | floor-3 door | nothing | a door's link (world) | world |
-  | weapon transform (floor 5) | the Dragon Sword (player) | the transformed sword, a world flag | per player: each player's Dragon Sword transforms once; the doors it opens (`weapon_transformed`) are the world's, set by the first |
-
-  The floor-3 healing tile (Resist Fire and Bless) and other learned magic are per player and
-  run on the player who stands there.
+- **One pack and one purse for the party.** The player bank of `item_stock` and `gold` are the
+  party's, kept by the host; every change to them goes through the host, so when two players
+  reach for the last herb the first gets it and the other is told it is gone. Stacks hold 99
+  (`KF_ITEM_STACK_CAPACITY`, `item_types.h`). The world holds exactly one game's loot, as in
+  single player: a chest, a drop, a boss's drop, an NPC's gift and a shop's one Gold Cross are
+  taken once, into the pack. Keys are in the pack like anything else, so a key spent on a door is
+  gone for everyone. Shops sell everything else without limit, so the scarcity is in the unique
+  finds: every knight can buy the shop's armour, one wears the Knight Plate from the chest.
+- **What a player wears is lent from the pack, not theirs.** An item worn by another player who
+  is in the room shows as worn by them and cannot be put on. When a player leaves the room,
+  everything they wore goes back to the pack and their slots are empty in the save, so whoever
+  plays on can wear it; a returning player puts back on whatever of it is still free.
+- **The side of the screen says who found what:** "PLAYER1234 PICKED UP KNIGHT SWORD", for
+  pickups, purchases, sales, items used up and keys spent, out of the way of play. The game's own
+  pickup message still shows to the player who picked it up.
+- **The feed is drawn by the game, on every platform alike.** Not by the Dear ImGui overlay,
+  which is a desktop tool (Android puts its own panel in its place, and not every platform will
+  have it): the feed is drawn into the game's own picture with the game's own fonts, as the PORT
+  SETTINGS page is (`menu_spell` and `menu_draw_text`, `verdite-port.md`), so it shows wherever
+  the game does, at the game's resolution, in every renderer tier. What the feed holds (its lines,
+  how long each stays, the fade) is a libverdite model, game-agnostic and unit-tested; KF1 only
+  draws it. The font sets the limits: player names are what `menu_spell` can spell (capitals and
+  digits in English, kana in Japanese), so a name is entered in that set; item names are drawn as
+  the game's menus draw them (how is for Order). Any other coop text on screen, such as whose
+  eyes a dead player is watching through, follows the same rule.
+- **Learned magic is a character's.** The floor-3 healing tile (Resist Fire and Bless) teaches
+  whoever stands on it.
+- **Exchanges** (`map_event_interact`, `map_scripts.cpp`) are the single-player trades, made
+  from the party's pack: the Gold Cross for the Key of the Dead, the Harp's trade, the Dragon
+  Sword's transform, once each. The Mirror of Truth for Healing is the one that matters to a
+  party, since Healing is learned by the knight who trades (Questions).
 
 ## What else changes
 
-- **Menus do not pause the world in a room.** With a partner on the floor, opening the inventory
-  would freeze their enemies; in a room only the player's view stops. A change to the game's
-  behaviour, but coop cannot work without it. Each menu is a blocking loop that draws its own
-  frames (`menu_status_panel`'s `while (1)` around `menu_frame_begin` and
-  `menu_present_frame`, and `kf::host_wait_buttons_released`, in `menu_runtime.cpp`); the save,
-  load, drop, config and system panels are the same, and dialogue, shops and item messages likely
-  too. Rather than rewrite each panel, the world update runs from inside the menu's frame; whether
-  the game's update can be entered from there (re-entrancy, the menu's own use of the frame) is
-  what the spike in Order finds out.
+- **Menus never pause the world in a room,** wherever the others are. One rule a player cannot
+  get wrong, where pausing only when alone on the floor would make the same menu safe one moment
+  and deadly the next. Opening the inventory would otherwise freeze the others' enemies, so only
+  the player's view stops. A change to the game's behaviour, but coop cannot work without it. A
+  player in a menu still feels hits: their machine judges attack events and projectiles from the
+  menu's frame, or a menu would be a place no enemy can touch. On the floor's owner the menu's
+  frame runs the whole world update; on any other machine it only takes messages and judges hits
+  against a player who is standing still. Each menu is a blocking loop that draws its own frames
+  (`menu_status_panel`'s `while (1)` around `menu_frame_begin` and `menu_present_frame`, and
+  `kf::host_wait_buttons_released`, in `menu_runtime.cpp`); the save, load, drop, config and
+  system panels are the same, and dialogue, shops and item messages likely too. Rather than
+  rewrite each panel, the world update runs from inside the menu's frame; whether the game's
+  update can be entered from there (re-entrancy, the menu's own use of the frame) is what the
+  spike in Order finds out.
 - **The world blocks too, not only menus.** The floor-5 boss reveal shows two images until a
   button (`screen_show_image_until_input`) and the weapon transform runs two `for (;;)` render
   loops, one moving the player along a camera path (`map_scripts.cpp`). On the owner's machine
-  each would freeze the floor for the partner. Under "authority goes with the cause" they run on
+  each would freeze the floor for the others. Under "authority goes with the cause" they run on
   the triggering player's machine; when that player is also the floor's owner, the world update
   has to run from these loops' frames as from a menu's.
-- **Saves:** the coop save is the world, the key ledger, the host's character and each guest's
-  slot, each slot with its own per-player chest record, kept on every machine.
+- **Saves:** the coop save is the world, the party's pack and purse, and every character, kept on
+  the host, live and as last saved. A save point in a room saves the whole party, wherever each
+  player is; the save panel picks no card slot.
+- **The ending is everyone's.** Walking into floor 5's ending cell with `boss_defeat` set ends
+  the game (`player_warp_trigger_update`, `player_warp.cpp`); in a room it plays for every
+  player, wherever they are, and the coop world is marked finished.
 - **The pose** gains the game update number and the height (on a stair or in the air the knight
   is drawn on the cell's floor today).
 
@@ -172,71 +235,73 @@ Every field of the save (`SavedGameState`, `save_system.cpp`) is the world's or 
 
 1. **The table of the player's reads**, before any code: every read of `player_state`,
    `actor_state.player_position` and `camera_position` in the floor code (scripts, objects, events,
-   actors, effects, collision), each classed as the triggerer's, the owner's or the world's. It is
+   actors, effects, collision), each classed as the triggerer's, the owner's or the world's, and
+   every read of `player_state.map_variant` (whether floor 5's variants are regions). It is
    a day's work and decides whether "authority goes with the cause" holds; a read that fits none
    of the three changes the model before anything is built.
-2. Two spikes, since either can sink the model and the knight cannot: enemies that target more
-   than one player (a per-actor target in place of `actor_state.player_position`), and a world
+2. Two spikes, since either can sink the model and the knight cannot: enemies that target any of
+   several players (a per-actor target in place of `actor_state.player_position`), and a world
    that does not stop while one player is held (the world update called from a menu's frame and
    from the boss reveal's and weapon transform's loops). If either fails, the model changes.
 3. The smooth knight: poses numbered by update, a playback buffer, swings as events, height.
-   Needed by this model whatever else changes.
-4. The coop save: the state map applied, the floor snapshot split into the world's part and each
-   player's, guest slots, the key ledger, the world's highest floor, the guarded snapshot writes,
-   the copy on every machine.
-5. Floor ownership: the snapshot on arrival, enemies drawn as puppets, triggers sent as writes,
-   the handover.
+   Needed by this model whatever else changes. Then the room's size measured: knights drawn and
+   poses taken on the weakest platform, the host's upload.
+4. The coop save: the state map applied, the party's pack and purse with worn gear lent from it,
+   guest slots, the world's highest floor, the guarded snapshot writes, the acknowledged writes
+   to the host. The pickup feed: libverdite's model, drawn by the game.
+5. Floor ownership: seniority, the snapshot on arrival, enemies drawn as puppets, triggers sent
+   as writes, the handover, the floor restarted from its record when its owner drops.
 6. Hits across machines (the attack event, remote players in the collision grid); menus that do
    not pause, every panel; kill credit; the exchanges.
+7. Death: watching another player (the arrival path, drawn from their camera), coming back
+   beside them, the wipe loading the last save.
 
 ## Questions
 
-1. **Who runs a shared floor:** the first to arrive, or always the host? Leaning first to
-   arrive, which avoids a handover every time the host walks in.
-2. **Shop stock:** per player, as chests are, or shared with the first buyer taking it? Leaning
-   per player: it follows chests and keeps the single-player economy, and a shared limited stock
-   is an item race.
-3. **Where a late joiner starts:** beside the host, at the game's start, or at the host's last
-   save point? Beside the host on a deep floor, a level-1 character dies at once and goes back to
-   its last save, which for a new character is the start, so beside the host is a loop. Leaning
-   the game's start.
-4. **The host drops mid-session:** the room ends for everyone, or a guest's copy carries on until
-   the host returns? Carrying on means two copies of the world that both changed, and key spends
-   with no one to arbitrate them. Leaning the room ends: each guest keeps the writes the host
-   never received and they are merged at the next session.
+1. **Healing for a party.** Herbs are sold without limit and restore points heal for free, so
+   what runs short is gold: each kill drops its gold once, for the whole party. Leaning: a kill's
+   gold counts for each player on the floor, as its experience does, and the Mirror of Truth is
+   not spent in a room, so every knight who trades it learns Healing.
 
 ## Weak points (to argue with)
 
-- **Is per-player loot faithful?** The original never had to decide it, and two copies of a
-  unique weapon change the game's economy: close to a modern convenience. Accepted: each player
-  gets the single-player economy.
-- **Which ids are key items:** 52 to 76 also holds things that are used rather than spent on a
-  door (Mirror of Truth, Harp, the staves, Dragon Chalice). Each needs checking against the game:
-  held by the world, or per player. The exchanges table is the same question for trades and is a
-  first pass, not checked against every page of dialogue.
-- **Persistent actors killed while a player was away, or before a player's death sent them back
-  to their last save,** stay dead; their drops are a boss's, so that player has to get them some
-  other way (given on rejoining or on going back?).
+- **Some knights trail others.** One copy of each unique find for the whole party means one
+  wears the Knight Plate and the rest wear what the shops sell. Taken for the scarcity, which is
+  King's Field's; more attackers and full experience for each make up for it.
+- **Anyone can empty the pack.** Shared herbs and gold are spent by whoever gets there first.
+  Fine between friends, and the side of the screen says who spent what.
 - **Triggers on a floor someone else owns:** a write sent from the triggering player reaches the
-  owner a moment late, so the owner can briefly see a door shut that the partner has opened, or
-  run an event the partner's write has just changed. Whether any trigger needs the owner's answer
+  owner a moment late, so the owner can briefly see a door shut that another player has opened,
+  or run an event their write has just changed. Whether any trigger needs the owner's answer
   before it acts (a door an enemy is standing in) is for the table in Order to find.
-- **Handover mid-fight:** the owner walks off the floor while enemies are chasing the other
-  player; the snapshot must carry AI state well enough that they do not reset or jump. Smaller
-  than feared: `KfActor` is about 70 bytes and its only pointer, `animation_cache`, can be
-  rebuilt. Still to check: what the `unknown_*` fields hold, AI state kept outside the actor
-  (statics in `actor_behavior.cpp`), and doors and effects caught mid-motion.
-- **The floor's owner drops:** its enemies, their HP and the floor's unsaved progress go with
-  it, and the partner is left with frozen puppets. The partner takes the floor over from what it
-  last received (puppet poses, HP from hit events) and the floor's last versioned record.
+- **Handover mid-fight:** the owner walks off the floor while enemies are chasing the others; the
+  snapshot must carry AI state well enough that they do not reset or jump. Smaller than feared:
+  `KfActor` is about 70 bytes and its only pointer, `animation_cache`, can be rebuilt. Still to
+  check: what the `unknown_*` fields hold, AI state kept outside the actor (statics in
+  `actor_behavior.cpp`), and doors and effects caught mid-motion.
+- **An owner dropping restarts the floor's fight.** Taken for never rebuilding a floor from
+  puppets; it happens only when a guest who owns a floor with others on it loses its connection.
+- **The host is the room.** A flaky host connection ends every session it drops, and the more
+  players, the more it costs. Taken for the simplicity (no takeover, no merge); if it proves
+  common, reconnecting into the same room within a grace period is the fix, not a second copy of
+  the world.
 - **Trust:** hits judged by whoever feels them let a modified client never be hit. Fine between
   friends; not if rooms are ever public.
-- **A guest without the host:** the guest's character only exists in the host's save, so a
-  guest whose host stops playing loses that character. The guest's backup copy holds it but is
-  not playable alone.
-- **Death is softer than the game's.** Without a revival fruit the original starts over; coop
-  sends the dead player to their last restore point instead. Taken because a new game would wipe
-  the partner's world, but it is a convenience the original did not have.
+- **A guest without the host:** a guest's character only exists in the host's save, so a guest
+  whose host stops playing loses that character. The export is a record, not playable.
+- **Dying to travel:** a player far from the others can die on purpose to come back beside one.
+  It costs a wait until that player is out of a fight, and it brings the party together, which is
+  the point. Accepted, as is a player far across the floor sharing a kill's experience.
+- **What is "out of a fight"?** A few seconds without a hit and no enemy chasing may never come
+  in a long boss fight, leaving the dead watching to the end. Judged by play; a longest wait
+  after which they come back anyway is the fix if it drags.
+- **A party against enemies tuned for one.** Enemies target the nearest player, so the others get
+  free hits from behind, and full experience for each multiplies the rate; four knights may
+  flatten the game. No scaling until it is judged by play; if it is needed, enemy health by the
+  number of players on the floor is the lever.
+- **Death is a departure.** In the original a death costs everything since the last save or the
+  game. In coop one death costs only time, and a wipe costs what a reload costs. Chosen for fun;
+  the danger now lives in everyone falling.
 
 ## Changes
 
@@ -265,3 +330,36 @@ Every field of the save (`SavedGameState`, `save_system.cpp`) is the world's or 
   Death without a fruit is a new game in the original, so going back to the last save is marked
   as a departure. The guest's copy is a backup, not a way to resume; the host dropping is
   Question 4.
+- 2026-10-26: red-teamed a third time, for players rather than the decomp. A room is two players,
+  and the host owns any floor it is on, so the arrival snapshot is the handover and no floor is
+  ever taken over from puppets when someone drops. The coop save is the host's alone, writes kept
+  once acknowledged, so the guest's backup and its merge (two changed worlds once the host played
+  alone) are gone. A boss's drop waits where it fell for each character and an NPC's gift is given
+  to whoever lacks it, closing the drop lost to the away, the late and the dead. Dropped items are
+  the world's, so players can hand each other things. A player in a menu still feels hits.
+  Floor 5's variants swap actor models, so the ownership unit may be smaller than a floor. The
+  ending plays for both. Shop stock is per player and late joiners start at the start. A list of
+  what players are told heads the plan as its test of simplicity.
+- 2026-10-26: menus never pause in a room, alone on a floor or not: pausing only when alone made
+  the same menu safe one moment and deadly the next.
+- 2026-10-26: death works as Halo's coop: a dead player keeps everything, watches their partner
+  and comes back beside them once the partner is out of a fight; when both are down the party
+  goes back to the last save, world included, unless a Grass Fruit revives the last to fall. The
+  coop save keeps the last save beside the live state, and a save point saves the party. Dying
+  apart was the worst moment coop had. Late joiners now start beside the host, since dying there
+  no longer sends them back to the start.
+- 2026-10-26: one pack and one purse for the party, replacing per-player loot: the world holds one
+  game's loot, taken once, so per-player chest records, the split floor snapshot, boss drops
+  waiting for each player, the key ledger and dropping items to hand them over are all gone, and
+  so is the weak point that per-player loot was a modern convenience. Worn gear is lent from the
+  pack and goes back when its wearer leaves. A feed on the side of the screen says who picked up
+  what. Healing for two is an open question.
+- 2026-10-26: the pickup feed is drawn by the game with its own fonts, from a libverdite model,
+  not by the Dear ImGui overlay, so it is the same on every platform. The Grass Fruit is taken
+  out of coop's death rules: it should do something in coop, not yet decided.
+- 2026-10-26: any number of players, not two: no rule counts the players and the room's size is
+  measured on the weakest platform (four is the first to test). A shared floor is run by its most
+  senior player (the host, then guests in joining order); an owner who drops leaves the floor to
+  the next, restarted from its last record rather than rebuilt from puppets. A dead player
+  watches any living one and comes back beside them; the wipe is everyone down. Poses go only to
+  players on the same floor.
