@@ -9,7 +9,7 @@ service; no game uses it yet.
 
 The goal: Demon's Souls-style online play in the Verdite ports, namely
 **messages** left on the ground, **bloodstains** that replay another player's
-last seconds, and **coop** (summoning another player into your world), on
+last seconds, and **coop** (one playthrough together, [COOP_PLAN.md](COOP_PLAN.md)), on
 Cloudflare Realtime's TURN service with a gossip layer between players. It is
 meant for every Verdite game, not only KF1.
 
@@ -96,15 +96,10 @@ game:
   seconds, and played back as a ghost drawn with the game's own model.
 - **A remote player in the world**: patches so that actors, collision and
   damage know a second player exists.
-- **Coop sync**: someone is authoritative for enemies, damage, doors, events,
-  area changes and saves.
-  - **Host-authoritative**: the host runs the world, the guest sends inputs
-    and position. The robust default.
-  - **Deterministic lockstep**: both machines simulate from the same inputs.
-    Possibly viable, because the game logic is integer fixed point at a fixed
-    20 updates a second, but only if the port is fully deterministic. The
-    fuzzer's replay tests that: one input recording, run twice, must give the
-    same game memory tick for tick.
+- **Coop sync**: authority goes with the floor: each player owns their
+  character, whoever is on a floor runs it, and the lasting world is a shared
+  record merged by union ([COOP_PLAN.md](COOP_PLAN.md), with the models
+  rejected and why).
 
 ## Order and dependencies
 
@@ -131,7 +126,6 @@ get online play by writing only their own game layer.
 
 ## Open questions
 
-- Host-authoritative or lockstep for coop: decided by the determinism test.
 - What a bloodstain records (pose only, or pose plus inputs) and how long.
 - Whether coop needs the host and guest on the same build, and how versions
   are matched.
@@ -180,3 +174,6 @@ get online play by writing only their own game layer.
   what is left (walking, smoother swings, height).
 - 2026-10-26: the knight's head follows the player's pitch, which the pose now carries
   (version 3, 19 bytes).
+- 2026-10-26: coop is one seamless playthrough, not a summon (it starved the guest of items), with
+  one tick rate per room, the host's. Lockstep is out, since the game holds one floor and players
+  may be on different ones; authority goes with the floor ([COOP_PLAN.md](COOP_PLAN.md)).
