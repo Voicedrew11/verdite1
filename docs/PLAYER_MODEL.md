@@ -118,8 +118,11 @@ with the forearm bent 12 degrees, and the weapon arm holds its guard.
 - The knight's TMD and joints are `port/ext/online_player_model.cpp` (generated), behind
   `kf/platform/online_players.h`. The game draws each part with the actor lights, selecting the
   knight as the current TMD; nothing takes an asset slot.
-- The pose (`port/ext/online_pose.h`) is version 2, 17 bytes: it adds the equipped weapon and the
-  attack phase, which the game publishes every update (`online_publish_weapon`).
+- The pose (`port/ext/online_pose.h`) is version 3, 19 bytes: it adds the equipped weapon, the
+  attack phase and the camera's pitch, which the game publishes every update
+  (`online_publish_player`).
+- The head bends about the neck by the player's pitch, so others see where they look up or
+  down; held to 60 degrees, a neck's reach, though the look limit allows 85.
 - A remote player's weapon file is loaded the first time someone holds it (16 at most, about
   25 KB each), sampled into the morph scratch as the game samples its own, halved, and drawn on
   the elbow; a player with no weapon keeps the knight's own forearm.

@@ -499,7 +499,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..cf1601ff55a1e4d2cdeeaf2eafd75eadb96d0d2b 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bba986aede 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,13 +6,13 @@
@@ -559,18 +559,19 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..cf1601ff55a1e4d2cdeeaf2eafd75ead
          player_update();
          if (game_result != GameResult::Running) {
              break;
-@@ -59,6 +78,10 @@ void game_main_loop(void)
+@@ -59,6 +78,11 @@ void game_main_loop(void)
          effect_pool_update();
          map_event_pool_update();
          render_frame(&player_position_snapshot, &player_rotation_snapshot);
 +        automap_publish();
-+        // PC extension (online play): what this player holds and how far through a swing, for the
-+        // others in the room to draw.
-+        kf::online_publish_weapon(kf_enum_encode<u8>(player_state.equipped_weapon_id), player_state.weapon_attack_phase);
++        // PC extension (online play): what this player holds, how far through a swing and where
++        // they look up or down, for the others in the room to draw.
++        kf::online_publish_player(kf_enum_encode<u8>(player_state.equipped_weapon_id), player_state.weapon_attack_phase,
++            player_state.camera_rotation.vx);
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
-@@ -88,7 +111,9 @@ void game_shutdown(void)
+@@ -88,7 +112,9 @@ void game_shutdown(void)
  
  void frame_pacer_wait(void)
  {
@@ -1852,10 +1853,10 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b2578426a5188406e8b49e7f2a8c905ec78a799
+index 0000000000000000000000000000000000000000..0ac89ab381ba08bd39ae735c43a7933094b375da
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,370 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). Their right forearm is the game's own first-person weapon model
 +// (WEPON/WEPxx.MIM: a gauntlet holding the weapon) on the knight's elbow, posed by its clip at
@@ -1895,6 +1896,7 @@ index 0000000000000000000000000000000000000000..2b2578426a5188406e8b49e7f2a8c905
 +    ONLINE_PLAYER_GAIT_PHASE_END = 4096,
 +    ONLINE_PLAYER_GAIT_MIDDLE = 114,          // the thigh's middle angle through a stride (10 degrees)
 +    ONLINE_PLAYER_FOREARM_BEND = 137,         // the free forearm bends while walking (12 degrees)
++    ONLINE_PLAYER_HEAD_PITCH_MOST = 683,      // the head follows the camera's pitch this far (60 degrees)
 +};
 +
 +// One leg through a walk, from its foot leaving the ground behind, linear between keys as the
@@ -2093,7 +2095,7 @@ index 0000000000000000000000000000000000000000..2b2578426a5188406e8b49e7f2a8c905
 +};
 +
 +// The knight walking: legs half a cycle apart, the free arm swung against the right leg, the right
-+// upper arm lifted through a swing.
++// upper arm lifted through a swing, the head tilted as the player looks up or down.
 +static OnlinePlayerPose online_player_pose(const kf::OnlinePlayer &player)
 +{
 +    using Part = kf::OnlinePlayerPart;
@@ -2113,6 +2115,9 @@ index 0000000000000000000000000000000000000000..2b2578426a5188406e8b49e7f2a8c905
 +        -2 * (right.thigh - ((ONLINE_PLAYER_GAIT_MIDDLE * stride) >> KF_FIXED12_BITS)) / 5);
 +    pose.bends[part(Part::ForearmLeft)] = static_cast<s16>(-((ONLINE_PLAYER_FOREARM_BEND * stride) >> KF_FIXED12_BITS));
 +    pose.bends[part(Part::UpperArmRight)] = online_player_arm_raise(player.weapon, player.attack_phase);
++    // An upright part tips forward at a positive bend, as the camera looks down at a positive pitch.
++    pose.bends[part(Part::Head)] = static_cast<s16>(
++        std::clamp<s32>(player.pitch, -ONLINE_PLAYER_HEAD_PITCH_MOST, ONLINE_PLAYER_HEAD_PITCH_MOST));
 +
 +    const auto &hip = joints[part(Part::ThighRight)].pivot;
 +    const auto &knee = joints[part(Part::ShinRight)].pivot;

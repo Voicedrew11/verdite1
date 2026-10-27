@@ -178,3 +178,5 @@ get online play by writing only their own game layer.
   knight's elbow, posed by its clip at the attack phase the pose now carries (version 2, 17
   bytes: weapon and phase). [PLAYER_MODEL.md](PLAYER_MODEL.md) has the model, its tools and
   what is left (walking, smoother swings, height).
+- 2026-10-26: the knight's head follows the player's pitch, which the pose now carries
+  (version 3, 19 bytes).

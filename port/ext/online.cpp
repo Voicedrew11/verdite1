@@ -30,8 +30,9 @@ namespace kf::ext {
 namespace {
 
 std::string start_room; // --online-room
-u8 own_weapon = online_no_weapon;          // online_publish_weapon, sent with each pose
+u8 own_weapon = online_no_weapon;          // online_publish_player, sent with each pose
 s16 own_attack_phase = online_not_attacking;
+s16 own_pitch = 0;
 
 #if KF_ONLINE
 
@@ -148,7 +149,7 @@ void send_pose() {
     if (map.floor == 0)
         return;
     const auto bytes = online_pose_encode(
-        {map.floor, map.player_x, map.player_z, map.player_yaw, own_weapon, own_attack_phase});
+        {map.floor, map.player_x, map.player_z, map.player_yaw, own_weapon, own_attack_phase, own_pitch});
     vo_broadcast(online.session.get(), VO_CHANNEL_STATE, bytes.data(), bytes.size());
 }
 
@@ -250,16 +251,17 @@ std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     for (const auto &[peer, known] : ext::online.players)
         if (const auto &pose = known.pose; pose && pose->floor == floor)
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
-                pose->attack_phase, known.stride.phase, known.stride.amount});
+                pose->attack_phase, pose->pitch, known.stride.phase, known.stride.amount});
 #else
     (void)floor;
 #endif
     return players;
 }
 
-void online_publish_weapon(u8 weapon, s16 attack_phase) {
+void online_publish_player(u8 weapon, s16 attack_phase, s16 pitch) {
     ext::own_weapon = weapon;
     ext::own_attack_phase = attack_phase;
+    ext::own_pitch = pitch;
 }
 
 }
