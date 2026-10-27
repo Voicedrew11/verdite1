@@ -1,4 +1,5 @@
 #include <kf/platform/fuzz.h>
+#include "../ext/coop_floor.h"
 #include <kf/platform/automap.h>
 #include <kf/platform/host.h>
 #include <kf/platform/saves.h>
@@ -102,6 +103,8 @@ struct Fuzz {
     std::set<std::tuple<int, int, int>> cells;
     std::set<int> floors, items;
     std::optional<verdite::StateTrace> trace;
+    std::optional<verdite::StateTrace> floor_trace;
+    std::uint64_t handover_at = 0, floor_dump_at = 0;
 };
 Fuzz fuzz;
 
@@ -588,6 +591,104 @@ std::vector<verdite::TraceRegion> trace_regions() {
     };
 }
 
+// --- the floor's round-trip check (docs/COOP_PLAN.md, "The handover is live"): the same state,
+// with what a handover rightly changes left out: drawing's animation caches and the world's
+// records, which leaving a floor writes.
+
+void put_null_caches(std::vector<std::byte> &out, std::size_t first, std::size_t slot_bytes, std::size_t count, std::size_t at) {
+    for (std::size_t i = 0; i < count; ++i)
+        put_pointer(out, first + i * slot_bytes, at, 0);
+}
+
+template <typename T>
+void put_zeros_of(std::vector<std::byte> &out, std::size_t at) {
+    put_zeros(out, 0, at, at + sizeof(T));
+}
+
+std::vector<verdite::TraceRegion> floor_trace_regions() {
+    auto player = [](std::vector<std::byte> &out) {
+        write_player(out);
+        put_pointer(out, 0, offsetof(KfPlayerState, weapon_animation_cache), 0);
+    };
+    auto actors = [](std::vector<std::byte> &out) {
+        write_actors(out);
+        put_null_caches(out, offsetof(KfActorState, actors), sizeof(KfActor), KF_ACTOR_CAPACITY, offsetof(KfActor, animation_cache));
+    };
+    auto effects = [](std::vector<std::byte> &out) {
+        write_effects(out);
+        put_null_caches(out, offsetof(KfEffectState, records), sizeof(KfEffectRecord), KF_EFFECT_CAPACITY,
+                        offsetof(KfEffectRecord, animation_cache));
+    };
+    auto events = [](std::vector<std::byte> &out) {
+        write_map_events(out);
+        put_null_caches(out, offsetof(KfMapRuntimeState, events), sizeof(KfMapEvent), KF_MAP_EVENT_CAPACITY,
+                        offsetof(KfMapEvent, animation_cache));
+        put_zeros_of<KfMapSavedWorld>(out, offsetof(KfMapRuntimeState, world_state));
+    };
+    auto grids = [](std::vector<std::byte> &out) {
+        append_bytes(out, map_collision_grid);
+        append_bytes(out, map_collision_flag_grid);
+        append_bytes(out, map_floor_height_grid);
+        append_bytes(out, map_cell_attribute_grid);
+        append_bytes(out, map_cell_orientation_grid);
+        append_bytes(out, map_copy_regions);
+    };
+    return {
+        {"random", [](std::vector<std::byte> &out) { append_bytes(out, random_peek()); }},
+        {"player", player},
+        {"actors", actors},
+        {"effects", effects},
+        {"map_events", events},
+        {"map_objects", [](std::vector<std::byte> &out) { append_bytes(out, map_object_state); }},
+        {"grids", grids},
+        {"items", [](std::vector<std::byte> &out) { append_bytes(out, item_stock); }},
+    };
+}
+
+// Each region's bytes at one update, beside the floor trace, to find the fields where two runs part.
+void dump_floor_regions(const std::string &trace_path) {
+    std::vector<std::byte> bytes;
+    for (const auto &region : floor_trace_regions()) {
+        bytes.clear();
+        region.write(bytes);
+        const std::string path = trace_path + "." + std::to_string(fuzz.updates) + "." + region.name;
+        if (std::FILE *file = std::fopen(path.c_str(), "wb")) {
+            if (std::fwrite(bytes.data(), 1, bytes.size(), file) != bytes.size())
+                std::fprintf(stderr, "[KF1] floor dump: cannot write %s\n", path.c_str());
+            std::fclose(file);
+        }
+    }
+}
+
+// What a machine taking the floor does: the floor loaded from its record, then the live floor put
+// over it. The taker's player and random stream are its own, not the floor's; the check keeps this
+// machine's across the reload, so the two runs match.
+void hand_floor_over() {
+    const auto snapshot = ext::coop_floor_capture();
+    const u32 random = random_peek();
+    const KfMapSavedWorld world = map_runtime_state.world_state;
+    KfPlayerState player = player_state;
+    player.weapon_animation_cache = nullptr;
+    map_unload_floor();
+    map_load_floor();
+    map_runtime_state.world_state = world;
+    player_state = player;
+    random_seed(random);
+    if (!ext::coop_floor_restore(snapshot)) {
+        std::fprintf(stderr, "[KF1] floor handover: the snapshot was refused\n");
+        finish(4);
+    }
+    const auto active = std::ranges::count_if(actor_state.actors, [](const KfActor &actor) {
+        return actor.slot_state != KF_ACTOR_SLOT_FREE && actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE;
+    });
+    const auto effects = std::ranges::count_if(effect_state.records, [](const KfEffectRecord &effect) {
+        return effect.type != KF_EFFECT_SLOT_FREE;
+    });
+    std::fprintf(stderr, "[KF1] floor handover at update %llu on floor %d: %zu bytes, %td awake actors, %td effects\n",
+                 static_cast<unsigned long long>(fuzz.updates), kf_enum_encode<int>(player_state.progress_state.current_floor),
+                 snapshot.size(), active, effects);
+}
+
 // --- the run
 
 Options read_options(std::uint64_t seed) {
@@ -689,6 +790,13 @@ void unstick(verdite::FuzzRandom &random) {
 } // namespace
 
 void fuzz_start() {
+    if (const char *path = env("KF_FLOOR_TRACE")) {
+        fuzz.floor_trace = verdite::StateTrace::create(path, floor_trace_regions());
+        if (!fuzz.floor_trace)
+            std::fprintf(stderr, "[KF1] floor trace: cannot write %s\n", path);
+    }
+    fuzz.handover_at = static_cast<std::uint64_t>(std::max(env_number("KF_FLOOR_HANDOVER", 0), 0L));
+    fuzz.floor_dump_at = static_cast<std::uint64_t>(std::max(env_number("KF_FLOOR_DUMP", 0), 0L));
     if (const char *path = env("KF_TRACE")) {
         fuzz.trace = verdite::StateTrace::create(path, trace_regions());
         if (!fuzz.trace)
@@ -746,6 +854,12 @@ void fuzz_between_updates() {
     ++fuzz.updates;
     if (fuzz.trace)
         fuzz.trace->record(fuzz.updates, host_clock_tick());
+    if (fuzz.floor_trace)
+        fuzz.floor_trace->record(fuzz.updates, host_clock_tick());
+    if (fuzz.floor_dump_at != 0 && fuzz.updates == fuzz.floor_dump_at)
+        dump_floor_regions(env("KF_FLOOR_TRACE") ? env("KF_FLOOR_TRACE") : "floor");
+    if (fuzz.handover_at != 0 && fuzz.updates == fuzz.handover_at)
+        hand_floor_over();
     if (!fuzz.active)
         return;
     watch_player();

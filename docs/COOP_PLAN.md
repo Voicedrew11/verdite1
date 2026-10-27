@@ -121,6 +121,22 @@ a floor that ignores them. So authority is split by what causes a thing, not by 
   puppets, as it draws the other players, still running its own triggers and with the puppets
   in its own collision grid so it cannot walk through them. An owner who leaves sends a fresh
   snapshot to the next most senior player there, who takes the floor.
+- **The handover is live.** The snapshot carries everything that runs on its own on the floor
+  (every actor whole, the AI's state kept outside the actors, effects in flight, emitters, doors
+  and objects caught mid-motion, the floor's timers), so the one who takes the floor carries on
+  the same fight: no enemy resets, jumps or forgets whom it chases. Its completeness is tested,
+  not judged: a floor captured mid-fight and restored into a fresh one must step update for update
+  as the original does (Order 5 builds this first).
+- **The host runs the session wherever it stands.** Owning a floor is running its simulation;
+  it is not a say in the session. The host decides who owns every floor, on its own floor or not:
+  each player tells the host which floor it is on, the host keeps the table of owners and is
+  the only one that changes it, and every handover, arrival snapshot and restart is the host's
+  order to the players concerned, so two players arriving at once never both take a floor. The
+  host names each floor's heir with its owner, so an owner walking off sends its snapshot
+  straight to the heir without waiting; no snapshot and no play goes through the host, which
+  is on the path only of who owns what and of the records it keeps. The host takes only the
+  records of a floor from the owner it named, so a former owner's late writes are refused. The save, the party, who is in the room, sending a player away and ending
+  the room stay the host's alone. The host owns any floor it is on, since it is the most senior.
 - **An owner who drops takes the floor's live state with it.** The next most senior player on
   the floor takes it from the floor's last record, kept by the host, as if everyone there had
   just arrived: the players stay where they are, persistent actors killed stay dead, and the
@@ -350,8 +366,12 @@ What the table changed:
    world records go into the coop save; a guest alone on another floor keeps its chests and
    doors for the session. Public rooms and the title menu followed the same day (The title menu),
    with the service's list (NETWORKING_PLAN.md); sending a player away is still to come.
-5. Floor ownership: seniority, the snapshot on arrival, enemies drawn as puppets, triggers sent
-   as writes, the handover, the floor restarted from its record when its owner drops.
+5. **Begun 2026-10-27: the snapshot, its round trip and the host's table** (Floor ownership;
+   `port/ext/coop_floor.h`, `port/ext/coop_floor_owners.h`). Floor ownership: first the floor's live snapshot and its round-trip test (a floor captured
+   mid-fight and restored steps as the original), since the live handover rests on it; then the
+   host's table of owners (seniority, every change the host's order, unit-tested), the snapshot on
+   arrival, enemies drawn as puppets, triggers sent as writes, the live handover, and the floor
+   restarted from its record when its owner drops.
 6. Hits across machines (the attack event, remote players in the collision grid); menus that do
    not pause, every panel; kill credit; the exchanges.
 7. Death: watching another player (the arrival path, drawn from their camera), coming back
@@ -515,6 +535,46 @@ Not yet:
   loaded; the title menu is silent.
 - **Sending a player away** from a public room, and the service's check of names.
 
+## Floor ownership
+
+Order's fifth step, begun 2026-10-27: its two foundations are built, the session's part is not.
+
+- **The snapshot** (`port/ext/coop_floor.h`): between updates, on the floor's owner, every actor
+  slot whole, the actor definitions (floor 4's transform rewrites one), the effect records, the
+  NPCs, the dialogue gate and the ambient scripts' countdown, the object pool (objects, doors,
+  drops and their sequences), and the collision grid's occupant counts without the owner's own
+  player, whom the taker counts itself. About 37 KB, under a CONTROL message's 64 KB. Animation
+  caches are not in it: they are drawing's, rebuilt when a slot is next drawn. The floor's
+  records, the grids' shape (copy regions, heights) and the player are not either: they are the
+  world's or the player's. A restore is refused, with nothing changed, for another floor, another
+  build's layout (the structs are copied whole), or a slot whose definition, cell or tile is out
+  of range, or an object whose link the game's own restore would refuse.
+- **The round trip** (`scripts/floor_handover.py`): two seeded headless runs play the same
+  (`KF_FUZZ`, no macros, godmode); in the second, at update 1500, the floor is captured, unloaded
+  (which writes its record), loaded from that record and the snapshot put back, keeping that
+  machine's player and random stream, as a taker's are its own. A floor trace (`KF_FLOOR_TRACE`:
+  the fuzzer's regions, with the animation caches and the world's records left out, and the five
+  grids and copy regions added) must then match update for update. `KF_FLOOR_DUMP=<update>` writes
+  each region's bytes to find the field where two runs part. Checked 2026-10-27: 15 of 15 equal,
+  seeds 31 to 33 on every floor, each with up to 12 awake actors and 18 effects in flight at the
+  handover, for about 2000 updates after it. The first version only failed through the check
+  itself: the reload reset the player's `equipment_effect_ticks`, which is the player's, not the
+  floor's.
+- **The host's table** (`port/ext/coop_floor_owners.h`, 10 unit tests): seniority by first
+  arrival, the host first; a row (owner and heir) sent when it changes; a take for a more senior
+  arrival, a show for any other, a run from the record for an empty floor or one whose live state
+  was lost. An owner walking off names whom it sent its floor to, so a snapshot sent to an heir
+  who had just left is caught and the next runs the floor from the record; a take's giver who
+  leaves or drops before the taker says `taken` loses the floor the same way.
+
+Not yet: the session's part. The messages (a player's floor and whom it left a floor with, the
+host's orders, a snapshot, a record, taken); a floor's records and the world's flags from the host
+for a run from the record; a non-owner's floor (the actors not run, drawn from the owner's poses
+as the knights are, in its collision grid); triggers on another's floor sent as writes;
+`coop_floor_records_kept` called with the table; a dropped owner's floor. Not checked by the round
+trip: the Harp's floor deformation caught mid-sweep (its segments are a file static in
+`effect_update.cpp`), a boss fight's scripted loops, and a floor held by a menu or dialogue.
+
 ## The room's size
 
 Order's third step, 2026-10-27. Another player is now sent a pose every game update and played
@@ -558,7 +618,8 @@ What a room costs each player, for N players:
   snapshot must carry AI state well enough that they do not reset or jump. Smaller than feared:
   `KfActor` is about 70 bytes and its only pointer, `animation_cache`, can be rebuilt. Still to
   check: what the `unknown_*` fields hold, AI state kept outside the actor (statics in
-  `actor_behavior.cpp`), and doors and effects caught mid-motion.
+  `actor_behavior.cpp`, the spike's `actor_target_players`), and doors and effects caught
+  mid-motion. The round-trip test finds what is missed, by actor and field, rather than play.
 - **An owner dropping restarts the floor's fight.** Taken for never rebuilding a floor from
   puppets; it happens only when a guest who owns a floor with others on it loses its connection.
 - **The host is the room.** A flaky host connection ends every session it drops, and the more
@@ -686,3 +747,15 @@ What a room costs each player, for N players:
   service then has nothing to hand out; a private code is 8 digits, the only characters every
   language's menu font has. Hosting and joining from the menu are strict, and a session started
   there sets nothing aside and ends at the title.
+- 2026-10-27: the handover is live (a restart from the record was weighed for its cost and
+  rejected as a seam), with a round-trip test of the floor's snapshot built first in Order 5. The
+  host runs the session wherever it stands: it names every floor's owner and orders every
+  handover, arrival snapshot and restart, so owning a floor is running it, not a say in the
+  session, and two players arriving at once never both take it.
+- 2026-10-27: a floor's heir, named by the host with its owner: the handover's snapshot had gone
+  through the host, a hop more while the floor's enemies wait, for nothing the host decides then.
+  Every snapshot now goes straight between the two players; the host only orders.
+- 2026-10-27: Order 5's foundations (Floor ownership): the floor's snapshot, its round trip, 15 of
+  15 equal on every floor, and the host's table. The table gained `taken` and an owner's move
+  says whom it left its floor with, since a take or a walk-off crossing another player's move would
+  otherwise leave the new owner waiting for a snapshot that never comes.

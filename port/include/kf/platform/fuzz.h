@@ -22,6 +22,9 @@
 //     KF_FUZZ_COVERAGE=fuzz-coverage.txt   floors, cells and items reached ("0": none)
 //     KF_FUZZ_GAME_SEED=<n>       the game's own rand seed
 //     KF_TRACE=<file>             a state trace, one line per update (with or without the fuzzer)
+//     KF_FLOOR_TRACE=<file>       a trace of the floor's live state, as the handover check compares it
+//     KF_FLOOR_HANDOVER=<update>  at that update, hand the floor over: capture, reload, restore
+//     KF_FLOOR_DUMP=<update>      at that update, each floor trace region's bytes beside the trace
 #include <kf/lib/types.h>
 #include <kf/platform/input.h>
 
