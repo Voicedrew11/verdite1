@@ -78,7 +78,9 @@ struct CoopSaveRequest {};
 using CoopMessage = std::variant<CoopHello, CoopWelcome, CoopCharacterUpdate, CoopAcknowledged, CoopPackRequest,
     CoopWearRequest, CoopPack, CoopFeedLine, CoopSaveRequest>;
 
-// At most VO_CONTROL_BYTES; a welcome with a world too big for it is nothing.
+inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
+
+// At most coop_message_most; a welcome with a world too big for it is nothing.
 std::optional<std::vector<std::uint8_t>> coop_message_encode(const CoopMessage &message);
 // Nothing when the bytes are not a message: the wrong version or kind, a length past the end or
 // bytes left over, an item, stack, floor or cell out of range, a name outside the font.

@@ -291,7 +291,7 @@ if(doctest_FOUND)
   add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp libverdite/tests/crash.cpp
     libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp libverdite/tests/fuzz.cpp libverdite/tests/memory_card.cpp
     libverdite/tests/menu_pointer.cpp libverdite/tests/menu_settings.cpp libverdite/tests/places.cpp libverdite/tests/state_trace.cpp libverdite/tests/stick.cpp
-    libverdite/tests/options.cpp libverdite/tests/setup.cpp libverdite/tests/touch.cpp)
+    libverdite/tests/options.cpp libverdite/tests/pickup_feed.cpp libverdite/tests/setup.cpp libverdite/tests/touch.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_DATA="${CMAKE_SOURCE_DIR}/libverdite/tests/data")
   target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -429,7 +429,8 @@ endif()
 if(doctest_FOUND)
   add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp
     port/tests/online_pose.cpp port/ext/online_pose.cpp port/tests/online_playback.cpp port/ext/online_playback.cpp
-    port/tests/online_stride.cpp port/ext/online_stride.cpp)
+    port/tests/online_stride.cpp port/ext/online_stride.cpp port/tests/coop_party.cpp port/ext/coop_party.cpp
+    port/tests/coop_message.cpp port/ext/coop_message.cpp)
   target_link_libraries(kf_port_tests PRIVATE kf_frontend doctest::doctest)
   target_compile_options(kf_port_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME port COMMAND kf_port_tests)
