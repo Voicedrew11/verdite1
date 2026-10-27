@@ -7,7 +7,7 @@
 using namespace kf::ext;
 
 TEST_CASE("a pose sent is the pose received") {
-    const OnlinePose sent{3, 41.5f, 12.25f, -1.5f, 2, 3071, -800};
+    const OnlinePose sent{3, 41.5f, 12.25f, -1.5f, 2, 3071, -800, 123456, -5120};
     const auto bytes = online_pose_encode(sent);
     const auto received = online_pose_decode(bytes);
     REQUIRE(received.has_value());
@@ -19,6 +19,8 @@ TEST_CASE("a pose sent is the pose received") {
     CHECK(pose.weapon == 2);
     CHECK(pose.attack_phase == 3071);
     CHECK(pose.pitch == -800);
+    CHECK(pose.update == 123456);
+    CHECK(pose.foot_height == -5120);
 }
 
 TEST_CASE("a player with no weapon, not attacking, is a pose") {
@@ -41,11 +43,17 @@ TEST_CASE("a pitch past straight up or down is refused") {
     CHECK_FALSE(online_pose_decode(online_pose_encode({1, 10.0f, 10.0f, 0.0f, 2, -1, -1025})));
 }
 
+TEST_CASE("a height past any fall is refused") {
+    CHECK(online_pose_decode(online_pose_encode({1, 10.0f, 10.0f, 0.0f, 2, -1, 0, 0, 1 << 20})));
+    CHECK_FALSE(online_pose_decode(online_pose_encode({1, 10.0f, 10.0f, 0.0f, 2, -1, 0, 0, (1 << 20) + 1})));
+    CHECK_FALSE(online_pose_decode(online_pose_encode({1, 10.0f, 10.0f, 0.0f, 2, -1, 0, 0, -(1 << 20) - 1})));
+}
+
 TEST_CASE("bytes that are not a pose are refused") {
     auto bytes = online_pose_encode({1, 10.0f, 10.0f, 0.0f});
-    CHECK_FALSE(online_pose_decode(std::span(bytes).first(18)));
+    CHECK_FALSE(online_pose_decode(std::span(bytes).first(online_pose_bytes - 1)));
     auto wrong_version = bytes;
-    wrong_version[0] = 2;
+    wrong_version[0] = 3;
     CHECK_FALSE(online_pose_decode(wrong_version));
     CHECK_FALSE(online_pose_decode(online_pose_encode({0, 10.0f, 10.0f, 0.0f})));
     CHECK_FALSE(online_pose_decode(online_pose_encode({6, 10.0f, 10.0f, 0.0f})));

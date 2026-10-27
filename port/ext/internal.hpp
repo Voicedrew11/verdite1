@@ -158,7 +158,7 @@ bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
 // or --online-room (online_join_at_start). The service is the deployed one, or KF_ONLINE_SERVICE
 // (a local wrangler dev). Peers must have the same build (KF_VERSION and KF_BUILD_COMMIT).
 void online_start();   // joins the room given on the command line, if any
-void online_poll();    // on every host poll: the session's events, and our pose 20 times a second
+void online_poll();    // on every host poll: the session's events (our pose goes out from online_update)
 void online_stop();    // leaves the room
 void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
 // The other players in the room, as last heard from, for the automap.

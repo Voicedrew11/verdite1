@@ -1,17 +1,19 @@
-// Online play: a room joined through the Verdite online service (online/README.md), our pose and
-// weapon sent to the others 20 times a second, and theirs kept for the automap and the world. Opt-in: nothing touches the
-// network until a room is joined.
+// Online play: a room joined through the Verdite online service (online/README.md), our pose sent
+// to the others once per game update, and theirs played back for the automap and the world. Opt-in:
+// nothing touches the network until a room is joined.
 #include "internal.hpp"
+#include "online_playback.h"
 #include "online_pose.h"
 #include "online_stride.h"
 
 #include <imgui.h>
 #include <kf/platform/automap.h>
+#include <kf/platform/input.h>
 #include <kf/platform/online_players.h>
 
+#include <algorithm>
 #include <array>
 #include <cctype>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -31,24 +33,22 @@ namespace kf::ext {
 namespace {
 
 std::string start_room; // --online-room
-u8 own_weapon = online_no_weapon;          // online_publish_player, sent with each pose
-s16 own_attack_phase = online_not_attacking;
-s16 own_pitch = 0;
+std::uint32_t own_update = 0; // game updates counted by online_update, numbering the poses sent
 
 #if KF_ONLINE
 
-using Clock = std::chrono::steady_clock;
-
 constexpr const char *default_service = "https://verdite-online.voicedrew11.workers.dev";
-constexpr auto pose_period = std::chrono::milliseconds(50);
 constexpr std::size_t room_most = 64;
+constexpr int playback_delay_ms = 100; // behind the newest pose heard, to ride out late ones
+constexpr int vblanks_per_second = 60;
 
 struct SessionClose {
     void operator()(vo_session *session) const { vo_close(session); }
 };
 
 struct Peer {
-    std::optional<OnlinePose> pose;   // the last one heard
+    OnlinePlayback playback;
+    std::optional<OnlinePose> shown;   // as played back for this update
     OnlineStride stride;
 };
 
@@ -58,7 +58,6 @@ struct Online {
     vo_peer self = 0;
     std::map<vo_peer, Peer> players; // open peers
     std::string status;   // what the overlay says when not in a room, or why we left
-    Clock::time_point next_pose;
     std::array<char, room_most + 1> room_field{};
 };
 Online online;
@@ -96,8 +95,13 @@ void join(const std::string &room) {
         return;
     }
     online.room = room;
-    online.next_pose = Clock::now();
     std::printf("[online] joining room %s on %s as %s\n", room.c_str(), service.c_str(), build.c_str());
+}
+
+// At least two updates, so one late pose is not a stall.
+std::uint32_t playback_delay_updates() {
+    const int update_ms = world_update_vblanks * 1000 / vblanks_per_second;
+    return static_cast<std::uint32_t>(std::max(2, (playback_delay_ms + update_ms - 1) / update_ms));
 }
 
 std::string hex(vo_peer peer) {
@@ -113,25 +117,22 @@ void on_event(const vo_event &event) {
         std::printf("[online] in room %s as %s\n", online.room.c_str(), hex(event.peer).c_str());
         break;
     case VO_EVENT_PEER_OPEN:
-        online.players[event.peer] = {};
+        online.players.erase(event.peer);
+        online.players.emplace(event.peer, Peer{OnlinePlayback(playback_delay_updates()), {}, {}});
         std::printf("[online] %s is here\n", hex(event.peer).c_str());
         break;
     case VO_EVENT_PEER_CLOSED:
         online.players.erase(event.peer);
         std::printf("[online] %s left\n", hex(event.peer).c_str());
         break;
-    case VO_EVENT_PACKET:
-        if (event.channel != VO_CHANNEL_STATE || !online.players.contains(event.peer))
+    case VO_EVENT_PACKET: {
+        const auto known = online.players.find(event.peer);
+        if (event.channel != VO_CHANNEL_STATE || known == online.players.end())
             break;
-        if (const auto pose = online_pose_decode(std::span(event.data, event.size))) {
-            auto &known = online.players[event.peer];
-            if (!known.pose || known.pose->floor != pose->floor)
-                std::printf("[online] %s is on floor %d\n", hex(event.peer).c_str(), pose->floor);
-            if (known.pose)
-                known.stride = online_stride_step(known.stride, *known.pose, *pose);
-            known.pose = pose;
-        }
+        if (const auto pose = online_pose_decode(std::span(event.data, event.size)))
+            known->second.playback.receive(*pose);
         break;
+    }
     case VO_EVENT_ERROR:
         std::printf("[online] %s\n", event.message ? event.message : "error");
         // a failed peer is followed by its PEER_CLOSED; anything else ends the session
@@ -141,17 +142,23 @@ void on_event(const vo_event &event) {
     }
 }
 
-void send_pose() {
-    const auto now = Clock::now();
-    if (now < online.next_pose)
+void send_pose(const OnlinePlayerPose &own) {
+    if (own.floor < 1 || own.floor > automap_floor_count)
         return;
-    online.next_pose = now + pose_period;
-    const auto &map = automap_snapshot();
-    if (map.floor == 0)
-        return;
-    const auto bytes = online_pose_encode(
-        {map.floor, map.player_x, map.player_z, map.player_yaw, own_weapon, own_attack_phase, own_pitch});
+    const auto bytes = online_pose_encode({own.floor, own.x, own.z, own.yaw, own.weapon, own.attack_phase, own.pitch,
+        own_update, own.foot_height});
     vo_broadcast(online.session.get(), VO_CHANNEL_STATE, bytes.data(), bytes.size());
+}
+
+void play_on(vo_peer peer, Peer &known) {
+    const auto next = known.playback.step();
+    if (!next)
+        return;
+    if (!known.shown || known.shown->floor != next->floor)
+        std::printf("[online] %s is on floor %d\n", hex(peer).c_str(), next->floor);
+    if (known.shown)
+        known.stride = online_stride_step(known.stride, *known.shown, *next);
+    known.shown = next;
 }
 
 #endif
@@ -178,8 +185,6 @@ void online_poll() {
         if (event.kind == VO_EVENT_ERROR && event.error != VO_ERROR_PEER_FAILED)
             leave(online.status); // fatal: the session only waits to be closed
     }
-    if (online.session && online.self != 0)
-        send_pose();
 }
 
 void online_stop() {
@@ -194,7 +199,7 @@ void online_draw_panel() {
         else if (online.players.empty())
             ImGui::TextDisabled("Waiting for someone to join the same room.");
         for (const auto &[peer, known] : online.players) {
-            if (const auto &pose = known.pose)
+            if (const auto &pose = known.shown)
                 ImGui::BulletText("%s  floor %d  (%.1f, %.1f)", hex(peer).c_str(), pose->floor, pose->x, pose->z);
             else
                 ImGui::BulletText("%s  connected", hex(peer).c_str());
@@ -216,8 +221,8 @@ void online_draw_panel() {
 std::vector<OnlinePose> online_players() {
     std::vector<OnlinePose> poses;
     for (const auto &[peer, known] : online.players)
-        if (known.pose)
-            poses.push_back(*known.pose);
+        if (known.shown)
+            poses.push_back(*known.shown);
     return poses;
 }
 
@@ -264,19 +269,26 @@ std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     std::vector<OnlinePlayer> players;
 #if KF_ONLINE
     for (const auto &[peer, known] : ext::online.players)
-        if (const auto &pose = known.pose; pose && pose->floor == floor)
+        if (const auto &pose = known.shown; pose && pose->floor == floor)
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
-                pose->attack_phase, pose->pitch, known.stride.phase, known.stride.amount});
+                pose->attack_phase, pose->pitch, pose->foot_height, known.stride.phase, known.stride.amount});
 #else
     (void)floor;
 #endif
     return players;
 }
 
-void online_publish_player(u8 weapon, s16 attack_phase, s16 pitch) {
-    ext::own_weapon = weapon;
-    ext::own_attack_phase = attack_phase;
-    ext::own_pitch = pitch;
+void online_update(const OnlinePlayerPose &own) {
+    ++ext::own_update;
+#if KF_ONLINE
+    if (!ext::online.session || ext::online.self == 0)
+        return;
+    ext::send_pose(own);
+    for (auto &[peer, known] : ext::online.players)
+        ext::play_on(peer, known);
+#else
+    (void)own;
+#endif
 }
 
 }

@@ -104,10 +104,10 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
                  }
                  actor->action_progress = KF_ACTOR_PROGRESS_COMPLETE;
 diff --git a/src/game/actor_pool.cpp b/src/game/actor_pool.cpp
-index 7c6b4de806700422183551d2b4782dd3fa5eaf47..66b515ad4afe3dd69991d8cb1c0685863a551b91 100644
+index 7c6b4de806700422183551d2b4782dd3fa5eaf47..b001a3c183a768fd71aa1a1b1bc00411a97f0704 100644
 --- a/src/game/actor_pool.cpp
 +++ b/src/game/actor_pool.cpp
-@@ -4,20 +4,77 @@
+@@ -4,20 +4,78 @@
  #include <kf/lib/codec.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
@@ -140,13 +140,14 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..66b515ad4afe3dd69991d8cb1c068586
 +{
 +    std::vector<ActorPlayerPosition> players{{KF_ACTOR_TARGET_THIS_PLAYER, own_position}};
 +    for (const auto &other : kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor))) {
-+        VECTOR position = {static_cast<s32>(other.x * static_cast<float>(KF_MAP_TILE_SIZE)), 0,
++        // At their eyes, as actor_state.player_position is this player's camera.
++        const VECTOR position = {static_cast<s32>(other.x * static_cast<float>(KF_MAP_TILE_SIZE)),
++            other.foot_height - KF_PLAYER_CAMERA_HEIGHT,
 +            static_cast<s32>(other.z * static_cast<float>(KF_MAP_TILE_SIZE))};
 +        if (position.vx < 0 || position.vx >= KF_MAP_COLUMNS * KF_MAP_TILE_SIZE
 +            || position.vz < 0 || position.vz >= KF_MAP_ROWS * KF_MAP_TILE_SIZE) {
 +            continue;
 +        }
-+        position.vy = map_floor_height_at_position(&position);
 +        players.push_back({other.id, position});
 +    }
 +    return players;
@@ -185,7 +186,7 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..66b515ad4afe3dd69991d8cb1c068586
              actor_update_awareness();
              if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE) {
                  actor_update_current_action();
-@@ -25,6 +82,7 @@ void actor_pool_update(void)
+@@ -25,6 +83,7 @@ void actor_pool_update(void)
          }
      }
      actor_bind_current(NULL);
@@ -604,7 +605,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..b368f53fd40607898d0c6765bb44dadfc6b5ecca 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..88b68fa389772862b5687b0d1cb164def1f38167 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,22 +6,34 @@
@@ -674,7 +675,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..b368f53fd40607898d0c6765bb44dadf
          player_update();
          if (game_result != GameResult::Running) {
              break;
-@@ -54,11 +83,13 @@ void game_main_loop(void)
+@@ -54,11 +83,9 @@ void game_main_loop(void)
          player_update_transform_snapshot(&player_position_snapshot, &player_rotation_snapshot);
          audio_set_listener_transform(audio_state, &player_position_snapshot, &player_rotation_snapshot);
          actor_set_player_transform(&player_position_snapshot, &player_rotation_snapshot);
@@ -685,14 +686,10 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..b368f53fd40607898d0c6765bb44dadf
 +        game_world_update();
          render_frame(&player_position_snapshot, &player_rotation_snapshot);
 +        automap_publish();
-+        // PC extension (online play): what this player holds, how far through a swing and where
-+        // they look up or down, for the others in the room to draw.
-+        kf::online_publish_player(kf_enum_encode<u8>(player_state.equipped_weapon_id), player_state.weapon_attack_phase,
-+            player_state.camera_rotation.vx);
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
-@@ -78,6 +109,7 @@ void game_main_loop(void)
+@@ -78,6 +105,7 @@ void game_main_loop(void)
              player_state.previous_map_cell.x = KF_MAP_CELL_COORD_INVALID;
          }
      }
@@ -700,10 +697,22 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..b368f53fd40607898d0c6765bb44dadf
      game_shutdown();
  }
  
-@@ -86,14 +118,46 @@ void game_shutdown(void)
+@@ -86,14 +114,61 @@ void game_shutdown(void)
      audio_close_vab(audio_state);
  }
  
++// PC extension (online play): this player as the others in the room are sent it.
++static kf::OnlinePlayerPose game_online_pose(void)
++{
++    constexpr float tile_size = KF_MAP_TILE_SIZE;
++    return {kf_enum_encode<s32>(player_state.progress_state.current_floor),
++        static_cast<float>(player_state.camera_position.vx) / tile_size,
++        static_cast<float>(player_state.camera_position.vz) / tile_size,
++        static_cast<float>(player_state.camera_rotation.vy & KF_ANGLE_WRAP_MASK) * (6.2831853f / (KF_ANGLE_WRAP_MASK + 1)),
++        player_state.foot_height, kf_enum_encode<u8>(player_state.equipped_weapon_id),
++        player_state.weapon_attack_phase, player_state.camera_rotation.vx};
++}
++
 +void game_world_update(void)
 +{
 +    // A blocking loop inside the world's update (the floor-4 transform) draws frames too; the
@@ -713,6 +722,9 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..b368f53fd40607898d0c6765bb44dadf
 +    }
 +    world_update_running = true;
 +    world_update_last_tick = kf::host_clock_tick();
++    // PC extension (online play): every update, held or not, this player's pose goes to the others
++    // in the room and theirs play on by one, before the enemies choose whom to go after.
++    kf::online_update(game_online_pose());
 +    actor_pool_update();
 +    map_object_pool_update();
 +    effect_pool_update();
@@ -2063,10 +2075,10 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ac89ab381ba08bd39ae735c43a7933094b375da
+index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355bc7aa992
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,370 @@
+@@ -0,0 +1,368 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). Their right forearm is the game's own first-person weapon model
 +// (WEPON/WEPxx.MIM: a gauntlet holding the weapon) on the knight's elbow, posed by its clip at
@@ -2396,12 +2408,10 @@ index 0000000000000000000000000000000000000000..0ac89ab381ba08bd39ae735c43a79330
 +{
 +    const auto knight = tmd_resource_view(kf::online_player_model_tmd().data(), kf::online_player_model_tmd().size());
 +    const auto &joints = kf::online_player_model_joints();
-+    const s32 cell_x = std::clamp(static_cast<s32>(player.x), 0, KF_MAP_COLUMNS - 1);
-+    const s32 cell_z = std::clamp(static_cast<s32>(player.z), 0, KF_MAP_COLUMNS - 1);
 +    const auto pose = online_player_pose(player);
 +    const VECTOR feet = {
 +        static_cast<s32>(player.x * ONLINE_PLAYER_TILE_SIZE),
-+        map_base_floor_height(cell_x, cell_z) + pose.drop,
++        player.foot_height + pose.drop,
 +        static_cast<s32>(player.z * ONLINE_PLAYER_TILE_SIZE)};
 +    // The automap's yaw, back in the game's angle units, is the camera's heading h; the player
 +    // walks along (-sin h, cos h). Actors walk along (-sin a, -cos a), their models' front, so the

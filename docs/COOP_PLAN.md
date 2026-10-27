@@ -1,7 +1,7 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times; its table of the player's reads done 2026-10-27.** Nothing here is built except the other players'
-knight ([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to
+**Draft, 2026-10-26, red-teamed three times; Order's first three steps done 2026-10-27.** Built so
+far: the two spikes and the smooth knight ([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
 are [NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
 
@@ -294,8 +294,7 @@ What the table changed:
 - **The ending is everyone's.** Walking into floor 5's ending cell with `boss_defeat` set ends
   the game (`player_warp_trigger_update`, `player_warp.cpp`); in a room it plays for every
   player, wherever they are, and the coop world is marked finished.
-- **The pose** gains the game update number and the height (on a stair or in the air the knight
-  is drawn on the cell's floor today).
+- **The pose** carries the game update number and the height (done, Order's third step).
 
 ## Order
 
@@ -309,9 +308,10 @@ What the table changed:
    several players (a per-actor target in place of `actor_state.player_position`), and a world
    that does not stop while one player is held (the world update called from a menu's frame and
    from every blocking loop in the table). If either fails, the model changes.
-3. The smooth knight: poses numbered by update, a playback buffer, swings as events, height.
-   Needed by this model whatever else changes. Then the room's size measured: knights drawn and
-   poses taken on the weakest platform, the host's upload.
+3. **Done 2026-10-27, but for the 3DS** (The room's size). The smooth knight: poses numbered by
+   update, a playback buffer, swings as events, height. Needed by this model whatever else
+   changes. Then the room's size measured: knights drawn and poses taken on the weakest
+   platform, the host's upload.
 4. The coop save: the state map applied, the party's pack and purse with worn gear lent from it,
    guest slots, the world's highest floor, the guarded snapshot writes, the acknowledged writes
    to the host. The pickup feed: libverdite's model, drawn by the game.
@@ -362,6 +362,27 @@ and the dialogue page. What it found:
   platform.
 - Not yet driven: a chest's lid, the boss reveal, the weapon transform, the floor-4 transform, the
   floor-2 transfer and the warp shimmer; they draw through the same two waits.
+
+## The room's size
+
+Order's third step, 2026-10-27. Another player is now sent a pose every game update and played
+back a few updates behind, so every update of their walk and swing is drawn, on the height they
+stand at ([PLAYER_MODEL.md](PLAYER_MODEL.md)). A swing is not an event of its own: it advances a
+fixed step an update, so any pose inside it gives every update of it, and lost poses cost nothing
+the playback cannot fill in. The attack event in step 6 is for its target to feel it.
+
+What a room costs each player, for N players:
+
+- **Upload:** a 27-byte pose to each of the other N - 1, at the tick rate (12 to 30 a second, 15
+  by default), about 112 bytes with the UDP, DTLS and SCTP headers (estimated, not captured):
+  1.7 KB a second to each other player at 15, so 5 KB a second for four players, 10 KB at 30
+  updates. Poses go peer to peer, so the host sends no more than anyone. Not the limit.
+- **Drawing:** about 100 µs a knight on the desktop to pose and enqueue it, so three knights are
+  0.3 ms of a 67 ms update there. The 3DS's ARM11 is far slower and has no SIMD; its cost is the
+  number that sets the room's size, and it waits for a build that runs there. If it is too much,
+  the weapon's morph and the per-part lighting are where to look first.
+- **Poses taken:** decoding and playback are a map lookup and a blend per player per update,
+  nothing beside the drawing.
 
 ## Questions
 
@@ -484,3 +505,8 @@ and the dialogue page. What it found:
   `render_frame` and `kf::host_wait_frame`, so menus, dialogue and scripted loops do not stop it.
   The NPC being talked to is held out of the world's update, and a death in a menu waits for the
   menu to close, which step 6 has to change.
+- 2026-10-27: the smooth knight (Order's third step, The room's size): a pose every update,
+  numbered and with the height, played back a few updates behind. A swing is placed from any pose
+  inside it, so it is not an event of its own; the attack event stays in step 6. A knight costs
+  about 100 µs to draw on the desktop and four players upload about 5 KB a second each; the 3DS's
+  cost, which sets the room's size, waits for a build there.

@@ -4,9 +4,11 @@
 #include <kf/platform/fuzz.h>
 #include <kf/platform/input.h>
 #include <kf/platform/menu_pointer.h>
+#include <kf/platform/online_players.h>
 #include <kf/game/actor.h>
 #include <kf/lib/map_types.h>
 #include <kf/game/player.h>
+#include <kf/lib/codec.h>
 #include <verdite/agent.h>
 #include <verdite/crash.h>
 #include <verdite/menu_pointer.h>
@@ -124,6 +126,20 @@ std::string do_actors(verdite::AgentArgs) {
     return verdite::json_ok("actors", ",\"actors\":[" + actors + "]");
 }
 
+// The other players in the room on this floor, as drawn: online id, position in cells, feet
+// height, attack phase and stride.
+std::string do_players(verdite::AgentArgs) {
+    std::string players;
+    for (const auto &player : online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor))) {
+        char text[192];
+        std::snprintf(text, sizeof text, "%s{\"id\":%u,\"pos\":[%.3f,%.3f],\"footHeight\":%d,\"attackPhase\":%d,\"stride\":%.2f}",
+            players.empty() ? "" : ",", player.id, static_cast<double>(player.x), static_cast<double>(player.z),
+            player.foot_height, static_cast<int>(player.attack_phase), static_cast<double>(player.stride));
+        players += text;
+    }
+    return verdite::json_ok("players", ",\"players\":[" + players + "]");
+}
+
 // The menu frame on screen: each row's widget (0 window, 1 list, 2 choice), box, and
 // whether it is the cursor's and of the widget taking input.
 std::string do_menu(verdite::AgentArgs) {
@@ -216,6 +232,7 @@ void agent_start() {
         {"release", "release - let go of the pressed buttons", do_release},
         {"move", "move <cell_x> <cell_z> - put the player on a cell of this floor at the next update", do_move},
         {"actors", "actors - the awake actors on this floor and the player each goes after", do_actors},
+        {"players", "players - the other players in the room on this floor, as drawn", do_players},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
         {"point", "point <x> <y> - move the mouse over a menu (game pixels)", do_point},
         {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},

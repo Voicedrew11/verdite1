@@ -3,7 +3,8 @@
 Other players in an online room are drawn as a knight of our own, made to look like the game's
 models, holding the player's real weapon and swinging it with the game's own animation
 (`src/game/online_player_render.cpp`, in `patches/src/game.patch`), and walking in a gait shaped on
-the game's skeletons'. Not finished: a player on a stair is drawn on the cell's floor.
+the game's skeletons'. Each of their updates is played back here, a few behind, so every update
+of a walk and a swing is drawn, on the height they stand at.
 
 `tools/player_model/` holds it:
 
@@ -106,10 +107,9 @@ with the forearm bent 12 degrees, and the weapon arm holds its guard.
   unit-tested): 1700 units a cycle, the planted foot's sweep, so the feet keep pace with the
   floor. The skeleton's slide: it covers 1760 a cycle on a 1200 sweep. Moving backwards plays it
   backwards; strafing plays it forward.
-- The stride's size follows the speed (full at 150 an update), eased half way each pose, and is
-  held through two poses that repeat the last: poses go out every 50 ms of the wall clock, which
-  can fall between two game updates, and without the hold the stride shrank by half every few
-  poses. A change of floor or a move over 1000 units leaves the player standing.
+- The stride's size follows the speed (full at 150 an update), eased half way each update, and is
+  held through two updates that repeat the last, which is what the playback shows when their poses
+  run out for a moment. A change of floor or a move over 1000 units leaves the player standing.
 - `preview.py walk W` draws the knight's cycle above the skeleton's at the same phases, side on
   and three-quarters.
 
@@ -118,20 +118,37 @@ with the forearm bent 12 degrees, and the weapon arm holds its guard.
 - The knight's TMD and joints are `port/ext/online_player_model.cpp` (generated), behind
   `kf/platform/online_players.h`. The game draws each part with the actor lights, selecting the
   knight as the current TMD; nothing takes an asset slot.
-- The pose (`port/ext/online_pose.h`) is version 3, 19 bytes: it adds the equipped weapon, the
-  attack phase and the camera's pitch, which the game publishes every update
-  (`online_publish_player`).
+- The pose (`port/ext/online_pose.h`) is version 4, 27 bytes: floor, position, yaw, the equipped
+  weapon, the attack phase, the camera's pitch, the update it was sent in and the feet's height.
+  `game_world_update` sends one every update (`kf::online_update`), in the main loop and while
+  the player is held in a menu or a scripted loop, so a room sends 12 to 30 a second, the tick
+  rate.
+- **Playback** (`port/ext/online_playback.h`, unit-tested): poses are kept by their update and
+  played one per update of this machine, the same rate since a room has one tick rate. It runs
+  100 ms behind the newest heard (at least two updates) to ride out late poses; it holds the last
+  pose when they run out and waits for the delay to build again, plays two an update when more
+  than one past the delay, and jumps when 32 past it (a stall). A lost pose is filled in between
+  its neighbours (position, height, the facing the short way round, pitch), but not across a
+  change of floor or a warp. A swing advances 300 an update (`KF_WEAPON_ATTACK_PHASE_STEP`), so
+  any pose inside it places every update of it: a swing is not sent as an event of its own. The
+  attack event that lets its target feel it is coop's (`COOP_PLAN.md`, Order step 6).
+- The knight stands on the sent height plus the drop of its gait, so it climbs a stair and falls
+  as its player does. The enemies take another player at that height less the camera's 1500,
+  as they take this player at its camera.
 - The head bends about the neck by the player's pitch, so others see where they look up or
   down; held to 60 degrees, a neck's reach, though the look limit allows 85.
 - A remote player's weapon file is loaded the first time someone holds it (16 at most, about
   25 KB each), sampled into the morph scratch as the game samples its own, halved, and drawn on
   the elbow; a player with no weapon keeps the knight's own forearm.
-- The phase arrives 20 times a second and is drawn as it last arrived, so a swing shows about
-  nine of its fourteen updates.
+- Checked 2026-10-27 with two headless instances in a room at 15 updates a second: after the
+  first two, every one of the other's updates was played, two behind, through a walk and a swing
+  (all 13 of its updates, 300 to 3900), and on through a menu held open on this side. The
+  renderer's frame smoothing blends the knight between updates, as any model it draws.
+- A knight costs about 100 µs to pose and enqueue on the desktop (RelWithDebInfo, headless,
+  holding a weapon and swinging, the weapon file's load left out). Not yet profiled: the weapon's
+  morph and the eleven parts' lights are the likely bulk.
 
 ## Next
 
-1. Advance a remote swing and walk between poses at the game's rate, so every update of them is
-   drawn: at a run the knight's cycle is about nine poses, each drawn for 50 ms.
-2. The height: the pose has none, so a player on a stair or in the air is drawn on the cell's
-   floor.
+1. The room's size on the weakest platform: the knight's cost there, measured once a build runs
+   on the 3DS (`RUNTIME.md`).

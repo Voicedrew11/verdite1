@@ -270,7 +270,9 @@ settings file is the player's, and is saved on exit.
 
 Also `actors` (the awake actors on the floor: slot, definition, action, HP, position and the
 player each goes after, 0 for this one, else the online id) and `move <cell_x> <cell_z>` (puts the
-player on a cell of this floor at the next update, as the fuzzer's goto does).
+player on a cell of this floor at the next update, as the fuzzer's goto does), and `players` (the
+other players in the online room on this floor, as drawn: id, cell position, feet height, attack
+phase, stride).
 `KF_TEST_WORLD_RUNS_WHILE_HELD=1` keeps the world running in menus and scripted loops as it does
 in an online room ([COOP_PLAN.md](COOP_PLAN.md), "The spikes").
 
