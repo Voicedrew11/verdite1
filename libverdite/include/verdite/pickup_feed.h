@@ -32,8 +32,8 @@ class PickupFeed {
 public:
     explicit PickupFeed(PickupFeedShape shape = {});
 
-    // A line at now_ms. One like a line added within merge_ms adds its count to it and shows it
-    // again from the start.
+    // A line at now_ms. One like a line added within merge_ms adds its count to it, which shows
+    // again from the start as the newest.
     void add(const PickupLine &line, std::uint64_t now_ms);
 
     // The lines to draw at now_ms, oldest first; the faded ones are forgotten.
