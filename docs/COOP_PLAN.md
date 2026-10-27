@@ -1,7 +1,8 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times; Order's first three steps done 2026-10-27.** Built so
-far: the two spikes and the smooth knight ([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to
+**Draft, 2026-10-26, red-teamed three times; Order's first three steps done 2026-10-27, the fourth's
+interfaces agreed.** Built so far: the two spikes and the smooth knight
+([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
 are [NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
 
@@ -25,6 +26,9 @@ The test of the design: if a rule needs more than a line here, it is too complic
   are out of a fight.
 - If everyone goes down, the party goes back to its last save, the world with it.
 - If the host leaves, the session ends; everything up to that moment is kept.
+- Joining sets your own game aside, and leaving puts it back where you stood.
+- A room is private, joined by its code, or public, listed for anyone to join; each keeps its own
+  world.
 
 ## Fixed
 
@@ -40,6 +44,24 @@ The test of the design: if a rule needs more than a line here, it is too complic
   world, the party's pack and purse, and a character slot for every guest who has joined; a
   guest's character lives there and nowhere else (the guest's machine keeps only an export of
   it). The host may play it alone between sessions; a guest only plays it in the host's room.
+- **Joining sets the player's own game aside; leaving puts it back.** The game in progress is
+  kept as it stands (character, world, pack, automap, where they stand), in memory and in a file
+  of its own, so quitting or a crash in the room loses nothing; it is the quick save's path, a
+  third card file beside the slots' and the quick save's. Leaving, the host dropping or the
+  connection failing all bring it back, the floor reloaded. A join asked for in a menu, a
+  dialogue or a scripted loop happens at the next point between updates, as the F1 language
+  change does; from the title it is at once, and leaving goes back to the title.
+- **A coop world per room code,** kept by its host: a group keeps its world under its code, and
+  another group's does not touch it. The host plays one alone between sessions from the Online
+  panel, which sets their own game aside the same way.
+- **The host is whoever is in the room first,** and the panel says whose world it is. If the
+  wrong player arrives first, they leave and come back; handing a world to its owner is not built.
+- **Public rooms.** A room is private (joined by its code, as now) or public: the service lists
+  public rooms of the same build, with their host's name, floor and number of players, and anyone
+  may join one. A public room's world is its own, under a code the service gives it, so strangers
+  never touch a private world. In a public room the host can send a player away (their
+  character stays in the world, worn gear back in the pack), and a host who sends someone away
+  is not offered that room by the service again.
 - **Late joiners start fresh, beside the host:** level 1, adding the game's starting kit (a
   Short Sword, a Medicinal Herb, 150 gold) to the party's pack and purse, and free to wear
   whatever in the pack no one is wearing. On a deep floor a level-1 character dies often, but
@@ -235,8 +257,11 @@ What the table changed:
 ## Items
 
 - **One pack and one purse for the party.** The player bank of `item_stock` and `gold` are the
-  party's, kept by the host; every change to them goes through the host, so when two players
-  reach for the last herb the first gets it and the other is told it is gone. Stacks hold 99
+  party's, kept by the host; every change to them goes through the host. A guest's game acts at
+  once and the host settles: each update the guest compares the game's pack and purse with its
+  copy and sends the difference, and the host applies what it can (never below 0, below what
+  others wear, or past a full stack). No write in the game slips past and nothing waits; two
+  players using the last herb within a round trip both heal, and the pack stays at 0. Stacks hold 99
   (`KF_ITEM_STACK_CAPACITY`, `item_types.h`). The world holds exactly one game's loot, as in
   single player: a chest, a drop, a boss's drop, an NPC's gift and a shop's one Gold Cross are
   taken once, into the pack. Keys are in the pack like anything else, so a key spent on a door is
@@ -312,9 +337,16 @@ What the table changed:
    update, a playback buffer, swings as events, height. Needed by this model whatever else
    changes. Then the room's size measured: knights drawn and poses taken on the weakest
    platform, the host's upload.
-4. The coop save: the state map applied, the party's pack and purse with worn gear lent from it,
-   guest slots, the world's highest floor, the guarded snapshot writes, the acknowledged writes
-   to the host. The pickup feed: libverdite's model, drawn by the game.
+4. **Interfaces agreed 2026-10-27** (`verdite/pickup_feed.h`, `port/ext/coop_party.h`,
+   `port/ext/coop_message.h`, `kf/platform/coop.h`). The coop save: the state map applied, the
+   party's pack and purse with worn gear lent from it, guest slots, the world's highest floor,
+   the guarded snapshot writes, the acknowledged writes to the host, the player's own game set
+   aside and put back, a world per room code. The pickup feed: libverdite's model, drawn by the
+   game; the cause of a change (found, bought, sold, used) is said by the shop's buy and sell and
+   item use, since a difference in the pack cannot tell. Built in that order: the models with
+   their tests, the file, the session, the game's patches, the feed. Until step 5 only the host's
+   world records go into the coop save; a guest alone on another floor keeps its chests and
+   doors for the session. Public rooms follow, with the service's list (NETWORKING_PLAN.md).
 5. Floor ownership: seniority, the snapshot on arrival, enemies drawn as puppets, triggers sent
    as writes, the handover, the floor restarted from its record when its owner drops.
 6. Hits across machines (the attack event, remote players in the collision grid); menus that do
@@ -413,8 +445,15 @@ What a room costs each player, for N players:
   players, the more it costs. Taken for the simplicity (no takeover, no merge); if it proves
   common, reconnecting into the same room within a grace period is the fix, not a second copy of
   the world.
-- **Trust:** hits judged by whoever feels them let a modified client never be hit. Fine between
-  friends; not if rooms are ever public.
+- **Trust, now that rooms can be public:** hits judged by whoever feels them let a modified
+  client never be hit, and a stranger can sell the pack's unique finds. Only that public world
+  suffers, since it is its own, and the host can send them away; a modified client's own
+  invulnerability is accepted, as it spoils only its own player's game. Names are capitals and
+  digits, but can still offend: the public list needs the service's moderation (reports, a
+  word list).
+- **The wrong host:** whoever is first in the room hosts their world under that code, so a guest
+  who arrives first starts an empty one. Leaving and rejoining fixes it; if it is common, the
+  service can hold a room for the player who last hosted it.
 - **A guest without the host:** a guest's character only exists in the host's save, so a guest
   whose host stops playing loses that character. The export is a record, not playable.
 - **Dying to travel:** a player far from the others can die on purpose to come back beside one.
@@ -510,3 +549,9 @@ What a room costs each player, for N players:
   inside it, so it is not an event of its own; the attack event stays in step 6. A knight costs
   about 100 µs to draw on the desktop and four players upload about 5 KB a second each; the 3DS's
   cost, which sets the room's size, waits for a build there.
+- 2026-10-27: step 4's interfaces agreed. A guest's pack changes act at once and the host settles
+  (in place of asking the host before taking, which needed a patch and a wait at each of about 20
+  writes); two players using the last herb within a round trip both heal. Joining sets the
+  player's own game aside and leaving puts it back, so nothing is lost either way; a world per
+  room code; the host is whoever is first. Public rooms, listed by the service, each with a world
+  of its own, and the host can send a player away; the trust weak point is restated for them.

@@ -180,3 +180,8 @@ get online play by writing only their own game layer.
 - 2026-10-26: coop is one seamless playthrough, not a summon (it starved the guest of items), with
   one tick rate per room, the host's. Lockstep is out, since the game holds one floor and players
   may be on different ones; authority goes with the floor ([COOP_PLAN.md](COOP_PLAN.md)).
+- 2026-10-27: public rooms ([COOP_PLAN.md](COOP_PLAN.md), "Public rooms"): a room is private, joined
+  by its code, or public, listed by the service for its game and build with the host's name, floor
+  and number of players. The service gives a public room its code, drops a host's room from the
+  list for a player the host sent away, and moderates names. To build: the list in the service and
+  the protocol, and joining from it in the client.
