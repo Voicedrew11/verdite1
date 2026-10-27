@@ -281,7 +281,10 @@ object slot's id on this floor, 255 for none; `take` empties it as a pickup does
 "Floor ownership"). `hit <slot> [aim]` strikes an actor as the sword does at full charge, or aims a
 spell at it, and `effects` lists the effects in flight, this machine's and those it draws from the
 floor's owner; `coop` also counts the swings and hits this player felt from other machines
-([COOP_PLAN.md](COOP_PLAN.md), "Hits across machines").
+([COOP_PLAN.md](COOP_PLAN.md), "Hits across machines"). `hurt <hp>` takes HP at the next update as
+poison does, dying at 0, and `coop` also says whether this player is down, whose eyes it sees
+through, whether it is in a fight and how many times the party went back to its last save; `move`,
+`warp` and `hurt` are refused while down ([COOP_PLAN.md](COOP_PLAN.md), "Death").
 `title` reads the title menu as English text (whether it is up, the page's heading, code, note and
 rows) and `title type <digits>` types a room code on its join page ([COOP_PLAN.md](COOP_PLAN.md),
 "The title menu").

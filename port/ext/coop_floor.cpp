@@ -617,18 +617,20 @@ struct Puppet {
     u8 index;
     u8 definition_id;
     KfAnimationClip animation_clip;
+    KfActorAction action;   // whether it goes after a player (coop_death_play.cpp)
     u16 animation_phase;
     u16 health;
     u8 cell_x, cell_z;
     VECTOR position;
     SVECTOR rotation;
 };
-constexpr std::size_t puppet_bytes = 1 + 1 + 1 + 2 + 2 + 1 + 1 + 3 * 4 + 3 * 2;
+constexpr std::size_t puppet_bytes = 1 + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 3 * 4 + 3 * 2;
 
 void write_puppet(CoopByteWriter &out, std::size_t index, const KfActor &actor) {
     out.u8(static_cast<std::uint8_t>(index));
     out.u8(actor.definition_id);
     out.u8(kf_enum_encode<u8>(actor.animation_clip));
+    out.u8(kf_enum_encode<u8>(actor.action));
     out.u16(actor.animation_phase);
     out.u16(actor.health);
     out.u8(static_cast<std::uint8_t>(actor.cell_x));
@@ -646,6 +648,7 @@ std::optional<Puppet> read_puppet(CoopByteReader &in) {
     puppet.index = in.u8();
     puppet.definition_id = in.u8();
     puppet.animation_clip = kf_enum_decode<KfAnimationClip>(in.u8());
+    puppet.action = kf_enum_decode<KfActorAction>(in.u8());
     puppet.animation_phase = in.u16();
     puppet.health = in.u16();
     puppet.cell_x = in.u8();
@@ -820,6 +823,7 @@ void show_actors(const std::array<std::optional<Puppet>, KF_ACTOR_CAPACITY> &sho
         actor.lifecycle = KF_ACTOR_LIFECYCLE_ACTIVE;
         actor.definition_id = puppet->definition_id;
         actor.animation_clip = clip_drawable(puppet->definition_id, puppet->animation_clip);
+        actor.action = puppet->action;
         actor.animation_phase = puppet->animation_phase;
         actor.health = puppet->health;
         actor.cell_x = puppet->cell_x;

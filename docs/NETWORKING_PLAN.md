@@ -177,6 +177,8 @@ get online play by writing only their own game layer.
 - 2026-10-27: a pose every game update, not 20 a second on the wall clock, numbered by the update
   and carrying the feet's height (version 4, 27 bytes), and played back a few updates behind so
   every update of another player is drawn ([PLAYER_MODEL.md](PLAYER_MODEL.md)).
+- 2026-10-27: the pose also says whether its player is down or in a fight (version 5, 28 bytes),
+  for coop's death ([COOP_PLAN.md](COOP_PLAN.md), "Death").
 - 2026-10-26: coop is one seamless playthrough, not a summon (it starved the guest of items), with
   one tick rate per room, the host's. Lockstep is out, since the game holds one floor and players
   may be on different ones; authority goes with the floor ([COOP_PLAN.md](COOP_PLAN.md)).

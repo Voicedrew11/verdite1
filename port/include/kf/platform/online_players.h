@@ -24,13 +24,14 @@ struct OnlinePlayer {
     s32 foot_height;  // the feet's y, up is negative
     float stride_phase; // 0..1 through the walk; the right foot leaves the ground at 0, the left at 0.5
     float stride;       // 0 standing .. 1 a full stride
+    bool eyes;          // this player, down, sees through theirs: their knight is not drawn here
 };
 
 // Whether the world keeps running while this player is held in a menu or a scripted loop: in a
 // room (docs/COOP_PLAN.md), or with KF_TEST_WORLD_RUNS_WHILE_HELD=1 for tests without one.
 bool online_world_runs_while_held();
 
-// The other players on this floor (1..5), as last heard from; empty when not in a room.
+// The other players on this floor (1..5) who are up, as last heard from; empty when not in a room.
 std::vector<OnlinePlayer> online_players_on_floor(int floor);
 
 // This player, as the others in the room are sent it.

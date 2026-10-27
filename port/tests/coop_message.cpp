@@ -229,3 +229,22 @@ TEST_CASE("a welcome with a world too big for one message is nothing") {
     big.world.assign(coop_message_most, 0);
     CHECK_FALSE(coop_message_encode(big));
 }
+
+TEST_CASE("a save request, a wipe and its answer come back as they were sent") {
+    const CoopSaveRequest save = round_trip(CoopSaveRequest{{5, 39, 47}});
+    CHECK((save.at.floor == 5 && save.at.cell_x == 39 && save.at.cell_z == 47));
+    const CoopWipe wipe = round_trip(CoopWipe{3, welcome()});
+    CHECK(wipe.life == 3);
+    CHECK(wipe.start.state == welcome().state);
+    CHECK(wipe.start.world == welcome().world);
+    CHECK((wipe.start.floor == 3 && wipe.start.cell_x == 99 && wipe.start.cell_z == 12));
+    CHECK(round_trip(CoopWiped{7}).life == 7);
+}
+
+TEST_CASE("a save request off the map, or a wipe of life 0, is refused") {
+    CHECK_FALSE(coop_message_decode(encoded(CoopSaveRequest{{6, 1, 1}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopSaveRequest{{1, 100, 1}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopSaveRequest{{1, 1, 100}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopWipe{0, welcome()})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopWiped{0})));
+}

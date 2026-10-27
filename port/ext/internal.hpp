@@ -7,6 +7,7 @@
 #include <verdite/title_menu.h>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <span>
 #include <string_view>
 #include <string>
@@ -166,8 +167,10 @@ void online_start();   // joins the room given on the command line, if any
 void online_poll();    // on every host poll: the session's events (our pose goes out from online_update)
 void online_stop();    // leaves the room
 void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
-// The other players in the room, as last heard from, for the automap.
+// The other players in the room who are up, as last heard from, for the automap.
 std::vector<OnlinePose> online_players();
+// Every other player in the room as last played back, down or up, by peer.
+std::map<std::uint64_t, OnlinePose> online_room_poses();
 // A join asked for by the title menu: as the room's first (hosting) or after someone (joining).
 // One that finds the room the other way round leaves at once. A listed_as lists the room under
 // that host name (a public code only).
@@ -205,6 +208,8 @@ void coop_room_left();   // left, dropped or failed: this player's own game come
 // The pickup feed's lines now, oldest first, and a line's player's name.
 std::vector<verdite::PickupShown> coop_feed_lines();
 std::string coop_player_name(std::uint32_t player);
+// A player's name by its id (CoopPlayerId).
+std::string coop_player_name_of(std::uint64_t player);
 // The title's coop start: once the room is joined, whether the world can go in (the host at once,
 // a guest once the host welcomed it); then the world goes in at the first point between updates
 // without setting a game aside, and leaving it goes back to the title.

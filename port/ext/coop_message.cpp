@@ -187,10 +187,25 @@ bool read(CoopByteReader &in, CoopFeedLine &line) {
     return read_cause(in, line.cause) && read_change(in, line.change);
 }
 
-void write(CoopByteWriter &, const CoopSaveRequest &) {}
+void write_save_point(CoopByteWriter &out, const CoopSavePoint &point) {
+    out.u8(static_cast<std::uint8_t>(point.floor));
+    out.u8(point.cell_x);
+    out.u8(point.cell_z);
+}
 
-bool read(CoopByteReader &, CoopSaveRequest &) {
-    return true;
+bool read_save_point(CoopByteReader &in, CoopSavePoint &point) {
+    point.floor = in.u8();
+    point.cell_x = in.u8();
+    point.cell_z = in.u8();
+    return in.ok() && coop_save_point_valid(point);
+}
+
+void write(CoopByteWriter &out, const CoopSaveRequest &request) {
+    write_save_point(out, request.at);
+}
+
+bool read(CoopByteReader &in, CoopSaveRequest &request) {
+    return read_save_point(in, request.at);
 }
 
 void write(CoopByteWriter &out, const CoopRoster &roster) {
@@ -422,6 +437,25 @@ bool read(CoopByteReader &in, CoopPlayerHit &hit) {
     return in.ok() && floor_valid(hit.floor);
 }
 
+void write(CoopByteWriter &out, const CoopWipe &wipe) {
+    out.u32(wipe.life);
+    write(out, wipe.start);
+}
+
+bool read(CoopByteReader &in, CoopWipe &wipe) {
+    wipe.life = in.u32();
+    return read(in, wipe.start) && wipe.life != 0;
+}
+
+void write(CoopByteWriter &out, const CoopWiped &wiped) {
+    out.u32(wiped.life);
+}
+
+bool read(CoopByteReader &in, CoopWiped &wiped) {
+    wiped.life = in.u32();
+    return in.ok() && wiped.life != 0;
+}
+
 template <typename Message>
 std::optional<CoopMessage> read_as(CoopByteReader &in) {
     Message message{};
@@ -431,12 +465,12 @@ std::optional<CoopMessage> read_as(CoopByteReader &in) {
 }
 
 using Reader = std::optional<CoopMessage> (*)(CoopByteReader &);
-constexpr std::array<Reader, 21> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
+constexpr std::array<Reader, 23> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
     &read_as<CoopAcknowledged>, &read_as<CoopPackRequest>, &read_as<CoopWearRequest>, &read_as<CoopPack>,
     &read_as<CoopFeedLine>, &read_as<CoopSaveRequest>, &read_as<CoopRoster>, &read_as<CoopFloorAt>,
     &read_as<CoopFloorOrders>, &read_as<CoopFloorRecord>, &read_as<CoopFloorSnapshot>, &read_as<CoopFloorTaken>,
     &read_as<CoopFloorWrites>, &read_as<CoopActorHit>, &read_as<CoopActorAim>, &read_as<CoopKill>,
-    &read_as<CoopSwing>, &read_as<CoopPlayerHit>};
+    &read_as<CoopSwing>, &read_as<CoopPlayerHit>, &read_as<CoopWipe>, &read_as<CoopWiped>};
 static_assert(readers.size() == std::variant_size_v<CoopMessage>);
 
 } // namespace

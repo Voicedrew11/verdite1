@@ -2,6 +2,8 @@
 
 #include "coop_bytes.h"
 
+#include <kf/platform/automap.h>
+
 #include <algorithm>
 #include <limits>
 #include <set>
@@ -27,7 +29,7 @@ constexpr std::array<SlotItems, coop_worn_slots> slot_items = {{
 }};
 
 constexpr std::array<std::uint8_t, 8> file_magic = {'K', 'F', 'C', 'O', 'O', 'P', 0, 0};
-constexpr std::uint32_t file_version = 1;
+constexpr std::uint32_t file_version = 2;   // 1: no save point
 constexpr std::size_t file_header_bytes = file_magic.size() + 12;
 constexpr std::uint32_t crc32_reflected_polynomial = 0xedb88320u;
 
@@ -105,7 +107,36 @@ std::optional<CoopWorldState> read_state(CoopByteReader &in) {
     return CoopWorldState{CoopParty(std::move(characters), pack, gold), std::move(world)};
 }
 
+// After the last save, version 2 on: whether there is a save point, and where.
+void write_save_point(CoopByteWriter &out, const std::optional<CoopSavePoint> &point) {
+    out.u8(point ? 1 : 0);
+    if (!point)
+        return;
+    out.u8(static_cast<std::uint8_t>(point->floor));
+    out.u8(point->cell_x);
+    out.u8(point->cell_z);
+}
+
+bool read_save_point(CoopByteReader &in, std::optional<CoopSavePoint> &point) {
+    const std::uint8_t has = in.u8();
+    if (!in.ok() || has > 1)
+        return false;
+    if (has == 0)
+        return true;
+    CoopSavePoint read;
+    read.floor = in.u8();
+    read.cell_x = in.u8();
+    read.cell_z = in.u8();
+    point = read;
+    return in.ok() && coop_save_point_valid(read);
+}
+
 } // namespace
+
+bool coop_save_point_valid(const CoopSavePoint &point) {
+    return point.floor >= 1 && point.floor <= coop_floor_count && point.cell_x < automap_columns &&
+           point.cell_z < automap_rows;
+}
 
 bool coop_name_valid(std::string_view name) {
     if (name.empty() || name.size() > coop_name_most)
@@ -301,6 +332,7 @@ std::vector<std::uint8_t> coop_world_encode(const CoopWorldFile &file) {
     payload.u8(file.last_save ? 1 : 0);
     if (file.last_save)
         write_state(payload, *file.last_save);
+    write_save_point(payload, file.save_point);
     CoopByteWriter out;
     out.raw(file_magic);
     out.u32(file_version);
@@ -317,7 +349,7 @@ std::optional<CoopWorldFile> coop_world_decode(std::span<const std::uint8_t> byt
     const std::uint32_t version = header.u32();
     const std::uint32_t size = header.u32();
     const std::uint32_t sum = header.u32();
-    if (!header.ok() || version != file_version || size != bytes.size() - file_header_bytes)
+    if (!header.ok() || version < 1 || version > file_version || size != bytes.size() - file_header_bytes)
         return std::nullopt;
     const auto payload = bytes.subspan(file_header_bytes);
     if (sum != checksum(payload))
@@ -326,7 +358,7 @@ std::optional<CoopWorldFile> coop_world_decode(std::span<const std::uint8_t> byt
     auto live = read_state(in);
     if (!live)
         return std::nullopt;
-    CoopWorldFile file{std::move(*live), std::nullopt};
+    CoopWorldFile file{std::move(*live), std::nullopt, std::nullopt};
     const std::uint8_t has_last_save = in.u8();
     if (has_last_save > 1)
         return std::nullopt;
@@ -335,6 +367,8 @@ std::optional<CoopWorldFile> coop_world_decode(std::span<const std::uint8_t> byt
         if (!file.last_save)
             return std::nullopt;
     }
+    if (version >= 2 && !read_save_point(in, file.save_point))
+        return std::nullopt;
     if (!in.done())
         return std::nullopt;
     return file;

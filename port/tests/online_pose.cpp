@@ -67,3 +67,19 @@ TEST_CASE("a pose off the map or not finite is refused") {
     CHECK_FALSE(online_pose_decode(online_pose_encode({1, nan, 10.0f, 0.0f})));
     CHECK_FALSE(online_pose_decode(online_pose_encode({1, 10.0f, 10.0f, infinity})));
 }
+
+TEST_CASE("a pose says whether its player is down or in a fight") {
+    for (const bool down : {false, true})
+        for (const bool fighting : {false, true}) {
+            OnlinePose pose{1, 10.0f, 20.0f, 0.5f, 3, -1, 0, 7, -400};
+            pose.down = down;
+            pose.fighting = fighting;
+            const auto received = online_pose_decode(online_pose_encode(pose));
+            REQUIRE(received.has_value());
+            CHECK(received.value_or(OnlinePose{}).down == down);
+            CHECK(received.value_or(OnlinePose{}).fighting == fighting);
+        }
+    auto unknown = online_pose_encode({1, 10.0f, 20.0f, 0.5f, 3, -1, 0, 7, -400});
+    unknown.back() = 4;
+    CHECK_FALSE(online_pose_decode(unknown));
+}

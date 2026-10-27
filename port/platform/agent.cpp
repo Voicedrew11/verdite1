@@ -1,4 +1,5 @@
 #include <kf/platform/agent.h>
+#include <kf/platform/coop.h>
 #include <kf/ext/ext.h>
 #include <kf/platform/host.h>
 #include <kf/platform/fuzz.h>
@@ -38,6 +39,7 @@ bool quit_requested;
 std::optional<std::array<int, 2>> move_request; // a cell, applied between updates
 std::optional<std::array<long, 2>> give_request; // an item (255: gold) and a count, applied between updates
 std::optional<int> warp_request;                // a floor, applied between updates
+std::optional<int> hurt_request;                // hp lost between updates, as poison takes it
 std::optional<std::size_t> take_request;
 std::optional<std::size_t> hit_request;         // an actor slot struck between updates, as the sword does        // an object slot emptied between updates, as a pickup does
 
@@ -112,6 +114,8 @@ std::string do_release(verdite::AgentArgs) {
 std::string do_move(verdite::AgentArgs args) {
     if (args.size() != 2)
         return verdite::json_error("move <cell_x> <cell_z>");
+    if (coop_player_down())
+        return verdite::json_error("the player is down");
     char *end_x = nullptr, *end_z = nullptr;
     const long x = std::strtol(args[0].c_str(), &end_x, 10), z = std::strtol(args[1].c_str(), &end_z, 10);
     if (*end_x || *end_z || x < 0 || z < 0 || x >= KF_MAP_COLUMNS || z >= KF_MAP_ROWS)
@@ -123,6 +127,8 @@ std::string do_move(verdite::AgentArgs args) {
 std::string do_warp(verdite::AgentArgs args) {
     if (args.size() != 1)
         return verdite::json_error("warp <floor 1..5>");
+    if (coop_player_down())
+        return verdite::json_error("the player is down");
     char *end = nullptr;
     const long floor = std::strtol(args[0].c_str(), &end, 10);
     if (*end || floor < 1 || floor > 5)
@@ -183,6 +189,19 @@ std::string do_give(verdite::AgentArgs args) {
         return verdite::json_error("items are 0..79, or 255 for gold; counts -100000..100000");
     give_request = std::array{item, count};
     return verdite::json_ok("give");
+}
+
+std::string do_hurt(verdite::AgentArgs args) {
+    if (args.size() != 1)
+        return verdite::json_error("hurt <hp>");
+    if (coop_player_down())
+        return verdite::json_error("the player is down");
+    char *end = nullptr;
+    const long hp = std::strtol(args[0].c_str(), &end, 10);
+    if (*end || hp < 1 || hp > KF_PLAYER_VITAL_MAX)
+        return verdite::json_error("hurt <hp 1..9999>");
+    hurt_request = static_cast<int>(hp);
+    return verdite::json_ok("hurt");
 }
 
 std::string do_coop(verdite::AgentArgs) {
@@ -358,6 +377,7 @@ void agent_start() {
         {"object", "object <slot> [take] - an object slot's id on this floor (255 none); take empties it as a pickup does", do_object},
         {"hit", "hit <slot> [aim] - strike an actor at the next update as the sword does at full charge, or aim a spell at it", do_hit},
         {"give", "give <item> <count> - change the pack (item 255: the purse) at the next update, as a pickup or use would", do_give},
+        {"hurt", "hurt <hp> - lose hp at the next update as poison takes it, dying at 0", do_hurt},
         {"coop", "coop - the coop session: role, whether its world is in play, the pack, purse and what each player wears", do_coop},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
         {"title", "title [type <digits>] - the title menu's page as English text; type a room code on its join page", do_title},
@@ -386,6 +406,11 @@ void agent_between_updates() {
             player_state.striking_attack, player_state.piercing_attack, player_state.holy_attack,
             player_state.fire_attack, KF_ACTOR_DAMAGE_SCALE_ONE, KF_ACTOR_DAMAGE_CREDIT_PLAYER);
         hit_request.reset();
+    }
+    if (hurt_request) {
+        if (!coop_player_down() && player_state.update_state != KF_PLAYER_UPDATE_DYING)
+            player_adjust_hp(-*hurt_request);
+        hurt_request.reset();
     }
     if (take_request) {
         map_object_state.objects[*take_request].object_id = KF_OBJECT_NONE;

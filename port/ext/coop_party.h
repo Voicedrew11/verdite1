@@ -127,8 +127,17 @@ private:
     std::uint32_t gold_ = 0;
 };
 
+// Where a player stood: the party stands there when it goes back to its last save.
+struct CoopSavePoint {
+    int floor = 1;
+    std::uint8_t cell_x = 0, cell_z = 0;
+};
+// Whether a floor is 1..5 and a cell on the map.
+bool coop_save_point_valid(const CoopSavePoint &point);
+
 // The coop world as the host's file keeps it: the live state, written as play goes on, and the
-// last save, the whole party and world as when anyone last saved at a save point.
+// last save, the whole party and world as when anyone last saved at a save point, with where they
+// saved.
 struct CoopWorldState {
     CoopParty party;
     std::vector<std::uint8_t> world;   // the game's floors and story flags, and the two shops' banks
@@ -136,11 +145,13 @@ struct CoopWorldState {
 struct CoopWorldFile {
     CoopWorldState live;
     std::optional<CoopWorldState> last_save;
+    std::optional<CoopSavePoint> save_point{};   // the last save's; none from a file of version 1, when each
+                                                 // character stands where it stood when saved
 };
 std::vector<std::uint8_t> coop_world_encode(const CoopWorldFile &file);
 // Nothing when the bytes are not a coop world: the wrong magic or version, a bad checksum, a count
 // or length that runs past the end, a stack over 99, a name outside the font, two characters with
-// one id, or a floor outside 1..5.
+// one id, or a floor or save point outside the map.
 std::optional<CoopWorldFile> coop_world_decode(std::span<const std::uint8_t> bytes);
 
 }

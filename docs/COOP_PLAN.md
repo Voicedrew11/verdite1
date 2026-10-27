@@ -1,7 +1,7 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times; Order's first six steps done 2026-10-27, public
-rooms and the title menu with them.** Built so far: the two spikes, the smooth knight
+**Draft, 2026-10-26, red-teamed three times; Order's seven steps done 2026-10-27, public rooms
+and the title menu with them.** Built so far: the two spikes, the smooth knight
 ([PLAYER_MODEL.md](PLAYER_MODEL.md)) and the coop save (The coop save). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
 are [NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
@@ -383,8 +383,9 @@ What the table changed:
    machine runs, remote players in the collision grid); what a non-owner does not yet see
    (enemies' effects and sounds); menus that do not pause, every panel; kill credit; the
    exchanges.
-7. Death: watching another player (the arrival path, drawn from their camera), coming back
-   beside them, the wipe loading the last save.
+7. **Done 2026-10-27** (Death; `port/ext/coop_death.h`, `port/ext/coop_death_play.h`). Death:
+   watching another player (the arrival path, drawn from their camera), coming back beside them,
+   the wipe loading the last save.
 
 ## The spikes
 
@@ -465,10 +466,10 @@ room's coop world. `port/ext/coop.cpp` is the session; the party's rules and the
 - **The file:** the host stores its own character every second and the guests' as they send them,
   and writes the file at most every 5 seconds, at a save point (the whole live state is also
   kept as the last save), and when it leaves the room, quitting included.
-- **Guards until their steps:** in a coop world F2 and F4 do nothing, a slot's game is never
-  loaded, and a death revives as if with a fruit and keeps the fruit, since the game's restart is
-  a new game, which would empty the party's pack (Order 7 replaces it). NPC stages and the floor-2
-  departure read the world's highest floor, and a stage never goes lower.
+- **Guards:** in a coop world F2 and F4 do nothing and a slot's game is never loaded. A death goes
+  down (Death) in place of the game's revival or restart, which is a new game and would empty the
+  party's pack. NPC stages and the floor-2 departure read the world's highest floor, and a stage
+  never goes lower.
 - **The feed** is drawn by the game after its HUD (`menu_draw_pickup_feed`), at the left of the
   picture: the line spelled by `menu_spell` with the item's name as the menus draw it, faded
   with the shade `menu_draw_text` takes. In English "PLAYER1234 USED MEDICINAL HERB"; in Japanese
@@ -595,8 +596,8 @@ Order's fifth step, done 2026-10-27: the two foundations, then the session's par
   host's row names it the owner. A guest owner sends its record to the host at most once a second
   while the floor changes. The host keeps a record only from the owner its table names, and the
   welcome's world carries what it kept.
-- **A non-owner's floor:** the owner sends its awake actors every update on the STATE channel (27
-  bytes each, in parts of at most 1100 bytes, `port/ext/coop_floor_frames.h`, 5 unit tests), and
+- **A non-owner's floor:** the owner sends its awake actors every update on the STATE channel (28
+  bytes each since step 7, which added the action, in parts of at most 1100 bytes, `port/ext/coop_floor_frames.h`, 5 unit tests), and
   the others play them back three updates behind, as the knights are: slot, definition, clip and
   phase, health, cell, position and rotation, counted in the collision grid where they stand, the
   clip clamped to what this machine's model has (floor 5's variants). A hit on an actor another
@@ -628,8 +629,6 @@ Not yet:
   stage are shared). Enemies' effects and sounds are shown since step 6 (Hits across machines).
 - **A player arriving takes the snapshot of the moment the owner sent it:** what that player
   changed in the round trip before (a pickup) is undone on its machine, though the owner has it.
-- **A death off floor 1** loads floor 1 without unloading the floor the player died on, so a
-  floor it owned with others on it runs from the record (step 7's death replaces the revival).
 - Not checked by the round trip: the Harp's floor deformation caught mid-sweep (its segments are a
   file static in `effect_update.cpp`), a boss fight's scripted loops, and a floor held by a menu or
   dialogue. Not driven in a room: a boss fight, the floor-4 transform, floor 5's variants.
@@ -684,6 +683,72 @@ Not yet:
   so an enemy spawns beside a guest who has just arrived only when the owner has too.
 - The actor spawner's new actors face the owner's player.
 
+## Death
+
+Order's seventh step, done 2026-10-27: the rules in `port/ext/coop_death.h` (unit-tested), this
+machine's part in `port/ext/coop_death_play.h`, the wipe in the session (`port/ext/coop.cpp`).
+
+- **Going down:** when the death fade ends, `player_death_update` asks `kf::coop_player_died`, which
+  in a coop world puts the player down in place of the game's revival or new game. Down, the
+  player is out of the world: `player_distance_to_point` finds it nowhere (so no collision, trap,
+  blast or spell meets it), `player_apply_damage` does nothing, the actors leave it out of their
+  targets, the collision grid does not count it, the floor scripts and warps do not fire where its
+  view is, and a kill gives it nothing. HP stays 0, so menus back out by themselves, and `move`,
+  `warp` and `hurt` on the agent are refused.
+- **The pose says so:** a pose carries two flags (version 5, 28 bytes), down and in a fight. A down
+  player is left out of `online_players_on_floor`, so no machine draws, targets, counts or hits it;
+  the pose is the one source, as continuous as the position.
+- **Seeing through another's eyes:** each update, in place of its own, a down player looks from the
+  eyes of an up player: the one it had, else the nearest on its floor, else the first in the room's
+  order; Attack or Confirm moves to the next. Its camera, cell and feet are theirs (so drawing,
+  sound and the automap follow), and the knight it looks out of is not drawn on its machine. When
+  they are on another floor it goes there as a warp does, through `map_unload_floor`, so an owner
+  hands its floor on and the arrival path follows: it counts as on that floor, and may run it. The
+  game draws "WATCHING PLAYER1234" low in the middle of the picture, in the menu font.
+- **Out of a fight:** judged by the player's own machine for its pose: a hit taken
+  (`player_apply_damage`) or dealt (`actor_apply_damage` with its credit) in the last 4 seconds, or
+  an awake enemy pursuing or attacking it. The owner knows its actors' targets; a machine drawing
+  the owner's actors takes the nearest player up, as the owner chooses, so the owner's frame now
+  carries each actor's action. An enemy near but wandering is not a fight.
+- **Coming back:** at least 3 seconds down, so whose eyes is said, and then once those eyes are out
+  of a fight, or after 30 seconds whatever the fight. The player stands on the first cell beside
+  them a player could stand on now (the game's own collision query, about as high as their feet, no
+  warp or pit), else the four corners, else their own cell, facing as they face, revived as with a
+  Grass Fruit and faded in as the revival is. Arriving on a floor while down does not let enemies
+  spawn beside it.
+- **The wipe:** when every player in the room is down, the host sends the party back to its last
+  save. The live world becomes the last save; each character is as saved, but one who joined since
+  keeps what it has; everyone in the room wears what of their gear is free; and each player's game
+  is put in again at the save point, with nothing set aside (`CoopWipe`, a welcome's fields and the
+  wipe's number). A host alone is a party of one. A world never saved goes back to how it was
+  opened, so there is always a last save.
+- **What was said before the wipe:** a guest's messages still on their way when the wipe comes are
+  of a world that no longer is (a write to a chest, a record, a hit, a pack change). Each guest,
+  once back at the save, says so to everyone (`CoopWiped`, after everything it said before on that
+  channel), and until then each machine drops what that guest sends; the host's messages need no
+  such gate, since its wipe comes after all of them. A guest not yet back counts as up, so the host
+  never wipes twice on stale poses.
+- **The save point:** where the party stands after a wipe is kept with the last save (the coop
+  file's version 2; a version-1 file is read, and stands the party where its world is opened). A
+  guest's save request now says where it saved.
+- **A character kept dying or down** (a state is taken at any moment, mid-fade too) comes into the
+  world whole and standing.
+- **Checked** (`scripts/coop_death.py`, 11 checks, two headless instances on a local service, plain
+  and under ASan and UBSan, where libjuice's `picohash.h` is the only report): B dead on floor 2 goes
+  down seeing through A's eyes, follows A onto floor 1 and comes back beside A whole; down, B is
+  drawn by no one and no enemy goes after it; B stays down while A is chased and comes back once A
+  is clear; both down, both stand at the save point whole with an object A took since back on both,
+  and B draws A's floor again; A alone, dying, is back at the save point.
+
+Not yet:
+
+- **Judged by eye and by play:** the watching line, the cut from the dead player's fade to
+  another's eyes and from their eyes to the revival's fade, and the lengths (3, 4 and 30 seconds).
+- **A race at the wipe:** a player coming back as the last other goes down can be wiped with the
+  rest, since the host judges by poses a few updates old.
+- A down player's floor-5 variant is the entry's, whatever the eyes' variant.
+- The Grass Fruit still does nothing in coop.
+
 ## The room's size
 
 Order's third step, 2026-10-27. Another player is now sent a pose every game update and played
@@ -694,8 +759,8 @@ the playback cannot fill in. The attack event (Hits across machines) is for its 
 
 What a room costs each player, for N players:
 
-- **Upload:** a 27-byte pose to each of the other N - 1, at the tick rate (12 to 30 a second, 15
-  by default), about 112 bytes with the UDP, DTLS and SCTP headers (estimated, not captured):
+- **Upload:** a 28-byte pose to each of the other N - 1, at the tick rate (12 to 30 a second, 15
+  by default), about 113 bytes with the UDP, DTLS and SCTP headers (estimated, not captured):
   1.7 KB a second to each other player at 15, so 5 KB a second for four players, 10 KB at 30
   updates. Poses go peer to peer, so the host sends no more than anyone. Not the limit.
 - **Drawing:** about 100 µs a knight on the desktop to pose and enqueue it, so three knights are
@@ -704,7 +769,7 @@ What a room costs each player, for N players:
   the weapon's morph and the per-part lighting are where to look first.
 - **Poses taken:** decoding and playback are a map lookup and a blend per player per update,
   nothing beside the drawing.
-- **A floor's actors:** its owner also sends every other player its awake actors each update, 27
+- **A floor's actors:** its owner also sends every other player its awake actors each update, 28
   bytes each, and its actors' effects in flight, 30 bytes each: about 450 bytes with the headers for a dozen awake, so about 7 KB a second to each
   other player at 15 updates, sent to everyone and kept only on the owner's floor. A handover or
   an arrival's snapshot is about 40 KB, once.
@@ -754,8 +819,9 @@ What a room costs each player, for N players:
   It costs a wait until that player is out of a fight, and it brings the party together, which is
   the point. Accepted, as is a player far across the floor sharing a kill's experience.
 - **What is "out of a fight"?** A few seconds without a hit and no enemy chasing may never come
-  in a long boss fight, leaving the dead watching to the end. Judged by play; a longest wait
-  after which they come back anyway is the fix if it drags.
+  in a long boss fight, leaving the dead watching to the end. It came at once in testing: floor 1
+  has an enemy that pursues from behind a wall it cannot pass, forever. So a down player comes
+  back after 30 seconds whatever the fight (Death); the length is for play to judge.
 - **A party against enemies tuned for one.** Enemies target the nearest player, so the others get
   free hits from behind, and full experience for each multiplies the rate; four knights may
   flatten the game. No scaling until it is judged by play; if it is needed, enemy health by the
@@ -883,3 +949,8 @@ What a room costs each player, for N players:
   their flight exists only there. Players pass through each other, so one-cell corridors cannot be
   blocked. The last player's aim wins, as the game keeps one. Effects' sounds play as they appear
   and go. A dead player's menu backs out by itself.
+- 2026-10-27: Order 7 done (Death). Down and in a fight travel in the pose, not as messages, as
+  continuous state; the fight is judged by the player's own machine, the enemies' part of it by
+  their action, so the owner's frame carries it. A down player comes back after 30 seconds
+  whatever the fight, since an enemy that cannot reach a player can pursue it forever. The wipe
+  needs a guard against a guest's messages from before it, and a save point kept in the file.

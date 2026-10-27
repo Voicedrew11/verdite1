@@ -174,6 +174,49 @@ TEST_CASE("a coop world written is the world read") {
     CHECK_FALSE(without.value_or(CoopWorldFile{}).last_save.has_value());
 }
 
+TEST_CASE("a coop world keeps where its last save was made") {
+    CoopParty party;
+    party.join(1, "HOST");
+    CoopWorldFile file{{party, {1}}, CoopWorldState{party, {2}}, CoopSavePoint{3, 45, 67}};
+    const auto decoded = coop_world_decode(coop_world_encode(file));
+    REQUIRE(decoded.has_value());
+    const auto kept = decoded.value_or(CoopWorldFile{}).save_point;
+    REQUIRE(kept.has_value());
+    const CoopSavePoint point = kept.value_or(CoopSavePoint{});
+    CHECK((point.floor == 3 && point.cell_x == 45 && point.cell_z == 67));
+    file.save_point = CoopSavePoint{6, 0, 0};
+    CHECK_FALSE(coop_world_decode(coop_world_encode(file)));
+    file.save_point = CoopSavePoint{1, 100, 0};
+    CHECK_FALSE(coop_world_decode(coop_world_encode(file)));
+}
+
+TEST_CASE("a coop world of version 1 is read, with no save point") {
+    CoopParty party;
+    party.join(1, "HOST");
+    auto bytes = coop_world_encode({{party, {1}}, CoopWorldState{party, {2}}, std::nullopt});
+    // Version 1 had no save point: its payload ends at the last save, with the header to match.
+    bytes.pop_back();
+    const auto put_u32 = [&](std::size_t at, std::uint32_t value) {
+        for (int i = 0; i < 4; ++i)
+            bytes[at + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(value >> (8 * i));
+    };
+    constexpr std::size_t header = 20;
+    std::uint32_t crc = ~0u;
+    for (std::size_t at = header; at < bytes.size(); ++at) {
+        crc ^= bytes[at];
+        for (int bit = 0; bit < 8; ++bit)
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1)));
+    }
+    put_u32(8, 1);
+    put_u32(12, static_cast<std::uint32_t>(bytes.size() - header));
+    put_u32(16, ~crc);
+    const auto decoded = coop_world_decode(bytes);
+    REQUIRE(decoded.has_value());
+    const CoopWorldFile read = decoded.value_or(CoopWorldFile{});
+    CHECK(read.last_save.has_value());
+    CHECK_FALSE(read.save_point.has_value());
+}
+
 TEST_CASE("a coop world that is not one is refused") {
     CoopParty party;
     party.join(1, "HOST");

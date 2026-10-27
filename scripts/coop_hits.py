@@ -111,6 +111,8 @@ def main():
             time.sleep(0.1)
         check(f"B, in its menu, is hurt to 0 and the menu closes (lowest {lowest} hp, then {closed and closed['context']})",
               bool(opened) and lowest == 0 and closed is not None)
+        # Down, B comes back beside A once A is out of a fight (docs/COOP_PLAN.md, "Death is the party's").
+        b.wait("B back beside A", lambda s: not s["down"], 90)
 
         a.run("move %d %d" % FIGHT)
         b.run("move %d %d" % FIGHT)
@@ -132,6 +134,8 @@ def main():
         check(f"and gives A, on the floor, experience ({a_xp} before, {experience(a)} after)", experience(a) > a_xp)
 
         slot = awake_slot(a, b)
+        # A down player gets nothing from a kill, so B is up for it.
+        b.wait("B up", lambda s: not s["down"], 90)
         a_xp, b_xp = experience(a), experience(b)
         killed = strike_until(a, slot, lambda: hp_of(a, slot) == 0)
         time.sleep(1)
@@ -144,13 +148,14 @@ def main():
         coop_floors.wait_part(a, "running", 2)
         b.run("warp 2")
         coop_floors.wait_part(b, "watching", 2)
-        # B walks among them until they throw at it; it may die of them and come back on floor 1, and
+        # B walks among them until they throw at it; it may die of them and come back beside A, and
         # what it felt is counted either way.
         seen, felt = set(), 0
         for cell in CASTERS * 2:
             if seen and felt:
                 break
-            if b.coop()["floor"] == 2:
+            now = b.coop()
+            if now["floor"] == 2 and not now["down"]:
                 b.run("move %d %d" % cell)
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline and not (seen and felt):

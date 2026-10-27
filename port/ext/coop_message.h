@@ -76,8 +76,10 @@ struct CoopFeedLine {
     CoopPackChange change;
 };
 
-// Guest to host: this player used a save point, so the whole party and world are saved.
-struct CoopSaveRequest {};
+// Guest to host: this player used a save point, there, so the whole party and world are saved.
+struct CoopSaveRequest {
+    CoopSavePoint at;
+};
 
 // Host to everyone, when anyone comes or goes: each player in the room and their peer, so a
 // snapshot can go straight from one player to another.
@@ -168,16 +170,31 @@ struct CoopPlayerHit {
     std::uint16_t scale_q12 = 0, multiplier_tenths = 0;
 };
 
+// Host to each guest, when every player in the room is down: the party goes back to its last save,
+// the `life`th time this session. `start` is what the guest's game is replaced with, as a welcome's
+// is: its character, the pack and purse, and the world as last saved, at the save point.
+struct CoopWipe {
+    std::uint32_t life = 0;
+    CoopWelcome start;
+};
+// A guest to everyone, once its game is back at the save: what it says from now on is of the
+// `life`th; what it said before, still on its way, is not.
+struct CoopWiped {
+    std::uint32_t life = 0;
+};
+
 using CoopMessage = std::variant<CoopHello, CoopWelcome, CoopCharacterUpdate, CoopAcknowledged, CoopPackRequest,
     CoopWearRequest, CoopPack, CoopFeedLine, CoopSaveRequest, CoopRoster, CoopFloorAt, CoopFloorOrders,
-    CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites, CoopActorHit, CoopActorAim, CoopKill, CoopSwing, CoopPlayerHit>;
+    CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites, CoopActorHit, CoopActorAim, CoopKill, CoopSwing, CoopPlayerHit,
+    CoopWipe, CoopWiped>;
 
 inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
 
 // At most coop_message_most; a welcome with a world too big for it is nothing.
 std::optional<std::vector<std::uint8_t>> coop_message_encode(const CoopMessage &message);
 // Nothing when the bytes are not a message: the wrong version or kind, a length past the end or
-// bytes left over, an item, stack, floor or cell out of range, a name outside the font.
+// bytes left over, an item, stack, floor or cell out of range, a name outside the font, a wipe's
+// life of 0.
 std::optional<CoopMessage> coop_message_decode(std::span<const std::uint8_t> bytes);
 
 }

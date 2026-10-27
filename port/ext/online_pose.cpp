@@ -11,7 +11,9 @@ namespace {
 
 static_assert(std::endian::native == std::endian::little, "poses are sent little-endian as they are");
 
-constexpr std::uint8_t pose_version = 4;
+constexpr std::uint8_t pose_version = 5;
+constexpr std::uint8_t flag_down = 1;
+constexpr std::uint8_t flag_fighting = 2;
 constexpr int floor_count = 5;
 constexpr std::uint8_t weapon_count = 16;
 constexpr std::uint8_t no_weapon = 0xff;
@@ -63,6 +65,7 @@ std::array<std::uint8_t, online_pose_bytes> online_pose_encode(const OnlinePose 
     std::memcpy(&bytes[17], &pose.pitch, sizeof pose.pitch);
     std::memcpy(&bytes[19], &pose.update, sizeof pose.update);
     std::memcpy(&bytes[23], &pose.foot_height, sizeof pose.foot_height);
+    bytes[27] = static_cast<std::uint8_t>((pose.down ? flag_down : 0) | (pose.fighting ? flag_fighting : 0));
     return bytes;
 }
 
@@ -79,6 +82,11 @@ std::optional<OnlinePose> online_pose_decode(std::span<const std::uint8_t> bytes
     std::memcpy(&pose.pitch, &bytes[17], sizeof pose.pitch);
     std::memcpy(&pose.update, &bytes[19], sizeof pose.update);
     std::memcpy(&pose.foot_height, &bytes[23], sizeof pose.foot_height);
+    const std::uint8_t flags = bytes[27];
+    pose.down = (flags & flag_down) != 0;
+    pose.fighting = (flags & flag_fighting) != 0;
+    if ((flags & ~(flag_down | flag_fighting)) != 0)
+        return std::nullopt;
     if (pose.floor < 1 || pose.floor > floor_count || !on_map(pose.x, automap_columns) ||
         !on_map(pose.z, automap_rows) || !std::isfinite(pose.yaw) || !known_weapon(pose.weapon) ||
         !known_attack_phase(pose.attack_phase) || !known_pitch(pose.pitch) || !known_height(pose.foot_height))

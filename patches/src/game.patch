@@ -1,5 +1,5 @@
 diff --git a/src/game/actor.cpp b/src/game/actor.cpp
-index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..81f3c153f3908d9538d571099b7b4d5a291ff23c 100644
+index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..a3d974233b1bdd0b143c86f85770f7d3a8fa8d0c 100644
 --- a/src/game/actor.cpp
 +++ b/src/game/actor.cpp
 @@ -6,6 +6,7 @@
@@ -10,7 +10,17 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..81f3c153f3908d9538d571099b7b4d5a
  
  #include <algorithm>
  #include <array>
-@@ -315,6 +316,14 @@ void actor_apply_damage(
+@@ -308,6 +309,9 @@ void actor_apply_damage(
+     if (damage == 0) {
+         return;
+     }
++    if (hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
++        kf::coop_player_fought();   // PC extension (coop): this player is in a fight
++    }
+     if (actor->health != 0 && hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
+         if (cutting_damage == 0 && striking_damage == 0 && piercing_damage == 0) {
+             player_increment_magic_training();
+@@ -315,6 +319,14 @@ void actor_apply_damage(
              player_increment_physical_power_training();
          }
      }
@@ -25,7 +35,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..81f3c153f3908d9538d571099b7b4d5a
      if (actor->action == KF_ACTOR_ACTION_DRIFT) {
          actor->vertical_state = KF_ACTOR_VERTICAL_FALL;
          actor->vertical_velocity = 0;
-@@ -325,6 +334,7 @@ void actor_apply_damage(
+@@ -325,6 +337,7 @@ void actor_apply_damage(
          remaining = 0;
          if (health != 0 && hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
              player_add_experience(definition->experience_reward);
@@ -33,7 +43,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..81f3c153f3908d9538d571099b7b4d5a
          }
          if (definition->action_animations[KF_ACTOR_ANIM_SLOT_DEATH] != KF_ANIMATION_CLIP_NONE) {
              actor_set_action(actor, KF_ACTOR_ACTION_DYING);
-@@ -395,17 +405,18 @@ void actor_pool_apply_radial_damage(
+@@ -395,17 +408,18 @@ void actor_pool_apply_radial_damage(
      }
  }
  
@@ -56,7 +66,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..81f3c153f3908d9538d571099b7b4d5a
  
      distance = actor_distance_to_point(
          actor,
-@@ -416,13 +427,26 @@ void actor_try_attack_player(
+@@ -416,13 +430,26 @@ void actor_try_attack_player(
          definition->collision_height,
          KF_COLLISION_PLAYER_HEIGHT);
      if (distance == -1) {
@@ -86,7 +96,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..81f3c153f3908d9538d571099b7b4d5a
          return;
      }
      status_effect = KF_PLAYER_STATUS_NONE;
-@@ -430,6 +454,13 @@ void actor_try_attack_player(
+@@ -430,6 +457,13 @@ void actor_try_attack_player(
          && (kf::random_next() >> ACTOR_STATUS_CHANCE_RANDOM_SHIFT) < definition->status_effect_chance) {
          status_effect = definition->status_effect;
      }
@@ -266,15 +276,16 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
                  }
                  actor->action_progress = KF_ACTOR_PROGRESS_COMPLETE;
 diff --git a/src/game/actor_pool.cpp b/src/game/actor_pool.cpp
-index 7c6b4de806700422183551d2b4782dd3fa5eaf47..3ac3bbdf3c968b88eb772d1d2c805a7a9d4f8768 100644
+index 7c6b4de806700422183551d2b4782dd3fa5eaf47..71ea017b13b208002f374c41e16bee4cd205e9a9 100644
 --- a/src/game/actor_pool.cpp
 +++ b/src/game/actor_pool.cpp
-@@ -4,20 +4,90 @@
+@@ -4,20 +4,95 @@
  #include <kf/lib/codec.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
 +#include <kf/game/collision.h>
 +#include <kf/game/player.h>
++#include <kf/platform/coop.h>
 +#include <kf/platform/online_players.h>
  
  #include <array>
@@ -311,6 +322,10 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..3ac3bbdf3c968b88eb772d1d2c805a7a
 +            continue;
 +        }
 +        players.push_back({other.id, position});
++    }
++    // PC extension (coop): a player who is down is no one's target, while there is another.
++    if (kf::coop_player_down() && players.size() > 1) {
++        players.erase(players.begin());
 +    }
 +    return players;
 +}
@@ -360,7 +375,7 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..3ac3bbdf3c968b88eb772d1d2c805a7a
              actor_update_awareness();
              if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE) {
                  actor_update_current_action();
-@@ -25,6 +95,7 @@ void actor_pool_update(void)
+@@ -25,6 +100,7 @@ void actor_pool_update(void)
          }
      }
      actor_bind_current(NULL);
@@ -934,7 +949,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..4928888c5127d7a951a860cfc316a1a0dd426db0 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af8a4da0ff 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,22 +6,36 @@
@@ -1011,7 +1026,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..4928888c5127d7a951a860cfc316a1a0
          player_update();
          if (game_result != GameResult::Running) {
              break;
-@@ -54,11 +90,9 @@ void game_main_loop(void)
+@@ -54,13 +90,12 @@ void game_main_loop(void)
          player_update_transform_snapshot(&player_position_snapshot, &player_rotation_snapshot);
          audio_set_listener_transform(audio_state, &player_position_snapshot, &player_rotation_snapshot);
          actor_set_player_transform(&player_position_snapshot, &player_rotation_snapshot);
@@ -1023,9 +1038,13 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..4928888c5127d7a951a860cfc316a1a0
          render_frame(&player_position_snapshot, &player_rotation_snapshot);
 +        automap_publish();
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
-         if (player_current_map_attribute()
+-        if (player_current_map_attribute()
++        // PC extension (coop): a player who is down takes no warp where its view is.
++        if (!kf::coop_player_down() && player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
-@@ -78,6 +112,7 @@ void game_main_loop(void)
+             if (!map_cells_equal(player_state.previous_map_cell, player_state.motion_state.map_cell)) {
+                 if (player_warp_trigger_update() != 0) {
+@@ -78,6 +113,7 @@ void game_main_loop(void)
              player_state.previous_map_cell.x = KF_MAP_CELL_COORD_INVALID;
          }
      }
@@ -1033,7 +1052,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..4928888c5127d7a951a860cfc316a1a0
      game_shutdown();
  }
  
-@@ -86,14 +121,78 @@ void game_shutdown(void)
+@@ -86,14 +122,78 @@ void game_shutdown(void)
      audio_close_vab(audio_state);
  }
  
@@ -1300,7 +1319,7 @@ index ba8ad9601988b735d737b6c0e32c034a76a2ab79..2914c179a4969e2c9e9c828c101f1eb2
      event->dialogue.stage = stage;
      event->dialogue.page = KF_DIALOGUE_FIRST_PAGE;
 diff --git a/src/game/map_events.cpp b/src/game/map_events.cpp
-index c71d1f33020a17fdc28c290f146f11c52383e1c3..682ebc6a6b2026b244b15993ef7a7187b35e8023 100644
+index c71d1f33020a17fdc28c290f146f11c52383e1c3..b815379b1c0674f879cf14039a1e0f7514c90e4f 100644
 --- a/src/game/map_events.cpp
 +++ b/src/game/map_events.cpp
 @@ -6,6 +6,7 @@
@@ -1329,7 +1348,18 @@ index c71d1f33020a17fdc28c290f146f11c52383e1c3..682ebc6a6b2026b244b15993ef7a7187
          if (state == KF_MAP_EVENT_ACTIVE) {
              map_event_set_current(&event);
  
-@@ -261,6 +268,8 @@ void map_world_state_persist(void)
+@@ -124,6 +131,10 @@ void map_event_pool_update(void)
+ 
+     if (map_runtime_state.ambient_script_countdown-- == 0) {
+         map_runtime_state.ambient_script_countdown = MAP_AMBIENT_COUNTDOWN_RELOAD;
++        // PC extension (coop): a player who is down triggers nothing where its view is.
++        if (kf::coop_player_down()) {
++            return;
++        }
+         switch (player_state.progress_state.current_floor) {
+         case KF_FLOOR_FORCE_RELOAD:
+             // This resource-load sentinel has no ambient floor script.
+@@ -261,6 +272,8 @@ void map_world_state_persist(void)
  
  void map_unload_floor(void)
  {
@@ -1338,7 +1368,7 @@ index c71d1f33020a17fdc28c290f146f11c52383e1c3..682ebc6a6b2026b244b15993ef7a7187
      animation_cache_release_all();
      audio_close_vab(audio_state);
      map_world_state_persist();
-@@ -269,4 +278,5 @@ void map_unload_floor(void)
+@@ -269,4 +282,5 @@ void map_unload_floor(void)
  void map_events_reset_module_state(void)
  {
      kf::restore_initial_value<map_runtime_state>();
@@ -1628,7 +1658,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f275179f01d41b53a7d3b8f4133d83376cf95a72 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..7b6eb0a4a802299aab1bd40e4a8ec4d3b964044c 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,13 @@
@@ -2155,7 +2185,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f275179f01d41b53a7d3b8f4133d8337
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2196,75 @@ void menu_draw_number(
+@@ -1854,10 +2196,82 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -2190,6 +2220,13 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f275179f01d41b53a7d3b8f4133d8337
 +        glyphs.insert(glyphs.end(), after.begin(), after.end());
 +        menu_draw_text(glyphs, MenuPoint{feed_left_x, y}, row.opacity);
 +        y += feed_row_step;
++    }
++    // A player who is down: whose eyes it sees through, low in the middle of the picture.
++    constexpr s16 watching_y = 200, picture_middle_x = 160;
++    const auto watching = menu_spell(kf::coop_watching_text(language), language);
++    if (!watching.empty()) {
++        const s32 width = static_cast<s32>(watching.size()) * MENU_FONT_CELL_WIDTH;
++        menu_draw_text(watching, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), watching_y}, 1.0f);
 +    }
 +}
 +
@@ -3136,18 +3173,19 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +        online_player_draw_weapon(player, *weapon, body, placements[upper_arm_right]);
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
-index 33680f578d7627d7bb43b29b77f58b843371198a..df1af79f6e950578bd0affc94a360c02b016f9a6 100644
+index 33680f578d7627d7bb43b29b77f58b843371198a..094c09dacd336aed23ecd96269a814c5a8ce85e4 100644
 --- a/src/game/player_core.cpp
 +++ b/src/game/player_core.cpp
-@@ -7,6 +7,7 @@
+@@ -7,6 +7,8 @@
  #include <kf/game/resources.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
++#include <kf/platform/coop.h>
 +#include <kf/platform/online_players.h>
  
  #include <algorithm>
  #include <array>
-@@ -226,6 +227,15 @@ void game_initialize_session(void)
+@@ -226,6 +228,15 @@ void game_initialize_session(void)
      player_state.compass_enabled = KF_PLAYER_OPTION_ON;
  }
  
@@ -3163,7 +3201,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..df1af79f6e950578bd0affc94a360c02
  void player_get_floor_position(VECTOR &position)
  {
      position = {player_state.camera_position.vx, player_state.foot_height,
-@@ -304,6 +314,53 @@ s32 player_distance_to_point_in_cone(
+@@ -304,6 +315,53 @@ s32 player_distance_to_point_in_cone(
      return distance;
  }
  
@@ -3217,8 +3255,19 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..df1af79f6e950578bd0affc94a360c02
  s32 player_distance_to_point(
      s32 point_x, s32 point_y, s32 point_z, s32 max_distance, s32 point_height)
  {
+@@ -314,6 +372,10 @@ s32 player_distance_to_point(
+     s32 distance;
+     s32 tolerance = point_height;
+ 
++    // PC extension (coop): a player who is down is nowhere, so nothing meets, hits or sees it.
++    if (kf::coop_player_down()) {
++        return KF_PROXIMITY_NONE;
++    }
+     dx = player_state.camera_position.vx - point_x;
+     if (dx < -max_distance || max_distance < dx) {
+         return KF_PROXIMITY_NONE;
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a85c41405b551858ed7cb706b062dbee0826b2a9..8dd581f8e6c29065aff4783ed0822a7eb0a3d68c 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..6d598d15ca5b030f8cbdff7f32439ce7e10226ac 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
 @@ -1,4 +1,5 @@
@@ -3238,23 +3287,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8dd581f8e6c29065aff4783ed0822a7e
      player_state.experience = 0;
      player_state.progress_state.level = 1;
      player_state.progress_state.current_floor = KF_FLOOR_1;
-@@ -147,8 +152,13 @@ void player_death_restart(void)
- {
-     KfFloorId floor = player_state.progress_state.current_floor;
- 
--    if (map_runtime_state.world_state.floor1.revival_enabled == KF_MAP_SCRIPT_SET && item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_DRAGON_KING_GRASS_FRUIT)] != 0) {
--        item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_DRAGON_KING_GRASS_FRUIT)]--;
-+    // PC extension (coop): a coop world never starts a new game, which would empty the party's
-+    // pack; until coop has its own death (docs/COOP_PLAN.md, Order 7), the player revives as if
-+    // with a fruit, and keeps the fruit.
-+    const bool coop = kf::coop_world_in_play();
-+    if (coop || (map_runtime_state.world_state.floor1.revival_enabled == KF_MAP_SCRIPT_SET && item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_DRAGON_KING_GRASS_FRUIT)] != 0)) {
-+        if (!coop)
-+            item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_DRAGON_KING_GRASS_FRUIT)]--;
-         map_world_state_persist();
-         player_state.camera_position.vx = PLAYER_REVIVAL_POSITION_X;
-         player_state.vitals.current_hp = player_state.vitals.maximum_hp;
-@@ -223,125 +233,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
+@@ -223,125 +228,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
      }
  }
  
@@ -3452,15 +3485,15 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8dd581f8e6c29065aff4783ed0822a7e
 -        player_state.physical_power -= BLACK_MASK_PHYSICAL_POWER_PENALTY;
 +    if (p.equipped_head_armor_id == KF_ITEM_BLACK_MASK) {
 +        p.physical_power -= BLACK_MASK_PHYSICAL_POWER_PENALTY;
-     }
--    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
--        player_state.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
++    }
 +    if ((p.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
 +        p.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
      }
+-    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
+-        player_state.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
 +    if (p.physical_power >= KF_PLAYER_POWER_MAX + 1) {
 +        p.physical_power = KF_PLAYER_POWER_MAX;
-+    }
+     }
 +    if (p.magic >= KF_PLAYER_POWER_MAX + 1) {
 +        p.magic = KF_PLAYER_POWER_MAX;
 +    }
@@ -3480,6 +3513,18 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8dd581f8e6c29065aff4783ed0822a7e
  }
  
  void player_increment_physical_power_training(void)
+@@ -447,6 +463,11 @@ void player_apply_damage(
+     s32 loss;
+     s32 remaining;
+ 
++    // PC extension (coop): a player who is down is out of the world; any other is in a fight.
++    if (kf::coop_player_down()) {
++        return;
++    }
++    kf::coop_player_fought();
+     if ((status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
+         player_state.curse_timer = KF_CURSE_DURATION_UPDATES;
+         player_state.status_effect_flags |= KF_PLAYER_STATUS_CURSE;
 @@ -505,6 +526,28 @@ void player_apply_damage(
      }
  }
@@ -3519,8 +3564,31 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8dd581f8e6c29065aff4783ed0822a7e
      distance = player_distance_to_point(origin->vx, origin->vy, origin->vz, radius, radius);
      if (distance == -1) {
          return;
+diff --git a/src/game/player_death_fade.cpp b/src/game/player_death_fade.cpp
+index b90adbb1ec3e303bc920fd26705f1850209ad267..4e225c97c936afe0f29462ea8a8ae98d78a634f3 100644
+--- a/src/game/player_death_fade.cpp
++++ b/src/game/player_death_fade.cpp
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <kf/platform/coop.h>
+ #include <kf/game/game.h>
+ #include <kf/game/graphics.h>
+ #include <kf/game/player.h>
+@@ -59,7 +60,11 @@ void player_death_update(void)
+         player_death_apply_visual_fade(&player_death_saved_color_matrix, KF_FIXED12_ONE);
+         render_frame(NULL, NULL);
+         render_frame(NULL, NULL);
+-        player_death_restart();
++        // PC extension (coop): a player in coop goes down instead (docs/COOP_PLAN.md, "Death is the
++        // party's"); the game's revival or new game never runs there.
++        if (!kf::coop_player_died()) {
++            player_death_restart();
++        }
+     } else {
+         player_death_apply_visual_fade(&player_death_saved_color_matrix, blend);
+     }
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index a30de1fda381916646ae0970dd325eae46425ce7..61787ae3387d29ac01e495232d33ba284f3542f8 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fcc564ea0d 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
 @@ -1,4 +1,5 @@
@@ -3660,7 +3728,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..61787ae3387d29ac01e495232d33ba28
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -649,6 +715,19 @@ void player_update(void)
+@@ -649,6 +715,27 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -3677,10 +3745,18 @@ index a30de1fda381916646ae0970dd325eae46425ce7..61787ae3387d29ac01e495232d33ba28
 +    case kf::QuickRequest::None:
 +        break;
 +    }
++    // PC extension (coop): a player who is down sees through another player's eyes until it comes
++    // back beside them (docs/COOP_PLAN.md, "Death is the party's").
++    if (kf::coop_player_down()) {
++        kf::coop_down_update(kf::button_pressed(input, player_previous_input, kf::Button::Attack)
++            || kf::button_pressed(input, player_previous_input, kf::Button::Confirm));
++        player_previous_input = input;
++        return;
++    }
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
          player_death_update();
          return;
-@@ -662,7 +741,7 @@ void player_update(void)
+@@ -662,7 +749,7 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,
@@ -4458,7 +4534,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..14d6efe02376e0f13706b9d1528ac26d5a101f98 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8af2343413d93edf025cfdc7c01222051fa29b91 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -3,6 +3,7 @@
@@ -4534,7 +4610,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..14d6efe02376e0f13706b9d1528ac26d
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +105,55 @@ void render_entities(void)
+@@ -77,23 +105,56 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -4585,7 +4661,8 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..14d6efe02376e0f13706b9d1528ac26d
 +    const auto players = kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor));
 +    for (std::size_t i = 0; i < players.size(); ++i) {
 +        const auto &player = players[i];
-+        if (render_cell_is_visible(static_cast<s32>(player.x), static_cast<s32>(player.z), origin)) {
++        // Not the knight whose eyes this player, down, sees through.
++        if (!player.eyes && render_cell_is_visible(static_cast<s32>(player.x), static_cast<s32>(player.z), origin)) {
 +            tag(KF_RENDER_TAG_ONLINE_PLAYERS, i, player.id);
 +            render_online_player(player);
 +        }

@@ -2,7 +2,9 @@
 // under its code, and everyone who joins plays in it with their own character. The host keeps the
 // party (one pack and one purse, every character, what each wears) and writes the world's file;
 // a guest's game changes the pack at once and the host settles the difference. Joining sets the
-// player's own game aside and leaving puts it back, both between updates.
+// player's own game aside and leaving puts it back, both between updates. When every player is down,
+// the host sends the party back to its last save (coop_death_play.h).
+#include "coop_death_play.h"
 #include "coop_floor_play.h"
 #include "coop_hits.h"
 #include "coop_message.h"
@@ -61,6 +63,7 @@ struct HostSide {
 struct GuestSide {
     std::uint64_t host = 0;
     std::optional<CoopWelcome> welcome;   // until it is in the game
+    std::optional<CoopWipe> wipe;         // until it is in the game
     std::optional<CoopPack> pack;         // the newest, until it is in the game
     std::vector<CoopPack::Player> players;
     int highest_floor = 1;
@@ -89,6 +92,8 @@ struct Coop {
     verdite::PickupFeed feed{verdite::PickupFeedShape{}};
     std::vector<CoopPlayerId> feed_players;   // a feed line's player is an index into this
     bool looked_for_aside = false;            // once a run, for a game a quit left set aside
+    std::uint32_t life = 0;                   // how many times the party went back to its last save
+    std::map<CoopPlayerId, std::uint32_t> lives;   // each other player's, once a wipe makes it matter
 };
 Coop coop;
 
@@ -118,6 +123,12 @@ std::string name_of(CoopPlayerId id) {
     char name[coop_name_most + 1];
     std::snprintf(name, sizeof name, "PLAYER%04u", static_cast<unsigned>(id % 10000));
     return name;
+}
+
+CoopSavePoint standing_here() {
+    const auto &cell = player_state.motion_state.map_cell;
+    return {kf_enum_encode<int>(player_state.progress_state.current_floor), static_cast<std::uint8_t>(cell.x),
+        static_cast<std::uint8_t>(cell.z)};
 }
 
 void know_self() {
@@ -202,6 +213,14 @@ bool load_coop_world() {
     const auto world = enter.world.empty() ? save_system_coop_world() : enter.world;
     if (!save_system_coop_apply(character, world, enter.pack, enter.gold))
         return false;
+    // A character kept dying or down comes back whole and standing, as it would beside another
+    // player: its state was taken at any moment, mid-fade or mid-hit too.
+    if (player_state.vitals.current_hp == 0) {
+        player_state.vitals.current_hp = player_state.vitals.maximum_hp;
+        player_state.vitals.current_mp = player_state.vitals.maximum_mp;
+    }
+    player_state.update_state = KF_PLAYER_UPDATE_NORMAL;
+    player_state.death_visual_blend = 0;
     if (enter.beside)
         stand_beside(*enter.beside);
     put_on(enter.worn);
@@ -274,6 +293,28 @@ bool set_game_aside() {
     return save_system_aside_write();
 }
 
+// The coop world, just put in the game: who runs which floor, deaths, and the pack start afresh.
+void start_playing() {
+    if (coop.role == Role::Host) {
+        coop_floors_start(coop.self, coop.self);
+        host_roster();
+    } else {
+        coop_floors_start(coop.self, 0);
+        coop_floors_roster(coop.guest.roster);
+    }
+    coop_death_start(coop.self);
+    coop.mirror = CoopPackMirror(coop.enter.pack, coop.enter.gold);
+    coop.worn_sent = game_worn();
+    coop.character_sent.clear();
+    coop.enter = {};
+}
+
+void stop_playing() {
+    coop_floors_stop();
+    coop_hits_stop();
+    coop_death_stop();
+}
+
 void enter_world() {
     if (!coop.from_title && !set_game_aside()) {
         fail("This game could not be set aside, so the room was left.");
@@ -286,17 +327,29 @@ void enter_world() {
         return;
     }
     coop.in_play = true;
-    if (coop.role == Role::Host) {
-        coop_floors_start(coop.self, coop.self);
-        host_roster();
-    } else {
-        coop_floors_start(coop.self, 0);
-        coop_floors_roster(coop.guest.roster);
-    }
-    coop.mirror = CoopPackMirror(coop.enter.pack, coop.enter.gold);
-    coop.worn_sent = game_worn();
-    coop.enter = {};
+    start_playing();
     std::printf("[coop] playing the world of room %s\n", coop.room.c_str());
+}
+
+// The coop world put in again over the one in play, with nothing set aside: the party back at its
+// last save, as coop.enter holds it.
+void enter_again() {
+    stop_playing();
+    if (!player_replace_game(load_coop_world)) {
+        fail("The party's last save could not be loaded, so the room was left.");
+        return;
+    }
+    start_playing();
+}
+
+// What each other player in the room says counts again only once it says it is back at the save
+// too (CoopWiped): until then, what it said before is still on its way.
+void others_not_yet_back() {
+    const auto room = coop_floors_room();
+    const CoopPlayerId host = room.empty() ? 0 : room.front().id;
+    for (const CoopRoster::Player &player : room)
+        if (player.id != coop.self && player.id != host)
+            coop.lives.try_emplace(player.id, coop.life);
 }
 
 void enter_as_host() {
@@ -313,6 +366,15 @@ void enter_as_host() {
     enter_world();
     if (!coop.in_play)
         return;
+    // A wipe always has a save to go back to: a world never saved goes back to how it was opened,
+    // and one kept before save points were stands the party where it was opened.
+    if (!host.file.last_save) {
+        party.store(coop.self, save_system_coop_character(), kf_enum_encode<u8>(player_state.progress_state.highest_floor));
+        keep_live_world();
+        host.file.last_save = host.file.live;
+    }
+    if (!host.file.save_point)
+        host.file.save_point = standing_here();
     host.pack_changed = true;
     write_world_file();
 }
@@ -325,8 +387,7 @@ void enter_as_guest(const CoopWelcome &welcome) {
 }
 
 void leave_world() {
-    coop_floors_stop();
-    coop_hits_stop();
+    stop_playing();
     std::printf("[coop] left the world of room %s\n", coop.room.c_str());
     if (coop.from_title) {
         reset_session();
@@ -418,7 +479,77 @@ void host_welcome(std::uint64_t peer, const CoopHello &hello) {
     std::printf("[coop] %s joined the world\n", hello.name.c_str());
 }
 
+CoopWelcome start_at_save(const CoopCharacter &character) {
+    const CoopParty &party = coop.host.file.live.party;
+    const CoopSavePoint point = coop.host.file.save_point.value_or(standing_here());
+    return {character.state, character.wore, party.pack(), party.gold(), party.highest_floor(),
+        coop.host.file.live.world, point.floor, point.cell_x, point.cell_z};
+}
+
+// Every player is down: the live world becomes the last save, every character as saved (one who
+// joined since keeps what it has), everyone in the room wearing what of their gear is free, and
+// each player's game is put back at the save point.
+void host_wipe() {
+    HostSide &host = coop.host;
+    const CoopWorldState saved = host.file.last_save.value_or(host.file.live);
+    const CoopParty &before = host.file.live.party;
+    std::vector<CoopCharacter> characters(saved.party.characters().begin(), saved.party.characters().end());
+    for (const CoopCharacter &character : before.characters())
+        if (std::ranges::find(characters, character.id, &CoopCharacter::id) == characters.end())
+            characters.push_back(character);
+    const std::vector<CoopPlayerId> in_room(before.in_room().begin(), before.in_room().end());
+    CoopParty party(characters, saved.party.pack(), saved.party.gold());
+    for (const CoopPlayerId id : in_room)
+        party.join(id, std::ranges::find(characters, id, &CoopCharacter::id)->name);
+    host.file.live = {std::move(party), saved.world};
+    host.applied_through.clear();
+    host.worn_through.clear();
+    others_not_yet_back();
+    ++coop.life;
+    const CoopParty &now = host.file.live.party;
+    for (const auto &[peer, id] : host.guests)
+        send(peer, CoopWipe{coop.life, start_at_save(*std::ranges::find(now.characters(), id, &CoopCharacter::id))});
+    const CoopWelcome own = start_at_save(*std::ranges::find(now.characters(), coop.self, &CoopCharacter::id));
+    coop.enter = {own.state, own.world, own.pack, own.gold, own.worn,
+        std::array<std::uint8_t, 3>{static_cast<std::uint8_t>(own.floor), own.cell_x, own.cell_z}};
+    enter_again();
+    if (!coop.in_play)
+        return;
+    host.pack_changed = true;
+    write_world_file();
+    host_show_message("Everyone fell: the party is back at its last save.");
+    std::printf("[coop] the party went back to its last save (%u)\n", coop.life);
+}
+
+// Whether every player is down, each since the last wipe.
+bool party_down() {
+    std::vector<CoopPlayerId> not_back;
+    for (const auto &[id, life] : coop.lives)
+        if (life < coop.life)
+            not_back.push_back(id);
+    return coop_death_party_down(not_back);
+}
+
+void guest_wipe(const CoopWipe &wipe) {
+    others_not_yet_back();
+    coop.life = wipe.life;
+    coop.guest.highest_floor = wipe.start.highest_floor;
+    coop.guest.pack.reset();
+    coop.enter = {wipe.start.state, wipe.start.world, wipe.start.pack, wipe.start.gold, wipe.start.worn,
+        std::array<std::uint8_t, 3>{static_cast<std::uint8_t>(wipe.start.floor), wipe.start.cell_x, wipe.start.cell_z}};
+    enter_again();
+    if (!coop.in_play)
+        return;
+    broadcast(CoopWiped{coop.life});
+    host_show_message("Everyone fell: the party is back at its last save.");
+    std::printf("[coop] back at the party's last save (%u)\n", coop.life);
+}
+
 void between_updates_as_host() {
+    if (party_down()) {
+        host_wipe();
+        return;
+    }
     HostSide &host = coop.host;
     for (const auto &[peer, hello] : host.waiting)
         host_welcome(peer, hello);
@@ -485,6 +616,18 @@ void between_updates_as_guest() {
     coop.character_sent_ms = now;
 }
 
+// A save point used by any player, at `at`: the whole live state becomes the last save.
+void host_save(const CoopSavePoint &at) {
+    HostSide &host = coop.host;
+    host.file.live.party.store(coop.self, save_system_coop_character(),
+        kf_enum_encode<u8>(player_state.progress_state.highest_floor));
+    keep_live_world();
+    host.file.last_save = host.file.live;
+    host.file.save_point = at;
+    write_world_file();
+    host_show_message("The party is saved.");
+}
+
 // ---- messages ----
 
 void host_receives(std::uint64_t peer, const CoopMessage &message) {
@@ -507,8 +650,8 @@ void host_receives(std::uint64_t peer, const CoopMessage &message) {
         host_takes(id, request->number, request->change, request->cause);
     } else if (const auto *wear = std::get_if<CoopWearRequest>(&message)) {
         host_wear(id, wear->number, wear->worn);
-    } else if (std::holds_alternative<CoopSaveRequest>(message)) {
-        coop_save_point();
+    } else if (const auto *save = std::get_if<CoopSaveRequest>(&message)) {
+        host_save(save->at);
     }
 }
 
@@ -524,6 +667,11 @@ void guest_receives(std::uint64_t peer, const CoopMessage &message) {
     }
     if (peer != guest.host)
         return;
+    if (const auto *wipe = std::get_if<CoopWipe>(&message)) {
+        if (wipe->life > coop.life)
+            guest.wipe = *wipe;
+        return;
+    }
     if (const auto *roster = std::get_if<CoopRoster>(&message)) {
         guest.roster = *roster;
         coop_floors_roster(*roster);
@@ -532,6 +680,16 @@ void guest_receives(std::uint64_t peer, const CoopMessage &message) {
     }
     else if (const auto *line = std::get_if<CoopFeedLine>(&message))
         feed(line->by, line->cause, line->change);
+}
+
+// Whether a guest's message was said before it came back to the party's last save: the wipe made
+// it of no account. The host's are never, since its wipe comes after everything it said before.
+bool from_before_wipe(CoopPlayerId from) {
+    const auto room = coop_floors_room();
+    if (from == 0 || room.empty() || from == room.front().id)
+        return false;
+    const auto life = coop.lives.find(from);
+    return life != coop.lives.end() && life->second < coop.life;
 }
 
 // Whether a message is about who runs which floor (coop_floor_play.h), from any player.
@@ -625,6 +783,14 @@ void coop_control_packet(std::uint64_t peer, std::span<const std::uint8_t> bytes
         std::printf("[coop] a message that is not one was dropped\n");
         return;
     }
+    const CoopPlayerId from = coop_floors_player(peer);
+    if (const auto *wiped = std::get_if<CoopWiped>(&*message)) {
+        if (from != 0)
+            coop.lives[from] = std::max(coop.lives[from], wiped->life);
+        return;
+    }
+    if (from_before_wipe(from))
+        return;
     if (floor_message(*message))
         coop_floors_receive(peer, *message);
     else if (coop_hits_message(*message))
@@ -657,6 +823,10 @@ std::string coop_player_name(std::uint32_t player) {
     return player < coop.feed_players.size() ? name_of(coop.feed_players[player]) : std::string();
 }
 
+std::string coop_player_name_of(std::uint64_t player) {
+    return name_of(player);
+}
+
 std::string coop_json() {
     const char *role = coop.role == Role::Host ? "host" : coop.role == Role::Guest ? "guest" : "none";
     std::string pack;
@@ -676,7 +846,8 @@ std::string coop_json() {
            std::to_string(kf::coop_highest_floor(kf_enum_encode<u8>(player_state.progress_state.highest_floor))) +
            ",\"floor\":" + std::to_string(kf_enum_encode<int>(player_state.progress_state.current_floor)) + ",\"cell\":[" +
            std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
-           "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json();
+           "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json() + "," +
+           coop_death_json() + ",\"life\":" + std::to_string(coop.life);
 }
 
 std::string coop_panel_line() {
@@ -761,6 +932,34 @@ bool coop_backs_out_of_menu() {
     return ext::coop.in_play && player_state.vitals.current_hp == 0;
 }
 
+bool coop_player_died() {
+    if (!ext::coop.in_play)
+        return false;
+    ext::coop_death_went_down();
+    return true;
+}
+
+bool coop_player_down() {
+    return ext::coop.in_play && ext::coop_death_down();
+}
+
+void coop_down_update(bool next) {
+    if (ext::coop.in_play)
+        ext::coop_death_down_update(next);
+}
+
+void coop_player_fought() {
+    if (ext::coop.in_play)
+        ext::coop_death_fought();
+}
+
+std::string coop_watching_text(Language language) {
+    const std::string name = ext::coop_death_eyes_name();
+    if (name.empty())
+        return {};
+    return language == Language::English ? "WATCHING " + name : name + " を みています";
+}
+
 bool coop_runs_floor() {
     return !ext::coop.in_play || ext::coop_floors_run_here();
 }
@@ -777,17 +976,11 @@ bool coop_save_point() {
     if (coop.role == Role::Guest) {
         send(coop.guest.host, CoopCharacterUpdate{++coop.guest.character_number, save_system_coop_character(),
             kf_enum_encode<u8>(player_state.progress_state.highest_floor)});
-        send(coop.guest.host, CoopSaveRequest{});
+        send(coop.guest.host, CoopSaveRequest{standing_here()});
         host_show_message("The party is saved.");
         return true;
     }
-    HostSide &host = coop.host;
-    host.file.live.party.store(coop.self, save_system_coop_character(),
-        kf_enum_encode<u8>(player_state.progress_state.highest_floor));
-    keep_live_world();
-    host.file.last_save = host.file.live;
-    write_world_file();
-    host_show_message("The party is saved.");
+    host_save(standing_here());
     return true;
 }
 
@@ -804,6 +997,7 @@ void coop_update() {
         take_game_changes();
     coop_hits_world_update();
     coop_floors_world_update();
+    coop_death_world_update();
 }
 
 void coop_between_updates() {
@@ -816,6 +1010,12 @@ void coop_between_updates() {
     }
     if (coop.leaving) {
         leave_world();
+        return;
+    }
+    if (coop.in_play && coop.guest.wipe) {
+        const CoopWipe wipe = std::move(*coop.guest.wipe);
+        coop.guest.wipe.reset();
+        guest_wipe(wipe);
         return;
     }
     if (coop.entering) {

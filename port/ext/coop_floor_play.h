@@ -24,6 +24,8 @@ void coop_floors_stop();
 
 // Who is in the room and their peers, the host first: the host's own, or as it last sent it.
 void coop_floors_roster(const CoopRoster &roster);
+// Who is in the room and their peers, the host first, as the roster last said.
+std::span<const CoopRoster::Player> coop_floors_room();
 // Host only: a guest left the room, dropped or was sent away.
 void coop_floors_gone(CoopPlayerId player);
 // A floor message (CoopFloorAt to CoopFloorWrites) from a player in the roster.

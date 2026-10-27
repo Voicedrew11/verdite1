@@ -1,5 +1,6 @@
 #include "coop_hits.h"
 
+#include "coop_death_play.h"
 #include "coop_floor_play.h"
 #include "internal.hpp"
 
@@ -95,7 +96,7 @@ void apply(const CoopPlayerHit &hit) {
 }
 
 void apply(const CoopKill &kill) {
-    if (on_floor(kill.floor))
+    if (on_floor(kill.floor) && !coop_death_down())
         player_add_experience(static_cast<s16>(kill.experience));
 }
 

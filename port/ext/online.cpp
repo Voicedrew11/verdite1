@@ -2,6 +2,7 @@
 // to the others once per game update, and theirs played back for the automap and the world. Opt-in:
 // nothing touches the network until a room is joined.
 #include "coop_floor_frames.h"
+#include "coop_death_play.h"
 #include "coop_floor_play.h"
 #include "internal.hpp"
 #include "online_playback.h"
@@ -199,7 +200,7 @@ void send_pose(const OnlinePlayerPose &own) {
     if (online.listed)
         vo_describe(online.session.get(), static_cast<std::uint32_t>(own.floor));
     const auto bytes = online_pose_encode({own.floor, own.x, own.z, own.yaw, own.weapon, own.attack_phase, own.pitch,
-        own_update, own.foot_height});
+        own_update, own.foot_height, coop_death_down(), coop_death_fighting()});
     vo_broadcast(online.session.get(), VO_CHANNEL_STATE, bytes.data(), bytes.size());
 }
 
@@ -350,8 +351,16 @@ void online_draw_panel() {
 std::vector<OnlinePose> online_players() {
     std::vector<OnlinePose> poses;
     for (const auto &[peer, known] : online.players)
-        if (known.shown)
+        if (known.shown && !known.shown->down)
             poses.push_back(*known.shown);
+    return poses;
+}
+
+std::map<std::uint64_t, OnlinePose> online_room_poses() {
+    std::map<std::uint64_t, OnlinePose> poses;
+    for (const auto &[peer, known] : online.players)
+        if (known.shown)
+            poses.emplace(peer, *known.shown);
     return poses;
 }
 
@@ -402,6 +411,10 @@ std::vector<OnlinePose> online_players() {
     return {};
 }
 
+std::map<std::uint64_t, OnlinePose> online_room_poses() {
+    return {};
+}
+
 #endif
 
 }
@@ -425,10 +438,13 @@ bool online_world_runs_while_held() {
 std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     std::vector<OnlinePlayer> players;
 #if KF_ONLINE
+    // A player who is down is out of the world (docs/COOP_PLAN.md, "Death is the party's").
+    const std::uint64_t eyes = ext::coop_death_eyes_peer();
     for (const auto &[peer, known] : ext::online.players)
-        if (const auto &pose = known.shown; pose && pose->floor == floor)
+        if (const auto &pose = known.shown; pose && pose->floor == floor && !pose->down)
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
-                pose->attack_phase, pose->pitch, pose->foot_height, known.stride.phase, known.stride.amount});
+                pose->attack_phase, pose->pitch, pose->foot_height, known.stride.phase, known.stride.amount,
+                peer == eyes});
 #else
     (void)floor;
 #endif

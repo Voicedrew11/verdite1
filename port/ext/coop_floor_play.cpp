@@ -42,6 +42,7 @@ struct Floors {
     std::optional<CoopFloorOwners> table;              // the host's only
     std::map<std::uint64_t, CoopPlayerId> players;     // by peer
     std::map<CoopPlayerId, std::uint64_t> peers;       // by player
+    std::vector<CoopRoster::Player> room;              // the roster, the host first
     std::array<CoopFloorOwnership, coop_floor_count> rows{};
     int floor = 0;                                     // the floor this machine said it is on
     CoopPlayerId left_floor_with = 0;
@@ -319,12 +320,17 @@ void coop_floors_stop() {
 void coop_floors_roster(const CoopRoster &roster) {
     floors.players.clear();
     floors.peers.clear();
+    floors.room = roster.players;
     for (const CoopRoster::Player &player : roster.players) {
         floors.players[player.peer] = player.id;
         floors.peers[player.id] = player.peer;
     }
     if (!floors.table && !roster.players.empty())
         floors.host = roster.players.front().id;
+}
+
+std::span<const CoopRoster::Player> coop_floors_room() {
+    return floors.room;
 }
 
 void coop_floors_gone(CoopPlayerId player) {

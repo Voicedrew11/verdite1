@@ -76,6 +76,25 @@ void coop_hit_other_player(u32 player, const CoopPlayerHitArgs &hit);
 // player can die in one, and the death waits for the menu to close.
 bool coop_backs_out_of_menu();
 
+// Death in coop (docs/COOP_PLAN.md, "Death is the party's"). player_death_update, as the death fade
+// ends: in coop the player goes down, in place of the game's revival or new game, and true is
+// returned. False outside coop, and the game revives or restarts as it does.
+bool coop_player_died();
+// Whether this player is down: out of the world, so nothing targets, meets or hurts it
+// (player_distance_to_point finds it nowhere, player_apply_damage does nothing) and it triggers
+// nothing where its view is (floor scripts, warps).
+bool coop_player_down();
+// player_update while down, in place of the player's own update: the view at a living player's
+// eyes, the next one when `next` was pressed, on their floor; back beside them, faded in, once
+// they are out of a fight or after 30 seconds at most.
+void coop_down_update(bool next);
+// A hit this player took (player_apply_damage) or dealt (actor_apply_damage with its credit): it
+// is in a fight for a few seconds.
+void coop_player_fought();
+// What the game draws while down, in what menu_spell spells: whose eyes this player sees
+// through. Empty when not down.
+std::string coop_watching_text(Language language);
+
 // map_unload_floor, before the floor goes: the floor's owner sends it live to its heir, and its
 // record to the host.
 void coop_floor_unloading();
