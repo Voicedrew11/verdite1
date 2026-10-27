@@ -26,6 +26,7 @@ struct Side {
     vo_peer self = 0;
     vo_peer other = 0;
     bool failed = false;
+    bool first = false;   // in the room before the other
     uint32_t control_sent = 0;
     uint32_t control_received = 0;
     uint32_t state_sent = 0;
@@ -89,7 +90,9 @@ void poll(Side &side) {
         switch (event.kind) {
         case VO_EVENT_JOINED:
             side.self = event.peer;
-            std::printf("%s: joined as %016llx\n", side.name, static_cast<unsigned long long>(event.peer));
+            side.first = event.older == 0;
+            std::printf("%s: joined as %016llx (%s)\n", side.name, static_cast<unsigned long long>(event.peer),
+                        side.first ? "first" : "after another");
             break;
         case VO_EVENT_PEER_OPEN:
             side.other = event.peer;
@@ -203,6 +206,12 @@ int main(int argc, char **argv) {
                     side.control_received, other.control_sent, side.state_received, other.state_sent,
                     side.big_received ? "arrived" : "missing");
         ok = ok && !side.failed && side.big_received && side.control_received == other.control_sent;
+    }
+    // a joined an empty room, b joined after it
+    if (!sides[0].first || sides[1].first) {
+        std::printf("JOINED said a was %s and b %s\n", sides[0].first ? "first" : "not first",
+                    sides[1].first ? "first" : "not first");
+        ok = false;
     }
     for (auto &side : sides)
         vo_close(side.session);

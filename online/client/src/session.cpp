@@ -519,7 +519,9 @@ struct vo_session {
             return;
         }
         self = frame.peer;
-        push(event_of(VO_EVENT_JOINED, self));
+        Event joined = event_of(VO_EVENT_JOINED, self);
+        joined.older = !frame.peers.empty();
+        push(std::move(joined));
         for (const PeerId peer : frame.peers)
             links[peer].older = true;
         if (!links.empty())

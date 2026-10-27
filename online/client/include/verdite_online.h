@@ -45,7 +45,8 @@ typedef enum vo_channel {
 } vo_channel;
 
 typedef enum vo_event_kind {
-    VO_EVENT_JOINED,       /* in the room as event.peer; PEER_OPEN for each other peer follows */
+    VO_EVENT_JOINED,       /* in the room as event.peer; PEER_OPEN for each other peer follows.
+                            * event.older says whether anyone was in the room before you */
     VO_EVENT_PEER_OPEN,    /* event.peer's channels are open: it can be sent to. event.older
                             * says whether it joined the room before you */
     VO_EVENT_PEER_CLOSED,  /* event.peer left or its connection failed; never sent to again */
@@ -71,7 +72,8 @@ typedef struct vo_event {
     vo_peer peer;
     vo_channel channel;
     vo_error error;
-    int older;           /* PEER_OPEN: nonzero when event.peer joined the room before you */
+    int older;           /* JOINED: nonzero when someone was in the room first; PEER_OPEN: nonzero
+                          * when event.peer joined the room before you */
     const char *message; /* ERROR: what went wrong, for the log; valid as data is */
     const uint8_t *data; /* PACKET: valid until the next vo_poll or vo_close */
     size_t size;
