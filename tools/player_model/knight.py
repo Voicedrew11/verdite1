@@ -65,9 +65,9 @@ def rot(ax, a):
     if ax == 'y': return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
-def posed(parts, pose):
+def posed(parts, pose, lift=0.0):
     """World (builder space) vertices per part. pose: name -> 3x3 rotation about the pivot,
-    in the parent's frame."""
+    in the parent's frame; lift raises the whole body (negative lowers it)."""
     world = {}
     for p in parts:
         R = pose.get(p.name, np.eye(3))
@@ -76,6 +76,6 @@ def posed(parts, pose):
             # The pivot moves with the parent: x' = PR (pivot + R (x - pivot)) + PT
             M = PR @ R; T = PR @ p.pivot + PT - M @ p.pivot
         else:
-            M = R; T = p.pivot - R @ p.pivot
+            M = R; T = p.pivot - R @ p.pivot + np.array([0, lift, 0])
         world[p.name] = (M, T)
     return world

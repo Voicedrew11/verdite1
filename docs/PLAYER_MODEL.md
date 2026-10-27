@@ -2,8 +2,8 @@
 
 Other players in an online room are drawn as a knight of our own, made to look like the game's
 models, holding the player's real weapon and swinging it with the game's own animation
-(`src/game/online_player_render.cpp`, in `patches/src/game.patch`). Not finished: the legs do not
-walk yet, and a player on a stair is drawn on the cell's floor.
+(`src/game/online_player_render.cpp`, in `patches/src/game.patch`), and walking in a gait shaped on
+the game's skeletons'. Not finished: a player on a stair is drawn on the cell's floor.
 
 `tools/player_model/` holds it:
 
@@ -13,7 +13,8 @@ walk yet, and a player on a stair is drawn on the cell's floor.
 | `body.py` | Builds parts from lofted cross-sections, boxes and panels, and writes them as a TMD. |
 | `knight.py` | The knight's part table and the rig that poses it. |
 | `arm.py` | The weapon arm: a first-person weapon model on the knight's elbow, through an attack. |
-| `preview.py` | The command: `survey`, `floor N`, `knight`, `swing W`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
+| `walk.py` | The walk: legs and free arm through a cycle, and how far the body drops onto the planted foot. |
+| `preview.py` | The command: `survey`, `floor N`, `knight`, `swing W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
 | `gltf.py` | Writes a posed model as `knight.glb`, to turn around in Blender. |
 
 After changing the knight, run `preview.py cpp` and rebuild; the part order is
@@ -79,6 +80,39 @@ radians until the hit (phase 3072, the Colichemarde's 1000), then lowers by the 
 Known flaw: the blend moves vertices in straight lines, so on its first update the arm briefly
 folds toward the body.
 
+## The walk
+
+The game's walkers are morph clips, sampled linearly between keyframes; the model was the
+skeleton (B1 actor model 5, its move clip 1), measured from its vertices. One leg, over the
+4096-phase cycle, from its foot leaving the ground:
+
+| Phase | Skeleton thigh / knee | Knight thigh / knee |
+| --- | --- | --- |
+| 0 (foot leaves the ground behind) | -15 / 11 | -22 / 14 |
+| 1024 (end of the swing, reaching) | 40 / 46 | 42 / 50 |
+| 2048 (foot lands) | 28 / 18 | 30 / 12 |
+| 3072 (mid-stance) | -1 / 20 | 4 / 16 |
+
+Degrees, thigh forward of vertical. The thigh swings forward in a quarter of the cycle to a
+reach past the landing angle, settles onto it, and sweeps back through the stance over half the
+cycle; the feet barely lift (the skeleton's by about 12 units). The other leg is half a cycle
+behind. The knight's range is a little wider than the skeleton's, since a player runs 180 units
+an update and the skeleton walks 110; the left arm swings against the right leg (0.4 of its swing)
+with the forearm bent 12 degrees, and the weapon arm holds its guard.
+
+- The body drops so the longer leg stands on the floor (by 9 to 81 units through the cycle,
+  lowest when both feet are down), as the skeleton's hips bob by about 33.
+- The cycle advances by the distance a player moves between poses (`port/ext/online_stride.h`,
+  unit-tested): 1700 units a cycle, the planted foot's sweep, so the feet keep pace with the
+  floor. The skeleton's slide: it covers 1760 a cycle on a 1200 sweep. Moving backwards plays it
+  backwards; strafing plays it forward.
+- The stride's size follows the speed (full at 150 an update), eased half way each pose, and is
+  held through two poses that repeat the last: poses go out every 50 ms of the wall clock, which
+  can fall between two game updates, and without the hold the stride shrank by half every few
+  poses. A change of floor or a move over 1000 units leaves the player standing.
+- `preview.py walk W` draws the knight's cycle above the skeleton's at the same phases, side on
+  and three-quarters.
+
 ## In the game
 
 - The knight's TMD and joints are `port/ext/online_player_model.cpp` (generated), behind
@@ -94,7 +128,7 @@ folds toward the body.
 
 ## Next
 
-1. Walking: legs and left arm swung by distance moved, from the change in position.
-2. Advance a remote swing between poses at the game's rate, so every update of it is drawn.
-3. The height: the pose has none, so a player on a stair or in the air is drawn on the cell's
+1. Advance a remote swing and walk between poses at the game's rate, so every update of them is
+   drawn: at a run the knight's cycle is about nine poses, each drawn for 50 ms.
+2. The height: the pose has none, so a player on a stair or in the air is drawn on the cell's
    floor.

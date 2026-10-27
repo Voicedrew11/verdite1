@@ -1852,14 +1852,15 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f84a98234ef6c8c4d161b9d3e380d3684206f0d7
+index 0000000000000000000000000000000000000000..2b2578426a5188406e8b49e7f2a8c905ec78a799
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,366 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). Their right forearm is the game's own first-person weapon model
 +// (WEPON/WEPxx.MIM: a gauntlet holding the weapon) on the knight's elbow, posed by its clip at
-+// their attack phase, so others see the swing its player sees.
++// their attack phase, so others see the swing its player sees. They walk by the distance they move,
++// in a gait shaped on the game's own skeletons'.
 +#include <kf/platform/prelude.h>
 +#include <kf/game/equipment.h>
 +#include <kf/game/graphics.h>
@@ -1890,7 +1891,27 @@ index 0000000000000000000000000000000000000000..f84a98234ef6c8c4d161b9d3e380d368
 +    ONLINE_PLAYER_ATTACK_BLEND = 600,         // phase over which the guard turns into the swing
 +    ONLINE_PLAYER_ARM_RAISE = -587,           // the upper arm lifts forward through a swing (0.9 rad)
 +    ONLINE_PLAYER_HIT_PHASE = 3072,           // PLAYER_WEAPON_HIT_PHASE
-+    ONLINE_PLAYER_COLICHEMARDE_HIT_PHASE = 1000
++    ONLINE_PLAYER_COLICHEMARDE_HIT_PHASE = 1000,
++    ONLINE_PLAYER_GAIT_PHASE_END = 4096,
++    ONLINE_PLAYER_GAIT_MIDDLE = 114,          // the thigh's middle angle through a stride (10 degrees)
++    ONLINE_PLAYER_FOREARM_BEND = 137,         // the free forearm bends while walking (12 degrees)
++};
++
++// One leg through a walk, from its foot leaving the ground behind, linear between keys as the
++// game's keyframes are; shaped on the skeleton's move clip (B1 actor model 5). The thigh swings
++// forward fast to a reach past the contact angle, settles on it and sweeps back over half the cycle.
++struct OnlinePlayerGaitKey {
++    s16 phase;
++    s16 thigh;  // forward of vertical
++    s16 knee;   // bend
++};
++
++static constexpr std::array<OnlinePlayerGaitKey, 4> online_player_gait = {{
++    {0, -250, 159}, {1024, 478, 569}, {2048, 341, 137}, {3072, 46, 182}}};
++
++struct OnlinePlayerLeg {
++    s32 thigh;
++    s32 knee;
 +};
 +
 +static constexpr float ONLINE_PLAYER_TILE_SIZE = KF_MAP_TILE_SIZE;
@@ -2043,6 +2064,66 @@ index 0000000000000000000000000000000000000000..f84a98234ef6c8c4d161b9d3e380d368
 +        / (KF_WEAPON_ATTACK_PHASE_END - hit));
 +}
 +
++// A leg at a phase of the walk, scaled by the stride (KF_FIXED12_ONE a full one).
++static OnlinePlayerLeg online_player_leg(s32 phase, s32 stride)
++{
++    phase &= ONLINE_PLAYER_GAIT_PHASE_END - 1;
++    std::size_t key = online_player_gait.size() - 1;
++    while (phase < online_player_gait[key].phase)
++        --key;
++    const auto &from = online_player_gait[key];
++    const auto &to = online_player_gait[(key + 1) % online_player_gait.size()];
++    const s32 end = key + 1 < online_player_gait.size() ? to.phase : ONLINE_PLAYER_GAIT_PHASE_END;
++    const s32 along = ((phase - from.phase) << KF_FIXED12_BITS) / (end - from.phase);
++    const s32 thigh = from.thigh + (((to.thigh - from.thigh) * along) >> KF_FIXED12_BITS);
++    const s32 knee = from.knee + (((to.knee - from.knee) * along) >> KF_FIXED12_BITS);
++    return {(thigh * stride) >> KF_FIXED12_BITS, (knee * stride) >> KF_FIXED12_BITS};
++}
++
++// How far below the hip a leg reaches: the body is lowered so the longer one stands on the floor.
++static s32 online_player_leg_reach(const OnlinePlayerLeg &leg, s32 thigh_length, s32 shin_length)
++{
++    return (thigh_length * kf::angle_cosine(leg.thigh) + shin_length * kf::angle_cosine(leg.thigh - leg.knee))
++        >> KF_FIXED12_BITS;
++}
++
++struct OnlinePlayerPose {
++    std::array<s16, kf::online_player_part_count> bends;  // about each part's pivot, forward is negative
++    s32 drop;                                              // the body lowered to stand on the planted foot
++};
++
++// The knight walking: legs half a cycle apart, the free arm swung against the right leg, the right
++// upper arm lifted through a swing.
++static OnlinePlayerPose online_player_pose(const kf::OnlinePlayer &player)
++{
++    using Part = kf::OnlinePlayerPart;
++    const auto &joints = kf::online_player_model_joints();
++    const s32 stride = std::clamp(static_cast<s32>(std::lround(player.stride * KF_FIXED12_ONE)), 0, KF_FIXED12_ONE);
++    const s32 phase = static_cast<s32>(std::lround(player.stride_phase * static_cast<float>(ONLINE_PLAYER_GAIT_PHASE_END)));
++    const auto right = online_player_leg(phase, stride);
++    const auto left = online_player_leg(phase + ONLINE_PLAYER_GAIT_PHASE_END / 2, stride);
++    const auto part = [](Part part) { return kf_enum_encode<u8>(part); };
++
++    OnlinePlayerPose pose{};
++    pose.bends[part(Part::ThighRight)] = static_cast<s16>(-right.thigh);
++    pose.bends[part(Part::ShinRight)] = static_cast<s16>(right.knee);
++    pose.bends[part(Part::ThighLeft)] = static_cast<s16>(-left.thigh);
++    pose.bends[part(Part::ShinLeft)] = static_cast<s16>(left.knee);
++    pose.bends[part(Part::UpperArmLeft)] = static_cast<s16>(
++        -2 * (right.thigh - ((ONLINE_PLAYER_GAIT_MIDDLE * stride) >> KF_FIXED12_BITS)) / 5);
++    pose.bends[part(Part::ForearmLeft)] = static_cast<s16>(-((ONLINE_PLAYER_FOREARM_BEND * stride) >> KF_FIXED12_BITS));
++    pose.bends[part(Part::UpperArmRight)] = online_player_arm_raise(player.weapon, player.attack_phase);
++
++    const auto &hip = joints[part(Part::ThighRight)].pivot;
++    const auto &knee = joints[part(Part::ShinRight)].pivot;
++    const s32 thigh_length = knee.vy - hip.vy;  // up is -y, the feet at 0
++    const s32 shin_length = -knee.vy;
++    const s32 reach = std::max(online_player_leg_reach(right, thigh_length, shin_length),
++        online_player_leg_reach(left, thigh_length, shin_length));
++    pose.drop = thigh_length + shin_length - reach;
++    return pose;
++}
++
 +struct OnlinePlayerPlacement {
 +    MATRIX rotation;   // the part's orientation in the world
 +    VECTOR position;   // its pivot in the world
@@ -2102,9 +2183,10 @@ index 0000000000000000000000000000000000000000..f84a98234ef6c8c4d161b9d3e380d368
 +    const auto &joints = kf::online_player_model_joints();
 +    const s32 cell_x = std::clamp(static_cast<s32>(player.x), 0, KF_MAP_COLUMNS - 1);
 +    const s32 cell_z = std::clamp(static_cast<s32>(player.z), 0, KF_MAP_COLUMNS - 1);
++    const auto pose = online_player_pose(player);
 +    const VECTOR feet = {
 +        static_cast<s32>(player.x * ONLINE_PLAYER_TILE_SIZE),
-+        map_base_floor_height(cell_x, cell_z),
++        map_base_floor_height(cell_x, cell_z) + pose.drop,
 +        static_cast<s32>(player.z * ONLINE_PLAYER_TILE_SIZE)};
 +    // The automap's yaw, back in the game's angle units, is the camera's heading h; the player
 +    // walks along (-sin h, cos h). Actors walk along (-sin a, -cos a), their models' front, so the
@@ -2119,8 +2201,7 @@ index 0000000000000000000000000000000000000000..f84a98234ef6c8c4d161b9d3e380d368
 +    for (std::size_t i = 0; i < joints.size(); ++i) {
 +        const auto &joint = joints[i];
 +        MATRIX bend;
-+        kf::matrix_set_rotation_xyz(SVECTOR{
-+            static_cast<s16>(i == upper_arm_right ? online_player_arm_raise(player.weapon, player.attack_phase) : 0), 0, 0}, bend);
++        kf::matrix_set_rotation_xyz(SVECTOR{pose.bends[i], 0, 0}, bend);
 +        auto &placement = placements[i];
 +        if (joint.parent < 0) {
 +            kf::matrix_multiply_rotation(body, bend, placement.rotation);

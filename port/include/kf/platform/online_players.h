@@ -20,6 +20,8 @@ struct OnlinePlayer {
     float yaw;        // radians, as AutomapSnapshot
     u8 weapon;        // the equipped weapon (0..15), or online_no_weapon
     s16 attack_phase; // 0..4095 through a swing, or online_not_attacking
+    float stride_phase; // 0..1 through the walk; the right foot leaves the ground at 0, the left at 0.5
+    float stride;       // 0 standing .. 1 a full stride
 };
 
 // The other players on this floor (1..5), as last heard from; empty when not in a room.

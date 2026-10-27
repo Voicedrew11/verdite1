@@ -8,6 +8,7 @@ they go under build/ (gitignored). See docs/PLAYER_MODEL.md.
   preview.py floor N                floor N's map-event and actor models, three angles each
   preview.py knight                 the knight beside floor 2's standing knight, four angles
   preview.py swing W [--yaw A,B]    the knight attacking with weapon W, one picture per update
+  preview.py walk [W]                the knight's walk cycle (holding weapon W) above the skeleton's
   preview.py tmd OUT.tmd            write the knight's TMD
   preview.py cpp [OUT.cpp]          write the knight as the game's source
                                     (port/ext/online_player_model.cpp)
@@ -19,7 +20,7 @@ Needs numpy and Pillow.
 """
 import argparse, collections, math, os, sys
 import numpy as np
-import kfmodel as kf, knight, arm
+import kfmodel as kf, knight, arm, walk
 from body import build_tmd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,11 +38,11 @@ def floor_banks(data, floor):
     names = {2: 'event', 3: 'effect', 4: 'actor'}
     return {name: kf.archive(chunks[i]) for i, name in names.items() if i < len(chunks)}
 
-def flatten(parts, tmd_bytes, pose, extra=()):
+def flatten(parts, tmd_bytes, pose, extra=(), lift=0.0):
     """The knight's objects posed (knight.posed) and joined into one object, with extra
     (vertices, normals, primitives) already in actor space, for kf.render."""
     tmd = kf.Tmd(tmd_bytes)
-    world = knight.posed(parts, pose)
+    world = knight.posed(parts, pose, lift)
     pieces = []
     for part, obj in zip(parts, tmd.objects):
         M, T = world[part.name]
@@ -109,6 +110,30 @@ def swing(args):
             imgs.append(kf.render(flat, vr, yaw=yaw, pitch=0.1, size=args.size, extent=1300,
                                   center=np.array([0, -1100, -250])))
     return kf.grid(imgs, len(phases))
+
+def walk_sheet(args):
+    """The knight through its walk cycle holding weapon W at rest, above the skeleton's walk
+    (B1 actor model 5, its move clip) at the same phases."""
+    vr = vram(args.data, 1)
+    parts = [p for p in knight.knight() if p.name != 'forearm_r']
+    tmd = build_tmd(parts)
+    weapon = arm.WeaponArm(args.data, args.weapon)
+    skeleton = floor_banks(args.data, 1)['actor'][5]
+    frames = 8
+    centre = np.array([0, -950, 0])
+    imgs = []
+    for yaw in args.yaw:
+        for k in range(frames):
+            pose, lift = walk.pose(k / frames, args.amount)
+            vertices, _ = weapon.state(None)
+            M, T = knight.posed(parts, pose, lift)['upper_arm_r']
+            flat = flatten(parts, tmd, pose, [weapon.placed(vertices, -(M @ arm.ELBOW + T))], lift)
+            imgs.append(kf.render(flat, vr, yaw=yaw, pitch=0.05, size=args.size, extent=1100, center=centre))
+        for k in range(frames):
+            v = skeleton.pose(1, k * 4096 // frames)
+            imgs.append(kf.render(skeleton.tmd, vr, verts=v, yaw=yaw, pitch=0.05, size=args.size, extent=1100,
+                                  center=centre))
+    return kf.grid(imgs, frames)
 
 def gltf_model(args):
     import gltf
@@ -192,6 +217,10 @@ def main():
     p = sub.add_parser('swing'); p.add_argument('weapon', type=int, choices=range(12))
     p.add_argument('--yaw', type=lambda s: [float(x) for x in s.split(',')], default=[0.8, math.pi / 2])
     p.add_argument('--size', type=int, default=200)
+    p = sub.add_parser('walk'); p.add_argument('weapon', type=int, choices=range(12), nargs='?', default=0)
+    p.add_argument('--yaw', type=lambda s: [float(x) for x in s.split(',')], default=[math.pi / 2, 0.8])
+    p.add_argument('--size', type=int, default=200)
+    p.add_argument('--amount', type=float, default=1.0)
     p = sub.add_parser('tmd'); p.add_argument('path')
     p = sub.add_parser('cpp'); p.add_argument('path', nargs='?',
                                               default=os.path.join(ROOT, 'port/ext/online_player_model.cpp'))
@@ -209,10 +238,10 @@ def main():
         with open(args.path, 'wb') as f:
             f.write(build_tmd(knight.knight()))
         return
-    image = {'floor': floor, 'knight': knight_sheet, 'swing': swing}[args.command](args)
+    image = {'floor': floor, 'knight': knight_sheet, 'swing': swing, 'walk': walk_sheet}[args.command](args)
     os.makedirs(args.out, exist_ok=True)
     name = {'floor': lambda: f'floor{args.floor}', 'knight': lambda: 'knight',
-            'swing': lambda: f'swing{args.weapon:02d}'}[args.command]()
+            'swing': lambda: f'swing{args.weapon:02d}', 'walk': lambda: 'walk'}[args.command]()
     path = os.path.join(args.out, name + '.png')
     kf.save(image, path)
     print(path)

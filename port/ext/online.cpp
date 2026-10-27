@@ -3,6 +3,7 @@
 // network until a room is joined.
 #include "internal.hpp"
 #include "online_pose.h"
+#include "online_stride.h"
 
 #include <imgui.h>
 #include <kf/platform/automap.h>
@@ -44,11 +45,16 @@ struct SessionClose {
     void operator()(vo_session *session) const { vo_close(session); }
 };
 
+struct Peer {
+    std::optional<OnlinePose> pose;   // the last one heard
+    OnlineStride stride;
+};
+
 struct Online {
     std::unique_ptr<vo_session, SessionClose> session;
     std::string room;
     vo_peer self = 0;
-    std::map<vo_peer, std::optional<OnlinePose>> players; // open peers, and their last pose
+    std::map<vo_peer, Peer> players; // open peers
     std::string status;   // what the overlay says when not in a room, or why we left
     Clock::time_point next_pose;
     std::array<char, room_most + 1> room_field{};
@@ -105,7 +111,7 @@ void on_event(const vo_event &event) {
         std::printf("[online] in room %s as %s\n", online.room.c_str(), hex(event.peer).c_str());
         break;
     case VO_EVENT_PEER_OPEN:
-        online.players[event.peer] = std::nullopt;
+        online.players[event.peer] = {};
         std::printf("[online] %s is here\n", hex(event.peer).c_str());
         break;
     case VO_EVENT_PEER_CLOSED:
@@ -117,9 +123,11 @@ void on_event(const vo_event &event) {
             break;
         if (const auto pose = online_pose_decode(std::span(event.data, event.size))) {
             auto &known = online.players[event.peer];
-            if (!known || known->floor != pose->floor)
+            if (!known.pose || known.pose->floor != pose->floor)
                 std::printf("[online] %s is on floor %d\n", hex(event.peer).c_str(), pose->floor);
-            known = pose;
+            if (known.pose)
+                known.stride = online_stride_step(known.stride, *known.pose, *pose);
+            known.pose = pose;
         }
         break;
     case VO_EVENT_ERROR:
@@ -183,8 +191,8 @@ void online_draw_panel() {
             ImGui::TextDisabled("Joining...");
         else if (online.players.empty())
             ImGui::TextDisabled("Waiting for someone to join the same room.");
-        for (const auto &[peer, pose] : online.players) {
-            if (pose)
+        for (const auto &[peer, known] : online.players) {
+            if (const auto &pose = known.pose)
                 ImGui::BulletText("%s  floor %d  (%.1f, %.1f)", hex(peer).c_str(), pose->floor, pose->x, pose->z);
             else
                 ImGui::BulletText("%s  connected", hex(peer).c_str());
@@ -205,9 +213,9 @@ void online_draw_panel() {
 
 std::vector<OnlinePose> online_players() {
     std::vector<OnlinePose> poses;
-    for (const auto &[peer, pose] : online.players)
-        if (pose)
-            poses.push_back(*pose);
+    for (const auto &[peer, known] : online.players)
+        if (known.pose)
+            poses.push_back(*known.pose);
     return poses;
 }
 
@@ -239,10 +247,10 @@ namespace kf {
 std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     std::vector<OnlinePlayer> players;
 #if KF_ONLINE
-    for (const auto &[peer, pose] : ext::online.players)
-        if (pose && pose->floor == floor)
+    for (const auto &[peer, known] : ext::online.players)
+        if (const auto &pose = known.pose; pose && pose->floor == floor)
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
-                pose->attack_phase});
+                pose->attack_phase, known.stride.phase, known.stride.amount});
 #else
     (void)floor;
 #endif
