@@ -1,5 +1,5 @@
 diff --git a/src/game/actor.cpp b/src/game/actor.cpp
-index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..3f61e7592766a2a73ff80d7414166acc78e51d2c 100644
+index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..6d0e3b0534725707e6ebc0430fe0b4c358cee8bf 100644
 --- a/src/game/actor.cpp
 +++ b/src/game/actor.cpp
 @@ -6,6 +6,7 @@
@@ -10,19 +10,30 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..3f61e7592766a2a73ff80d7414166acc
  
  #include <algorithm>
  #include <array>
-@@ -268,6 +269,11 @@ void actor_apply_damage(
-     s32 health;
-     s32 remaining;
- 
-+    // PC extension (coop): an actor another player's machine runs is only drawn here; hits cross
-+    // machines in a later step.
+@@ -315,6 +316,14 @@ void actor_apply_damage(
+             player_increment_physical_power_training();
+         }
+     }
++    // PC extension (coop): an actor another player's machine runs is only drawn here, so the hit,
++    // having trained this player, goes to that machine to apply.
 +    if (!kf::coop_runs_floor()) {
++        kf::coop_hit_actor_elsewhere({actor_index, actor->definition_id, base_power,
++            {cutting_damage, striking_damage, piercing_damage, magic_damage, fire_damage}, scale,
++            hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER});
 +        return;
 +    }
-     if (player_state.progress_state.current_floor == KF_FLOOR_5 && actor->definition_id == KF_FLOOR5_BOSS_DEFINITION) {
-         if (map_runtime_state.world_state.floor5.boss_encounter_started == KF_MAP_SCRIPT_UNSET) {
-             return;
-@@ -430,6 +436,10 @@ void actor_try_attack_player(
+     if (actor->action == KF_ACTOR_ACTION_DRIFT) {
+         actor->vertical_state = KF_ACTOR_VERTICAL_FALL;
+         actor->vertical_velocity = 0;
+@@ -325,6 +334,7 @@ void actor_apply_damage(
+         remaining = 0;
+         if (health != 0 && hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
+             player_add_experience(definition->experience_reward);
++            kf::coop_actor_killed(definition->experience_reward);   // PC extension (coop): the whole floor's
+         }
+         if (definition->action_animations[KF_ACTOR_ANIM_SLOT_DEATH] != KF_ANIMATION_CLIP_NONE) {
+             actor_set_action(actor, KF_ACTOR_ACTION_DYING);
+@@ -430,6 +440,10 @@ void actor_try_attack_player(
          && (kf::random_next() >> ACTOR_STATUS_CHANCE_RANDOM_SHIFT) < definition->status_effect_chance) {
          status_effect = definition->status_effect;
      }

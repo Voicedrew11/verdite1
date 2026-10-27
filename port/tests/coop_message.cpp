@@ -192,6 +192,26 @@ TEST_CASE("a floor message with a floor, order or purpose out of range is refuse
     CHECK_FALSE(coop_message_decode(purpose));
 }
 
+TEST_CASE("a hit, an aim and a kill come back as they were sent") {
+    const CoopActorHit hit = round_trip(CoopActorHit{3, 127, 9, 40, {1, 2, 3, 4, 5}, 4096, true});
+    CHECK((hit.floor == 3 && hit.slot == 127 && hit.definition == 9 && hit.base_power == 40));
+    CHECK(hit.damage == std::array<std::uint16_t, 5>{1, 2, 3, 4, 5});
+    CHECK((hit.scale == 4096 && hit.credited));
+    const CoopActorAim aim = round_trip(CoopActorAim{2, 5, 6});
+    CHECK((aim.floor == 2 && aim.slot == 5 && aim.definition == 6));
+    const CoopKill kill = round_trip(CoopKill{4, 300});
+    CHECK((kill.floor == 4 && kill.experience == 300));
+}
+
+TEST_CASE("a hit or an aim on a slot past the actors is refused") {
+    CHECK_FALSE(coop_message_decode(encoded(CoopActorHit{1, 128, 0, 0, {}, 0, false})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopActorAim{1, 200, 0})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopKill{0, 1})));
+    auto credited = encoded(CoopActorHit{1, 1, 0, 0, {}, 0, true});
+    credited.back() = 2;
+    CHECK_FALSE(coop_message_decode(credited));
+}
+
 TEST_CASE("a welcome with a world too big for one message is nothing") {
     CoopWelcome big = welcome();
     big.world.assign(coop_message_most, 0);

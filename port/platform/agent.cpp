@@ -37,7 +37,8 @@ bool quit_requested;
 std::optional<std::array<int, 2>> move_request; // a cell, applied between updates
 std::optional<std::array<long, 2>> give_request; // an item (255: gold) and a count, applied between updates
 std::optional<int> warp_request;                // a floor, applied between updates
-std::optional<std::size_t> take_request;        // an object slot emptied between updates, as a pickup does
+std::optional<std::size_t> take_request;
+std::optional<std::size_t> hit_request;         // an actor slot struck between updates, as the sword does        // an object slot emptied between updates, as a pickup does
 
 struct ButtonName { const char *name; Button button; };
 constexpr std::array<ButtonName, 14> button_names = {{
@@ -62,10 +63,10 @@ std::string snapshot() {
         const auto &rotation = player_state.camera_rotation;
         n += std::snprintf(text + n, sizeof text - n,
             ",\"hp\":%u,\"maxHp\":%u,\"mp\":%u,\"maxMp\":%u,\"area\":%d,\"level\":%u,\"gold\":%u,"
-            "\"pos\":[%d,%d,%d],\"pitch\":%d,\"yaw\":%d",
+            "\"experience\":%d,\"pos\":[%d,%d,%d],\"pitch\":%d,\"yaw\":%d",
             vitals.current_hp, vitals.maximum_hp, vitals.current_mp, vitals.maximum_mp,
             static_cast<int>(player_state.progress_state.current_floor), player_state.progress_state.level,
-            player_state.gold, position.vx, position.vy, position.vz, rotation.vx, rotation.vy);
+            player_state.gold, player_state.experience, position.vx, position.vy, position.vz, rotation.vx, rotation.vy);
     }
     return std::string(text, n) + "}";
 }
@@ -154,6 +155,22 @@ std::string do_object(verdite::AgentArgs args) {
         take_request = static_cast<std::size_t>(index);
     const auto id = kf_enum_encode<u8>(map_object_state.objects[static_cast<std::size_t>(index)].object_id);
     return verdite::json_ok("object", ",\"id\":" + std::to_string(id));
+}
+
+// Strikes an actor slot at the next update as the player's sword does, at full charge; or aims a
+// spell at it, as the cone's target is chosen.
+std::string do_hit(verdite::AgentArgs args) {
+    if (args.empty() || args.size() > 2 || (args.size() == 2 && args[1] != "aim"))
+        return verdite::json_error("hit <slot 0..127> [aim]");
+    char *end = nullptr;
+    const long slot = std::strtol(args[0].c_str(), &end, 10);
+    if (*end || slot < 0 || slot >= KF_ACTOR_CAPACITY)
+        return verdite::json_error("hit <slot 0..127> [aim]");
+    if (args.size() == 2)
+        actor_state.player_target = &actor_state.actors[static_cast<std::size_t>(slot)];
+    else
+        hit_request = static_cast<std::size_t>(slot);
+    return verdite::json_ok("hit");
 }
 
 std::string do_give(verdite::AgentArgs args) {
@@ -318,6 +335,7 @@ void agent_start() {
         {"players", "players - the other players in the room on this floor, as drawn", do_players},
         {"warp", "warp <floor> - change floor as a warp does, onto the first open cell, at the next update", do_warp},
         {"object", "object <slot> [take] - an object slot's id on this floor (255 none); take empties it as a pickup does", do_object},
+        {"hit", "hit <slot> [aim] - strike an actor at the next update as the sword does at full charge, or aim a spell at it", do_hit},
         {"give", "give <item> <count> - change the pack (item 255: the purse) at the next update, as a pickup or use would", do_give},
         {"coop", "coop - the coop session: role, whether its world is in play, the pack, purse and what each player wears", do_coop},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
@@ -341,6 +359,12 @@ void agent_between_updates() {
             u8 &stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][item];
             stock = static_cast<u8>(std::clamp<long>(stock + count, 0, KF_ITEM_STACK_CAPACITY));
         }
+    }
+    if (hit_request) {
+        actor_apply_damage(static_cast<u16>(*hit_request), player_state.physical_power, player_state.cutting_attack,
+            player_state.striking_attack, player_state.piercing_attack, player_state.holy_attack,
+            player_state.fire_attack, KF_ACTOR_DAMAGE_SCALE_ONE, KF_ACTOR_DAMAGE_CREDIT_PLAYER);
+        hit_request.reset();
     }
     if (take_request) {
         map_object_state.objects[*take_request].object_id = KF_OBJECT_NONE;

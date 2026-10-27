@@ -6,6 +6,7 @@
 #include <kf/lib/types.h>
 #include <kf/platform/language.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,22 @@ u8 coop_highest_floor(u8 own);
 // room only on the floor's owner. Elsewhere the owner's actors are drawn as it sends them, and a
 // hit on one does nothing until hits cross machines (Order 6).
 bool coop_runs_floor();
+
+// actor_apply_damage on a floor another player's machine runs, once the hit has trained this
+// player: the hit as it landed here goes to that machine, which applies it (Order 6).
+struct CoopActorHitArgs {
+    u16 actor;
+    u8 definition;
+    u16 base_power;
+    std::array<u16, 5> damage;   // cutting, striking, piercing, magic, fire
+    u16 scale;
+    bool credited;               // a player's own hit, which gives experience on a kill
+};
+void coop_hit_actor_elsewhere(const CoopActorHitArgs &hit);
+
+// actor_apply_damage on the floor's owner, once a player's hit has killed an actor and given this
+// player its experience: every other player on the floor gets it too.
+void coop_actor_killed(u16 experience);
 
 // map_unload_floor, before the floor goes: the floor's owner sends it live to its heir, and its
 // record to the host.

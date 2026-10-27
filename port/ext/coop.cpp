@@ -4,6 +4,7 @@
 // a guest's game changes the pack at once and the host settles the difference. Joining sets the
 // player's own game aside and leaving puts it back, both between updates.
 #include "coop_floor_play.h"
+#include "coop_hits.h"
 #include "coop_message.h"
 #include "coop_party.h"
 #include "internal.hpp"
@@ -325,6 +326,7 @@ void enter_as_guest(const CoopWelcome &welcome) {
 
 void leave_world() {
     coop_floors_stop();
+    coop_hits_stop();
     std::printf("[coop] left the world of room %s\n", coop.room.c_str());
     if (coop.from_title) {
         reset_session();
@@ -625,6 +627,8 @@ void coop_control_packet(std::uint64_t peer, std::span<const std::uint8_t> bytes
     }
     if (floor_message(*message))
         coop_floors_receive(peer, *message);
+    else if (coop_hits_message(*message))
+        coop_hits_receive(coop_floors_player(peer), *message);
     else if (coop.role == Role::Host)
         host_receives(peer, *message);
     else if (coop.role == Role::Guest)
@@ -794,6 +798,7 @@ void coop_update() {
     // Sent at once, even from a menu; the host's answer comes into the game between updates.
     if (coop.role == Role::Guest)
         take_game_changes();
+    coop_hits_world_update();
     coop_floors_world_update();
 }
 

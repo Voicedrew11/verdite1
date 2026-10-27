@@ -5,6 +5,7 @@
 #include "coop_floor_owners.h"
 #include "coop_party.h"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -120,9 +121,36 @@ struct CoopFloorWrites {
     std::vector<std::uint8_t> writes;
 };
 
+inline constexpr std::size_t coop_actor_slots = 128;   // KF_ACTOR_CAPACITY
+
+// A player on a floor another machine runs, to its owner: a hit as it landed on this player's
+// screen, with actor_apply_damage's arguments. The owner refuses one whose slot now holds another
+// definition.
+struct CoopActorHit {
+    int floor = 1;
+    std::uint8_t slot = 0;
+    std::uint8_t definition = 0;
+    std::uint16_t base_power = 0;
+    std::array<std::uint16_t, 5> damage{};   // cutting, striking, piercing, magic, fire
+    std::uint16_t scale = 0;
+    bool credited = false;                   // a player's own hit, which gives experience on a kill
+};
+// The same player to the owner: it aimed a spell at an actor (player_target), which may dodge.
+struct CoopActorAim {
+    int floor = 1;
+    std::uint8_t slot = 0;
+    std::uint8_t definition = 0;
+};
+// A floor's owner to everyone: a player's hit killed an actor, and every player on the floor gets
+// its experience.
+struct CoopKill {
+    int floor = 1;
+    std::uint16_t experience = 0;
+};
+
 using CoopMessage = std::variant<CoopHello, CoopWelcome, CoopCharacterUpdate, CoopAcknowledged, CoopPackRequest,
     CoopWearRequest, CoopPack, CoopFeedLine, CoopSaveRequest, CoopRoster, CoopFloorAt, CoopFloorOrders,
-    CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites>;
+    CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites, CoopActorHit, CoopActorAim, CoopKill>;
 
 inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
 

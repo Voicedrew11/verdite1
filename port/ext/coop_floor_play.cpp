@@ -396,6 +396,35 @@ void coop_floors_unloading() {
     wait();
 }
 
+CoopPlayerId coop_floors_runner() {
+    switch (floors.part) {
+    case Part::Running:
+        return floors.self;
+    case Part::Watching:
+        return floors.watching;
+    case Part::Waiting:
+        return 0;
+    }
+    return 0;
+}
+
+int coop_floors_floor() {
+    return floors.floor;
+}
+
+CoopPlayerId coop_floors_self() {
+    return floors.self;
+}
+
+CoopPlayerId coop_floors_player(std::uint64_t peer) {
+    const auto player = floors.players.find(peer);
+    return player != floors.players.end() ? player->second : 0;
+}
+
+void coop_floors_send(CoopPlayerId player, const CoopMessage &message) {
+    send_to(player, message);
+}
+
 bool coop_floors_run_here() {
     return !floors.on || floors.part == Part::Running;
 }

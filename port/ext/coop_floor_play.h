@@ -40,6 +40,17 @@ void coop_floors_world_update();
 // The loaded floor is about to go (map_unload_floor): an owner sends it live to its heir, and its
 // record to the host.
 void coop_floors_unloading();
+// The player whose machine runs this player's floor: this one while it runs it, the owner whose
+// actors it draws while it watches, 0 while it waits.
+CoopPlayerId coop_floors_runner();
+// The floor this machine said it is on, 0 before it has said.
+int coop_floors_floor();
+// This player, 0 outside a room.
+CoopPlayerId coop_floors_self();
+// The player a peer is, 0 for one not in the roster.
+CoopPlayerId coop_floors_player(std::uint64_t peer);
+// A message straight to one player in the room.
+void coop_floors_send(CoopPlayerId player, const CoopMessage &message);
 // Whether this machine runs the loaded floor's actors.
 bool coop_floors_run_here();
 // What this machine does with its floor, for the agent: "running", "watching", "waiting", or ""
