@@ -188,6 +188,10 @@ bool online_rooms(std::vector<verdite::TitleRoom> &rooms, verdite::RoomListState
 // CONTROL packets for coop: to one peer, or every open peer.
 void online_send_control(std::uint64_t peer, std::span<const std::uint8_t> bytes);
 void online_broadcast_control(std::span<const std::uint8_t> bytes);
+// To every peer on the STATE channel (unreliable): a floor owner's actors.
+void online_broadcast_state(std::span<const std::uint8_t> bytes);
+// This machine's peer in the room; 0 outside one.
+std::uint64_t online_self_peer();
 // Leaves the room once the session's events are handled, saying why.
 void online_leave_room(std::string_view why);
 

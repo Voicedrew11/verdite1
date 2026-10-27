@@ -22,10 +22,14 @@ int coop_worn_by_others(u8 item);
 // read in coop; `own` outside it. A stage is never set lower than it was in coop.
 u8 coop_highest_floor(u8 own);
 
-// Whether map_world_state_persist may write the floor's records into the lasting world: always
-// alone, and in a room only on the floor's owner (the host, until floors have owners). A machine
-// that may not still keeps its own copy for the session.
-bool coop_floor_records_kept();
+// Whether this machine runs the loaded floor's actors (actor_pool_update): always alone, and in a
+// room only on the floor's owner. Elsewhere the owner's actors are drawn as it sends them, and a
+// hit on one does nothing until hits cross machines (Order 6).
+bool coop_runs_floor();
+
+// map_unload_floor, before the floor goes: the floor's owner sends it live to its heir, and its
+// record to the host.
+void coop_floor_unloading();
 
 // A save point used in coop: the whole party and the world are saved to the host's coop save, as
 // its last save; no card slot is picked. False when not in coop, and the game saves as it does.

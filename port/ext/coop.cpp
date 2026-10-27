@@ -3,6 +3,7 @@
 // party (one pack and one purse, every character, what each wears) and writes the world's file;
 // a guest's game changes the pack at once and the host settles the difference. Joining sets the
 // player's own game aside and leaving puts it back, both between updates.
+#include "coop_floor_play.h"
 #include "coop_message.h"
 #include "coop_party.h"
 #include "internal.hpp"
@@ -64,6 +65,7 @@ struct GuestSide {
     int highest_floor = 1;
     std::uint32_t character_number = 0;
     std::uint32_t wear_number = 0;
+    CoopRoster roster;   // as the host last sent it
 };
 
 struct Coop {
@@ -134,6 +136,16 @@ void send(std::uint64_t peer, const CoopMessage &message) {
 void broadcast(const CoopMessage &message) {
     if (const auto bytes = coop_message_encode(message))
         online_broadcast_control(*bytes);
+}
+
+// Who is in the room and their peers, the host first, to everyone: a snapshot goes straight from
+// one player to another.
+void host_roster() {
+    CoopRoster roster{{{coop.self, online_self_peer()}}};
+    for (const auto &[peer, id] : coop.host.guests)
+        roster.players.push_back({id, peer});
+    broadcast(roster);
+    coop_floors_roster(roster);
 }
 
 // ---- the game's side ----
@@ -273,6 +285,13 @@ void enter_world() {
         return;
     }
     coop.in_play = true;
+    if (coop.role == Role::Host) {
+        coop_floors_start(coop.self, coop.self);
+        host_roster();
+    } else {
+        coop_floors_start(coop.self, 0);
+        coop_floors_roster(coop.guest.roster);
+    }
     coop.mirror = CoopPackMirror(coop.enter.pack, coop.enter.gold);
     coop.worn_sent = game_worn();
     coop.enter = {};
@@ -305,6 +324,7 @@ void enter_as_guest(const CoopWelcome &welcome) {
 }
 
 void leave_world() {
+    coop_floors_stop();
     std::printf("[coop] left the world of room %s\n", coop.room.c_str());
     if (coop.from_title) {
         reset_session();
@@ -392,6 +412,7 @@ void host_welcome(std::uint64_t peer, const CoopHello &hello) {
         save_system_coop_world(), kf_enum_encode<u8>(player_state.progress_state.current_floor), cell.x, cell.z});
     host.pack_changed = true;
     host.file_changed = true;
+    host_roster();
     std::printf("[coop] %s joined the world\n", hello.name.c_str());
 }
 
@@ -501,10 +522,21 @@ void guest_receives(std::uint64_t peer, const CoopMessage &message) {
     }
     if (peer != guest.host)
         return;
-    if (const auto *pack = std::get_if<CoopPack>(&message))
+    if (const auto *roster = std::get_if<CoopRoster>(&message)) {
+        guest.roster = *roster;
+        coop_floors_roster(*roster);
+    } else if (const auto *pack = std::get_if<CoopPack>(&message)) {
         guest.pack = *pack;
+    }
     else if (const auto *line = std::get_if<CoopFeedLine>(&message))
         feed(line->by, line->cause, line->change);
+}
+
+// Whether a message is about who runs which floor (coop_floor_play.h), from any player.
+bool floor_message(const CoopMessage &message) {
+    return std::holds_alternative<CoopFloorAt>(message) || std::holds_alternative<CoopFloorOrders>(message)
+        || std::holds_alternative<CoopFloorRecord>(message) || std::holds_alternative<CoopFloorSnapshot>(message)
+        || std::holds_alternative<CoopFloorTaken>(message) || std::holds_alternative<CoopFloorWrites>(message);
 }
 
 // What the others in the room wear: the host's party, or a guest's last word from the host.
@@ -572,10 +604,13 @@ void coop_peer_closed(std::uint64_t peer) {
         const auto guest = coop.host.guests.find(peer);
         if (guest == coop.host.guests.end())
             return;
-        coop.host.file.live.party.leave(guest->second);
+        const CoopPlayerId id = guest->second;
+        coop.host.file.live.party.leave(id);
         coop.host.guests.erase(guest);
         coop.host.pack_changed = true;
         coop.host.file_changed = true;
+        host_roster();
+        coop_floors_gone(id);
         return;
     }
     if (coop.role == Role::Guest && peer == coop.guest.host)
@@ -588,7 +623,9 @@ void coop_control_packet(std::uint64_t peer, std::span<const std::uint8_t> bytes
         std::printf("[coop] a message that is not one was dropped\n");
         return;
     }
-    if (coop.role == Role::Host)
+    if (floor_message(*message))
+        coop_floors_receive(peer, *message);
+    else if (coop.role == Role::Host)
         host_receives(peer, *message);
     else if (coop.role == Role::Guest)
         guest_receives(peer, *message);
@@ -634,7 +671,8 @@ std::string coop_json() {
            worn_json(game_worn()) + ",\"othersWear\":[" + others + "],\"feed\":[" + feed_rows + "],\"highestFloor\":" +
            std::to_string(kf::coop_highest_floor(kf_enum_encode<u8>(player_state.progress_state.highest_floor))) +
            ",\"floor\":" + std::to_string(kf_enum_encode<int>(player_state.progress_state.current_floor)) + ",\"cell\":[" +
-           std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) + "]";
+           std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
+           "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"";
 }
 
 std::string coop_panel_line() {
@@ -715,8 +753,13 @@ u8 coop_highest_floor(u8 own) {
     return static_cast<u8>(std::max<int>(own, world));
 }
 
-bool coop_floor_records_kept() {
-    return true;   // until floors have owners (Order 5), only the host's world is kept
+bool coop_runs_floor() {
+    return !ext::coop.in_play || ext::coop_floors_run_here();
+}
+
+void coop_floor_unloading() {
+    if (ext::coop.in_play)
+        ext::coop_floors_unloading();
 }
 
 bool coop_save_point() {
@@ -746,10 +789,12 @@ void coop_pack_cause(PackCause cause) {
 
 void coop_update() {
     using namespace ext;
-    if (!coop.in_play || coop.role != Role::Guest)
+    if (!coop.in_play)
         return;
     // Sent at once, even from a menu; the host's answer comes into the game between updates.
-    take_game_changes();
+    if (coop.role == Role::Guest)
+        take_game_changes();
+    coop_floors_world_update();
 }
 
 void coop_between_updates() {
@@ -781,6 +826,9 @@ void coop_between_updates() {
         between_updates_as_host();
     else
         between_updates_as_guest();
+    coop_floors_between_updates();
+    if (coop.role == Role::Host && coop_floors_world_changed())
+        coop.host.file_changed = true;
 }
 
 }

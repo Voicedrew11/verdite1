@@ -107,7 +107,7 @@ TEST_CASE("a message cut short, with bytes left over, or of another version or k
     version[0] = 2;
     CHECK_FALSE(coop_message_decode(version));
     auto kind = encoded(CoopSaveRequest{});
-    kind[1] = 9;
+    kind[1] = 16;
     CHECK_FALSE(coop_message_decode(kind));
 }
 
@@ -137,6 +137,59 @@ TEST_CASE("an item, stack, floor, cell, cause or name out of range is refused") 
     CoopPack floor_pack;
     floor_pack.highest_floor = 0;
     CHECK_FALSE(coop_message_decode(encoded(floor_pack)));
+}
+
+TEST_CASE("the floor messages sent are the messages received") {
+    const CoopRoster roster = round_trip(CoopRoster{{{1, 0x10}, {2, 0x20}}});
+    REQUIRE(roster.players.size() == 2);
+    CHECK(roster.players[1].id == 2);
+    CHECK(roster.players[1].peer == 0x20);
+
+    const CoopFloorAt at = round_trip(CoopFloorAt{4, 9});
+    CHECK(at.floor == 4);
+    CHECK(at.left_floor_with == 9);
+
+    const CoopFloorOrders orders = round_trip(CoopFloorOrders{{CoopFloorOwnership{2, 1, 3}, CoopRunFromRecord{3, 4},
+        CoopTakeFloor{5, 6, 7}, CoopShowFloor{1, 8, 9}}});
+    REQUIRE(orders.orders.size() == 4);
+    const auto &row = std::get<CoopFloorOwnership>(orders.orders[0]);
+    CHECK((row.floor == 2 && row.owner == 1 && row.heir == 3));
+    const auto &run = std::get<CoopRunFromRecord>(orders.orders[1]);
+    CHECK((run.floor == 3 && run.to == 4));
+    const auto &take = std::get<CoopTakeFloor>(orders.orders[2]);
+    CHECK((take.floor == 5 && take.from == 6 && take.to == 7));
+    const auto &show = std::get<CoopShowFloor>(orders.orders[3]);
+    CHECK((show.floor == 1 && show.owner == 8 && show.to == 9));
+
+    const CoopFloorRecord record = round_trip(CoopFloorRecord{3, {1, 2, 3}});
+    CHECK(record.floor == 3);
+    CHECK(record.record == std::vector<std::uint8_t>{1, 2, 3});
+
+    const CoopFloorSnapshot snapshot =
+        round_trip(CoopFloorSnapshot{2, CoopSnapshotFor::Handover, {4}, std::vector<std::uint8_t>(40000, 5)});
+    CHECK(snapshot.floor == 2);
+    CHECK(snapshot.purpose == CoopSnapshotFor::Handover);
+    CHECK(snapshot.record == std::vector<std::uint8_t>{4});
+    CHECK(snapshot.live.size() == 40000);
+
+    CHECK(round_trip(CoopFloorTaken{5}).floor == 5);
+    const CoopFloorWrites writes = round_trip(CoopFloorWrites{1, {7, 8}});
+    CHECK(writes.floor == 1);
+    CHECK(writes.writes == std::vector<std::uint8_t>{7, 8});
+}
+
+TEST_CASE("a floor message with a floor, order or purpose out of range is refused") {
+    CHECK_FALSE(coop_message_decode(encoded(CoopFloorAt{0, 0})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopFloorAt{6, 0})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopFloorTaken{6})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopFloorRecord{0, {}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopRoster{{{0, 1}}})));
+    auto order = encoded(CoopFloorOrders{{CoopRunFromRecord{1, 2}}});
+    order[3] = 4;   // the order's kind
+    CHECK_FALSE(coop_message_decode(order));
+    auto purpose = encoded(CoopFloorSnapshot{1, CoopSnapshotFor::Show, {}, {}});
+    purpose[3] = 3;
+    CHECK_FALSE(coop_message_decode(purpose));
 }
 
 TEST_CASE("a welcome with a world too big for one message is nothing") {

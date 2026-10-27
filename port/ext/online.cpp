@@ -1,6 +1,8 @@
 // Online play: a room joined through the Verdite online service (online/README.md), our pose sent
 // to the others once per game update, and theirs played back for the automap and the world. Opt-in:
 // nothing touches the network until a room is joined.
+#include "coop_floor_frames.h"
+#include "coop_floor_play.h"
 #include "internal.hpp"
 #include "online_playback.h"
 #include "online_pose.h"
@@ -172,6 +174,10 @@ void on_event(const vo_event &event) {
             coop_control_packet(event.peer, std::span(event.data, event.size));
             break;
         }
+        if (event.size > 0 && event.data[0] == coop_frame_tag) {
+            coop_floors_state_packet(event.peer, std::span(event.data, event.size));
+            break;
+        }
         if (const auto pose = online_pose_decode(std::span(event.data, event.size)))
             known->second.playback.receive(*pose);
         break;
@@ -246,6 +252,15 @@ void online_send_control(std::uint64_t peer, std::span<const std::uint8_t> bytes
 void online_broadcast_control(std::span<const std::uint8_t> bytes) {
     if (online.session)
         vo_broadcast(online.session.get(), VO_CHANNEL_CONTROL, bytes.data(), bytes.size());
+}
+
+void online_broadcast_state(std::span<const std::uint8_t> bytes) {
+    if (online.session)
+        vo_broadcast(online.session.get(), VO_CHANNEL_STATE, bytes.data(), bytes.size());
+}
+
+std::uint64_t online_self_peer() {
+    return online.session ? online.self : 0;
 }
 
 void online_leave_room(std::string_view why) {
@@ -354,6 +369,12 @@ void online_stop() {}
 void online_send_control(std::uint64_t, std::span<const std::uint8_t>) {}
 
 void online_broadcast_control(std::span<const std::uint8_t>) {}
+
+void online_broadcast_state(std::span<const std::uint8_t>) {}
+
+std::uint64_t online_self_peer() {
+    return 0;
+}
 
 void online_leave_room(std::string_view) {}
 

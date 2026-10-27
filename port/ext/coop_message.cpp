@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <type_traits>
 
 namespace kf::ext {
 namespace {
@@ -192,6 +193,149 @@ bool read(CoopByteReader &, CoopSaveRequest &) {
     return true;
 }
 
+void write(CoopByteWriter &out, const CoopRoster &roster) {
+    out.u8(static_cast<std::uint8_t>(roster.players.size()));
+    for (const CoopRoster::Player &player : roster.players) {
+        out.u64(player.id);
+        out.u64(player.peer);
+    }
+}
+
+bool read(CoopByteReader &in, CoopRoster &roster) {
+    const std::uint8_t count = in.u8();
+    if (!in.ok() || count > players_most)
+        return false;
+    for (std::uint8_t i = 0; i < count; ++i) {
+        const CoopRoster::Player player{in.u64(), in.u64()};
+        if (!in.ok() || player.id == 0 || player.peer == 0)
+            return false;
+        roster.players.push_back(player);
+    }
+    return true;
+}
+
+void write(CoopByteWriter &out, const CoopFloorAt &at) {
+    out.u8(static_cast<std::uint8_t>(at.floor));
+    out.u64(at.left_floor_with);
+}
+
+bool read(CoopByteReader &in, CoopFloorAt &at) {
+    at.floor = in.u8();
+    at.left_floor_with = in.u64();
+    return in.ok() && floor_valid(at.floor);
+}
+
+// An order: its kind (CoopFloorOrder's index), the floor, then its two players.
+void write_order(CoopByteWriter &out, const CoopFloorOrder &order) {
+    out.u8(static_cast<std::uint8_t>(order.index()));
+    std::visit(
+        [&](const auto &kind) {
+            using Kind = std::decay_t<decltype(kind)>;
+            out.u8(static_cast<std::uint8_t>(kind.floor));
+            if constexpr (std::is_same_v<Kind, CoopFloorOwnership>) {
+                out.u64(kind.owner);
+                out.u64(kind.heir);
+            } else if constexpr (std::is_same_v<Kind, CoopRunFromRecord>) {
+                out.u64(kind.to);
+                out.u64(0);
+            } else if constexpr (std::is_same_v<Kind, CoopTakeFloor>) {
+                out.u64(kind.from);
+                out.u64(kind.to);
+            } else {
+                out.u64(kind.owner);
+                out.u64(kind.to);
+            }
+        },
+        order);
+}
+
+std::optional<CoopFloorOrder> read_order(CoopByteReader &in) {
+    const std::uint8_t kind = in.u8();
+    const int floor = in.u8();
+    const CoopPlayerId first = in.u64();
+    const CoopPlayerId second = in.u64();
+    if (!in.ok() || !floor_valid(floor))
+        return std::nullopt;
+    switch (kind) {
+    case 0:
+        return CoopFloorOwnership{floor, first, second};
+    case 1:
+        return CoopRunFromRecord{floor, first};
+    case 2:
+        return CoopTakeFloor{floor, first, second};
+    case 3:
+        return CoopShowFloor{floor, first, second};
+    default:
+        return std::nullopt;
+    }
+}
+
+void write(CoopByteWriter &out, const CoopFloorOrders &orders) {
+    out.u8(static_cast<std::uint8_t>(orders.orders.size()));
+    for (const CoopFloorOrder &order : orders.orders)
+        write_order(out, order);
+}
+
+bool read(CoopByteReader &in, CoopFloorOrders &orders) {
+    const std::uint8_t count = in.u8();
+    if (!in.ok())
+        return false;
+    for (std::uint8_t i = 0; i < count; ++i) {
+        auto order = read_order(in);
+        if (!order)
+            return false;
+        orders.orders.push_back(*order);
+    }
+    return true;
+}
+
+void write(CoopByteWriter &out, const CoopFloorRecord &record) {
+    out.u8(static_cast<std::uint8_t>(record.floor));
+    out.blob(record.record);
+}
+
+bool read(CoopByteReader &in, CoopFloorRecord &record) {
+    record.floor = in.u8();
+    record.record = in.blob();
+    return in.ok() && floor_valid(record.floor);
+}
+
+void write(CoopByteWriter &out, const CoopFloorSnapshot &snapshot) {
+    out.u8(static_cast<std::uint8_t>(snapshot.floor));
+    out.u8(static_cast<std::uint8_t>(snapshot.purpose));
+    out.blob(snapshot.record);
+    out.blob(snapshot.live);
+}
+
+bool read(CoopByteReader &in, CoopFloorSnapshot &snapshot) {
+    snapshot.floor = in.u8();
+    const std::uint8_t purpose = in.u8();
+    snapshot.purpose = static_cast<CoopSnapshotFor>(purpose);
+    snapshot.record = in.blob();
+    snapshot.live = in.blob();
+    return in.ok() && floor_valid(snapshot.floor) && purpose <= static_cast<std::uint8_t>(CoopSnapshotFor::Show);
+}
+
+void write(CoopByteWriter &out, const CoopFloorTaken &taken) {
+    out.u8(static_cast<std::uint8_t>(taken.floor));
+}
+
+bool read(CoopByteReader &in, CoopFloorTaken &taken) {
+    taken.floor = in.u8();
+    return in.ok() && floor_valid(taken.floor);
+}
+
+void write(CoopByteWriter &out, const CoopFloorWrites &writes) {
+    out.u8(static_cast<std::uint8_t>(writes.floor));
+    out.blob(writes.writes);
+}
+
+bool read(CoopByteReader &in, CoopFloorWrites &writes) {
+    writes.floor = in.u8();
+    writes.writes = in.blob();
+    return in.ok() && floor_valid(writes.floor);
+}
+
 template <typename Message>
 std::optional<CoopMessage> read_as(CoopByteReader &in) {
     Message message{};
@@ -201,9 +345,11 @@ std::optional<CoopMessage> read_as(CoopByteReader &in) {
 }
 
 using Reader = std::optional<CoopMessage> (*)(CoopByteReader &);
-constexpr std::array<Reader, 9> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
+constexpr std::array<Reader, 16> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
     &read_as<CoopAcknowledged>, &read_as<CoopPackRequest>, &read_as<CoopWearRequest>, &read_as<CoopPack>,
-    &read_as<CoopFeedLine>, &read_as<CoopSaveRequest>};
+    &read_as<CoopFeedLine>, &read_as<CoopSaveRequest>, &read_as<CoopRoster>, &read_as<CoopFloorAt>,
+    &read_as<CoopFloorOrders>, &read_as<CoopFloorRecord>, &read_as<CoopFloorSnapshot>, &read_as<CoopFloorTaken>,
+    &read_as<CoopFloorWrites>};
 static_assert(readers.size() == std::variant_size_v<CoopMessage>);
 
 } // namespace

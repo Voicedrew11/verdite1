@@ -2,6 +2,7 @@
 // What the coop session says on the CONTROL channel (reliable, ordered): a version byte, a kind
 // byte, then the kind's fields, little-endian. The host is the room's oldest peer; everything about
 // the party goes through it (docs/COOP_PLAN.md, "The lasting world is the host's save").
+#include "coop_floor_owners.h"
 #include "coop_party.h"
 
 #include <cstdint>
@@ -77,8 +78,51 @@ struct CoopFeedLine {
 // Guest to host: this player used a save point, so the whole party and world are saved.
 struct CoopSaveRequest {};
 
+// Host to everyone, when anyone comes or goes: each player in the room and their peer, so a
+// snapshot can go straight from one player to another.
+struct CoopRoster {
+    struct Player { CoopPlayerId id; std::uint64_t peer; };
+    std::vector<Player> players;
+};
+// A player to everyone, when it comes onto a floor: where it is now, and whom its machine handed
+// the floor it left to (0: no one). The host's table takes it; the others learn where it is.
+struct CoopFloorAt {
+    int floor = 1;
+    CoopPlayerId left_floor_with = 0;
+};
+// Host to everyone: the table's orders (CoopFloorOwners), each acted on by the players it names.
+struct CoopFloorOrders {
+    std::vector<CoopFloorOrder> orders;
+};
+// A floor's owner to the host, as its lasting state changes and when it leaves; and the host to a
+// player it orders to run a floor from the record, just before the order. The bytes are
+// coop_floor_record's.
+struct CoopFloorRecord {
+    int floor = 1;
+    std::vector<std::uint8_t> record;
+};
+// One player to another, straight: a floor's record and its live state (coop_floor_capture), for
+// the one it goes to to run (a take, or a handover to the heir) or to watch (a show).
+enum class CoopSnapshotFor : std::uint8_t { Take, Handover, Show };
+struct CoopFloorSnapshot {
+    int floor = 1;
+    CoopSnapshotFor purpose = CoopSnapshotFor::Show;
+    std::vector<std::uint8_t> record;
+    std::vector<std::uint8_t> live;
+};
+// The taker of a floor to the host: it runs the floor from the snapshot now.
+struct CoopFloorTaken {
+    int floor = 1;
+};
+// A player on a floor to everyone: what it changed in the floor's lasting state (coop_floor_writes).
+struct CoopFloorWrites {
+    int floor = 1;
+    std::vector<std::uint8_t> writes;
+};
+
 using CoopMessage = std::variant<CoopHello, CoopWelcome, CoopCharacterUpdate, CoopAcknowledged, CoopPackRequest,
-    CoopWearRequest, CoopPack, CoopFeedLine, CoopSaveRequest>;
+    CoopWearRequest, CoopPack, CoopFeedLine, CoopSaveRequest, CoopRoster, CoopFloorAt, CoopFloorOrders,
+    CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites>;
 
 inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
 

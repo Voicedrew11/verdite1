@@ -10,6 +10,8 @@
 #include <kf/lib/map_types.h>
 #include <kf/game/player.h>
 #include <kf/lib/item.h>
+#include <kf/lib/map.h>
+#include <kf/lib/map_data.h>
 #include <kf/lib/codec.h>
 #include <verdite/agent.h>
 #include <verdite/crash.h>
@@ -34,6 +36,8 @@ Press press;
 bool quit_requested;
 std::optional<std::array<int, 2>> move_request; // a cell, applied between updates
 std::optional<std::array<long, 2>> give_request; // an item (255: gold) and a count, applied between updates
+std::optional<int> warp_request;                // a floor, applied between updates
+std::optional<std::size_t> take_request;        // an object slot emptied between updates, as a pickup does
 
 struct ButtonName { const char *name; Button button; };
 constexpr std::array<ButtonName, 14> button_names = {{
@@ -112,6 +116,44 @@ std::string do_move(verdite::AgentArgs args) {
         return verdite::json_error("cells are 0..99");
     move_request = std::array{static_cast<int>(x), static_cast<int>(z)};
     return verdite::json_ok("move");
+}
+
+std::string do_warp(verdite::AgentArgs args) {
+    if (args.size() != 1)
+        return verdite::json_error("warp <floor 1..5>");
+    char *end = nullptr;
+    const long floor = std::strtol(args[0].c_str(), &end, 10);
+    if (*end || floor < 1 || floor > 5)
+        return verdite::json_error("warp <floor 1..5>");
+    warp_request = static_cast<int>(floor);
+    return verdite::json_ok("warp");
+}
+
+// The first cell, by rows, whose four neighbours are floor too: somewhere to stand after a warp.
+std::optional<std::array<int, 2>> first_open_cell() {
+    auto floor = [](int x, int z) {
+        return x >= 0 && z >= 0 && x < KF_MAP_COLUMNS && z < KF_MAP_ROWS
+            && map_collision_grid.cells[z][x] == KF_MAP_CELL_FLOOR;
+    };
+    for (int z = 0; z < KF_MAP_ROWS; ++z)
+        for (int x = 0; x < KF_MAP_COLUMNS; ++x)
+            if (floor(x, z) && floor(x - 1, z) && floor(x + 1, z) && floor(x, z - 1) && floor(x, z + 1))
+                return std::array{x, z};
+    return std::nullopt;
+}
+
+// An object slot of this floor: its id (255 for none), and `take` empties it at the next update.
+std::string do_object(verdite::AgentArgs args) {
+    if (args.empty() || args.size() > 2 || (args.size() == 2 && args[1] != "take"))
+        return verdite::json_error("object <slot 0..189> [take]");
+    char *end = nullptr;
+    const long index = std::strtol(args[0].c_str(), &end, 10);
+    if (*end || index < 0 || index >= KF_MAP_OBJECT_CAPACITY)
+        return verdite::json_error("object <slot 0..189> [take]");
+    if (args.size() == 2)
+        take_request = static_cast<std::size_t>(index);
+    const auto id = kf_enum_encode<u8>(map_object_state.objects[static_cast<std::size_t>(index)].object_id);
+    return verdite::json_ok("object", ",\"id\":" + std::to_string(id));
 }
 
 std::string do_give(verdite::AgentArgs args) {
@@ -274,6 +316,8 @@ void agent_start() {
         {"move", "move <cell_x> <cell_z> - put the player on a cell of this floor at the next update", do_move},
         {"actors", "actors - the awake actors on this floor and the player each goes after", do_actors},
         {"players", "players - the other players in the room on this floor, as drawn", do_players},
+        {"warp", "warp <floor> - change floor as a warp does, onto the first open cell, at the next update", do_warp},
+        {"object", "object <slot> [take] - an object slot's id on this floor (255 none); take empties it as a pickup does", do_object},
         {"give", "give <item> <count> - change the pack (item 255: the purse) at the next update, as a pickup or use would", do_give},
         {"coop", "coop - the coop session: role, whether its world is in play, the pack, purse and what each player wears", do_coop},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
@@ -297,6 +341,17 @@ void agent_between_updates() {
             u8 &stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][item];
             stock = static_cast<u8>(std::clamp<long>(stock + count, 0, KF_ITEM_STACK_CAPACITY));
         }
+    }
+    if (take_request) {
+        map_object_state.objects[*take_request].object_id = KF_OBJECT_NONE;
+        take_request.reset();
+    }
+    if (warp_request) {
+        const auto floor = kf_enum_decode<KfFloorId>(static_cast<u8>(*warp_request));
+        warp_request.reset();
+        player_warp_change_floor(floor, floor == KF_FLOOR_5 ? KF_FLOOR5_ENTRY_VARIANT : KF_MAP_VARIANT_DEFAULT);
+        if (const auto cell = first_open_cell())
+            player_move_to_cell((*cell)[0], (*cell)[1]);
     }
     if (!move_request)
         return;

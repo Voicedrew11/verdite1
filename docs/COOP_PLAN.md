@@ -1,6 +1,6 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times; Order's first four steps done 2026-10-27, public
+**Draft, 2026-10-26, red-teamed three times; Order's first five steps done 2026-10-27, public
 rooms and the title menu with them.** Built so far: the two spikes, the smooth knight
 ([PLAYER_MODEL.md](PLAYER_MODEL.md)) and the coop save (The coop save). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
@@ -179,10 +179,11 @@ a floor that ignores them. So authority is split by what causes a thing, not by 
   and the guests lose only what the host had not yet acknowledged, a second or so; there is
   never a second copy to merge, even when the host plays alone between sessions. Key spends are
   not a floor's: they go through the host, the first claim wins and a door refuses the second.
-- **The game's own snapshot writes are guarded.** `map_world_state_persist` runs on revival
-  (`player_death.cpp`), at a save point (`map_scripts.cpp`), on F2's quick save and on leaving
-  a floor (`player_update.cpp`, `map_events.cpp`). On a machine that does not own the floor, those calls
-  write only its player's part; otherwise its stale copy would overwrite the owner's.
+- **The game's own snapshot writes stay on its machine.** `map_world_state_persist` runs on
+  revival (`player_death.cpp`), at a save point (`map_scripts.cpp`), on F2's quick save and on
+  leaving a floor (`player_update.cpp`, `map_events.cpp`), and writes only that machine's copy of
+  the world. A floor's record reaches the host's save only as the owner sends it, and the host
+  keeps it only from the owner its table names, so a stale copy never overwrites the owner's.
 - **NPC progress comes from the world, not the loader.** On loading a floor the game sets each
   NPC's dialogue stage to the loading player's `highest_floor`, capped by the NPC's limit, and can
   lower it (`map_event_refresh_dialogue_stage`, `map_event.cpp`); `map_load.cpp` also disables the
@@ -242,7 +243,7 @@ and are left out. Every read fits one of the three; the ones that changed the pl
 | `map_object` reveal pieces | current floor; `revealed_piece_count`, `revival_enabled` | world |
 | orbit sounds, `audio_*`, the warp shimmer's facing | the camera | each machine's own presentation |
 | `map_event_refresh_dialogue_stage`, `map_load` floor 2 | `highest_floor` | world (the world's highest floor) |
-| `map_world_state_persist` | current floor: revival, the **save point** (not the restore point), F2 quick save, leaving a floor | guarded: the owner's only |
+| `map_world_state_persist` | current floor: revival, the **save point** (not the restore point), F2 quick save, leaving a floor | each machine's own copy; the host keeps only the owner's record |
 | `map_variant_assets_load`, `player_warp_same_floor` † | `player_state.map_variant` | each machine's drawing (below) |
 
 What the table changed:
@@ -363,17 +364,18 @@ What the table changed:
    game; the cause of a change (found, bought, sold, used) is said by the shop's buy and sell and
    item use, since a difference in the pack cannot tell. Built in that order: the models with
    their tests, the file, the session, the game's patches, the feed. Until step 5 only the host's
-   world records go into the coop save; a guest alone on another floor keeps its chests and
-   doors for the session. Public rooms and the title menu followed the same day (The title menu),
+   world records went into the coop save. Public rooms and the title menu followed the same day (The title menu),
    with the service's list (NETWORKING_PLAN.md); sending a player away is still to come.
-5. **Begun 2026-10-27: the snapshot, its round trip and the host's table** (Floor ownership;
-   `port/ext/coop_floor.h`, `port/ext/coop_floor_owners.h`). Floor ownership: first the floor's live snapshot and its round-trip test (a floor captured
+5. **Done 2026-10-27, but for what a non-owner does not yet see** (Floor ownership;
+   `port/ext/coop_floor.h`, `port/ext/coop_floor_owners.h`, `port/ext/coop_floor_play.h`,
+   `port/ext/coop_floor_frames.h`). Floor ownership: first the floor's live snapshot and its round-trip test (a floor captured
    mid-fight and restored steps as the original), since the live handover rests on it; then the
    host's table of owners (seniority, every change the host's order, unit-tested), the snapshot on
    arrival, enemies drawn as puppets, triggers sent as writes, the live handover, and the floor
    restarted from its record when its owner drops.
-6. Hits across machines (the attack event, remote players in the collision grid); menus that do
-   not pause, every panel; kill credit; the exchanges.
+6. Hits across machines (the attack event, a hit on an actor another machine runs, remote players
+   in the collision grid); what a non-owner does not yet see (enemies' effects and sounds); menus
+   that do not pause, every panel; kill credit; the exchanges.
 7. Death: watching another player (the arrival path, drawn from their camera), coming back
    beside them, the wipe loading the last save.
 
@@ -484,8 +486,8 @@ Not yet:
 - **A held host** answers a hello and puts the others' changes into its game when its menu
   closes; a guest arriving while the host reads a sign waits for it.
 - The coop world's automap is not kept: each entry starts it unexplored.
-- `coop_floor_records_kept` is not called yet: until floors have owners (Order 5) only the host's
-  world goes into the save, and a guest's world is its own for the session.
+- A guest's world outside the floors it runs is the welcome's: a floor it loads is brought up to
+  date by the host's record or the owner's snapshot when it arrives (Floor ownership).
 
 ## The title menu
 
@@ -537,7 +539,7 @@ Not yet:
 
 ## Floor ownership
 
-Order's fifth step, begun 2026-10-27: its two foundations are built, the session's part is not.
+Order's fifth step, done 2026-10-27: the two foundations, then the session's part on them.
 
 - **The snapshot** (`port/ext/coop_floor.h`): between updates, on the floor's owner, every actor
   slot whole, the actor definitions (floor 4's transform rewrites one), the effect records, the
@@ -567,13 +569,62 @@ Order's fifth step, begun 2026-10-27: its two foundations are built, the session
   who had just left is caught and the next runs the floor from the record; a take's giver who
   leaves or drops before the taker says `taken` loses the floor the same way.
 
-Not yet: the session's part. The messages (a player's floor and whom it left a floor with, the
-host's orders, a snapshot, a record, taken); a floor's records and the world's flags from the host
-for a run from the record; a non-owner's floor (the actors not run, drawn from the owner's poses
-as the knights are, in its collision grid); triggers on another's floor sent as writes;
-`coop_floor_records_kept` called with the table; a dropped owner's floor. Not checked by the round
-trip: the Harp's floor deformation caught mid-sweep (its segments are a file static in
-`effect_update.cpp`), a boss fight's scripted loops, and a floor held by a menu or dialogue.
+- **The messages** (`port/ext/coop_message.h`): the host's roster (each player's id and peer, the
+  host first), so a snapshot goes straight from one player to another; a player's floor and whom
+  it left a floor with, to everyone; the host's orders, to everyone; a floor's record, from its
+  owner to the host and from the host to a player it orders to run a floor from the record; a
+  snapshot (the floor's record with its live state, for a take, a handover or a show); `taken`;
+  and a player's writes.
+- **Each machine's part** (`port/ext/coop_floor_play.h`): a machine arriving on a floor tells
+  everyone, and its actors stand still (`coop_runs_floor`, which gates `actor_pool_update`) until
+  the host's order: a run from the record, a take or a show. The owner of a floor runs it; any other
+  machine draws its actors. A snapshot is put in by loading the floor again from the record in it,
+  only if that record is not what the machine loaded, then putting the live floor over it
+  (`coop_floor_reload`), keeping the machine's player and random stream as the round trip does.
+  A run from the record loads again whenever actors on the floor were drawn from another's. An
+  owner walking off sends its record to the host and its snapshot to the heir from
+  `map_unload_floor`, before the floor goes (`coop_floor_unloading`); the heir holds it until the
+  host's row names it the owner. A guest owner sends its record to the host at most once a second
+  while the floor changes. The host keeps a record only from the owner its table names, and the
+  welcome's world carries what it kept.
+- **A non-owner's floor:** the owner sends its awake actors every update on the STATE channel (27
+  bytes each, in parts of at most 1100 bytes, `port/ext/coop_floor_frames.h`, 5 unit tests), and
+  the others play them back three updates behind, as the knights are: slot, definition, clip and
+  phase, health, cell, position and rotation, counted in the collision grid where they stand, the
+  clip clamped to what this machine's model has (floor 5's variants). A hit on an actor another
+  machine runs does nothing until step 6, since a local kill would drop its loot twice.
+- **Triggers as writes** (`coop_floor_writes`): between updates, every machine on a floor compares
+  the floor's lasting state with how it last sent or took it, and sends what changed to everyone;
+  a machine on that floor puts it in. A placed object's id or link changed, or its action began
+  (a pickup taken, a chest emptied, a key's link cleared, a door opened, a chest's lid); a drop
+  that appeared or went; an event's state or dialogue stage, never lowered; the floor's story
+  flags, raised only, with what loading the floor applies for them (floor 1's passage and the
+  actor its two-step trigger wakes, floor 5's boss encounter). Floor 1's two-step triggers go only
+  once complete, and floor 3's map pieces not at all: each machine counts the pieces its own
+  objects reveal. The motion a write starts is each machine's own: every machine runs its objects.
+  Records and writes from the network are checked before the game reads them, with the save's own
+  check of a floor's record (`save_system_floor_record_valid`).
+- **Checked** (`scripts/coop_floors.py`, 18 checks, three headless instances on a local service,
+  plain and under ASan and UBSan, where libjuice's `picohash.h` is the only report): a guest
+  arriving on the host's floor draws it, with the host's awake actors where the host has them; an
+  object either takes is gone on the other; a floor a guest ran alone, and what it took there, is
+  in the host's world when the host goes there; the host walking off hands floor 1 live to the
+  guest, which carries on with the same actors where they were; the host coming back takes it; a
+  third player draws the floor a guest runs, and runs it from the record when that guest drops.
+
+Not yet:
+
+- **What a non-owner does not see:** enemies' projectiles and spells (effects the owner's actors
+  spawn), and the actors' sounds. Traps fire on each machine at its own player, and NPCs wander on
+  each machine apart (their state and dialogue stage are shared). The Harp's floor deformation is
+  not sent.
+- **A player arriving takes the snapshot of the moment the owner sent it:** what that player
+  changed in the round trip before (a pickup) is undone on its machine, though the owner has it.
+- **A death off floor 1** loads floor 1 without unloading the floor the player died on, so a
+  floor it owned with others on it runs from the record (step 7's death replaces the revival).
+- Not checked by the round trip: the Harp's floor deformation caught mid-sweep (its segments are a
+  file static in `effect_update.cpp`), a boss fight's scripted loops, and a floor held by a menu or
+  dialogue. Not driven in a room: a boss fight, the floor-4 transform, floor 5's variants.
 
 ## The room's size
 
@@ -595,6 +646,10 @@ What a room costs each player, for N players:
   the weapon's morph and the per-part lighting are where to look first.
 - **Poses taken:** decoding and playback are a map lookup and a blend per player per update,
   nothing beside the drawing.
+- **A floor's actors:** its owner also sends every other player its awake actors each update, 27
+  bytes each: about 450 bytes with the headers for a dozen awake, so about 7 KB a second to each
+  other player at 15 updates, sent to everyone and kept only on the owner's floor. A handover or
+  an arrival's snapshot is about 40 KB, once.
 
 ## Questions
 
@@ -759,3 +814,9 @@ What a room costs each player, for N players:
   15 equal on every floor, and the host's table. The table gained `taken` and an owner's move
   says whom it left its floor with, since a take or a walk-off crossing another player's move would
   otherwise leave the new owner waiting for a snapshot that never comes.
+- 2026-10-27: Order 5 done (Floor ownership). Writes are found by comparing the floor's lasting
+  state between updates, not by hooking each trigger, and go to everyone: an object's id, link or
+  starting action, never its motion, which each machine runs. A non-owner draws only the owner's
+  awake actors, and a hit on one waits for step 6. The game's own snapshot writes are no longer
+  guarded in the game: a record reaches the host's save only from the owner the host names, so
+  `coop_floor_records_kept` is gone.

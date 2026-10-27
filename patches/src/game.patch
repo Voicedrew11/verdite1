@@ -1,8 +1,28 @@
 diff --git a/src/game/actor.cpp b/src/game/actor.cpp
-index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..fabae5d8608bfbb5fae617bf2648d8c66a0b1c1a 100644
+index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..3f61e7592766a2a73ff80d7414166acc78e51d2c 100644
 --- a/src/game/actor.cpp
 +++ b/src/game/actor.cpp
-@@ -430,6 +430,10 @@ void actor_try_attack_player(
+@@ -6,6 +6,7 @@
+ #include <kf/lib/map_data.h>
+ #include <kf/lib/null.h>
+ #include <kf/lib/random.h>
++#include <kf/platform/coop.h>
+ 
+ #include <algorithm>
+ #include <array>
+@@ -268,6 +269,11 @@ void actor_apply_damage(
+     s32 health;
+     s32 remaining;
+ 
++    // PC extension (coop): an actor another player's machine runs is only drawn here; hits cross
++    // machines in a later step.
++    if (!kf::coop_runs_floor()) {
++        return;
++    }
+     if (player_state.progress_state.current_floor == KF_FLOOR_5 && actor->definition_id == KF_FLOOR5_BOSS_DEFINITION) {
+         if (map_runtime_state.world_state.floor5.boss_encounter_started == KF_MAP_SCRIPT_UNSET) {
+             return;
+@@ -430,6 +436,10 @@ void actor_try_attack_player(
          && (kf::random_next() >> ACTOR_STATUS_CHANCE_RANDOM_SHIFT) < definition->status_effect_chance) {
          status_effect = definition->status_effect;
      }
@@ -605,7 +625,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..653c9cabfeefa48c1d383d4a385344239d23919a 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..a554d6d427657516db83e03fe4dec771249064a9 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,22 +6,36 @@
@@ -704,7 +724,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..653c9cabfeefa48c1d383d4a38534423
      game_shutdown();
  }
  
-@@ -86,14 +121,64 @@ void game_shutdown(void)
+@@ -86,14 +121,67 @@ void game_shutdown(void)
      audio_close_vab(audio_state);
  }
  
@@ -735,7 +755,10 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..653c9cabfeefa48c1d383d4a38534423
 +    // PC extension (coop): this player's character, pack and purse go to the host, and what the
 +    // host decided comes into the game.
 +    kf::coop_update();
-+    actor_pool_update();
++    // PC extension (coop): on a floor another player runs, its actors come from that player.
++    if (kf::coop_runs_floor()) {
++        actor_pool_update();
++    }
 +    map_object_pool_update();
 +    effect_pool_update();
 +    map_event_pool_update();
@@ -941,10 +964,18 @@ index ba8ad9601988b735d737b6c0e32c034a76a2ab79..2914c179a4969e2c9e9c828c101f1eb2
      event->dialogue.stage = stage;
      event->dialogue.page = KF_DIALOGUE_FIRST_PAGE;
 diff --git a/src/game/map_events.cpp b/src/game/map_events.cpp
-index c71d1f33020a17fdc28c290f146f11c52383e1c3..af1bcbeefd51d5cebd9e9967923b713942125c7c 100644
+index c71d1f33020a17fdc28c290f146f11c52383e1c3..682ebc6a6b2026b244b15993ef7a7187b35e8023 100644
 --- a/src/game/map_events.cpp
 +++ b/src/game/map_events.cpp
-@@ -88,11 +88,17 @@ void map_event_update_animation_loop(void)
+@@ -6,6 +6,7 @@
+ #include <kf/lib/map.h>
+ #include <kf/lib/map_data.h>
+ #include <kf/lib/random.h>
++#include <kf/platform/coop.h>
+ 
+ #include <algorithm>
+ #include <cstdio>
+@@ -88,11 +89,17 @@ void map_event_update_animation_loop(void)
      }
  }
  
@@ -962,7 +993,16 @@ index c71d1f33020a17fdc28c290f146f11c52383e1c3..af1bcbeefd51d5cebd9e9967923b7139
          if (state == KF_MAP_EVENT_ACTIVE) {
              map_event_set_current(&event);
  
-@@ -269,4 +275,5 @@ void map_unload_floor(void)
+@@ -261,6 +268,8 @@ void map_world_state_persist(void)
+ 
+ void map_unload_floor(void)
+ {
++    // PC extension (coop): the floor's owner hands it on live before it goes.
++    kf::coop_floor_unloading();
+     animation_cache_release_all();
+     audio_close_vab(audio_state);
+     map_world_state_persist();
+@@ -269,4 +278,5 @@ void map_unload_floor(void)
  void map_events_reset_module_state(void)
  {
      kf::restore_initial_value<map_runtime_state>();
@@ -4194,7 +4234,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..443ad56529e5f879218f52eed540e331
  {
      return displayed_language.value_or(kf::game_language());
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f96ac677b 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..3704f839cd528f47da8c55a28d4ac2ae5d564a30 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
 @@ -1,4 +1,5 @@
@@ -4391,7 +4431,41 @@ index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f
  }
  
  static u32 save_checksum(const u8 *data, std::size_t size) {
-@@ -368,41 +452,145 @@ static void save_state_apply(const SavedGameState &state) {
+@@ -251,7 +335,9 @@ static u32 save_checksum(const u8 *data, std::size_t size) {
+     return ~crc;
+ }
+ 
+-static bool save_world_valid(const KfMapSavedWorld &world) {
++// PC extension (coop): `definitions` checks the links, NULL leaves them for when the floor loads.
++static bool save_world_valid(const KfMapSavedWorld &world,
++                             const KfMapObjectDefinitionTable *definitions = &map_object_state.definitions) {
+     static_assert(sizeof(KfMapObjectLink) == 8, "Update the floor record boundary when the compact link representation changes");
+     for (const auto &floor : world.floors) {
+         if (floor.records[0] == 0)
+@@ -297,7 +383,7 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+                 return false;
+             KfMapObjectLink link{};
+             std::memcpy(&link, floor.records.data() + position + 1, sizeof link);
+-            if (!map_saved_link_valid(map_object_state.definitions.entries[id].behavior_type, link))
++            if (definitions != nullptr && !map_saved_link_valid(definitions->entries[id].behavior_type, link))
+                 return false;
+         }
+         for (std::size_t group = 0; group < 3; ++group) {
+@@ -311,6 +397,13 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+     return true;
+ }
+ 
++// PC extension (coop): one floor's record, as another player sends it.
++bool save_system_floor_record_valid(const KfMapSavedFloor &floor, const KfMapObjectDefinitionTable *definitions) {
++    KfMapSavedWorld world{};
++    world.floors[0] = floor;
++    return save_world_valid(world, definitions);
++}
++
+ static bool save_state_valid(const SavedGameState &state) {
+     const auto &p = state.player;
+     const auto floor = kf_enum_encode<u8>(p.progress_state.current_floor);
+@@ -368,41 +461,145 @@ static void save_state_apply(const SavedGameState &state) {
      // The existing load-return path reloads the floor, weapon and selected magic.
  }
  
@@ -4435,9 +4509,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f
              || checksum != save_checksum(data.data() + save_header_bytes, payload_size))
 -        return kf::SaveFileResult::Invalid;
 +        return false;
-     save_state_fields(io, state);
--    return io.valid && io.position == size && save_state_valid(state)
--        ? kf::SaveFileResult::Ok : kf::SaveFileResult::Invalid;
++    save_state_fields(io, state);
 +    return io.valid && io.position == data.size();
 +}
 +
@@ -4528,7 +4600,9 @@ index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f
 +        return false;
 +    SaveCodec io{card.data(), card_entry_offset(target) + card_entry_bytes, card_entry_offset(target),
 +                 SaveCodecMode::Write, true, SaveLayout::Card};
-+    save_state_fields(io, state);
+     save_state_fields(io, state);
+-    return io.valid && io.position == size && save_state_valid(state)
+-        ? kf::SaveFileResult::Ok : kf::SaveFileResult::Invalid;
 +    if (!io.valid)
 +        return false;
 +    const std::size_t previous = card_entry_of(card, slot);
@@ -4563,7 +4637,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f
  }
  
  static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
-@@ -418,76 +606,249 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
+@@ -418,76 +615,249 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
  
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries) {
      summaries = {};
@@ -4849,7 +4923,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f
  void menu_play_input_sound(KfMenuSoundCue cue)
  {
      SoundRef sound;
-@@ -542,7 +903,7 @@ void screen_show_image_until_input(const char *path)
+@@ -542,7 +912,7 @@ void screen_show_image_until_input(const char *path)
      const auto alternate = comparison_image_read(path, game_graphics_runtime.display_state.asset_load_capacity);
      // Transparent glyph pixels need the original backdrop when replacing a page.
      kf::Image backdrop{};
@@ -4858,7 +4932,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f
          kf::host_fail("Cannot capture the dialogue background.");
      bool showing_alternate = false;
      bool reported_unavailable = false;
-@@ -552,7 +913,7 @@ void screen_show_image_until_input(const char *path)
+@@ -552,7 +922,7 @@ void screen_show_image_until_input(const char *path)
          const bool compare = kf::host_action_held(kf::Action::compare_language);
          const bool show_alternate = compare && !alternate.empty();
          if (show_alternate != showing_alternate) {
@@ -4867,7 +4941,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f
                  kf::host_fail("Cannot restore the dialogue background.");
              if (show_alternate)
                  tim_upload_images(alternate.data(), alternate.size());
-@@ -603,5 +964,6 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
+@@ -603,5 +973,6 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
  void save_system_reset_module_state(void)
  {
      kf::restore_initial_value<talk_image_path_template>();

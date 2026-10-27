@@ -274,7 +274,11 @@ player on a cell of this floor at the next update, as the fuzzer's goto does), a
 other players in the online room on this floor, as drawn: id, cell position, feet height, attack
 phase, stride), `give <item> <count>` (changes the pack, item 255 the purse, at the next update, as
 a pickup or use would) and `coop` (the coop session: role, whether its world is in play, the pack,
-purse, what this player and the others wear, the pickup feed's lines, floor and cell).
+purse, what this player and the others wear, the pickup feed's lines, floor and cell, and whether
+this machine runs its floor, draws another's or waits for the host's order), `warp <floor>` (changes
+floor as a warp does, onto the first open cell, at the next update) and `object <slot> [take]` (an
+object slot's id on this floor, 255 for none; `take` empties it as a pickup does) ([COOP_PLAN.md](COOP_PLAN.md),
+"Floor ownership").
 `title` reads the title menu as English text (whether it is up, the page's heading, code, note and
 rows) and `title type <digits>` types a room code on its join page ([COOP_PLAN.md](COOP_PLAN.md),
 "The title menu").
@@ -282,7 +286,7 @@ rows) and `title type <digits>` types a room code on its join page ([COOP_PLAN.m
 in an online room ([COOP_PLAN.md](COOP_PLAN.md), "The spikes").
 
 Not yet: `main`'s `peek`/`poke`/`dump` (there is no guest RAM; the decomp's
-named globals take their place, command by command), `warp`, `stick`, `view`.
+named globals take their place, command by command), `stick`, `view`.
 
 ## Fuzzing
 
