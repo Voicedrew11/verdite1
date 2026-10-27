@@ -278,7 +278,10 @@ purse, what this player and the others wear, the pickup feed's lines, floor and 
 this machine runs its floor, draws another's or waits for the host's order), `warp <floor>` (changes
 floor as a warp does, onto the first open cell, at the next update) and `object <slot> [take]` (an
 object slot's id on this floor, 255 for none; `take` empties it as a pickup does) ([COOP_PLAN.md](COOP_PLAN.md),
-"Floor ownership").
+"Floor ownership"). `hit <slot> [aim]` strikes an actor as the sword does at full charge, or aims a
+spell at it, and `effects` lists the effects in flight, this machine's and those it draws from the
+floor's owner; `coop` also counts the swings and hits this player felt from other machines
+([COOP_PLAN.md](COOP_PLAN.md), "Hits across machines").
 `title` reads the title menu as English text (whether it is up, the page's heading, code, note and
 rows) and `title type <digits>` types a room code on its join page ([COOP_PLAN.md](COOP_PLAN.md),
 "The title menu").

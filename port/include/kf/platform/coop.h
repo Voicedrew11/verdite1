@@ -25,11 +25,11 @@ u8 coop_highest_floor(u8 own);
 
 // Whether this machine runs the loaded floor's actors (actor_pool_update): always alone, and in a
 // room only on the floor's owner. Elsewhere the owner's actors are drawn as it sends them, and a
-// hit on one does nothing until hits cross machines (Order 6).
+// hit on one goes to the owner (coop_hit_actor_elsewhere).
 bool coop_runs_floor();
 
 // actor_apply_damage on a floor another player's machine runs, once the hit has trained this
-// player: the hit as it landed here goes to that machine, which applies it (Order 6).
+// player: the hit as it landed here goes to that machine, which applies it.
 struct CoopActorHitArgs {
     u16 actor;
     u8 definition;

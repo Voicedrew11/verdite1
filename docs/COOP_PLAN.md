@@ -1,6 +1,6 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times; Order's first five steps done 2026-10-27, public
+**Draft, 2026-10-26, red-teamed three times; Order's first six steps done 2026-10-27, public
 rooms and the title menu with them.** Built so far: the two spikes, the smooth knight
 ([PLAYER_MODEL.md](PLAYER_MODEL.md)) and the coop save (The coop save). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
@@ -153,13 +153,18 @@ a floor that ignores them. So authority is split by what causes a thing, not by 
   owner's machine every one of these becomes a choice among the players on the floor: each actor
   targets the nearest, spawning keeps clear of all of them, and a projectile that could reach a
   remote player is sent to that player's machine to judge. Remote players are counted in the
-  owner's collision grid, so enemies do not walk through them.
+  owner's collision grid, so enemies do not walk through them. Players pass through each other:
+  a player's own movement leaves players out, as it always did its own, since KF1's one-cell
+  corridors would let two knights wall each other in.
 - **Hits are decided by whoever feels them.** A player's hit on an enemy is judged on their own
   screen and sent to the floor's owner, which applies it. An enemy's melee hit is decided inside
   its AI on the attack frame (`actor_try_attack_player`, `actor.cpp`: distance, angle, a random
   status roll), so on a remote target the owner sends an attack event (actor, attack parameters,
   update number) instead, and the victim's machine runs the same test against its own position
-  and the puppet's, so no one takes a hit they dodged on their screen.
+  and the puppet's, so no one takes a hit they dodged on their screen. A projectile, an enemy's
+  jump and a blast are decided by the owner against the victim's latest pose and applied as they
+  are on the victim's machine: the projectile's flight exists only on the owner, so the victim has
+  nothing of its own to test it against.
 - **The lasting world is the host's save.** The game keeps a few story flags and a snapshot of
   each of its 5 floors (`KfMapSavedWorld`, `include/kf/lib/map.h`). The flags are script structs
   for floors 1, 3 and 5: `passage_opened`, `revival_enabled`, the floor-3 `revealed_piece_count`,
@@ -236,7 +241,7 @@ and are left out. Every read fits one of the three; the ones that changed the pl
 | `actor_try_attack_player`, jump contact | the player's position at the attack frame, `player_apply_damage` | owner's choice of target; the hit judged by the victim (attack event) |
 | actor spells (`actor_behavior.cpp`, the aim in the cone) | `player_distance_to_point_in_cone`, `player_position` | owner's: aimed at a player in the cone |
 | `effect_update_homing_direction` (`KF_EFFECT_HOMING_PLAYER`), the actor-spawner effect | `camera_position` every update | owner's: the target chosen at launch and kept in the effect |
-| effects' hits (`effect_dispatch.cpp`, `effect_update.cpp`), radial blasts | `collision_query_world`'s player test, `player_apply_radial_damage` | judged by the victim, as attack events |
+| effects' hits (`effect_dispatch.cpp`, `effect_update.cpp`), radial blasts | `collision_query_world`'s player test, `player_apply_radial_damage` | judged by the owner against the victim's pose, felt on the victim's machine (Hits across machines); traps each machine's own |
 | `effect_magic_power` | the player's magic for an effect flagged `KF_EFFECT_USE_PLAYER_MAGIC` | the caster's; on the owner, the weapon transform's and the boss death's blasts read the owner's magic (accepted) |
 | `collision_query_world` | the cell's occupant count, then the one player | each machine: remote players in the grid and in this test |
 | `map_object` projectile emitters | `player_distance_to_point` | owner's: any player in range |
@@ -373,9 +378,11 @@ What the table changed:
    host's table of owners (seniority, every change the host's order, unit-tested), the snapshot on
    arrival, enemies drawn as puppets, triggers sent as writes, the live handover, and the floor
    restarted from its record when its owner drops.
-6. Hits across machines (the attack event, a hit on an actor another machine runs, remote players
-   in the collision grid); what a non-owner does not yet see (enemies' effects and sounds); menus
-   that do not pause, every panel; kill credit; the exchanges.
+6. **Done 2026-10-27, but for the Harp's deformation** (Hits across machines;
+   `port/ext/coop_hits.h`). Hits across machines (the attack event, a hit on an actor another
+   machine runs, remote players in the collision grid); what a non-owner does not yet see
+   (enemies' effects and sounds); menus that do not pause, every panel; kill credit; the
+   exchanges.
 7. Death: watching another player (the arrival path, drawn from their camera), coming back
    beside them, the wipe loading the last save.
 
@@ -389,7 +396,8 @@ another in the room from their last pose, on the floor's height at their cell) w
 updates, and puts it back after. Every read through `player_position` (activation, range,
 bearing, pursuit, the attack's reach) then follows the actor's target; `actor_target_players`
 keeps whom each goes after. A swing at another player is not felt here (`actor_try_attack_player`
-returns before `player_apply_damage`); the attack event that lets the victim feel it is step 6.
+returns before `player_apply_damage`); the attack event that lets the victim feel it is step 6
+(Hits across machines).
 Checked with two headless instances in a room: B walked to floor 1's enemies at cells (24..26,
 10..11), out of A's range; on A they woke and went after B's id as on B, and A took nothing.
 Alone, every target is this player and the game is unchanged. Still reading the one player:
@@ -413,7 +421,7 @@ and the dialogue page. What it found:
   `map_event_in_conversation` is skipped by `map_event_pool_update` until the talk is over.
 - **A death in a menu lands only when the menu closes.** HP reached 0 in the menu and the menu
   stayed open, the enemy still swinging; closing it ran the death. A menu has to close when its
-  player dies (step 6, with menus that do not pause).
+  player dies (step 6, with menus that do not pause; done, Hits across machines).
 - **A slow update can step the world twice in one frame.** The main loop's `render_frame` steps it
   again when the updates before it took longer than the tick; to watch for on the weakest
   platform.
@@ -592,7 +600,8 @@ Order's fifth step, done 2026-10-27: the two foundations, then the session's par
   the others play them back three updates behind, as the knights are: slot, definition, clip and
   phase, health, cell, position and rotation, counted in the collision grid where they stand, the
   clip clamped to what this machine's model has (floor 5's variants). A hit on an actor another
-  machine runs does nothing until step 6, since a local kill would drop its loot twice.
+  machine runs goes to that machine (Hits across machines), since a local kill would drop its loot
+  twice.
 - **Triggers as writes** (`coop_floor_writes`): between updates, every machine on a floor compares
   the floor's lasting state with how it last sent or took it, and sends what changed to everyone;
   a machine on that floor puts it in. A placed object's id or link changed, or its action began
@@ -614,10 +623,9 @@ Order's fifth step, done 2026-10-27: the two foundations, then the session's par
 
 Not yet:
 
-- **What a non-owner does not see:** enemies' projectiles and spells (effects the owner's actors
-  spawn), and the actors' sounds. Traps fire on each machine at its own player, and NPCs wander on
-  each machine apart (their state and dialogue stage are shared). The Harp's floor deformation is
-  not sent.
+- **What a non-owner does not see:** the Harp's floor deformation is not sent. Traps fire on each
+  machine at its own player, and NPCs wander on each machine apart (their state and dialogue
+  stage are shared). Enemies' effects and sounds are shown since step 6 (Hits across machines).
 - **A player arriving takes the snapshot of the moment the owner sent it:** what that player
   changed in the round trip before (a pickup) is undone on its machine, though the owner has it.
 - **A death off floor 1** loads floor 1 without unloading the floor the player died on, so a
@@ -626,13 +634,63 @@ Not yet:
   file static in `effect_update.cpp`), a boss fight's scripted loops, and a floor held by a menu or
   dialogue. Not driven in a room: a boss fight, the floor-4 transform, floor 5's variants.
 
+## Hits across machines
+
+Order's sixth step, done 2026-10-27 (`port/ext/coop_hits.h`, the messages in `coop_message.h`).
+Every hit is applied in the world update, held or not, so a player in a menu feels it.
+
+- **A player's hit on an actor another machine runs:** `actor_apply_damage`, once the hit has
+  trained the hitter (training is the hitter's), sends it to the floor's owner (`CoopActorHit`:
+  the slot and the definition seen there, the game's arguments, whether it was the player's own).
+  The owner applies it without training itself, unless the slot now holds another definition.
+  A spell's aim (`player_target`) goes the same way (`CoopActorAim`); the game keeps one, so the
+  last player's aim wins.
+- **Kill credit:** a kill by any player's hit gives the owner its experience and tells everyone
+  (`CoopKill`); every player on that floor adds it.
+- **An enemy's swing at another player** (`CoopSwing`): the owner's AI chose it, rolled the status
+  in the game's order and sends the swing's reach and angle; the victim runs the same test
+  (`actor_swing_reaches_player`) against where it stands and the actor as it draws it.
+- **Projectiles, jumps and blasts** (`CoopPlayerHit`): the other players on the floor are in the
+  collision grid while the world updates, and `collision_query_world` finds one
+  (`KfCollisionKind::OtherPlayer`) unless the query leaves players out, which a player's own
+  movement does. An enemy's projectile or jump that meets one, and a blast on the floor this
+  machine runs, is sent with `player_apply_damage`'s arguments and applied as it is. Each
+  machine's traps fire at its own player. An actor's spell aims at its target, and a homing
+  projectile follows the player its actor went after (`effect_target_players`), carried through
+  a handover in the floor's snapshot.
+- **What a watcher sees and hears:** each effect slot says what spawned it (`effect_sources`: an
+  actor, or what an actor's effect spawned), and the owner's frame carries those effects after its
+  actors, 30 bytes each. The watcher draws them after its own, keeping each slot's animation cache
+  and refusing a billboard or clip it lacks. A puppet's attack, hit and death sounds play as its
+  clip passes the action's phase; an effect's launch sound as it appears and its impact as it
+  goes, where the game plays them from about ten places.
+- **Menus:** every blocking loop waits through `render_frame` or `host_wait_frame`, so the world
+  runs under all of them. A player at 0 HP in a menu presses Back on every other read, so each
+  panel backs out as the player's own presses would, and the death goes on.
+- **The exchanges** come from the party's pack as any pack change does, and Healing goes to whoever
+  trades. An event write also carries the dialogue's page and the stage's last page when the last
+  page changes, so a trade ends its dialogue on every machine on the floor and is made once.
+- **Checked** (`scripts/coop_hits.py`, 9 checks, two headless instances on a local service): the
+  host's enemies hurt the guest beside them on the guest's machine; the guest, hurt to 0 in its
+  menu, is back in play; the guest's hit lands on the host's actor and its kill gives both
+  players the experience, and so does the host's own kill; on floor 2 the guest draws the host's
+  fire balls and feels one.
+
+Not yet:
+
+- Not driven: an exchange in a room, a blast, a dodge, the sounds (not judged by ear) and the
+  drawn effects (not judged by eye).
+- **Spawning beside a player:** `player_state.allow_near_actor_spawn` is still the owner's alone,
+  so an enemy spawns beside a guest who has just arrived only when the owner has too.
+- The actor spawner's new actors face the owner's player.
+
 ## The room's size
 
 Order's third step, 2026-10-27. Another player is now sent a pose every game update and played
 back a few updates behind, so every update of their walk and swing is drawn, on the height they
 stand at ([PLAYER_MODEL.md](PLAYER_MODEL.md)). A swing is not an event of its own: it advances a
 fixed step an update, so any pose inside it gives every update of it, and lost poses cost nothing
-the playback cannot fill in. The attack event in step 6 is for its target to feel it.
+the playback cannot fill in. The attack event (Hits across machines) is for its target to feel it.
 
 What a room costs each player, for N players:
 
@@ -647,7 +705,7 @@ What a room costs each player, for N players:
 - **Poses taken:** decoding and playback are a map lookup and a blend per player per update,
   nothing beside the drawing.
 - **A floor's actors:** its owner also sends every other player its awake actors each update, 27
-  bytes each: about 450 bytes with the headers for a dozen awake, so about 7 KB a second to each
+  bytes each, and its actors' effects in flight, 30 bytes each: about 450 bytes with the headers for a dozen awake, so about 7 KB a second to each
   other player at 15 updates, sent to everyone and kept only on the owner's floor. A handover or
   an arrival's snapshot is about 40 KB, once.
 
@@ -820,3 +878,8 @@ What a room costs each player, for N players:
   awake actors, and a hit on one waits for step 6. The game's own snapshot writes are no longer
   guarded in the game: a record reaches the host's save only from the owner the host names, so
   `coop_floor_records_kept` is gone.
+- 2026-10-27: Order 6 done (Hits across machines). Only an enemy's melee is re-judged by its
+  victim; projectiles, jumps and blasts are the owner's to judge against the victim's pose, since
+  their flight exists only there. Players pass through each other, so one-cell corridors cannot be
+  blocked. The last player's aim wins, as the game keeps one. Effects' sounds play as they appear
+  and go. A dead player's menu backs out by itself.

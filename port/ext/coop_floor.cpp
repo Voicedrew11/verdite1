@@ -317,8 +317,8 @@ bool coop_floor_keep_record(std::span<const std::uint8_t> bytes) {
 
 namespace {
 
-constexpr std::uint8_t writes_version = 1;
-constexpr std::size_t event_write_bytes = 4;   // index, state, stage limit, stage
+constexpr std::uint8_t writes_version = 2;
+constexpr std::size_t event_write_bytes = 6;   // index, state, stage limit, stage, page, the stage's last page
 
 // The floor's lasting state as this machine last sent or took it.
 struct Baseline {
@@ -362,7 +362,8 @@ bool object_changed(std::size_t index, const KfMapObject &was, const KfMapObject
 
 bool event_changed(const KfMapEvent &was, const KfMapEvent &now) {
     return was.state != now.state || was.dialogue.stage_limit != now.dialogue.stage_limit
-        || was.dialogue.stage != now.dialogue.stage;
+        || was.dialogue.stage != now.dialogue.stage
+        || !std::ranges::equal(was.dialogue_pages.last_page, now.dialogue_pages.last_page);
 }
 
 // The floor's story flags as they are the party's: floor 1's two-step triggers only once complete,
@@ -442,6 +443,13 @@ void apply_event(std::span<const std::uint8_t> write) {
     if (write[3] > event.dialogue.stage) {
         event.dialogue.stage = write[3];
         event.dialogue.page = KF_DIALOGUE_FIRST_PAGE;
+    }
+    // An exchange made: its stage ends on another page, so it is made once for the party.
+    const u8 stage = event.dialogue.stage;
+    if (stage != 0 && stage == write[3] && event.dialogue_pages.last_page[stage - 1] != write[5]) {
+        event.dialogue_pages.last_page[stage - 1] = write[5];
+        event.dialogue.page = write[4];
+        event.dialogue.page_delay = 0;
     }
 }
 
@@ -537,6 +545,8 @@ std::vector<std::uint8_t> coop_floor_writes() {
         out.u8(kf_enum_encode<u8>(event.state));
         out.u8(event.dialogue.stage_limit);
         out.u8(event.dialogue.stage);
+        out.u8(event.dialogue.page);
+        out.u8(event.dialogue.stage != 0 ? event.dialogue_pages.last_page[event.dialogue.stage - 1] : 0);
     }
     const auto flags = shared_flags();
     const bool flags_changed = flags != baseline.flags;

@@ -147,7 +147,9 @@ def main():
         # B walks among them until they throw at it; it may die of them and come back on floor 1, and
         # what it felt is counted either way.
         seen, felt = set(), 0
-        for cell in CASTERS:
+        for cell in CASTERS * 2:
+            if seen and felt:
+                break
             if b.coop()["floor"] == 2:
                 b.run("move %d %d" % cell)
             deadline = time.monotonic() + 25

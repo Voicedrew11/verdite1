@@ -131,7 +131,7 @@ with the forearm bent 12 degrees, and the weapon arm holds its guard.
   its neighbours (position, height, the facing the short way round, pitch), but not across a
   change of floor or a warp. A swing advances 300 an update (`KF_WEAPON_ATTACK_PHASE_STEP`), so
   any pose inside it places every update of it: a swing is not sent as an event of its own. The
-  attack event that lets its target feel it is coop's (`COOP_PLAN.md`, Order step 6).
+  attack event that lets its target feel it is coop's (`COOP_PLAN.md`, "Hits across machines").
 - The knight stands on the sent height plus the drop of its gait, so it climbs a stair and falls
   as its player does. The enemies take another player at that height less the camera's 1500,
   as they take this player at its camera.
