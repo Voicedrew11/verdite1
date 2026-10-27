@@ -1,6 +1,7 @@
 #include <kf/platform/host.h>
 #include <kf/platform/language_runtime.h>
 #include <kf/platform/coop.h>
+#include <kf/platform/title.h>
 #include <kf/platform/saves.h>
 #include <kf/audio/sound.h>
 #include <kf/platform/input.h>
@@ -350,6 +351,19 @@ static void process_keyboard_event(const SDL_KeyboardEvent &event) {
     }
 }
 
+// A digit or Backspace on the title's join page types the room code instead of being a button.
+static bool title_took_key(const SDL_KeyboardEvent &key) {
+    if (key.key >= SDLK_0 && key.key <= SDLK_9)
+        return title_type(static_cast<char>('0' + (key.key - SDLK_0)));
+    if (key.key >= SDLK_KP_1 && key.key <= SDLK_KP_9)
+        return title_type(static_cast<char>('1' + (key.key - SDLK_KP_1)));
+    if (key.key == SDLK_KP_0)
+        return title_type('0');
+    if (key.key == SDLK_BACKSPACE)
+        return title_type('\b');
+    return false;
+}
+
 static void process_event(const SDL_Event &event) {
 #if KF_EXT
     if (ext::process_event(event))
@@ -367,7 +381,7 @@ static void process_event(const SDL_Event &event) {
         break;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
-        if (host.focused)
+        if (host.focused && (event.type != SDL_EVENT_KEY_DOWN || !title_took_key(event.key)))
             process_keyboard_event(event.key);
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -700,7 +714,7 @@ u32 host_read_buttons() {
         host.run_toggled = !host.run_toggled;
         host_show_message(host.run_toggled ? "Running" : "Walking");
     }
-    if (host.input_context == InputContext::Opening)
+    if (host.input_context == InputContext::Opening || title_is_open())
         host.opening_load_pressed |= (pressed & action_bit(Action::quick_load)) != 0;
     host.input.pending.pressed = host.input.pending.released = 0;
     struct ButtonAction { Action action; Button button; };
@@ -733,6 +747,7 @@ u32 host_read_buttons() {
 
 void host_between_updates() {
     host_enemy_turn_between_updates();
+    title_between_updates();
     coop_between_updates();
     agent_between_updates();
     fuzz_between_updates();

@@ -27,6 +27,9 @@ typedef struct vo_config {
     const char *game;        /* [a-z0-9]{1,16}: "kf1" */
     const char *build;       /* peers in a room must have the same: "kf1-0.1.0-ab12cd3" */
     const char *room;        /* [A-Za-z0-9_-]{1,64} */
+    const char *listed_as;   /* NULL: an unlisted room. Else the host's name ([A-Za-z0-9 _-]{1,16}),
+                              * and the room is listed for its game and build while the first
+                              * peer in it is this one; only a public code (P and 7 more) */
 } vo_config;
 
 /* Starts joining the room; the copy of config is the session's. NULL when config is malformed;
@@ -101,6 +104,36 @@ typedef struct vo_link {
 } vo_link;
 /* How the connection to peer is doing. */
 vo_link vo_link_of(const vo_session *session, vo_peer peer);
+
+/* A listed room's floor, as its list row shows it; ignored unless the session's config had
+ * listed_as and it is the room's first peer. Sent at most once a second, the latest winning. */
+void vo_describe(vo_session *session, uint32_t floor);
+
+/* The public rooms of one game and build, kept up to date by the service while open. */
+typedef struct vo_lobby vo_lobby;
+
+typedef enum vo_lobby_state {
+    VO_LOBBY_CONNECTING,
+    VO_LOBBY_LISTING,  /* vo_lobby_rooms has the service's latest list */
+    VO_LOBBY_FAILED,   /* the service cannot be reached or refused; close and open again */
+} vo_lobby_state;
+
+typedef struct vo_listed_room {
+    char room[65];   /* NUL-terminated, as the service sent it */
+    char host[17];
+    uint32_t floor;
+    uint32_t players;
+    uint32_t most;
+} vo_listed_room;
+
+/* Starts listening; NULL when a name is malformed. service_url, game and build as in vo_config. */
+vo_lobby *vo_lobby_open(const char *service_url, const char *game, const char *build);
+/* NULL is ignored. */
+void vo_lobby_close(vo_lobby *lobby);
+vo_lobby_state vo_lobby_state_of(const vo_lobby *lobby);
+/* Copies up to most rows of the latest list, newest room first, and returns how many it copied.
+ * changed is set nonzero when the list differs from the one the last call copied. */
+size_t vo_lobby_rooms(vo_lobby *lobby, vo_listed_room *rooms, size_t most, int *changed);
 
 #ifdef __cplusplus
 }

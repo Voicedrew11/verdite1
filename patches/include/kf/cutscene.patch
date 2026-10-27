@@ -1,0 +1,29 @@
+diff --git a/include/kf/cutscene/opening_helpers.h b/include/kf/cutscene/opening_helpers.h
+index ca4640bfddedc03a134a33f5c476fbb7ae7ca2ce..d24b3c333dc9b53cf676a08c44b8288b75974358 100644
+--- a/include/kf/cutscene/opening_helpers.h
++++ b/include/kf/cutscene/opening_helpers.h
+@@ -7,7 +7,9 @@
+ enum class KfOpeningInputAction : u32 {
+     KF_OPENING_INPUT_NONE = 0,
+     KF_OPENING_INPUT_ADVANCE = 1,
+-    KF_OPENING_INPUT_SKIP = 2
++    KF_OPENING_INPUT_SKIP = 2,
++    // PC extension: F4's quick load, straight into the game past the title menu.
++    KF_OPENING_INPUT_QUICK_LOAD = 3
+ }; using enum KfOpeningInputAction;
+ 
+ extern KfOpeningInputAction opening_input_action;
+diff --git a/include/kf/cutscene/playback.h b/include/kf/cutscene/playback.h
+index b3e0d8315d3eb9420933346f3f292932949595f7..9c3fc28dfcb369525cf3fa20244f5c960f845226 100644
+--- a/include/kf/cutscene/playback.h
++++ b/include/kf/cutscene/playback.h
+@@ -1,7 +1,8 @@
+ #ifndef KF_CUTSCENE_PLAYBACK_H
+ #define KF_CUTSCENE_PLAYBACK_H
+ 
+-enum class Cutscene { Intro, Ending };
++// PC extension: Title, the logo and its menu without the intro before them.
++enum class Cutscene { Intro, Ending, Title };
+ 
+ void cutscene_play(Cutscene scene);
+ 

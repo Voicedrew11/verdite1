@@ -20,9 +20,25 @@ std::optional<PeerId> parse_peer(std::string_view hex);
 std::string peer_hex(PeerId peer);
 
 // The WebSocket address of a room, or nothing when a name does not match its form or the
-// service is not an http:// or https:// address.
+// service is not an http:// or https:// address. A listed_as names the host of a listed room,
+// which must have a public code; empty, the room is not listed.
 std::optional<std::string> room_url(std::string_view service_url, std::string_view game,
-                                    std::string_view room, std::string_view build);
+                                    std::string_view room, std::string_view build,
+                                    std::string_view listed_as = {});
+// The WebSocket address of the list of public rooms, checked as room_url is.
+std::optional<std::string> lobby_url(std::string_view service_url, std::string_view game, std::string_view build);
+
+constexpr std::size_t listed_rooms_most = 50;
+constexpr std::uint32_t floor_most = 99;
+
+// A row of the list of public rooms.
+struct ListedRoom {
+    std::string room;
+    std::string host;
+    std::uint32_t floor = 0;
+    std::uint32_t players = 0;
+    std::uint32_t most = 0;
+};
 
 // One URL of an RTCIceServer, with its credential.
 struct IceServer {
@@ -43,7 +59,7 @@ struct Signal {
 };
 
 struct ServiceFrame {
-    enum class Kind { Welcome, Join, Leave, Signal, Turn, Error };
+    enum class Kind { Welcome, Join, Leave, Signal, Turn, Rooms, Error };
     Kind kind = Kind::Error;
     int protocol = 0;                   // Welcome
     PeerId peer = 0;                    // Welcome: you; Join, Leave: them; Signal: the sender
@@ -51,6 +67,7 @@ struct ServiceFrame {
     Signal signal;                      // Signal
     std::vector<IceServer> ice_servers; // Turn: one per URL
     int seconds = 0;                    // Turn: how long the credential lasts
+    std::vector<ListedRoom> rooms;      // Rooms: newest first
     std::string code;                   // Error
     std::string message;                // Error
 };
@@ -61,5 +78,6 @@ std::optional<ServiceFrame> parse_service_frame(std::string_view text);
 
 std::string signal_frame(PeerId to, const Signal &signal);
 std::string turn_frame();
+std::string describe_frame(std::uint32_t floor);
 
 } // namespace vo

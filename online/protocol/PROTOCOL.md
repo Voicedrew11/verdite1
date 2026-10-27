@@ -4,8 +4,8 @@
 (`online/client`) both follow this page; a change here is a change to both, in one commit. A
 change that an older client cannot follow raises the version.
 
-Only the realtime tier's signaling is defined yet: a room, its peers, and the relay of WebRTC
-offers, answers and candidates between them. Records (messages, bloodstains), identity and
+Only the realtime tier's signaling is defined yet: a room, its peers, the relay of WebRTC
+offers, answers and candidates between them, and the list of public rooms. Records (messages, bloodstains), identity and
 signing come later (`docs/NETWORKING_PLAN.md`).
 
 ## Names
@@ -16,15 +16,21 @@ signing come later (`docs/NETWORKING_PLAN.md`).
 | room | `[A-Za-z0-9_-]{1,64}` | a room within the game, chosen by the players (a summon sign, a code to share) |
 | build | `[A-Za-z0-9._+-]{1,64}` | the client's build; peers in a room must have the same one |
 | peer | 16 lowercase hex digits | a peer within the room, given by the service on joining; never reused within a room |
+| public room | `P[A-HJ-NP-Z2-9]{7}` | a room that may be listed; the client draws the code at random |
+| host name | `[A-Za-z0-9 _-]{1,16}` | how a listed room's host is shown |
 
 ## Joining a room
 
 A client opens a WebSocket:
 
 ```
-GET /v1/rooms/{game}/{room}?protocol=1&build={build}
+GET /v1/rooms/{game}/{room}?protocol=1&build={build}[&listed=1&host={name}]
 Upgrade: websocket
 ```
+
+With `listed=1`, a public room is listed (see "The list of public rooms") while the peer that asked
+is its first, named by `host`. Asked by a later peer, `listed` is ignored. A room is never listed
+for a peer that did not ask, so a code shared by friends stays off the list.
 
 Limits are per address and approximate (counted per Cloudflare location). Refused before the upgrade with an HTTP status and a JSON body `{"error": code, "message": text}`:
 
@@ -32,6 +38,7 @@ Limits are per address and approximate (counted per Cloudflare location). Refuse
 |---|---|---|
 | 400 | `bad_request` | a name does not match its form, or the request is not a WebSocket upgrade |
 | 400 | `protocol` | the client's protocol version is not one the service speaks |
+| 400 | `not_listable` | `listed` is given for a room that is not a public room, or `host` is malformed |
 | 404 | `not_found` | any other path |
 | 429 | `rate_limited` | too many joins from one address (30 a minute) |
 
@@ -67,6 +74,7 @@ Error codes after the upgrade:
 |---|---|---|
 | `signal` | `to`, `data` | send `data` to peer `to`; it arrives as `signal` with your id as `from` |
 | `turn` | | ask for a TURN credential, answered by `turn` or an error. Only with another peer in the room. A peer keeps its last two: a new one revokes the one before the last |
+| `describe` | `floor` | a listed room's host: the floor its list row shows, a whole number 0 to 99. Ignored from anyone else; at most one a second counts |
 
 `data` is opaque to the service, a JSON object the clients agree on. Every one names `gen`, the
 generation of the pair's connection it belongs to (a whole number, 0 for the first; see "Moving to
@@ -84,6 +92,24 @@ A generation is never reused between a pair, and signals for one that is gone ar
 
 Leaving is closing the socket. The service sends `leave` to the others and revokes the leaver's
 TURN credential.
+
+## The list of public rooms
+
+```
+GET /v1/lobby/{game}?protocol=1&build={build}
+Upgrade: websocket
+```
+
+Refused before the upgrade as a join is (`bad_request`, `protocol`, `rate_limited`). The service
+sends `rooms` at once and again whenever the list changes, at most once a second; the client sends
+nothing, and leaves by closing the socket.
+
+| type | fields | meaning |
+|---|---|---|
+| `rooms` | `rooms` | the listed rooms of this game and build, newest first, at most 50: each `{room, host, floor, players, most}` |
+
+A room is on the list from its first peer's `welcome` until that peer leaves (a room whose host has
+gone ends: the coop world is the host's). `players` counts its peers; a full room stays listed.
 
 ## Connections
 

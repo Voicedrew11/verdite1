@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #ifdef __EMSCRIPTEN__
@@ -96,6 +97,7 @@ EM_ASYNC_JS(int, browser_save_write, (int slot, const u8 *input, unsigned size),
 #include <sys/stat.h>
 
 #include <cerrno>
+#include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -464,6 +466,44 @@ SaveFileResult coop_world_write(std::string_view room, std::span<const u8> data)
 #else
     return write_named(coop_world_name(room).c_str(), data.data(), data.size(), Previous::Keep);
 #endif
+}
+
+// The room in a world's file name, or nothing for any other file.
+static std::optional<std::string> room_of(std::string_view name) {
+    constexpr std::string_view prefix = "coop-", suffix = ".kfcoop";
+    if (!name.starts_with(prefix) || !name.ends_with(suffix) || name.size() <= prefix.size() + suffix.size())
+        return std::nullopt;
+    const std::string room(name.substr(prefix.size(), name.size() - prefix.size() - suffix.size()));
+    return room_valid(room) ? std::optional(room) : std::nullopt;
+}
+
+std::vector<std::string> coop_world_rooms() {
+    std::vector<std::string> rooms;
+#if defined(_WIN32)
+    if (!save_directory)
+        return rooms;
+    std::error_code error;
+    for (const auto &entry : std::filesystem::directory_iterator(*save_directory, error))
+        if (const auto room = room_of(entry.path().filename().string()); room && entry.is_regular_file(error))
+            rooms.push_back(*room);
+#elif !defined(__EMSCRIPTEN__)
+    if (save_directory < 0)
+        return rooms;
+    const int listing = ::dup(save_directory);
+    if (listing < 0)
+        return rooms;
+    DIR *directory = ::fdopendir(listing);
+    if (!directory) {
+        ::close(listing);
+        return rooms;
+    }
+    ::rewinddir(directory);
+    while (const dirent *entry = ::readdir(directory))
+        if (const auto room = room_of(entry->d_name))
+            rooms.push_back(*room);
+    ::closedir(directory);
+#endif
+    return rooms;
 }
 
 SaveFileResult save_earlier_read(SaveSlot slot, std::vector<u8> &data) {

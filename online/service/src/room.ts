@@ -5,15 +5,29 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 import { credentialSeconds, issue, revoke } from "./turn";
 import {
+  DESCRIBE_EVERY_MS,
+  FLOOR_MOST,
   FRAME_BYTES,
   FRAMES_PER_SECOND,
   PROTOCOL,
+  lobbyName,
   ROOM_PEERS,
   type ErrorCode,
   type ServerFrame,
 } from "./wire";
 
 const TURN_CREDENTIALS_KEPT = 2;
+
+// A public room's row on its lobby's list, kept while the peer that asked for it is in the room.
+interface Listing {
+  game: string;
+  room: string;
+  build: string;
+  host: string;
+  peer: string; // the host's peer id
+  floor: number;
+  describe_ms: number;
+}
 
 interface Peer {
   peer: string;
@@ -106,7 +120,49 @@ export class Room extends DurableObject<Env> {
     store(server, { peer: id, build, ip, turnUsers: [] });
     send(server, { type: "welcome", protocol: PROTOCOL, peer: id, peers: [...ids] });
     for (const { ws: other } of present) send(other, { type: "join", peer: id });
+    await this.listOnJoin(new URL(request.url), id, build, present.length === 0);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private lobby(listing: Listing) {
+    return this.env.LOBBIES.get(this.env.LOBBIES.idFromName(lobbyName(listing.game, listing.build)));
+  }
+
+  private async putRow(listing: Listing, players: number): Promise<void> {
+    await this.lobby(listing).put({ room: listing.room, host: listing.host, floor: listing.floor, players, most: ROOM_PEERS });
+  }
+
+  // The first peer lists the room if it asked to; a later one changes the row's count. A listing
+  // left from an earlier session (the object restarted) goes with the room's first new peer.
+  private async listOnJoin(url: URL, peer: string, build: string, first: boolean): Promise<void> {
+    const listing = await this.ctx.storage.get<Listing>("listing");
+    if (!first) {
+      if (listing) await this.putRow(listing, this.peers().length);
+      return;
+    }
+    if (listing) {
+      await this.ctx.storage.delete("listing");
+      await this.lobby(listing).remove(listing.room);
+    }
+    if (url.searchParams.get("listed") !== "1") return;
+    const [, , , game = "", room = ""] = url.pathname.split("/");
+    const fresh: Listing = { game, room, build, host: url.searchParams.get("host") ?? "", peer, floor: 0, describe_ms: 0 };
+    await this.ctx.storage.put("listing", fresh);
+    await this.putRow(fresh, 1);
+  }
+
+  private async describe(ws: WebSocket, self: Peer, floor: unknown): Promise<void> {
+    const listing = await this.ctx.storage.get<Listing>("listing");
+    if (!listing || listing.peer !== self.peer) return; // only the listed room's host
+    if (typeof floor !== "number" || !Number.isInteger(floor) || floor < 0 || floor > FLOOR_MOST) {
+      fail(ws, "bad_message", `a floor is a whole number 0 to ${FLOOR_MOST}`);
+      return;
+    }
+    const now_ms = Date.now();
+    if (now_ms - listing.describe_ms < DESCRIBE_EVERY_MS) return;
+    const described = { ...listing, floor, describe_ms: now_ms };
+    await this.ctx.storage.put("listing", described);
+    await this.putRow(described, this.peers().length);
   }
 
   // A credential only for a peer with someone to connect to, within its address's limit and
@@ -178,8 +234,12 @@ export class Room extends DurableObject<Env> {
       await this.turn(ws, self);
       return;
     }
+    if (type === "describe") {
+      await this.describe(ws, self, (frame as { floor?: unknown }).floor);
+      return;
+    }
     if (type !== "signal") {
-      fail(ws, "bad_message", "expected a signal or a turn request");
+      fail(ws, "bad_message", "expected a signal, a turn request or a describe");
       return;
     }
     const { to, data } = frame as { to?: unknown; data?: unknown };
@@ -212,8 +272,17 @@ export class Room extends DurableObject<Env> {
     } catch {
       // closed
     }
-    for (const { ws: other } of this.peers())
-      if (other !== ws) send(other, { type: "leave", peer: self.peer });
+    const others = this.peers().filter(({ ws: other }) => other !== ws);
+    for (const { ws: other } of others) send(other, { type: "leave", peer: self.peer });
     for (const username of self.turnUsers ?? []) await revoke(this.env, username);
+    const listing = await this.ctx.storage.get<Listing>("listing");
+    if (!listing) return;
+    if (listing.peer !== self.peer) {
+      await this.putRow(listing, others.length);
+      return;
+    }
+    // The host is gone, and the session with it.
+    await this.ctx.storage.delete("listing");
+    await this.lobby(listing).remove(listing.room);
   }
 }

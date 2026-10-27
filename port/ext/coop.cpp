@@ -72,6 +72,7 @@ struct Coop {
     CoopPlayerId self = 0;
     std::string name;
     bool in_play = false;    // the coop world is the game in play
+    bool from_title = false; // no game was set aside: leaving goes back to the title
     bool entering = false;   // to set this game aside and put the coop world in
     bool leaving = false;    // to put this game back
     Entering enter;
@@ -225,6 +226,8 @@ void fail(const char *why) {
     std::printf("[coop] %s\n", why);
     host_show_message(why);
     online_leave_room(why);
+    if (coop.from_title)
+        title_return();
 }
 
 std::optional<CoopWorldFile> read_world_file() {
@@ -259,12 +262,13 @@ bool set_game_aside() {
 }
 
 void enter_world() {
-    if (!set_game_aside()) {
+    if (!coop.from_title && !set_game_aside()) {
         fail("This game could not be set aside, so the room was left.");
         return;
     }
     if (!player_replace_game(load_coop_world)) {
-        player_replace_game(save_system_aside_read);
+        if (!coop.from_title)
+            player_replace_game(save_system_aside_read);
         fail("The coop world could not be loaded, so the room was left.");
         return;
     }
@@ -301,11 +305,16 @@ void enter_as_guest(const CoopWelcome &welcome) {
 }
 
 void leave_world() {
+    std::printf("[coop] left the world of room %s\n", coop.room.c_str());
+    if (coop.from_title) {
+        reset_session();
+        title_return();
+        return;
+    }
     if (player_replace_game(save_system_aside_read))
         save_card_remove(SaveCard::Aside);
     else
         host_show_message("Your own game could not be put back; it is still in its file.");
-    std::printf("[coop] left the world of room %s\n", coop.room.c_str());
     reset_session();
 }
 
@@ -530,6 +539,27 @@ void coop_room_joined(std::string_view room, bool first) {
     coop.role = first ? Role::Host : Role::Guest;
     coop.entering = first;
     std::printf("[coop] in room %s as %s (%s)\n", coop.room.c_str(), coop.name.c_str(), first ? "host" : "guest");
+}
+
+bool coop_ready_from_title() {
+    return coop.role == Role::Host || (coop.role == Role::Guest && coop.guest.welcome);
+}
+
+void coop_start_from_title() {
+    coop.from_title = true;
+    coop.entering = true;
+    // A game a crashed run left set aside stays in its file: putting it back now would only have
+    // the coop world replace it.
+    coop.looked_for_aside = true;
+}
+
+void coop_keep_leftover_aside() {
+    coop.looked_for_aside = true;
+}
+
+std::string coop_own_name() {
+    know_self();
+    return coop.name;
 }
 
 void coop_peer_open(std::uint64_t peer, bool older) {

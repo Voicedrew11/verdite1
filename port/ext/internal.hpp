@@ -4,6 +4,7 @@
 #include "online_pose.h"
 #include <verdite/options.h>
 #include <verdite/pickup_feed.h>
+#include <verdite/title_menu.h>
 #include <cstdint>
 #include <filesystem>
 #include <span>
@@ -167,6 +168,23 @@ void online_stop();    // leaves the room
 void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
 // The other players in the room, as last heard from, for the automap.
 std::vector<OnlinePose> online_players();
+// A join asked for by the title menu: as the room's first (hosting) or after someone (joining).
+// One that finds the room the other way round leaves at once. A listed_as lists the room under
+// that host name (a public code only).
+enum class RoomRole : std::uint8_t { First, Later };
+void online_join_from_title(std::string_view room, RoomRole expected, std::string_view listed_as);
+enum class OnlineFailure : std::uint8_t { None, NoHost, InUse, Full, OtherBuild, Unreachable, NoOnline, Other };
+struct OnlineStatus {
+    bool joining = false;   // asked, not yet in the room
+    bool in_room = false;
+    OnlineFailure failure = OnlineFailure::None;   // why the last session ended or never began
+};
+OnlineStatus online_status();
+// The list of public rooms of this build, open while the title shows it. online_rooms copies the
+// latest into rooms and says whether it changed since the last call.
+void online_list_open();
+void online_list_close();
+bool online_rooms(std::vector<verdite::TitleRoom> &rooms, verdite::RoomListState &state);
 // CONTROL packets for coop: to one peer, or every open peer.
 void online_send_control(std::uint64_t peer, std::span<const std::uint8_t> bytes);
 void online_broadcast_control(std::span<const std::uint8_t> bytes);
@@ -183,6 +201,17 @@ void coop_room_left();   // left, dropped or failed: this player's own game come
 // The pickup feed's lines now, oldest first, and a line's player's name.
 std::vector<verdite::PickupShown> coop_feed_lines();
 std::string coop_player_name(std::uint32_t player);
+// The title's coop start: once the room is joined, whether the world can go in (the host at once,
+// a guest once the host welcomed it); then the world goes in at the first point between updates
+// without setting a game aside, and leaving it goes back to the title.
+bool coop_ready_from_title();
+void coop_start_from_title();
+// A game a crashed run left set aside stays in its file this run (the title loaded a slot).
+void coop_keep_leftover_aside();
+std::string coop_own_name();
+// ---- the title menu (title.cpp) ----
+// A coop session started from the title ended: back to the title at the next point between updates.
+void title_return();
 // A line for the Online window: whose world this is, or empty outside coop.
 std::string coop_panel_line();
 

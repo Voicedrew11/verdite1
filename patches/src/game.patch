@@ -605,10 +605,10 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..e27548751724654b0c45cc16d62d32c6ca31800a 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..653c9cabfeefa48c1d383d4a385344239d23919a 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
-@@ -6,22 +6,35 @@
+@@ -6,22 +6,36 @@
  #include <kf/game/resources.h>
  #include <kf/game/save.h>
  #include <kf/game/session.h>
@@ -616,6 +616,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..e27548751724654b0c45cc16d62d32c6
 +#include <kf/platform/coop.h>
 +#include <kf/platform/input.h>
 +#include <kf/platform/online_players.h>
++#include <kf/platform/title.h>
  
  #include <cstdio>
  #include <cstdlib>
@@ -645,7 +646,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..e27548751724654b0c45cc16d62d32c6
      kf::language_apply_pending();
      game_graphics_runtime = {};
      actor_state = {};
-@@ -40,13 +53,30 @@ void game_main_loop(void)
+@@ -40,13 +54,35 @@ void game_main_loop(void)
      common_resources_load();
      kf::host_language_status("Language ready.");
      game_initialize_session();
@@ -673,10 +674,15 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..e27548751724654b0c45cc16d62d32c6
          game_apply_language();
 +        // PC extension: the fuzzer's checks and jumps run here, where the state is whole.
 +        kf::host_between_updates();
++        // PC extension: a coop session started from the title menu ended; back to it.
++        if (kf::title_return_requested()) {
++            game_result = GameResult::ReturnToTitle;
++            break;
++        }
          player_update();
          if (game_result != GameResult::Running) {
              break;
-@@ -54,11 +84,9 @@ void game_main_loop(void)
+@@ -54,11 +90,9 @@ void game_main_loop(void)
          player_update_transform_snapshot(&player_position_snapshot, &player_rotation_snapshot);
          audio_set_listener_transform(audio_state, &player_position_snapshot, &player_rotation_snapshot);
          actor_set_player_transform(&player_position_snapshot, &player_rotation_snapshot);
@@ -690,7 +696,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..e27548751724654b0c45cc16d62d32c6
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
-@@ -78,6 +106,7 @@ void game_main_loop(void)
+@@ -78,6 +112,7 @@ void game_main_loop(void)
              player_state.previous_map_cell.x = KF_MAP_CELL_COORD_INVALID;
          }
      }
@@ -698,7 +704,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..e27548751724654b0c45cc16d62d32c6
      game_shutdown();
  }
  
-@@ -86,14 +115,64 @@ void game_shutdown(void)
+@@ -86,14 +121,64 @@ void game_shutdown(void)
      audio_close_vab(audio_state);
  }
  
@@ -2218,6 +2224,166 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +            break;
 +    }
 +    kf::host_wait_buttons_released();
++}
+diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..f42949da371449a1e1c6d37e7c184789ccbe866c
+--- /dev/null
++++ b/src/game/menu_title.cpp
+@@ -0,0 +1,154 @@
++// PC extension: the title menu (kf/platform/title.h) over the opening's logo, drawn with the
++// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a short column
++// under the logo; the others fill the picture as the menu's pages do, over the logo dimmed.
++#include <kf/platform/prelude.h>
++#include <kf/game/menu.h>
++#include <kf/game/menu_text.h>
++#include <kf/game/resources.h>
++#include <kf/platform/menu_pointer.h>
++#include <kf/platform/title.h>
++
++#include <algorithm>
++#include <string>
++#include <vector>
++
++namespace {
++
++enum {
++    TITLE_SCREEN_WIDTH = 320,
++    TITLE_TOP_FIRST_ROW_Y = 150,
++    TITLE_HEADING_X = 12,
++    TITLE_HEADING_Y = 19,
++    TITLE_ROW_X = 26,
++    TITLE_FIRST_ROW_Y = 41,
++    TITLE_ROW_STEP = 22,
++    TITLE_VISIBLE_ROWS = 7,
++    TITLE_VALUE_X = 180,
++    TITLE_VALUE_WIDTH = 110,
++    TITLE_CODE_WIDTH = 110,
++    TITLE_GRID_CELL_WIDTH = 28,
++    TITLE_GRID_CELL_STEP = 34,
++    TITLE_NOTE_Y = 206,
++    TITLE_TEXT_INSET = 6,
++    // A translucent box sprite sits this far up and left of its text's place.
++    TITLE_BOX_X_OFFSET = 4,
++    TITLE_BOX_Y_OFFSET = 3
++};
++
++constexpr float title_dim_shade = 0.45f;
++
++s16 at_x(s32 x)
++{
++    return static_cast<s16>(x);
++}
++
++void title_draw_centred(const std::vector<MenuTextGlyph> &glyphs, s32 x, s32 width, s32 y, float shade)
++{
++    const s32 left = x - TITLE_BOX_X_OFFSET + (width - menu_text_width(glyphs)) / 2;
++    menu_draw_text(glyphs, MenuPoint{at_x(left), at_x(y)}, shade);
++}
++
++// A box with text centred in it, lit when selected.
++void title_draw_box(const std::string &text, s32 x, s32 y, s32 width, bool lit, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    menu_blit_box_translucent(lit ? assets.option_highlight : assets.option_background, MenuPoint{at_x(x), at_x(y)}, width);
++    title_draw_centred(menu_spell(text, language), x, width, y, 1.0f);
++}
++
++// A row: its text in a row box, the cursor on the selected one, its value in an option box.
++void title_draw_row(const kf::TitleRowText &row, s32 index, MenuPoint at, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    const auto label = menu_spell(row.text, language);
++    const s32 box_width = std::max<s32>(assets.row_background.width, menu_text_width(label) + 2 * TITLE_TEXT_INSET);
++    const s32 reach = row.value.empty() ? box_width : TITLE_VALUE_X + TITLE_VALUE_WIDTH - at.x;
++    const bool held = kf::host_menu_row(index, at.x - TITLE_BOX_X_OFFSET, at.y - TITLE_BOX_Y_OFFSET, reach,
++        assets.row_background.height);
++    menu_blit_box_translucent(held ? assets.row_confirmed_background : assets.row_background, at, box_width);
++    if (row.selected)
++        menu_blit_sprite(&assets.selection_cursor, &at);
++    const float shade = row.enabled ? 1.0f : title_dim_shade;
++    menu_draw_text(label, MenuPoint{at_x(at.x + TITLE_TEXT_INSET - TITLE_BOX_X_OFFSET), at.y}, shade);
++    if (row.value.empty())
++        return;
++    menu_blit_box_translucent(row.selected ? assets.option_highlight : assets.option_background,
++        MenuPoint{TITLE_VALUE_X, at.y}, TITLE_VALUE_WIDTH);
++    title_draw_centred(menu_spell(row.value, language), TITLE_VALUE_X, TITLE_VALUE_WIDTH, at.y, shade);
++}
++
++// The top page: its rows centred under the logo.
++void title_draw_top(const kf::TitleText &text, kf::Language language)
++{
++    const s32 box_width = menu_resources().assets.row_background.width;
++    const s32 x = (TITLE_SCREEN_WIDTH - box_width) / 2 + TITLE_BOX_X_OFFSET;
++    for (s32 i = 0; i < static_cast<s32>(text.rows.size()); i++)
++        title_draw_row(text.rows[i], i, MenuPoint{at_x(x), at_x(TITLE_TOP_FIRST_ROW_Y + i * TITLE_ROW_STEP)}, language);
++}
++
++// The join page's digits, grid_columns to a line; returns the y below the grid.
++s32 title_draw_grid(const kf::TitleText &text, s32 y, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    const s32 columns = static_cast<s32>(text.grid_columns);
++    const s32 cells = std::min<s32>(static_cast<s32>(text.rows.size()), static_cast<s32>(text.grid_cells));
++    for (s32 i = 0; i < cells; i++) {
++        const s32 x = TITLE_ROW_X + (i % columns) * TITLE_GRID_CELL_STEP;
++        const s32 row_y = y + (i / columns) * TITLE_ROW_STEP;
++        const bool held = kf::host_menu_row(i, x - TITLE_BOX_X_OFFSET, row_y - TITLE_BOX_Y_OFFSET,
++            TITLE_GRID_CELL_WIDTH, assets.option_background.height);
++        title_draw_box(text.rows[i].text, x, row_y, TITLE_GRID_CELL_WIDTH, text.rows[i].selected || held, language);
++    }
++    return y + (cells + columns - 1) / columns * TITLE_ROW_STEP;
++}
++
++// Any other page: the heading, a code, the rows (a window of them around the cursor) and the note.
++void title_draw_page(const kf::TitleText &text, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    const MenuPoint heading_at{TITLE_HEADING_X, TITLE_HEADING_Y};
++    menu_blit_sprite_translucent(&assets.row_background, &heading_at);
++    menu_draw_text(menu_spell(text.heading, language),
++        MenuPoint{TITLE_HEADING_X + TITLE_TEXT_INSET - TITLE_BOX_X_OFFSET, TITLE_HEADING_Y}, 1.0f);
++
++    s32 y = TITLE_FIRST_ROW_Y;
++    if (!text.code.empty()) {
++        title_draw_box(text.code, (TITLE_SCREEN_WIDTH - TITLE_CODE_WIDTH) / 2 + TITLE_BOX_X_OFFSET, y, TITLE_CODE_WIDTH,
++            true, language);
++        y += 2 * TITLE_ROW_STEP;
++    }
++    s32 first = 0;
++    if (text.grid_columns > 0) {
++        y = title_draw_grid(text, y, language);
++        first = std::min<s32>(static_cast<s32>(text.rows.size()), static_cast<s32>(text.grid_cells));
++    }
++    const s32 count = static_cast<s32>(text.rows.size());
++    const auto selected = std::find_if(text.rows.begin() + first, text.rows.end(),
++        [](const kf::TitleRowText &row) { return row.selected; });
++    const s32 cursor = selected == text.rows.end() ? first : static_cast<s32>(selected - text.rows.begin());
++    const s32 visible = std::max<s32>(1, std::min<s32>(TITLE_VISIBLE_ROWS, (TITLE_NOTE_Y - y) / TITLE_ROW_STEP));
++    const s32 start = std::clamp<s32>(cursor - visible / 2, first, std::max(first, count - visible));
++    for (s32 i = start; i < count && i < start + visible; i++)
++        title_draw_row(text.rows[i], i, MenuPoint{TITLE_ROW_X, at_x(y + (i - start) * TITLE_ROW_STEP)}, language);
++}
++
++} // namespace
++
++bool menu_title_draw(void)
++{
++    const kf::Language language = game_text_language();
++    const kf::TitleText text = kf::title_text(language);
++    s32 selected = 0;
++    for (s32 i = 0; i < static_cast<s32>(text.rows.size()); i++)
++        if (text.rows[i].selected)
++            selected = i;
++    kf::host_menu_widget(kf::MenuWidget::List, selected);
++    const bool top = text.heading.empty();
++    if (top)
++        title_draw_top(text, language);
++    else
++        title_draw_page(text, language);
++    if (!text.note.empty())
++        title_draw_centred(menu_spell(text.note, language), 0, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y + (top ? 14 : 0), 1.0f);
++    return top;
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
@@ -3951,7 +4117,7 @@ index 55e9edcbc4495d8cc7075c10334d57e8863d727d..f02ffdf13e557f83b720bb2c9acc01d6
          kf::FaceShading::Flat, HUD_SPRITE_OT_DEPTH);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..aa22d1044416dd9cfa97e92d7553f3b83cee8eda 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..443ad56529e5f879218f52eed540e33136a1a838 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
 @@ -2,6 +2,8 @@
@@ -3977,7 +4143,25 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..aa22d1044416dd9cfa97e92d7553f3b8
  
  enum {
      MAP_VARIANT_ASSET_BUFFER_BYTES = 0x5a000,
-@@ -61,7 +65,7 @@ bool show_text_language(kf::Language language)
+@@ -40,6 +44,17 @@ KfMapCollisionGrid map_collision_grid;
+ KfMapAttributeGrid map_cell_attribute_grid;
+ 
+ namespace {
++// COM/MIX.TIM's 4-bit pages and their palettes, where the title menu needs them.
++enum : u16 {
++    MENU_TITLE_PAGES_X = 704,
++    MENU_TITLE_PAGES_Y = 256,
++    MENU_TITLE_PAGES_WIDTH = 320,
++    MENU_TITLE_PAGES_HEIGHT = 256,
++    MENU_TITLE_PALETTES_Y = 497,
++    MENU_TITLE_PALETTES_WIDTH = 16,
++    MENU_TITLE_PALETTES_HEIGHT = 15
++};
++
+ std::array<kf::ByteBuffer, 2> language_images;
+ std::optional<kf::Language> displayed_language;
+ 
+@@ -61,7 +76,7 @@ bool show_text_language(kf::Language language)
          return false;
      const auto &before = language_images[static_cast<std::size_t>(previous)];
      const auto &after = language_images[static_cast<std::size_t>(language)];
@@ -3986,6 +4170,29 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..aa22d1044416dd9cfa97e92d7553f3b8
              before.data(), before.size(), after.data(), after.size()))
          kf::host_fail("Cannot replace language graphics.");
      displayed_language = language;
+@@ -69,6 +84,22 @@ bool show_text_language(kf::Language language)
+ }
+ }
+ 
++// PC extension (the title menu): the menu's font, boxes and cursor, in the language shown, beside
++// the opening's pictures. Only MIX.TIM's 4-bit pages and their palettes go up, which the opening's
++// pictures do not use; its 8-bit pages overlap theirs.
++bool menu_title_prepare(void)
++{
++    const auto language = game_text_language();
++    if (!prepare_text_language(language))
++        return false;
++    constexpr std::array<kf::TextureArea, 2> menu_areas = {{
++        {MENU_TITLE_PAGES_X, MENU_TITLE_PAGES_Y, MENU_TITLE_PAGES_WIDTH, MENU_TITLE_PAGES_HEIGHT},
++        {0, MENU_TITLE_PALETTES_Y, MENU_TITLE_PALETTES_WIDTH, MENU_TITLE_PALETTES_HEIGHT},
++    }};
++    const auto &images = language_images[static_cast<std::size_t>(language)];
++    return kf::texture_store_upload_tim_within(&kf::host_textures(), images.data(), images.size(), menu_areas);
++}
++
+ kf::Language game_text_language()
+ {
+     return displayed_language.value_or(kf::game_language());
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
 index d3474864ec0f4578414b005ecaa89eae266de167..a67e5fa4bb5279170b87499b7c81109f96ac677b 100644
 --- a/src/game/save_system.cpp

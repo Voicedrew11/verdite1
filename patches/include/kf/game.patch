@@ -29,7 +29,7 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..c734d93227ffca1452fa03deb1f94d01
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..d3663340ceea25b0576532676c3c401a02fd2b5a 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..e5d30a81fa7da67e653f481dc7fcf5226ae02bf6 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
 @@ -30,7 +30,9 @@ enum class KfMenuRootChoice : s32 {
@@ -73,7 +73,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..d3663340ceea25b0576532676c3c401a
  extern void menu_resources_reload(void);
  extern void menu_draw_save_slots(
      std::span<const KfSaveSlotSummary> summaries, KfSaveSlotOverlay slot_overlay);
-@@ -340,7 +348,11 @@ extern void menu_draw_number(
+@@ -340,7 +348,16 @@ extern void menu_draw_number(
      const MenuSpriteDef *font, const MenuGlyphString *string);
  extern void menu_draw_string(
      const MenuSpriteDef *font, const MenuGlyphString *string);
@@ -82,10 +82,15 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..d3663340ceea25b0576532676c3c401a
 +extern void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade);
  extern void menu_draw_equipment_names(void);
 +extern void menu_draw_pickup_feed(void);
++// PC extension: the title menu (kf/platform/title.h) over the opening's logo. menu_title_prepare
++// puts the menu's font, boxes and cursor beside the opening's pictures, false when it cannot;
++// menu_title_draw draws this frame's page, true when it is the top page.
++extern bool menu_title_prepare(void);
++extern bool menu_title_draw(void);
  extern void menu_draw_status_summary(void);
  extern void menu_draw_status_details(void);
  struct MenuChoiceLabel;
-@@ -358,6 +370,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+@@ -358,6 +375,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
  extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
  extern void menu_frame_begin(void);
  extern void menu_item_model_preview(KfObjectId item_id);
@@ -286,6 +291,20 @@ index 35636457c6d504dfede73c5568fb25701f4a9a9d..b9dee3431d0ad9977a5ce497b80cdec8
 +void save_system_import_earlier(void);
  
  #endif // KF_GAME_SAVE_H
+diff --git a/include/kf/game/session.h b/include/kf/game/session.h
+index 74ec349bf5cb4e614b266b7639c25b8ff66c0057..852be4262b0a15848cd62662dc3d6e6a61e52b4e 100644
+--- a/include/kf/game/session.h
++++ b/include/kf/game/session.h
+@@ -1,7 +1,8 @@
+ #ifndef KF_GAME_SESSION_H
+ #define KF_GAME_SESSION_H
+ 
+-enum class GameResult { Running, ReturnToIntro, Completed };
++// PC extension: ReturnToTitle, a coop session started from the title menu ended.
++enum class GameResult { Running, ReturnToIntro, Completed, ReturnToTitle };
+ 
+ GameResult game_play();
+ 
 diff --git a/include/kf/game/system.h b/include/kf/game/system.h
 index 76c180637418194ab026f43d8a2fdef637ec9984..a0c28705d334fc0c553c95f132950ef86e70d7e1 100644
 --- a/include/kf/game/system.h

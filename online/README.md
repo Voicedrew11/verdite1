@@ -7,7 +7,7 @@ knows a game; the game layer (vocabulary, ghosts, coop sync) stays in `port/` an
 | folder | layer | what |
 |---|---|---|
 | `protocol/` | both | the wire protocol, the one definition the service and the client both follow |
-| `service/` | service | the Cloudflare Worker: TURN credentials and the signaling rooms (a Durable Object per room) |
+| `service/` | service | the Cloudflare Worker: TURN credentials, the signaling rooms (a Durable Object per room) and the list of public rooms (one per game and build) |
 | `client/` | client library | `verdite-online`: WebRTC data channels through Cloudflare TURN, behind a C interface (`include/verdite_online.h`) |
 
 The client depends on neither `libverdite/` nor the game, so it can move out as a subtree, and the
@@ -54,7 +54,12 @@ cmake --build --preset linux --target verdite_online vo_pair verdite_online_test
 build/linux/online/client/verdite_online_tests             # the frames, read and written
 build/linux/online/client/vo_pair --service http://127.0.0.1:8787 --seconds 10
 build/linux/online/client/vo_pair --service https://verdite-online.voicedrew11.workers.dev
+build/linux/online/client/vo_pair --service http://127.0.0.1:8787 --seconds 3 --listed 1
 ```
+
+With `--listed 1` the room has a public code, the first session lists it and says it is on floor
+7, and the run passes only if the list of public rooms (`vo_lobby_open`) shows it with both
+players.
 
 `vo_pair` opens two sessions in one room and sends CONTROL and STATE packets both ways at 20 a
 second, plus one 64 KiB CONTROL packet; it passes when every CONTROL packet arrived in order and

@@ -1,7 +1,7 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times; Order's first four steps done 2026-10-27, the fourth
-but for public rooms.** Built so far: the two spikes, the smooth knight
+**Draft, 2026-10-26, red-teamed three times; Order's first four steps done 2026-10-27, public
+rooms and the title menu with them.** Built so far: the two spikes, the smooth knight
 ([PLAYER_MODEL.md](PLAYER_MODEL.md)) and the coop save (The coop save). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
 are [NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
@@ -28,7 +28,7 @@ The test of the design: if a rule needs more than a line here, it is too complic
 - If the host leaves, the session ends; everything up to that moment is kept.
 - Joining sets your own game aside, and leaving puts it back where you stood.
 - A room is private, joined by its code, or public, listed for anyone to join; each keeps its own
-  world.
+  world. Both are hosted and joined from CO-OP on the title screen.
 
 ## Fixed
 
@@ -50,7 +50,8 @@ The test of the design: if a rule needs more than a line here, it is too complic
   third card file beside the slots' and the quick save's. Leaving, the host dropping or the
   connection failing all bring it back, the floor reloaded. A join asked for in a menu, a
   dialogue or a scripted loop happens at the next point between updates, as the F1 language
-  change does; from the title it is at once, and leaving goes back to the title.
+  change does; from the title it is at once with nothing set aside, and leaving goes back to the
+  title (The title menu).
 - **A coop world per room code,** kept by its host: a group keeps its world under its code, and
   another group's does not touch it. The host plays one alone between sessions from the Online
   panel, which sets their own game aside the same way.
@@ -58,8 +59,9 @@ The test of the design: if a rule needs more than a line here, it is too complic
   wrong player arrives first, they leave and come back; handing a world to its owner is not built.
 - **Public rooms.** A room is private (joined by its code, as now) or public: the service lists
   public rooms of the same build, with their host's name, floor and number of players, and anyone
-  may join one. A public room's world is its own, under a code the service gives it, so strangers
-  never touch a private world. In a public room the host can send a player away (their
+  may join one. A public room's world is its own, under a code of its own form (P and 7 letters,
+  drawn at random by the host's game; a private code is 8 digits), and the service lists a room
+  only for a host who asked, so strangers never touch a private world. In a public room the host can send a player away (their
   character stays in the world, worn gear back in the pack), and a host who sends someone away
   is not offered that room by the service again.
 - **Late joiners start fresh, beside the host:** level 1, adding the game's starting kit (a
@@ -346,7 +348,8 @@ What the table changed:
    item use, since a difference in the pack cannot tell. Built in that order: the models with
    their tests, the file, the session, the game's patches, the feed. Until step 5 only the host's
    world records go into the coop save; a guest alone on another floor keeps its chests and
-   doors for the session. Public rooms follow, with the service's list (NETWORKING_PLAN.md).
+   doors for the session. Public rooms and the title menu followed the same day (The title menu),
+   with the service's list (NETWORKING_PLAN.md); sending a player away is still to come.
 5. Floor ownership: seniority, the snapshot on arrival, enemies drawn as puppets, triggers sent
    as writes, the handover, the floor restarted from its record when its owner drops.
 6. Hits across machines (the attack event, remote players in the collision grid); menus that do
@@ -456,15 +459,61 @@ a room need `halt_on_error=0`.
 
 Not yet:
 
-- **Public rooms** and the service's list (NETWORKING_PLAN.md).
 - **Names:** a player is `PLAYER` and four digits of the install's id (`coop.id` in the user
   folder); choosing one, and kana names for Japanese, whose font has no capitals, is to come.
-- **Joining from the title** waits until a game is in play, then sets it aside.
 - **A held host** answers a hello and puts the others' changes into its game when its menu
   closes; a guest arriving while the host reads a sign waits for it.
 - The coop world's automap is not kept: each entry starts it unexplored.
 - `coop_floor_records_kept` is not called yet: until floors have owners (Order 5) only the host's
   world goes into the save, and a guest's world is its own for the session.
+
+## The title menu
+
+Built 2026-10-27, after Verdite2's and Verdite3's title: the game's own menu under the logo.
+KF1 had none (any button at the logo started a new game, and loading was the in-game menu's), so
+the logo (the opening's scene 1) now holds it, drawn with the menu's boxes, cursor and font as the
+SETTINGS page is, with the mouse and touch through the menu pointer:
+
+- **CONTINUE** (first, and where the cursor starts, when a card slot is used): the three slots
+  with their floor and experience; the chosen one goes in at the game's first update.
+- **NEW GAME**: the story scroll, then a new game, as a button at the logo was.
+- **COOP**: HOST (a new private world, whose 8-digit code is shown to read out before START; a new
+  public one; or a world this machine already keeps), JOIN BY CODE (a grid of digits, or the
+  keyboard's) and PUBLIC ROOMS (the service's list, kept up to date while shown: the host's name,
+  floor and players; a full room is dimmed).
+
+Any button in the attract scene goes to the menu, which waits as long as the logo did before
+going back to the attract scene, on its top page only. F4's quick load still goes straight in.
+
+**Hosting and joining are strict from the menu**, unlike the F1 panel, where whoever is first
+hosts: a join that finds the room empty leaves and says no one is hosting (a mistyped code makes
+no world), and hosting a room someone is in says it is in use. **From the title nothing is set
+aside**: the coop world goes in over the new game the title starts, and when the session ends
+(the player leaves, the host leaves, the connection fails) the game goes back to the title menu
+(`GameResult::ReturnToTitle`, `Cutscene::Title`), not to the intro. A game a crashed run left set
+aside stays in its file when the title starts CONTINUE or COOP, since either would replace it at
+once; a NEW GAME still gets it back.
+
+The menu is libverdite's (`verdite/title_menu.h`, unit-tested), so the other ports can take it;
+`port/ext/title.cpp` gives it the slots, the kept worlds and the list, and joins the room;
+`work/src/game/menu_title.cpp` draws it. The menu font goes up beside the logo: only
+`COM/MIX.TIM`'s 4-bit pages (x 704 to 1024, y 256 to 512) and their palettes (rows 497 to 511),
+which the opening's pictures never use; its 8-bit pages overlap the opening's.
+
+Checked 2026-10-27 by `scripts/title_pair.py` with headless instances on a local service, 18
+checks: the top page, a private world hosted from it and joined by its typed code, the guest back at
+the title menu when the host quits, a code no one hosts refused, the kept world offered again, a
+public world on the list with its host, floor and players and joined from it, NEW GAME, and
+CONTINUE loading slot 1. Judged by eye: not yet (the layout over the logo, the dimmed logo
+behind the inner pages).
+
+Not yet:
+
+- **Room codes in Japanese**: the kana font has no capitals and Japanese names are still to come,
+  so a host named `PLAYER1234` is listed as プレイヤー1234; a public room's code is never shown.
+- **Sounds**: the menu's cursor and confirm sounds are the game's bank, which the opening has not
+  loaded; the title menu is silent.
+- **Sending a player away** from a public room, and the service's check of names.
 
 ## The room's size
 
@@ -632,3 +681,8 @@ What a room costs each player, for N players:
   empty and its machine starts one; and wear requests are numbered, with the pack message saying
   the last the host has and the world's highest floor. A run that quits in a room gets its own
   game back in the next one.
+- 2026-10-27: public rooms and the title menu (The title menu). The client, not the service, draws
+  a public room's code (P and 7 letters), since a random code of its own form is enough and the
+  service then has nothing to hand out; a private code is 8 digits, the only characters every
+  language's menu font has. Hosting and joining from the menu are strict, and a session started
+  there sets nothing aside and ends at the title.

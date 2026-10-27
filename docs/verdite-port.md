@@ -275,6 +275,9 @@ other players in the online room on this floor, as drawn: id, cell position, fee
 phase, stride), `give <item> <count>` (changes the pack, item 255 the purse, at the next update, as
 a pickup or use would) and `coop` (the coop session: role, whether its world is in play, the pack,
 purse, what this player and the others wear, the pickup feed's lines, floor and cell).
+`title` reads the title menu as English text (whether it is up, the page's heading, code, note and
+rows) and `title type <digits>` types a room code on its join page ([COOP_PLAN.md](COOP_PLAN.md),
+"The title menu").
 `KF_TEST_WORLD_RUNS_WHILE_HELD=1` keeps the world running in menus and scripted loops as it does
 in an online room ([COOP_PLAN.md](COOP_PLAN.md), "The spikes").
 

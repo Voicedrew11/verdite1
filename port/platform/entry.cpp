@@ -331,6 +331,18 @@ bool prepare_release_data(const char *dropped) {
     return true;
 }
 #endif
+
+// The ending after the last floor, the title menu after a coop session begun there, and otherwise
+// the intro, as the game returns to it.
+Cutscene cutscene_after(GameResult result) {
+    switch (result) {
+    case GameResult::Completed: return Cutscene::Ending;
+    case GameResult::ReturnToTitle: return Cutscene::Title;
+    case GameResult::Running:
+    case GameResult::ReturnToIntro: break;
+    }
+    return Cutscene::Intro;
+}
 }
 
 int main(int argc, char **argv) {
@@ -472,6 +484,6 @@ int main(int argc, char **argv) {
         cutscene_play(Cutscene::Intro);
     for (;;) {
         const GameResult result = game_play();
-        cutscene_play(result == GameResult::Completed ? Cutscene::Ending : Cutscene::Intro);
+        cutscene_play(cutscene_after(result));
     }
 }

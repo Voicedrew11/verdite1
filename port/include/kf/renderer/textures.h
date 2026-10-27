@@ -4,6 +4,7 @@
 #include <kf/platform/assets.h>
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace kf {
@@ -22,6 +23,14 @@ bool texture_store_upload_tim(TextureStore *store, const u8 *bytes, std::size_t 
 // Replace only translated texels/palette entries; retain later map/menu uploads.
 bool texture_store_translate_tim(TextureStore *store, const u8 *before, std::size_t before_size,
                                  const u8 *after, std::size_t after_size);
+// A rectangle of the store, in words: x and width in 16-bit columns.
+struct TextureArea {
+    u16 x, y, width, height;
+};
+// Uploads only what of the TIM falls inside the areas, leaving the rest of the store as it is: the
+// menu's font beside the opening's pictures, whose other pages overlap.
+bool texture_store_upload_tim_within(TextureStore *store, const u8 *bytes, std::size_t size,
+                                     std::span<const TextureArea> areas);
 bool texture_decode(Image *image, TextureSource source, const u16 *words, std::size_t count);
 }
 

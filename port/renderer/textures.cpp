@@ -1,6 +1,7 @@
 #include <kf/renderer/constants.h>
 #include <kf/renderer/textures.h>
 
+#include <algorithm>
 #include <new>
 #include <utility>
 #include <vector>
@@ -34,6 +35,30 @@ bool texture_store_translate_tim(TextureStore *store, const u8 *before, std::siz
     for (std::size_t i = 0; i < texture_word_count; ++i)
         if (old_words[i] != new_words[i])
             store->words[i] = new_words[i];
+    ++store->generation;
+    return true;
+} catch (const codec::Error &error) {
+    error.report();
+    return false;
+} catch (const std::bad_alloc &) {
+    return false;
+}
+
+bool texture_store_upload_tim_within(TextureStore *store, const u8 *bytes, std::size_t size,
+                                     std::span<const TextureArea> areas) try {
+    if (store->words.empty())
+        store->words.resize(texture_word_count);
+    std::vector<u16> composed = store->words;
+    kf_tim_compose({bytes, size}, composed);
+    for (const TextureArea &area : areas) {
+        const int right = std::min<int>(area.x + area.width, texture_store_width);
+        const int bottom = std::min<int>(area.y + area.height, texture_store_height);
+        for (int y = area.y; y < bottom && area.x < right; ++y) {
+            const auto first = static_cast<std::ptrdiff_t>(y) * texture_store_width + area.x;
+            const auto last = static_cast<std::ptrdiff_t>(y) * texture_store_width + right;
+            std::copy(composed.begin() + first, composed.begin() + last, store->words.begin() + first);
+        }
+    }
     ++store->generation;
     return true;
 } catch (const codec::Error &error) {

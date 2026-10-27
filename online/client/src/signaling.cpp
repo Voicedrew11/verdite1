@@ -34,6 +34,16 @@ bool valid_room(std::string_view room) {
     return matches(room, 64, [](char c) { return is_alnum(c) || c == '_' || c == '-'; });
 }
 
+bool valid_host(std::string_view host) {
+    return matches(host, 16, [](char c) { return is_alnum(c) || c == ' ' || c == '_' || c == '-'; });
+}
+
+bool valid_public_room(std::string_view room) {
+    constexpr std::string_view letters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    return room.size() == 8 && room.front() == 'P' &&
+           std::ranges::all_of(room, [&](char c) { return letters.find(c) != std::string_view::npos; });
+}
+
 bool valid_build(std::string_view build) {
     return matches(build, 64, [](char c) {
         return is_alnum(c) || c == '.' || c == '_' || c == '+' || c == '-';
@@ -158,6 +168,59 @@ std::optional<ServiceFrame> parse_turn(const cJSON *json) {
     return frame;
 }
 
+std::optional<ListedRoom> parse_listed_room(const cJSON *row) {
+    if (!cJSON_IsObject(row))
+        return std::nullopt;
+    auto room = string_field(row, "room");
+    auto host = string_field(row, "host");
+    const auto floor = int_field(row, "floor", 0, static_cast<int>(floor_most));
+    const auto players = int_field(row, "players", 0, 64);
+    const auto most = int_field(row, "most", 1, 64);
+    if (!room || !valid_room(*room) || !host || !valid_host(*host) || !floor || !players || !most)
+        return std::nullopt;
+    return ListedRoom{std::move(*room), std::move(*host), static_cast<std::uint32_t>(*floor),
+                      static_cast<std::uint32_t>(*players), static_cast<std::uint32_t>(*most)};
+}
+
+std::optional<ServiceFrame> parse_rooms(const cJSON *json) {
+    const cJSON *rooms = cJSON_GetObjectItemCaseSensitive(json, "rooms");
+    if (!cJSON_IsArray(rooms) || static_cast<std::size_t>(cJSON_GetArraySize(rooms)) > listed_rooms_most)
+        return std::nullopt;
+    ServiceFrame frame;
+    frame.kind = ServiceFrame::Kind::Rooms;
+    const cJSON *row = nullptr;
+    cJSON_ArrayForEach(row, rooms) {
+        auto room = parse_listed_room(row);
+        if (!room)
+            return std::nullopt;
+        frame.rooms.push_back(std::move(*room));
+    }
+    return frame;
+}
+
+// The service's address as a WebSocket one, without a trailing slash; nothing when it is not
+// http:// or https://.
+std::optional<std::string> socket_base(std::string_view service_url) {
+    std::string url;
+    if (service_url.starts_with("https://"))
+        url = "wss://" + std::string(service_url.substr(8));
+    else if (service_url.starts_with("http://"))
+        url = "ws://" + std::string(service_url.substr(7));
+    else
+        return std::nullopt;
+    while (url.ends_with('/'))
+        url.pop_back();
+    return url;
+}
+
+// A query string's value: '+' would be a space, ' ' is not allowed.
+std::string query_value(std::string_view value) {
+    std::string out;
+    for (const char c : value)
+        out += c == '+' ? std::string("%2B") : c == ' ' ? std::string("%20") : std::string(1, c);
+    return out;
+}
+
 std::optional<ServiceFrame> parse_frame(const cJSON *json) {
     const auto type = string_field(json, "type");
     if (!type)
@@ -166,6 +229,8 @@ std::optional<ServiceFrame> parse_frame(const cJSON *json) {
         return parse_welcome(json);
     if (*type == "turn")
         return parse_turn(json);
+    if (*type == "rooms")
+        return parse_rooms(json);
     if (*type == "join" || *type == "leave") {
         const auto peer = peer_field(json, "peer");
         if (!peer)
@@ -234,23 +299,30 @@ std::string peer_hex(PeerId peer) {
 }
 
 std::optional<std::string> room_url(std::string_view service_url, std::string_view game,
-                                    std::string_view room, std::string_view build) {
+                                    std::string_view room, std::string_view build,
+                                    std::string_view listed_as) {
     if (!valid_game(game) || !valid_room(room) || !valid_build(build))
         return std::nullopt;
-    std::string url;
-    if (service_url.starts_with("https://"))
-        url = "wss://" + std::string(service_url.substr(8));
-    else if (service_url.starts_with("http://"))
-        url = "ws://" + std::string(service_url.substr(7));
-    else
+    if (!listed_as.empty() && (!valid_host(listed_as) || !valid_public_room(room)))
         return std::nullopt;
-    while (url.ends_with('/'))
-        url.pop_back();
-    url += "/v1/rooms/" + std::string(game) + "/" + std::string(room) +
-           "?protocol=" + std::to_string(protocol_version) + "&build=";
-    // '+' is a space in a query string
-    for (const char c : build)
-        url += c == '+' ? std::string("%2B") : std::string(1, c);
+    auto url = socket_base(service_url);
+    if (!url)
+        return std::nullopt;
+    *url += "/v1/rooms/" + std::string(game) + "/" + std::string(room) +
+            "?protocol=" + std::to_string(protocol_version) + "&build=" + query_value(build);
+    if (!listed_as.empty())
+        *url += "&listed=1&host=" + query_value(listed_as);
+    return url;
+}
+
+std::optional<std::string> lobby_url(std::string_view service_url, std::string_view game, std::string_view build) {
+    if (!valid_game(game) || !valid_build(build))
+        return std::nullopt;
+    auto url = socket_base(service_url);
+    if (!url)
+        return std::nullopt;
+    *url += "/v1/lobby/" + std::string(game) + "?protocol=" + std::to_string(protocol_version) +
+            "&build=" + query_value(build);
     return url;
 }
 
@@ -289,6 +361,10 @@ std::string signal_frame(PeerId to, const Signal &signal) {
 
 std::string turn_frame() {
     return R"({"type":"turn"})";
+}
+
+std::string describe_frame(std::uint32_t floor) {
+    return R"({"type":"describe","floor":)" + std::to_string(std::min(floor, floor_most)) + "}";
 }
 
 } // namespace vo

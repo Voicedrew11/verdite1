@@ -39,6 +39,45 @@ TEST_CASE("a room's address follows the service's scheme and checks the names") 
     CHECK_FALSE(room_url("https://x", "kf1", std::string(65, 'r'), "b"));
 }
 
+TEST_CASE("a listed room needs a public code and a host name; the list's address is checked too") {
+    CHECK(room_url("https://x", "kf1", "PABCDEFG", "b", "Knight 7") ==
+          "wss://x/v1/rooms/kf1/PABCDEFG?protocol=1&build=b&listed=1&host=Knight%207");
+    CHECK_FALSE(room_url("https://x", "kf1", "ABCDEF", "b", "Knight"));
+    CHECK_FALSE(room_url("https://x", "kf1", "PABCDEF0", "b", "Knight"));
+    CHECK_FALSE(room_url("https://x", "kf1", "PABCDEFG", "b", "Knight&x=1"));
+    CHECK_FALSE(room_url("https://x", "kf1", "PABCDEFG", "b", std::string(17, 'k')));
+    CHECK(lobby_url("http://127.0.0.1:8787/", "kf1", "kf1-0.1+a") ==
+          "ws://127.0.0.1:8787/v1/lobby/kf1?protocol=1&build=kf1-0.1%2Ba");
+    CHECK_FALSE(lobby_url("https://x", "kf1", "b c"));
+}
+
+TEST_CASE("rooms lists the public rooms, every row checked") {
+    const ServiceFrame frame = parsed(
+        R"({"type":"rooms","rooms":[{"room":"PABCDEFG","host":"Knight 7","floor":3,"players":2,"most":4}]})");
+    CHECK(frame.kind == ServiceFrame::Kind::Rooms);
+    REQUIRE(frame.rooms.size() == 1);
+    CHECK(frame.rooms[0].room == "PABCDEFG");
+    CHECK(frame.rooms[0].host == "Knight 7");
+    CHECK(frame.rooms[0].floor == 3);
+    CHECK(frame.rooms[0].players == 2);
+    CHECK(frame.rooms[0].most == 4);
+    CHECK(parsed(R"({"type":"rooms","rooms":[]})").rooms.empty());
+    CHECK_FALSE(parse_service_frame(R"({"type":"rooms","rooms":[{"room":"a/b","host":"h","floor":1,"players":1,"most":4}]})"));
+    CHECK_FALSE(parse_service_frame(R"({"type":"rooms","rooms":[{"room":"r","host":"<b>","floor":1,"players":1,"most":4}]})"));
+    CHECK_FALSE(parse_service_frame(R"({"type":"rooms","rooms":[{"room":"r","host":"h","floor":100,"players":1,"most":4}]})"));
+    CHECK_FALSE(parse_service_frame(R"({"type":"rooms","rooms":[{"room":"r","host":"h","floor":1,"players":1,"most":0}]})"));
+    CHECK_FALSE(parse_service_frame(R"({"type":"rooms","rooms":{}})"));
+    std::string many = R"({"type":"rooms","rooms":[)";
+    for (std::size_t i = 0; i <= listed_rooms_most; ++i)
+        many += std::string(i ? "," : "") + R"({"room":"r","host":"h","floor":1,"players":1,"most":4})";
+    CHECK_FALSE(parse_service_frame(many + "]}"));
+}
+
+TEST_CASE("describe carries the floor, at most the most") {
+    CHECK(describe_frame(3) == R"({"type":"describe","floor":3})");
+    CHECK(describe_frame(500) == R"({"type":"describe","floor":99})");
+}
+
 TEST_CASE("welcome names you and the peers already in the room") {
     const ServiceFrame frame = parsed(
         R"({"type":"welcome","protocol":1,"peer":"000000000000000a","peers":["000000000000000b"]})");

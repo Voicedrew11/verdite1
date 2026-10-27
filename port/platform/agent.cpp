@@ -5,6 +5,7 @@
 #include <kf/platform/input.h>
 #include <kf/platform/menu_pointer.h>
 #include <kf/platform/online_players.h>
+#include <kf/platform/title.h>
 #include <kf/game/actor.h>
 #include <kf/lib/map_types.h>
 #include <kf/game/player.h>
@@ -173,6 +174,27 @@ std::string do_menu(verdite::AgentArgs) {
     return verdite::json_ok("menu", ",\"rows\":[" + rows + "]");
 }
 
+// The title menu as English text: whether it is up, the page's heading, code and note, and its rows.
+// "title type <digits>" types on the join page, as the keyboard does.
+std::string do_title(verdite::AgentArgs args) {
+    if (args.size() == 2 && args[0] == "type") {
+        for (const char key : args[1])
+            if (!title_type(key))
+                return verdite::json_error("the join page is not up, or that is not a digit");
+    } else if (!args.empty()) {
+        return verdite::json_error("title [type <digits>]");
+    }
+    const TitleText text = title_text(Language::English);
+    std::string rows;
+    for (const TitleRowText &row : text.rows)
+        rows += (rows.empty() ? "" : ",") + std::string("{\"text\":") + verdite::json_quote(row.text) +
+                ",\"value\":" + verdite::json_quote(row.value) + ",\"enabled\":" + (row.enabled ? "true" : "false") +
+                ",\"selected\":" + (row.selected ? "true" : "false") + "}";
+    return verdite::json_ok("title", std::string(",\"open\":") + (title_is_open() ? "true" : "false") +
+        ",\"heading\":" + verdite::json_quote(text.heading) + ",\"code\":" + verdite::json_quote(text.code) +
+        ",\"note\":" + verdite::json_quote(text.note) + ",\"rows\":[" + rows + "]");
+}
+
 // A position in the original 320 x 240 pixels, from "<x> <y>".
 std::optional<std::array<float, 2>> menu_position(verdite::AgentArgs args) {
     if (args.size() != 2)
@@ -255,6 +277,7 @@ void agent_start() {
         {"give", "give <item> <count> - change the pack (item 255: the purse) at the next update, as a pickup or use would", do_give},
         {"coop", "coop - the coop session: role, whether its world is in play, the pack, purse and what each player wears", do_coop},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
+        {"title", "title [type <digits>] - the title menu's page as English text; type a room code on its join page", do_title},
         {"point", "point <x> <y> - move the mouse over a menu (game pixels)", do_point},
         {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},
         {"options", "options - the settings this platform shows, with their values, as JSON", do_options},

@@ -2,7 +2,10 @@
 // --seconds have passed since they connected. Every CONTROL packet must arrive, in order; STATE
 // packets are counted. Exits 0 when both stayed connected the whole time.
 //
-//   vo_pair --service http://127.0.0.1:8787 [--room R] [--seconds 10]
+//   vo_pair --service http://127.0.0.1:8787 [--room R] [--seconds 10] [--listed 1]
+//
+// With --listed 1 the room has a fresh public code, a lists it and says it is on floor 7, and the
+// list of public rooms must show it with both players.
 
 #include "verdite_online.h"
 
@@ -38,7 +41,20 @@ struct Options {
     std::string service;
     std::string room;
     int seconds = 10;
+    bool listed = false;
 };
+
+constexpr const char *pair_build = "vo-pair";
+constexpr const char *listed_host = "VO PAIR";
+constexpr uint32_t listed_floor = 7;
+
+std::string public_code(std::random_device &random) {
+    static constexpr std::string_view letters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    std::string code = "P";
+    for (int i = 0; i < 7; ++i)
+        code += letters[random() % letters.size()];
+    return code;
+}
 
 Options parse_options(int argc, char **argv) {
     Options options;
@@ -52,7 +68,11 @@ Options parse_options(int argc, char **argv) {
             options.room = argv[i + 1];
         else if (name == "--seconds")
             options.seconds = std::atoi(argv[i + 1]);
+        else if (name == "--listed")
+            options.listed = std::string_view(argv[i + 1]) == "1";
     }
+    if (options.listed)
+        options.room = public_code(random);
     return options;
 }
 
@@ -131,9 +151,12 @@ void send_big(Side &side) {
 }
 
 bool connect(std::array<Side, 2> &sides, const Options &options) {
-    const vo_config config{.service_url = options.service.c_str(), .game = "kf1",
-                           .build = "vo-pair", .room = options.room.c_str()};
-    sides[0].session = vo_open(&config);
+    const vo_config listed{.service_url = options.service.c_str(), .game = "kf1", .build = pair_build,
+                           .room = options.room.c_str(), .listed_as = options.listed ? listed_host : nullptr};
+    const vo_config config{.service_url = options.service.c_str(), .game = "kf1", .build = pair_build,
+                           .room = options.room.c_str(), .listed_as = nullptr};
+    sides[0].session = vo_open(&listed);
+    vo_describe(sides[0].session, listed_floor);
     const auto deadline = Clock::now() + std::chrono::seconds(30);
     while (sides[0].self == 0 && !sides[0].failed && Clock::now() < deadline) {
         poll(sides[0]);
@@ -150,6 +173,18 @@ bool connect(std::array<Side, 2> &sides, const Options &options) {
     return sides[0].other != 0 && sides[1].other != 0;
 }
 
+// The list shows the room with its host, floor and both players.
+bool listed_in(vo_lobby *lobby, const Options &options) {
+    std::array<vo_listed_room, 50> rooms{};
+    int changed = 0;
+    const std::size_t count = vo_lobby_rooms(lobby, rooms.data(), rooms.size(), &changed);
+    for (std::size_t i = 0; i < count; ++i)
+        if (options.room == rooms[i].room)
+            return std::string_view(rooms[i].host) == listed_host && rooms[i].floor == listed_floor &&
+                   rooms[i].players == 2 && rooms[i].most > 0;
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -159,6 +194,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     std::array<Side, 2> sides{Side{.name = "a"}, Side{.name = "b"}};
+    vo_lobby *lobby = options.listed ? vo_lobby_open(options.service.c_str(), "kf1", pair_build) : nullptr;
     const auto started = Clock::now();
     if (!connect(sides, options)) {
         std::printf("not connected within 30 s\n");
@@ -206,6 +242,12 @@ int main(int argc, char **argv) {
                     side.control_received, other.control_sent, side.state_received, other.state_sent,
                     side.big_received ? "arrived" : "missing");
         ok = ok && !side.failed && side.big_received && side.control_received == other.control_sent;
+    }
+    if (lobby) {
+        const bool shown = listed_in(lobby, options);
+        std::printf("the list %s the room on floor %u with both players\n", shown ? "shows" : "does not show", listed_floor);
+        ok = ok && shown;
+        vo_lobby_close(lobby);
     }
     // a joined an empty room, b joined after it
     if (!sides[0].first || sides[1].first) {

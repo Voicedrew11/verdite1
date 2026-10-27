@@ -42,6 +42,8 @@ constexpr auto renew_margin_most = std::chrono::minutes(15);
 constexpr auto move_timeout = std::chrono::seconds(30); // a next connection not open by then is dropped
 constexpr std::string_view moved_marker = "moved";
 constexpr std::string_view seen_marker = "seen";
+constexpr auto describe_every = std::chrono::seconds(1);    // the service counts no more
+constexpr auto describe_refresh = std::chrono::seconds(60); // keeps the row, which goes stale in 5 minutes
 
 // What a libdatachannel thread saw.
 struct Happening {
@@ -239,6 +241,12 @@ struct vo_session {
     std::optional<Clock::time_point> renew_at; // when it is replaced; none before the first
     std::optional<Clock::time_point> retry_turn_at;
     bool turn_asked = false;
+
+    // A listed room's floor: the latest asked for, and the last sent.
+    bool listed = false;
+    std::optional<std::uint32_t> floor;
+    std::optional<std::uint32_t> floor_sent;
+    Clock::time_point floor_sent_at{};
 
     std::vector<Retired> retired;
     bool fatal = false;
@@ -616,6 +624,8 @@ struct vo_session {
         case vo::ServiceFrame::Kind::Error:
             on_error(*frame);
             break;
+        case vo::ServiceFrame::Kind::Rooms: // the list's, not a room's
+            break;
         }
     }
 
@@ -796,9 +806,22 @@ struct vo_session {
             ask_for_turn();
     }
 
+    // Only the room's first peer's counts; the service ignores the others'.
+    void describe_if_due(Clock::time_point now) {
+        if (!listed || self == 0 || !floor)
+            return;
+        const bool changed = floor != floor_sent;
+        if (now - floor_sent_at < (changed ? describe_every : describe_refresh))
+            return;
+        send_frame(vo::describe_frame(*floor));
+        floor_sent = floor;
+        floor_sent_at = now;
+    }
+
     void run_timers() {
         const auto now = Clock::now();
         renew_if_due(now);
+        describe_if_due(now);
         std::vector<std::pair<PeerId, std::string>> failed;
         for (auto &[peer, link] : links) {
             try {
@@ -854,11 +877,13 @@ vo_session *vo_open(const vo_config *config) {
     if (config == nullptr || config->service_url == nullptr || config->game == nullptr ||
         config->build == nullptr || config->room == nullptr)
         return nullptr;
-    auto url = vo::room_url(config->service_url, config->game, config->room, config->build);
+    const std::string_view listed_as = config->listed_as ? config->listed_as : "";
+    auto url = vo::room_url(config->service_url, config->game, config->room, config->build, listed_as);
     if (!url)
         return nullptr;
     auto session = std::make_unique<vo_session>();
     session->url = std::move(*url);
+    session->listed = !listed_as.empty();
     try {
         session->open();
     } catch (const std::exception &error) {
@@ -966,6 +991,140 @@ vo_link vo_link_of(const vo_session *session, vo_peer peer) {
     } catch (const std::exception &) {
         return {};
     }
+}
+
+void vo_describe(vo_session *session, uint32_t floor) {
+    if (session != nullptr && session->listed)
+        session->floor = std::min(floor, vo::floor_most);
+}
+
+} // extern "C"
+
+namespace {
+
+// What the lobby's socket last said, shared with its libdatachannel thread.
+struct LobbyShared {
+    std::mutex mutex;
+    vo_lobby_state state = VO_LOBBY_CONNECTING;
+    std::vector<vo::ListedRoom> rooms;
+    std::uint64_t version = 0; // one more for each list
+};
+
+// On a libdatachannel thread.
+void lobby_heard(LobbyShared &shared, std::string_view text) {
+    const auto frame = vo::parse_service_frame(text);
+    const std::scoped_lock lock(shared.mutex);
+    if (frame && frame->kind == vo::ServiceFrame::Kind::Rooms) {
+        shared.rooms = frame->rooms;
+        shared.state = VO_LOBBY_LISTING;
+        ++shared.version;
+        return;
+    }
+    if (frame && frame->kind == vo::ServiceFrame::Kind::Error) {
+        std::fprintf(stderr, "[ONLINE] the room list: %s\n", frame->message.c_str());
+        shared.state = VO_LOBBY_FAILED;
+        return;
+    }
+    std::fprintf(stderr, "[ONLINE] ignoring a frame the protocol does not have\n");
+}
+
+// On a libdatachannel thread.
+void lobby_lost(LobbyShared &shared) {
+    const std::scoped_lock lock(shared.mutex);
+    shared.state = VO_LOBBY_FAILED;
+}
+
+void copy_text(std::span<char> to, const std::string &from) {
+    const std::size_t length = std::min(from.size(), to.size() - 1);
+    std::copy_n(from.begin(), length, to.begin());
+    to[length] = '\0';
+}
+
+} // namespace
+
+struct vo_lobby {
+    std::shared_ptr<LobbyShared> shared = std::make_shared<LobbyShared>();
+    std::shared_ptr<rtc::WebSocket> socket;
+    std::uint64_t copied_version = 0;
+};
+
+extern "C" {
+
+vo_lobby *vo_lobby_open(const char *service_url, const char *game, const char *build) {
+    if (service_url == nullptr || game == nullptr || build == nullptr)
+        return nullptr;
+    const auto url = vo::lobby_url(service_url, game, build);
+    if (!url)
+        return nullptr;
+    auto lobby = std::make_unique<vo_lobby>();
+    try {
+        rtc::WebSocket::Configuration config;
+        config.maxMessageSize = vo::frame_bytes;
+        lobby->socket = std::make_shared<rtc::WebSocket>(config);
+        // The callbacks hold the shared state, not the lobby, so one after vo_lobby_close is harmless.
+        const std::weak_ptr<LobbyShared> shared = lobby->shared;
+        lobby->socket->onMessage([](const rtc::binary &) {},
+                                 [shared](const rtc::string &text) {
+                                     if (const auto held = shared.lock())
+                                         lobby_heard(*held, text);
+                                 });
+        lobby->socket->onClosed([shared] {
+            if (const auto held = shared.lock())
+                lobby_lost(*held);
+        });
+        lobby->socket->onError([shared](const rtc::string &error) {
+            std::fprintf(stderr, "[ONLINE] the room list: %s\n", error.c_str());
+            if (const auto held = shared.lock())
+                lobby_lost(*held);
+        });
+        lobby->socket->open(*url);
+    } catch (const std::exception &error) {
+        std::fprintf(stderr, "[ONLINE] the room list: %s\n", error.what());
+        lobby_lost(*lobby->shared);
+    }
+    return lobby.release(); // owned by the caller until vo_lobby_close
+}
+
+void vo_lobby_close(vo_lobby *lobby) {
+    const std::unique_ptr<vo_lobby> owned(lobby);
+    if (!owned || !owned->socket)
+        return;
+    try {
+        owned->socket->resetCallbacks();
+        owned->socket->close();
+    } catch (const std::exception &error) {
+        std::fprintf(stderr, "[ONLINE] closing the room list: %s\n", error.what());
+    }
+}
+
+vo_lobby_state vo_lobby_state_of(const vo_lobby *lobby) {
+    if (lobby == nullptr)
+        return VO_LOBBY_FAILED;
+    const std::scoped_lock lock(lobby->shared->mutex);
+    return lobby->shared->state;
+}
+
+size_t vo_lobby_rooms(vo_lobby *lobby, vo_listed_room *rooms, size_t most, int *changed) {
+    if (changed != nullptr)
+        *changed = 0;
+    if (lobby == nullptr || (rooms == nullptr && most > 0))
+        return 0;
+    const std::scoped_lock lock(lobby->shared->mutex);
+    if (changed != nullptr)
+        *changed = lobby->shared->version != lobby->copied_version ? 1 : 0;
+    lobby->copied_version = lobby->shared->version;
+    const std::span<vo_listed_room> out(rooms, most);
+    const std::size_t count = std::min(most, lobby->shared->rooms.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        const vo::ListedRoom &from = lobby->shared->rooms[i];
+        vo_listed_room &to = out[i];
+        copy_text(to.room, from.room);
+        copy_text(to.host, from.host);
+        to.floor = from.floor;
+        to.players = from.players;
+        to.most = from.most;
+    }
+    return count;
 }
 
 } // extern "C"

@@ -227,7 +227,7 @@ if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE} AND NOT ANDROID)
 endif()
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_player_model.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_player_model.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/title.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
 target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)

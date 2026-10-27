@@ -185,3 +185,8 @@ get online play by writing only their own game layer.
   and number of players. The service gives a public room its code, drops a host's room from the
   list for a player the host sent away, and moderates names. To build: the list in the service and
   the protocol, and joining from it in the client.
+- 2026-10-27: public rooms built ([PROTOCOL.md](../online/protocol/PROTOCOL.md), "The list of public
+  rooms"): a host lists its room by joining with `listed=1&host=`, says its floor with `describe`,
+  and the service keeps a lobby per game and build (a Durable Object) whose list it pushes to every
+  open `/v1/lobby` socket when it changes. The client draws the public code. Joined from the title
+  menu ([COOP_PLAN.md](COOP_PLAN.md), "The title menu").

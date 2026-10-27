@@ -11,12 +11,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "ROOMS", "class_name": "Room" },
-      { "name": "BUDGET", "class_name": "Budget" }
+      { "name": "BUDGET", "class_name": "Budget" },
+      { "name": "LOBBIES", "class_name": "Lobby" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Room"] },
-    { "tag": "v2", "new_sqlite_classes": ["Budget"] }
+    { "tag": "v2", "new_sqlite_classes": ["Budget"] },
+    { "tag": "v3", "new_sqlite_classes": ["Lobby"] }
   ],
   // per address, per Cloudflare location, approximate
   "ratelimits": [

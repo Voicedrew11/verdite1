@@ -13,6 +13,29 @@ function roomUrl(room, build = "test-1", protocol = "1") {
   return `${WS}/v1/rooms/test/${run}-${room}?protocol=${protocol}&build=${build}`;
 }
 
+// A fresh public code, and the list of this run's own build, so runs never see each other's rooms.
+const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function publicCode() {
+  return "P" + Array.from(randomBytes(7), (b) => LETTERS[b % 32]).join("");
+}
+const listBuild = `list-${run}`;
+function listedUrl(room, host = "HOST1") {
+  return `${WS}/v1/rooms/test/${room}?protocol=1&build=${listBuild}&listed=1&host=${encodeURIComponent(host)}`;
+}
+function plainUrl(room) {
+  return `${WS}/v1/rooms/test/${room}?protocol=1&build=${listBuild}`;
+}
+const lobbyUrl = `${WS}/v1/lobby/test?protocol=1&build=${listBuild}`;
+
+// The list's frames until one passes check, which is returned.
+async function listUntil(lobby, check) {
+  for (;;) {
+    const frame = await lobby.next();
+    assert.equal(frame.type, "rooms");
+    if (check(frame.rooms)) return frame.rooms;
+  }
+}
+
 // A socket whose frames are read in order with next().
 function connect(url) {
   const ws = new WebSocket(url);
@@ -124,6 +147,54 @@ const cases = {
     a.close();
   },
 
+  async "a public room is listed while its host is in it, with its players and floor"() {
+    const lobby = connect(lobbyUrl);
+    assert.deepEqual((await lobby.next()).rooms, []);
+    const code = publicCode();
+    const host = connect(listedUrl(code, "Knight 7"));
+    const welcome = await host.next();
+    assert.equal(welcome.type, "welcome");
+    assert.deepEqual(await listUntil(lobby, (rooms) => rooms.length === 1), [
+      { room: code, host: "Knight 7", floor: 0, players: 1, most: 4 },
+    ]);
+
+    host.send({ type: "describe", floor: 3 });
+    await listUntil(lobby, (rooms) => rooms[0]?.floor === 3);
+
+    // a later peer asking to be listed changes nothing but the count
+    const guest = connect(listedUrl(code, "Other"));
+    await guest.next();
+    const rooms = await listUntil(lobby, (rooms) => rooms[0]?.players === 2);
+    assert.equal(rooms[0].host, "Knight 7");
+    // and its describe is ignored
+    guest.send({ type: "describe", floor: 9 });
+    host.send({ type: "describe", floor: 100 });
+    assert.equal((await host.next()).type, "join");
+    assert.equal((await host.next()).code, "bad_message");
+
+    guest.close();
+    await listUntil(lobby, (rooms) => rooms[0]?.players === 1);
+    assert.equal(rooms[0].floor, 3);
+    host.close();
+    await listUntil(lobby, (rooms) => rooms.length === 0);
+    lobby.close();
+  },
+
+  async "a room is listed only for the peer that asked, and the list opens with what is there"() {
+    const code = publicCode();
+    const first = connect(plainUrl(code));
+    await first.next();
+    const listedLater = connect(listedUrl(code));
+    await listedLater.next();
+    const other = publicCode();
+    const listed = connect(listedUrl(other));
+    await listed.next();
+    const lobby = connect(lobbyUrl);
+    const rooms = await listUntil(lobby, (rooms) => rooms.some((row) => row.room === other));
+    assert.ok(!rooms.some((row) => row.room === code));
+    [first, listedLater, listed, lobby].forEach((p) => p.close());
+  },
+
   async "the request is checked before the upgrade"() {
     // fetch() will not send Upgrade, so a plain HTTP request asks for one and reads the refusal
     const refused = (path, upgrade = true) =>
@@ -148,6 +219,11 @@ const cases = {
     assert.deepEqual(await refused("/v1/rooms/test/r?protocol=1"), { status: 400, error: "bad_request" });
     assert.deepEqual(await refused("/v1/rooms/test/r?protocol=1&build=b", false), { status: 400, error: "bad_request" });
     assert.deepEqual(await refused("/nowhere"), { status: 404, error: "not_found" });
+    assert.deepEqual(await refused("/v1/rooms/test/ABCDEF?protocol=1&build=b&listed=1&host=H"), { status: 400, error: "not_listable" });
+    assert.deepEqual(await refused("/v1/rooms/test/PABCDEFG?protocol=1&build=b&listed=1"), { status: 400, error: "not_listable" });
+    assert.deepEqual(await refused("/v1/rooms/test/PABCDEFG?protocol=1&build=b&listed=1&host=%3Cb%3E"), { status: 400, error: "not_listable" });
+    assert.deepEqual(await refused("/v1/lobby/test?protocol=2&build=b"), { status: 400, error: "protocol" });
+    assert.deepEqual(await refused("/v1/lobby/test?protocol=1"), { status: 400, error: "bad_request" });
   },
 };
 

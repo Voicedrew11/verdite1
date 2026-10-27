@@ -1,5 +1,104 @@
+diff --git a/src/cutscene/opening_controller.cpp b/src/cutscene/opening_controller.cpp
+index 76dcd4fcfb12f7eca8c38a123d6aa40a651ea082..aeaac71bb63830d429cb309e38ce37d630139b9c 100644
+--- a/src/cutscene/opening_controller.cpp
++++ b/src/cutscene/opening_controller.cpp
+@@ -20,6 +20,44 @@
+ 
+ std::array<char, KF_OPENING_INITIAL_TIM_PATH_BYTES> opening_initial_tim_path = {"B0/L0."};
+ 
++static void opening_load_skip_assets(void);
++
++// The attract scene, the logo and the story, until the game starts. PC extension: the logo holds
++// the title menu (kf/platform/title.h), which any button in the attract scene goes to; NEW GAME
++// plays the story as a button at the logo did, and CONTINUE, CO-OP and F4 go straight in.
++static void opening_title_loop(bool at_title)
++{
++    opening_input_action = KF_OPENING_INPUT_NONE;
++
++    for (;;) {
++        if (!at_title) {
++            opening_scene0_run();
++            if (opening_input_action == KF_OPENING_INPUT_QUICK_LOAD) {
++                opening_load_skip_assets();
++                break;
++            }
++        }
++        at_title = false;
++
++        opening_input_action = KF_OPENING_INPUT_NONE;
++        opening_scene1_run();
++        if (opening_input_action != KF_OPENING_INPUT_ADVANCE) {
++            if (opening_input_action == KF_OPENING_INPUT_SKIP || opening_input_action == KF_OPENING_INPUT_QUICK_LOAD) {
++                opening_load_skip_assets();
++                break;
++            }
++            continue;
++        }
++
++        audio_stop_sequence(KF_AUDIO_STOP_FADE);
++        opening_input_action = KF_OPENING_INPUT_NONE;
++        opening_scene3_run();
++
++        audio_stop_sequence(KF_AUDIO_STOP_FADE);
++        break;
++    }
++}
++
+ static void opening_load_skip_assets(void)
+ {
+     u8 *tim_data;
+@@ -45,6 +83,14 @@ void opening_run(Cutscene scene)
+     memory_set_allocation_mode(cutscene_memory_arena, KF_MEMORY_REBASE_ARENA);
+ 
+     switch (scene) {
++    case Cutscene::Title:
++        // PC extension: back to the title menu after a coop session, without the intro.
++        resource_file_load_allocated(cutscene_memory_arena, &tim_data, "B0/MIX0.", &tim_size);
++        tim_upload_images(tim_data, tim_size);
++        memory_release_last(cutscene_memory_arena);
++        opening_title_loop(true);
++        break;
++
+     case Cutscene::Intro:
+         if (resource_file_load_into(
+                 (void *)open_graphics_runtime.display_state.asset_load_buffer,
+@@ -57,33 +103,7 @@ void opening_run(Cutscene scene)
+         resource_file_load_allocated(cutscene_memory_arena, &tim_data, "B0/MIX0.", &tim_size);
+         tim_upload_images(tim_data, tim_size);
+         memory_release_last(cutscene_memory_arena);
+-        opening_input_action = KF_OPENING_INPUT_NONE;
+-
+-        for (;;) {
+-            opening_scene0_run();
+-            if (opening_input_action != KF_OPENING_INPUT_ADVANCE &&
+-                opening_input_action == KF_OPENING_INPUT_SKIP) {
+-                opening_load_skip_assets();
+-                break;
+-            }
+-
+-            opening_input_action = KF_OPENING_INPUT_NONE;
+-            opening_scene1_run();
+-            if (opening_input_action != KF_OPENING_INPUT_ADVANCE) {
+-                if (opening_input_action == KF_OPENING_INPUT_SKIP) {
+-                    opening_load_skip_assets();
+-                    break;
+-                }
+-                continue;
+-            }
+-
+-            audio_stop_sequence(KF_AUDIO_STOP_FADE);
+-            opening_input_action = KF_OPENING_INPUT_NONE;
+-            opening_scene3_run();
+-
+-            audio_stop_sequence(KF_AUDIO_STOP_FADE);
+-            break;
+-        }
++        opening_title_loop(false);
+         break;
+ 
+     case Cutscene::Ending:
 diff --git a/src/cutscene/opening_helpers.cpp b/src/cutscene/opening_helpers.cpp
-index eba4d2d2409d6cfa648463a7093e138fa4184c75..2530eb75d213cda8d51c209ebad482e0eaf2c48f 100644
+index eba4d2d2409d6cfa648463a7093e138fa4184c75..123e33ea502758233d8c26af4f268d8a9ff25edf 100644
 --- a/src/cutscene/opening_helpers.cpp
 +++ b/src/cutscene/opening_helpers.cpp
 @@ -9,6 +9,11 @@ void opening_poll_input(void)
@@ -8,17 +107,32 @@ index eba4d2d2409d6cfa648463a7093e138fa4184c75..2530eb75d213cda8d51c209ebad482e0
  
 +    // PC extension: F4 skips straight into the game, which then quick loads.
 +    if (kf::host_opening_quick_load()) {
-+        opening_input_action = KF_OPENING_INPUT_SKIP;
++        opening_input_action = KF_OPENING_INPUT_QUICK_LOAD;
 +        return;
 +    }
      if (input != 0) {
          if ((input & kf::Button::Start) != 0) {
              opening_input_action = KF_OPENING_INPUT_SKIP;
 diff --git a/src/cutscene/opening_scenes.cpp b/src/cutscene/opening_scenes.cpp
-index 0bbeb961b5c6ce038cfd3612d63e1dce776040dd..02b1e46062bae3bdf5101e3295e6cdea1690c912 100644
+index 0bbeb961b5c6ce038cfd3612d63e1dce776040dd..4c5721caa5977c21754878cedd5288987ebdc8a3 100644
 --- a/src/cutscene/opening_scenes.cpp
 +++ b/src/cutscene/opening_scenes.cpp
-@@ -18,6 +18,10 @@ enum {
+@@ -7,17 +7,25 @@
+ #include <kf/cutscene/render.h>
+ #include <kf/cutscene/resources.h>
+ #include <kf/cutscene/scene0.h>
++#include <kf/game/menu.h>
+ #include <kf/lib/math.h>
+ #include <kf/lib/null.h>
+ #include <kf/lib/render_face.h>
++#include <kf/platform/input.h>
++#include <kf/platform/title.h>
+ 
+ #include <algorithm>
+ #include <array>
++#include <cstdio>
+ 
+ enum {
      ENDING_SCROLL_BLEND_LAST = 0xfff,
      ENDING_SCROLL_BLEND_STEP = 0x40,
      SCENE0_UPDATES_PER_SECOND = 22,
@@ -29,7 +143,114 @@ index 0bbeb961b5c6ce038cfd3612d63e1dce776040dd..02b1e46062bae3bdf5101e3295e6cdea
      SCENE0_ROTATION_START_POINT = 8,
      SCENE0_FADE_OUT_START_POINT = 15,
      SCENE0_YAW_STEP = 40,
-@@ -397,6 +401,7 @@ void opening_scene3_run(void)
+@@ -233,12 +241,12 @@ void opening_scene0_run(void)
+     audio_stop_sequence(KF_AUDIO_STOP_FADE);
+ }
+ 
+-void opening_scene1_draw_fade(u8 shade)
++// PC extension: the logo's two halves at an ordering depth, so the title menu can draw over it.
++static void opening_scene1_submit_logo(u8 shade, s32 depth)
+ {
+     kf::DrawFace left {}, right {};
+     const CVECTOR color = {shade, shade, shade, 0};
+ 
+-    display_begin_frame(open_graphics_runtime.display_state);
+     left.material = {kf::SurfaceKind::Texture,
+         {SCENE1_LEFT_TPAGE_X, KF_TEXTURE_LOWER_PAGE_Y, 0, 0, kf::TextureFormat::Direct16},
+         kf::BlendMode::average};
+@@ -250,14 +258,65 @@ void opening_scene1_draw_fade(u8 shade)
+         SCENE1_RIGHT_PANEL_X + SCENE1_PANEL_WIDTH, KF_DISPLAY_HEIGHT);
+     render_face_uv_rectangle(&left, 0, 0, SCENE1_PANEL_WIDTH, KF_DISPLAY_HEIGHT);
+     render_face_uv_rectangle(&right, 0, 0, SCENE1_PANEL_WIDTH, KF_DISPLAY_HEIGHT);
+-    render_face_submit(&left, {&color, 1}, kf::FaceShading::Flat, 0);
+-    render_face_submit(&right, {&color, 1}, kf::FaceShading::Flat, 0);
++    render_face_submit(&left, {&color, 1}, kf::FaceShading::Flat, depth);
++    render_face_submit(&right, {&color, 1}, kf::FaceShading::Flat, depth);
++}
++
++void opening_scene1_draw_fade(u8 shade)
++{
++    display_begin_frame(open_graphics_runtime.display_state);
++    opening_scene1_submit_logo(shade, 0);
+     display_present_frame(open_graphics_runtime.display_state);
+ }
+ 
++// PC extension: the title menu over the logo (kf/platform/title.h), in the menu's font, boxes and
++// cursor, until the player chooses how to start, F4 quick loads, or the top page is left idle as
++// long as the logo held before. NEW GAME is ADVANCE, as a button at the logo was; CONTINUE and
++// CO-OP are SKIP.
++static KfOpeningInputAction opening_scene1_title_menu(void)
++{
++    if (!menu_title_prepare()) {
++        std::printf("The title menu's font could not be loaded; any button starts a new game.\n");
++        return KF_OPENING_INPUT_ADVANCE;
++    }
++    kf::title_open();
++    const auto previous_context = kf::host_set_input_context(kf::InputContext::Menu);
++    kf::host_wait_buttons_released();
++    KfOpeningInputAction action = KF_OPENING_INPUT_NONE;
++    u32 input = 0;
++    s32 idle_frames = 0;
++    for (;;) {
++        if (idle_frames == SCENE1_SEQUENCE_STOP_FRAME) {
++            audio_stop_sequence(KF_AUDIO_STOP_IMMEDIATE);
++        }
++        const u32 previous_input = input;
++        input = kf::host_read_buttons();
++        const u32 pressed = input & ~previous_input;
++        if (kf::host_opening_quick_load()) {
++            action = KF_OPENING_INPUT_QUICK_LOAD;
++            break;
++        }
++        if (const auto start = kf::title_update(pressed)) {
++            action = *start == kf::TitleStart::NewGame ? KF_OPENING_INPUT_ADVANCE : KF_OPENING_INPUT_SKIP;
++            break;
++        }
++        display_begin_frame(open_graphics_runtime.display_state);
++        const bool top_page = menu_title_draw();
++        opening_scene1_submit_logo(top_page ? KF_TEXTURE_BASE_BRIGHTNESS : KF_TEXTURE_BASE_BRIGHTNESS / 3,
++            MENU_BACKGROUND_OT_DEPTH);
++        display_present_frame(open_graphics_runtime.display_state);
++        idle_frames = pressed != 0 ? 0 : idle_frames + 1;
++        if (top_page && idle_frames >= SCENE1_HOLD_FRAMES) {
++            break;
++        }
++    }
++    kf::host_set_input_context(previous_context);
++    kf::host_wait_buttons_released();
++    return action;
++}
++
+ void opening_scene1_run(void)
+ {
+-    s32 frame;
+     s32 shade;
+ 
+     opening_resources_load_scene1();
+@@ -268,18 +327,10 @@ void opening_scene1_run(void)
+         shade += SCENE1_SHADE_STEP;
+     } while (shade < KF_TEXTURE_BASE_BRIGHTNESS + 1);
+ 
+-    frame = 0;
+-    do {
+-        if (frame == SCENE1_SEQUENCE_STOP_FRAME) {
+-            audio_stop_sequence(KF_AUDIO_STOP_IMMEDIATE);
+-        }
+-        kf::host_wait_frame();
+-        opening_poll_input();
+-        if (opening_input_action != KF_OPENING_INPUT_NONE) {
+-            break;
+-        }
+-        frame++;
+-    } while (frame < SCENE1_HOLD_FRAMES);
++    // PC extension: the title menu holds the logo instead of the first button (F4 still goes in).
++    if (opening_input_action != KF_OPENING_INPUT_QUICK_LOAD) {
++        opening_input_action = opening_scene1_title_menu();
++    }
+ 
+     audio_stop_sequence(KF_AUDIO_STOP_FADE);
+     shade = KF_TEXTURE_BASE_BRIGHTNESS;
+@@ -397,6 +448,7 @@ void opening_scene3_run(void)
      decreasing_yaw_model->rotation.vy = 0;
      increasing_yaw_model->rotation.vy = 0;
      opening_camera_path_begin(opening_scene3_camera_path);
@@ -37,7 +258,7 @@ index 0bbeb961b5c6ce038cfd3612d63e1dce776040dd..02b1e46062bae3bdf5101e3295e6cdea
  
      blend = 0;
      for (;;) {
-@@ -407,6 +412,7 @@ void opening_scene3_run(void)
+@@ -407,6 +459,7 @@ void opening_scene3_run(void)
              &opening_camera_path_state.position,
              &opening_camera_path_state.rotation);
          opening_poll_input();
@@ -45,7 +266,7 @@ index 0bbeb961b5c6ce038cfd3612d63e1dce776040dd..02b1e46062bae3bdf5101e3295e6cdea
          blend += OPENING_COLOR_FADE_STEP;
          if (blend > KF_FIXED12_ONE) {
              break;
-@@ -423,6 +429,7 @@ void opening_scene3_run(void)
+@@ -423,6 +476,7 @@ void opening_scene3_run(void)
              &opening_camera_path_state.position,
              &opening_camera_path_state.rotation);
          opening_poll_input();
@@ -53,7 +274,7 @@ index 0bbeb961b5c6ce038cfd3612d63e1dce776040dd..02b1e46062bae3bdf5101e3295e6cdea
          if (opening_input_action != KF_OPENING_INPUT_NONE) {
              break;
          }
-@@ -455,6 +462,7 @@ void opening_scene3_run(void)
+@@ -455,6 +509,7 @@ void opening_scene3_run(void)
          } while (panel_index < KF_OPENING_SCENE3_PANEL_COUNT);
          display_present_frame(open_graphics_runtime.display_state);
          opening_poll_input();
