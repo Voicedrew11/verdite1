@@ -17,9 +17,9 @@ constexpr std::size_t frames_most = 64;
 } // namespace
 
 std::vector<std::vector<std::uint8_t>> coop_frame_encode(int floor, std::uint32_t update,
-    std::span<const std::uint8_t> actors, std::size_t actor_bytes) {
-    const std::size_t per_packet = (coop_frame_packet_most - header_bytes) / actor_bytes * actor_bytes;
-    const std::size_t parts = std::max<std::size_t>(1, (actors.size() + per_packet - 1) / per_packet);
+    std::span<const std::uint8_t> frame) {
+    constexpr std::size_t per_packet = coop_frame_packet_most - header_bytes;
+    const std::size_t parts = std::max<std::size_t>(1, (frame.size() + per_packet - 1) / per_packet);
     std::vector<std::vector<std::uint8_t>> packets;
     for (std::size_t part = 0; part < parts; ++part) {
         CoopByteWriter out;
@@ -29,7 +29,7 @@ std::vector<std::vector<std::uint8_t>> coop_frame_encode(int floor, std::uint32_
         out.u8(static_cast<std::uint8_t>(part));
         out.u8(static_cast<std::uint8_t>(parts));
         const std::size_t first = part * per_packet;
-        out.raw(actors.subspan(first, std::min(per_packet, actors.size() - first)));
+        out.raw(frame.subspan(first, std::min(per_packet, frame.size() - first)));
         packets.push_back(std::move(out.bytes()));
     }
     return packets;
@@ -47,8 +47,8 @@ std::optional<CoopFramePart> coop_frame_decode(std::span<const std::uint8_t> byt
     part.parts = in.u8();
     if (!in.ok() || tag != coop_frame_tag || part.floor < 1 || part.floor > coop_floor_count || part.parts == 0 || part.part >= part.parts)
         return std::nullopt;
-    const auto actors = bytes.subspan(header_bytes);
-    part.actors.assign(actors.begin(), actors.end());
+    const auto frame = bytes.subspan(header_bytes);
+    part.bytes.assign(frame.begin(), frame.end());
     return part;
 }
 
@@ -62,7 +62,7 @@ void CoopFramePlayback::receive(const CoopFramePart &part) {
         frame.parts = part.parts;
     if (part.parts != frame.parts)
         return;
-    frame.received.try_emplace(part.part, part.actors);
+    frame.received.try_emplace(part.part, part.bytes);
     if (frames_.size() > frames_most)
         frames_.erase(frames_.begin());
 }
@@ -92,10 +92,10 @@ std::optional<std::vector<std::uint8_t>> CoopFramePlayback::step() {
     if (shown == frames_.end())
         return std::nullopt;
     frames_.erase(frames_.begin(), shown);
-    std::vector<std::uint8_t> actors;
+    std::vector<std::uint8_t> frame;
     for (const auto &[index, bytes] : shown->second.received)
-        actors.insert(actors.end(), bytes.begin(), bytes.end());
-    return actors;
+        frame.insert(frame.end(), bytes.begin(), bytes.end());
+    return frame;
 }
 
 }

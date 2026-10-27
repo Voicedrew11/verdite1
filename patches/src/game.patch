@@ -859,6 +859,38 @@ index 6379fd779cabcf6588bdddcec2e59e0e990b7262..d05909b793186ce3c156284a4c3e0f62
                  return {KfCollisionKind::Terrain};
              }
              if (KF_MAP_TILE_CENTER < position->vx % KF_MAP_TILE_SIZE) {
+diff --git a/src/game/effect_pool.cpp b/src/game/effect_pool.cpp
+index a7a8dab1efbefa85c3083f1f9fa7fa73154a2476..c5adfea2dcc0f04db7be5ab8b624696b53a4b0ae 100644
+--- a/src/game/effect_pool.cpp
++++ b/src/game/effect_pool.cpp
+@@ -15,11 +15,21 @@ enum {
+ };
+ 
+ KfEffectState effect_state;
++std::array<KfEffectSource, KF_EFFECT_CAPACITY> effect_sources;
++KfEffectSource effect_spawn_source = KfEffectSource::Other;
++std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effect_shown_records = [] {
++    std::array<KfEffectRecord, KF_EFFECT_CAPACITY> records{};
++    for (auto &record : records) {
++        record.type = KF_EFFECT_SLOT_FREE;
++    }
++    return records;
++}();
+ 
+ KfEffectRecord *effect_pool_find_free(void)
+ {
+     for (auto &record : effect_state.records) {
+         if (record.type == KF_EFFECT_SLOT_FREE) {
++            effect_sources[&record - effect_state.records.data()] = effect_spawn_source;   // PC extension (coop)
+             return &record;
+         }
+     }
+@@ -522,4 +532,5 @@ void effect_pool_set_current(KfEffectRecord *effect)
+ void effect_pool_reset_module_state(void)
+ {
+     kf::restore_initial_value<effect_state>();
++    kf::restore_initial_value<effect_shown_records>();
+ }
 diff --git a/src/game/effect_update.cpp b/src/game/effect_update.cpp
 index b0d8a7376e2d4a10cf30719994b0a16271c57cca..9ad4a869ba594b39fe114291289538333ee1a94d 100644
 --- a/src/game/effect_update.cpp
@@ -902,7 +934,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..56c96aa2c99462819f22107b8998d0c8d3b41c93 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..4928888c5127d7a951a860cfc316a1a0dd426db0 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,22 +6,36 @@
@@ -1001,7 +1033,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..56c96aa2c99462819f22107b8998d0c8
      game_shutdown();
  }
  
-@@ -86,14 +121,76 @@ void game_shutdown(void)
+@@ -86,14 +121,78 @@ void game_shutdown(void)
      audio_close_vab(audio_state);
  }
  
@@ -1040,7 +1072,9 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..56c96aa2c99462819f22107b8998d0c8
 +    }
 +    // PC extension (coop): on a floor another player runs, its actors come from that player.
 +    if (kf::coop_runs_floor()) {
++        effect_spawn_source = KfEffectSource::Actor;
 +        actor_pool_update();
++        effect_spawn_source = KfEffectSource::Other;
 +    }
 +    map_object_pool_update();
 +    effect_pool_update();
@@ -1225,6 +1259,22 @@ index 660386288c157b2819409141f669eb2ae4d10af9..ed8f7b4effe2cffc0b8bc0b7cc0fad8e
          }
          menu_draw_pickup_preview(item_id);
          menu_draw_two_option(
+diff --git a/src/game/magic.cpp b/src/game/magic.cpp
+index 4fe18c8e7eede5473389e9b1044366d9608d42f4..f65a199f16b466c8a89573ebc8a208b8722f12f2 100644
+--- a/src/game/magic.cpp
++++ b/src/game/magic.cpp
+@@ -154,8 +154,11 @@ void effect_pool_update(void)
+ {
+     for (auto &record : effect_state.records) {
+         if (record.type != KF_EFFECT_SLOT_FREE) {
++            // PC extension (coop): what an effect spawns comes from what spawned it.
++            effect_spawn_source = effect_sources[&record - effect_state.records.data()];
+             effect_pool_set_current(&record);
+             effect_update_dispatch();
+         }
+     }
++    effect_spawn_source = KfEffectSource::Other;
+ }
 diff --git a/src/game/map_event.cpp b/src/game/map_event.cpp
 index ba8ad9601988b735d737b6c0e32c034a76a2ab79..2914c179a4969e2c9e9c828c101f1eb2000cc06e 100644
 --- a/src/game/map_event.cpp
@@ -4408,7 +4458,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..7c46c9cd37389804fa6ca4a73d67c52b7ba3cdb0 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..14d6efe02376e0f13706b9d1528ac26d5a101f98 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -3,6 +3,7 @@
@@ -4484,7 +4534,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..7c46c9cd37389804fa6ca4a73d67c52b
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +105,43 @@ void render_entities(void)
+@@ -77,23 +105,55 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -4499,12 +4549,24 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..7c46c9cd37389804fa6ca4a73d67c52b
 -    for (auto &effect : effect_state.records) {
 +    for (std::size_t i = 0; i < std::size(effect_state.records); ++i) {
 +        auto &effect = effect_state.records[i];
++        if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
++            continue;
++        }
++        if (render_cell_is_visible(
++                effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
++            tag(KF_RENDER_TAG_EFFECTS, i, u32(kf_enum_encode<u8>(effect.kind)) << 8 | kf_enum_encode<u8>(effect.type));
++            render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
++        }
++    }
++    // PC extension (coop): the effects of a floor another machine runs, as it sends them.
++    for (std::size_t i = 0; i < std::size(effect_shown_records); ++i) {
++        auto &effect = effect_shown_records[i];
          if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
              continue;
          }
          if (render_cell_is_visible(
                  effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
-+            tag(KF_RENDER_TAG_EFFECTS, i, u32(kf_enum_encode<u8>(effect.kind)) << 8 | kf_enum_encode<u8>(effect.type));
++            tag(KF_RENDER_TAG_EFFECTS + KF_EFFECT_CAPACITY, i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
              render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
          }
      }

@@ -9,6 +9,7 @@
 #include "coop_message.h"
 
 #include <cstdint>
+#include <string>
 
 namespace kf::ext {
 
@@ -21,5 +22,7 @@ void coop_hits_receive(CoopPlayerId from, const CoopMessage &message);
 void coop_hits_world_update();
 // The world left play, or the room ended.
 void coop_hits_stop();
+// For the agent: the swings and other hits this player felt from other machines, as JSON fields.
+std::string coop_hits_json();
 
 }

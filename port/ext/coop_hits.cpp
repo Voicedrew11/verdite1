@@ -18,6 +18,8 @@ namespace {
 
 struct Hits {
     std::vector<std::pair<CoopPlayerId, CoopMessage>> inbox;
+    int swings_felt = 0;
+    int hits_felt = 0;
 };
 Hits hits;
 
@@ -77,6 +79,7 @@ void apply(const CoopSwing &swing) {
     actor_state.player_position = target;
     if (!reaches)
         return;
+    ++hits.swings_felt;
     player_apply_damage(definition.attack_components[KF_COMBAT_COMPONENT_CUTTING],
         definition.attack_components[KF_COMBAT_COMPONENT_STRIKING],
         definition.attack_components[KF_COMBAT_COMPONENT_PIERCING], kf_enum_decode<KfPlayerStatusFlags>(swing.status),
@@ -84,8 +87,10 @@ void apply(const CoopSwing &swing) {
 }
 
 void apply(const CoopPlayerHit &hit) {
-    if (on_floor(hit.floor))
-        player_apply_damage(hit.cutting, hit.striking, hit.piercing, kf_enum_decode<KfPlayerStatusFlags>(hit.status),
+    if (!on_floor(hit.floor))
+        return;
+    ++hits.hits_felt;
+    player_apply_damage(hit.cutting, hit.striking, hit.piercing, kf_enum_decode<KfPlayerStatusFlags>(hit.status),
             hit.magic, hit.fire, hit.scale_q12, hit.multiplier_tenths);
 }
 
@@ -140,6 +145,10 @@ void coop_hits_world_update() {
 
 void coop_hits_stop() {
     hits = Hits{};
+}
+
+std::string coop_hits_json() {
+    return "\"swingsFelt\":" + std::to_string(hits.swings_felt) + ",\"hitsFelt\":" + std::to_string(hits.hits_felt);
 }
 
 }

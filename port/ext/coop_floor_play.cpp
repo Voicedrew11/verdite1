@@ -101,18 +101,21 @@ void tell_everyone(const CoopMessage &message) {
 }
 
 void watch(CoopPlayerId owner) {
+    coop_floor_hide_effects();
     floors.part = Part::Watching;
     floors.watching = owner;
     floors.playback = CoopFramePlayback(frame_delay_updates);
 }
 
 void run() {
+    coop_floor_hide_effects();
     floors.part = Part::Running;
     floors.watching = 0;
     floors.record_due = true;
 }
 
 void wait() {
+    coop_floor_hide_effects();
     floors.part = Part::Waiting;
     floors.watching = 0;
 }
@@ -309,6 +312,7 @@ void coop_floors_start(CoopPlayerId self, CoopPlayerId host) {
 }
 
 void coop_floors_stop() {
+    coop_floor_hide_effects();
     floors = Floors{};
 }
 
@@ -368,12 +372,12 @@ void coop_floors_world_update() {
         return;
     ++floors.update;
     if (floors.part == Part::Running && !alone()) {
-        const auto actors = coop_floor_actors();
-        for (const auto &packet : coop_frame_encode(floors.floor, floors.update, actors, coop_floor_actor_bytes()))
+        const auto frame = coop_floor_frame();
+        for (const auto &packet : coop_frame_encode(floors.floor, floors.update, frame))
             online_broadcast_state(packet);
     } else if (floors.part == Part::Watching) {
-        if (const auto frame = floors.playback.step(); frame && !coop_floor_show_actors(*frame))
-            std::printf("[coop] actors from floor %d's owner that are not actors were dropped\n", floors.floor);
+        if (const auto frame = floors.playback.step(); frame && !coop_floor_show_frame(*frame))
+            std::printf("[coop] a frame from floor %d's owner that is not one was dropped\n", floors.floor);
     }
 }
 

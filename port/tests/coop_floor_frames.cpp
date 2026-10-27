@@ -8,13 +8,13 @@ namespace {
 
 constexpr std::size_t actor_bytes = 30;
 
-// `count` actors whose bytes all say `update`.
+// A frame of `count` actors whose bytes all say `update`.
 std::vector<std::uint8_t> actors(std::uint32_t update, std::size_t count) {
     return std::vector<std::uint8_t>(count * actor_bytes, static_cast<std::uint8_t>(update));
 }
 
 void send(CoopFramePlayback &playback, std::uint32_t update, std::size_t count = 2) {
-    for (const auto &packet : coop_frame_encode(2, update, actors(update, count), actor_bytes)) {
+    for (const auto &packet : coop_frame_encode(2, update, actors(update, count))) {
         const auto part = coop_frame_decode(packet);
         REQUIRE(part.has_value());
         playback.receive(part.value_or(CoopFramePart{}));
@@ -32,8 +32,8 @@ int played(CoopFramePlayback &playback) {
 
 } // namespace
 
-TEST_CASE("a frame too big for one packet goes in parts, none over the most, each whole actors") {
-    const auto packets = coop_frame_encode(3, 7, actors(7, 100), actor_bytes);
+TEST_CASE("a frame too big for one packet goes in parts, none over the most, joined as it was") {
+    const auto packets = coop_frame_encode(3, 7, actors(7, 100));
     CHECK(packets.size() == 3);
     std::size_t carried = 0;
     for (const auto &packet : packets) {
@@ -44,15 +44,14 @@ TEST_CASE("a frame too big for one packet goes in parts, none over the most, eac
         CHECK(part.floor == 3);
         CHECK(part.update == 7);
         CHECK(part.parts == 3);
-        CHECK(part.actors.size() % actor_bytes == 0);
-        carried += part.actors.size();
+        carried += part.bytes.size();
     }
     CHECK(carried == 100 * actor_bytes);
-    CHECK(coop_frame_encode(1, 1, {}, actor_bytes).size() == 1);
+    CHECK(coop_frame_encode(1, 1, {}).size() == 1);
 }
 
 TEST_CASE("a packet of another tag, floor or part is refused") {
-    auto packet = coop_frame_encode(1, 1, actors(1, 1), actor_bytes).front();
+    auto packet = coop_frame_encode(1, 1, actors(1, 1)).front();
     auto tag = packet;
     tag[0] = 4;   // a pose's version
     CHECK_FALSE(coop_frame_decode(tag));
@@ -87,7 +86,7 @@ TEST_CASE("a frame missing a part is not drawn; the last whole one is") {
     CoopFramePlayback playback(0);
     send(playback, 1, 100);
     CHECK(playback.step().value_or(std::vector<std::uint8_t>{}).size() == 100 * actor_bytes);
-    const auto packets = coop_frame_encode(2, 2, actors(2, 100), actor_bytes);
+    const auto packets = coop_frame_encode(2, 2, actors(2, 100));
     for (std::size_t i = 0; i + 1 < packets.size(); ++i)
         playback.receive(coop_frame_decode(packets[i]).value_or(CoopFramePart{}));
     CHECK(played(playback) == 1);

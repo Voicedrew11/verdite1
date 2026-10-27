@@ -4,6 +4,8 @@
 
 #include <kf/game/actor.h>
 #include <kf/game/animation_cache.h>
+#include <kf/game/asset.h>
+#include <kf/game/audio.h>
 #include <kf/game/collision.h>
 #include <kf/game/effect.h>
 #include <kf/game/graphics.h>
@@ -24,7 +26,7 @@ namespace kf::ext {
 namespace {
 
 constexpr std::array<std::uint8_t, 4> magic = {'K', 'F', 'F', 'L'};
-constexpr std::uint8_t version = 1;
+constexpr std::uint8_t version = 2;
 
 // The sizes of what is copied whole: a snapshot from a build of another layout is refused.
 constexpr std::array<std::uint32_t, 6> layout = {
@@ -43,6 +45,8 @@ struct Floor {
     std::array<KfActor, KF_ACTOR_CAPACITY> actors;
     KfActorDefinitionTable definitions;
     std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effects;
+    std::array<KfEffectSource, KF_EFFECT_CAPACITY> effect_sources;
+    std::array<u32, KF_EFFECT_CAPACITY> effect_targets;   // a homing effect's player
     std::array<KfMapEvent, KF_MAP_EVENT_CAPACITY> events;
     u16 dialogue_advance_gate;
     u16 ambient_script_countdown;
@@ -113,7 +117,9 @@ bool occupants_valid(const Floor &floor) {
 bool floor_valid(const Floor &floor) {
     return std::ranges::all_of(floor.actors, actor_valid) && std::ranges::all_of(floor.effects, effect_valid)
         && std::ranges::all_of(floor.events, event_valid) && std::ranges::all_of(floor.objects.objects, object_valid)
-        && occupants_valid(floor);
+        && occupants_valid(floor) && std::ranges::all_of(floor.effect_sources, [](KfEffectSource source) {
+               return source == KfEffectSource::Other || source == KfEffectSource::Actor;
+           });
 }
 
 // The animation caches are drawing's, rebuilt when the slot is next drawn.
@@ -158,6 +164,8 @@ void put_floor(const Floor &floor) {
     actor_state.actors = floor.actors;
     actor_state.definitions = floor.definitions;
     effect_state.records = floor.effects;
+    effect_sources = floor.effect_sources;
+    effect_target_players = floor.effect_targets;
     map_runtime_state.events = floor.events;
     map_runtime_state.dialogue_advance_gate = floor.dialogue_advance_gate;
     map_runtime_state.ambient_script_countdown = floor.ambient_script_countdown;
@@ -172,6 +180,8 @@ std::vector<std::uint8_t> coop_floor_capture() {
     floor.actors = actor_state.actors;
     floor.definitions = actor_state.definitions;
     floor.effects = effect_state.records;
+    floor.effect_sources = effect_sources;
+    floor.effect_targets = effect_target_players;
     floor.events = map_runtime_state.events;
     floor.dialogue_advance_gate = map_runtime_state.dialogue_advance_gate;
     floor.ambient_script_countdown = map_runtime_state.ambient_script_countdown;
@@ -585,6 +595,7 @@ bool coop_floor_apply_writes(std::span<const std::uint8_t> bytes) {
 void coop_floor_forget() {
     baseline.floor = 0;
     puppets_shown = false;
+    coop_floor_hide_effects();
 }
 
 // ---- puppets ----
@@ -653,31 +664,138 @@ bool awake(const KfActor &actor) {
 
 } // namespace
 
-std::vector<std::uint8_t> coop_floor_actors() {
-    CoopByteWriter out;
-    for (std::size_t i = 0; i < KF_ACTOR_CAPACITY; ++i)
-        if (awake(actor_state.actors[i]))
-            write_puppet(out, i, actor_state.actors[i]);
-    return std::move(out.bytes());
+namespace {
+
+// An actor's sound for each action that has one, as actor_play_sound_at_phase plays them.
+struct ActionSound {
+    std::size_t action;   // KF_ACTOR_ANIM_SLOT_*
+    std::size_t sound;    // KF_ACTOR_SOUND_*
+};
+constexpr std::array<ActionSound, 6> action_sounds = {{
+    {KF_ACTOR_ANIM_SLOT_MELEE, KF_ACTOR_SOUND_ATTACK},
+    {KF_ACTOR_ANIM_SLOT_JUMP_ATTACK, KF_ACTOR_SOUND_ATTACK},
+    {KF_ACTOR_ANIM_SLOT_SPECIAL_ATTACK, KF_ACTOR_SOUND_ATTACK},
+    {KF_ACTOR_ANIM_SLOT_MULTI_HIT_ATTACK, KF_ACTOR_SOUND_ATTACK},
+    {KF_ACTOR_ANIM_SLOT_HIT_REACTION, KF_ACTOR_SOUND_HIT_REACTION},
+    {KF_ACTOR_ANIM_SLOT_DEATH, KF_ACTOR_SOUND_DEATH},
+}};
+
+void play_at(const SoundRef &sound, const KfActor &actor) {
+    if (current_floor() == 5 && actor.definition_id == KF_FLOOR5_BOSS_DEFINITION)
+        audio_play_spatial_range(&sound, &actor.position, KF_AUDIO_MAX_VOLUME, KF_AUDIO_EXTENDED_MAX_DISTANCE,
+            KF_AUDIO_EXTENDED_ATTENUATION_DISTANCE);
+    else
+        audio_play_spatial_default_range(&sound, &actor.position, KF_AUDIO_MAX_VOLUME);
 }
 
-std::size_t coop_floor_actor_bytes() {
-    return puppet_bytes;
+// The sound the owner's actor played between two frames: its clip went on past the action's sound.
+void play_puppet_sound(const KfActor &was, const KfActor &now) {
+    if (was.lifecycle != KF_ACTOR_LIFECYCLE_ACTIVE || was.definition_id != now.definition_id
+        || was.animation_clip != now.animation_clip || now.animation_phase <= was.animation_phase)
+        return;
+    const KfActorDefinition &definition = actor_state.definitions.entries[now.definition_id];
+    for (const ActionSound &entry : action_sounds) {
+        const u16 phase = definition.action_animation_phases[entry.action];
+        if (definition.action_animations[entry.action] == now.animation_clip && phase >= was.animation_phase
+            && phase < now.animation_phase) {
+            play_at(definition.sounds[entry.sound], now);
+            return;
+        }
+    }
 }
 
-bool coop_floor_show_actors(std::span<const std::uint8_t> bytes) {
-    if (bytes.size() % puppet_bytes != 0)
+// An effect in flight as the others on its floor draw it.
+constexpr std::size_t shown_effect_bytes = 1 + 1 + 1 + 1 + 2 + 3 * 4 + 3 * 2 + 3 * 2;
+
+bool sent_to_others(std::size_t index) {
+    const KfEffectRecord &effect = effect_state.records[index];
+    return effect.type != KF_EFFECT_SLOT_FREE && effect_sources[index] == KfEffectSource::Actor
+        && effect_has_visual(effect);
+}
+
+void write_effect(CoopByteWriter &out, std::size_t index, const KfEffectRecord &effect) {
+    out.u8(static_cast<std::uint8_t>(index));
+    out.u8(kf_enum_encode<u8>(effect.kind));
+    out.u8(effect.render_id.value);
+    out.u8(kf_enum_encode<u8>(effect.animation_clip));
+    out.u16(effect.animation_phase);
+    out.s32(effect.position.vx);
+    out.s32(effect.position.vy);
+    out.s32(effect.position.vz);
+    out.u16(static_cast<std::uint16_t>(effect.rotation.vx));
+    out.u16(static_cast<std::uint16_t>(effect.rotation.vy));
+    out.u16(static_cast<std::uint16_t>(effect.rotation.vz));
+    out.u16(effect.scale_x);
+    out.u16(effect.scale_y);
+    out.u16(effect.scale_z);
+}
+
+// Whether this machine can draw what the owner sent: a billboard it has, or a model clip it has.
+bool drawable(const KfEffectRecord &effect) {
+    if (effect.animation_clip == KF_ANIMATION_CLIP_NONE)
+        return effect.render_id.billboard() == KF_EFFECT_BILLBOARD_NONE
+            || effect.render_id.value < KF_EFFECT_BILLBOARD_SPRITE_COUNT;
+    if (effect.render_id.model() == KF_EFFECT_MODEL_NONE)
+        return true;
+    const std::size_t asset = std::size_t{effect.render_id.value} + KF_ASSET_EFFECT_FIRST;
+    if (asset >= KF_ASSET_REGISTRY_KNOWN_ENTRIES)
         return false;
-    std::array<std::optional<Puppet>, KF_ACTOR_CAPACITY> shown{};
-    CoopByteReader in(bytes);
-    for (std::size_t i = 0; i < bytes.size() / puppet_bytes; ++i) {
+    const auto &clips = game_graphics_runtime.asset_animations[asset].clips;
+    return clips.empty() || kf_enum_encode<std::size_t>(effect.animation_clip) < clips.size();
+}
+
+// Into the slot it is drawn from, keeping the slot's animation cache.
+bool read_effect(CoopByteReader &in, std::array<KfEffectRecord, KF_EFFECT_CAPACITY> &shown) {
+    const std::uint8_t index = in.u8();
+    KfEffectRecord effect{};
+    effect.type = KF_EFFECT_TYPE_NONE;
+    effect.kind = kf_enum_decode<KfEffectKind>(in.u8());
+    effect.render_id.value = in.u8();
+    effect.base_render_id = effect.render_id;
+    effect.animation_clip = kf_enum_decode<KfAnimationClip>(in.u8());
+    effect.animation_phase = in.u16();
+    effect.position = {in.s32(), in.s32(), in.s32()};
+    effect.rotation = {static_cast<s16>(in.u16()), static_cast<s16>(in.u16()), static_cast<s16>(in.u16())};
+    effect.scale_x = in.u16();
+    effect.scale_y = in.u16();
+    effect.scale_z = in.u16();
+    if (!in.ok() || index >= KF_EFFECT_CAPACITY || kf_enum_encode<u8>(effect.kind) >= KF_MAGIC_RECORD_COUNT
+        || !drawable(effect))
+        return false;
+    effect.animation_cache = shown[index].animation_cache;
+    shown[index] = effect;
+    return true;
+}
+
+// The launch and impact sounds of the owner's effects, as they come and go between two frames.
+void play_effect_sounds(const std::array<KfEffectRecord, KF_EFFECT_CAPACITY> &was,
+    const std::array<KfEffectRecord, KF_EFFECT_CAPACITY> &now) {
+    for (std::size_t i = 0; i < KF_EFFECT_CAPACITY; ++i) {
+        const bool came = now[i].type != KF_EFFECT_SLOT_FREE && (was[i].type == KF_EFFECT_SLOT_FREE || was[i].kind != now[i].kind);
+        const bool went = was[i].type != KF_EFFECT_SLOT_FREE && (now[i].type == KF_EFFECT_SLOT_FREE || was[i].kind != now[i].kind);
+        if (went)
+            audio_play_spatial_default_range(&effect_state.magic.entries[kf_enum_encode<u8>(was[i].kind)].sounds[1],
+                &was[i].position, KF_AUDIO_MAX_VOLUME);
+        if (came)
+            audio_play_spatial_default_range(&effect_state.magic.entries[kf_enum_encode<u8>(now[i].kind)].sounds[0],
+                &now[i].position, KF_AUDIO_MAX_VOLUME);
+    }
+}
+
+bool read_actors(CoopByteReader &in, std::size_t count, std::array<std::optional<Puppet>, KF_ACTOR_CAPACITY> &shown) {
+    for (std::size_t i = 0; i < count; ++i) {
         const auto puppet = read_puppet(in);
         if (!puppet)
             return false;
         shown[puppet->index] = puppet;
     }
+    return true;
+}
+
+void show_actors(const std::array<std::optional<Puppet>, KF_ACTOR_CAPACITY> &shown) {
     for (std::size_t i = 0; i < KF_ACTOR_CAPACITY; ++i) {
         KfActor &actor = actor_state.actors[i];
+        const KfActor was = actor;
         const bool was_counted = actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE;
         if (was_counted)
             collision_adjust_cell_occupancy(actor.cell_x, actor.cell_z, -1);
@@ -699,9 +817,55 @@ bool coop_floor_show_actors(std::span<const std::uint8_t> bytes) {
         actor.position = puppet->position;
         actor.rotation = puppet->rotation;
         collision_adjust_cell_occupancy(actor.cell_x, actor.cell_z, 1);
+        play_puppet_sound(was, actor);
     }
+}
+
+} // namespace
+
+std::vector<std::uint8_t> coop_floor_frame() {
+    CoopByteWriter actors;
+    std::size_t actor_count = 0;
+    for (std::size_t i = 0; i < KF_ACTOR_CAPACITY; ++i)
+        if (awake(actor_state.actors[i])) {
+            write_puppet(actors, i, actor_state.actors[i]);
+            ++actor_count;
+        }
+    CoopByteWriter out;
+    out.u8(static_cast<std::uint8_t>(actor_count));
+    out.raw(actors.bytes());
+    for (std::size_t i = 0; i < KF_EFFECT_CAPACITY; ++i)
+        if (sent_to_others(i))
+            write_effect(out, i, effect_state.records[i]);
+    return std::move(out.bytes());
+}
+
+bool coop_floor_show_frame(std::span<const std::uint8_t> bytes) {
+    CoopByteReader in(bytes);
+    const std::size_t actor_count = in.u8();
+    if (!in.ok() || bytes.size() < 1 + actor_count * puppet_bytes
+        || (bytes.size() - 1 - actor_count * puppet_bytes) % shown_effect_bytes != 0)
+        return false;
+    std::array<std::optional<Puppet>, KF_ACTOR_CAPACITY> actors{};
+    if (!read_actors(in, actor_count, actors))
+        return false;
+    std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effects = effect_shown_records;
+    for (KfEffectRecord &effect : effects)
+        effect.type = KF_EFFECT_SLOT_FREE;
+    const std::size_t effect_count = (bytes.size() - 1 - actor_count * puppet_bytes) / shown_effect_bytes;
+    for (std::size_t i = 0; i < effect_count; ++i)
+        if (!read_effect(in, effects))
+            return false;
+    show_actors(actors);
+    play_effect_sounds(effect_shown_records, effects);
+    effect_shown_records = effects;
     puppets_shown = true;
     return true;
+}
+
+void coop_floor_hide_effects() {
+    for (KfEffectRecord &effect : effect_shown_records)
+        effect.type = KF_EFFECT_SLOT_FREE;
 }
 
 // ---- running the floor again ----

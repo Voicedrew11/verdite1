@@ -38,10 +38,27 @@ index d95430b514ce0cfa7db0c346e990d660a46d302e..e4cb83894aacf4b9cb77f3883ee35474
  
  struct KfCollisionResult {
 diff --git a/include/kf/game/effect.h b/include/kf/game/effect.h
-index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..c734d93227ffca1452fa03deb1f94d01b2b85695 100644
+index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..b3bea35de68789425ec9e75976d8f55a29030a4e 100644
 --- a/include/kf/game/effect.h
 +++ b/include/kf/game/effect.h
-@@ -343,6 +343,8 @@ extern int effect_magic_power(KfEffectRecord *effect);
+@@ -271,6 +271,16 @@ typedef struct KfEffectState {
+ extern std::array<SVECTOR, KF_EFFECT_SWING_PROBE_COUNT> effect_swing_probe_offsets;
+ extern KfEffectState effect_state;
+ 
++// PC extension (coop): what spawned each effect slot, so a floor's owner sends the others on it only
++// the effects they do not run themselves: an actor's and those its effects spawn, not a trap's (every
++// machine runs its own objects) nor this player's spells.
++enum class KfEffectSource : u8 { Other, Actor };
++extern std::array<KfEffectSource, KF_EFFECT_CAPACITY> effect_sources;
++extern KfEffectSource effect_spawn_source;   // what spawns effects now
++// PC extension (coop): the effects another machine runs on this floor, as its owner sends them,
++// drawn after this machine's own; a free slot's type is KF_EFFECT_SLOT_FREE.
++extern std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effect_shown_records;
++
+ enum class KfEffectSoundRequest : s32 {
+     KF_EFFECT_SOUND_SILENT = 0,
+     KF_EFFECT_SOUND_PLAY = 1
+@@ -343,6 +353,8 @@ extern int effect_magic_power(KfEffectRecord *effect);
  extern void effect_update_swinging_hazard(SVECTOR *probe_offset, u8 phase_limit);
  extern void effect_update_orbiting_projectile(s32 orbit_radius, u8 phase_limit);
  extern void effect_floor_deform_line(s32 segment_index, s32 progress_start, s32 progress_step);

@@ -676,7 +676,7 @@ std::string coop_json() {
            std::to_string(kf::coop_highest_floor(kf_enum_encode<u8>(player_state.progress_state.highest_floor))) +
            ",\"floor\":" + std::to_string(kf_enum_encode<int>(player_state.progress_state.current_floor)) + ",\"cell\":[" +
            std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
-           "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"";
+           "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json();
 }
 
 std::string coop_panel_line() {
@@ -755,6 +755,10 @@ u8 coop_highest_floor(u8 own) {
         return own;
     const int world = coop.role == Role::Host ? coop.host.file.live.party.highest_floor() : coop.guest.highest_floor;
     return static_cast<u8>(std::max<int>(own, world));
+}
+
+bool coop_backs_out_of_menu() {
+    return ext::coop.in_play && player_state.vitals.current_hp == 0;
 }
 
 bool coop_runs_floor() {

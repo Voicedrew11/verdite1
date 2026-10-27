@@ -19,6 +19,8 @@ import coop_pair  # noqa: E402
 
 PORTS = (27941, 27942)  # not coop_pair.py's, title_pair.py's nor coop_floors.py's
 FIGHT = (41, 65)  # two of floor 1's enemies wake here
+# A walk among floor 2's casters that wakes them and comes into reach of their fire balls.
+CASTERS = ((92, 4), (92, 12), (96, 14), (88, 16))
 SWUNG_AT = (25, 12)  # where the three at (24..26, 10..11) reach a player and swing
 
 
@@ -40,6 +42,16 @@ def strike_until(game, slot, test, seconds=60):
         game.run(f"hit {slot}")
         time.sleep(0.15)
     return test()
+
+
+def wait_state(game, test, seconds):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        state = game.run("state")["state"]
+        if test(state):
+            return state
+        time.sleep(0.1)
+    return None
 
 
 def awake_slot(runner, watcher):
@@ -84,6 +96,22 @@ def main():
         check(f"enemies A runs go after B and hurt B on B's machine ({hp} hp before, {hurt} after, targets {targets})",
               hurt < hp)
 
+        # B opens its menu there: the world goes on, and once B dies the menu closes by itself.
+        b.run("press start")
+        opened = wait_state(b, lambda state: state["context"] == "menu", 10)
+        lowest, closed = None, None
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            state = b.run("state")["state"]
+            if state["context"] == "menu":
+                lowest = state["hp"] if lowest is None else min(lowest, state["hp"])
+            elif lowest is not None:
+                closed = state
+                break
+            time.sleep(0.1)
+        check(f"B, in its menu, is hurt to 0 and the menu closes (lowest {lowest} hp, then {closed and closed['context']})",
+              bool(opened) and lowest == 0 and closed is not None)
+
         a.run("move %d %d" % FIGHT)
         b.run("move %d %d" % FIGHT)
         for game in (a, b):
@@ -110,6 +138,25 @@ def main():
         check(f"A's own kill of actor {slot} gives B experience ({b_xp} before, {experience(b)} after)",
               killed and experience(b) > b_xp)
 
+
+        # Floor 2's casters, which A runs: B draws their effects in flight.
+        a.run("warp 2")
+        coop_floors.wait_part(a, "running", 2)
+        b.run("warp 2")
+        coop_floors.wait_part(b, "watching", 2)
+        # B walks among them until they throw at it; it may die of them and come back on floor 1, and
+        # what it felt is counted either way.
+        seen, felt = set(), 0
+        for cell in CASTERS:
+            if b.coop()["floor"] == 2:
+                b.run("move %d %d" % cell)
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline and not (seen and felt):
+                seen |= {effect["kind"] for effect in b.run("effects")["effects"] if effect["from"] == "owner"}
+                felt = b.coop()["hitsFelt"]
+                time.sleep(0.1)
+        check(f"B draws the effects A's actors launch (kinds {sorted(seen)})", bool(seen))
+        check(f"their projectiles, meeting B on A, are felt on B's machine ({felt})", felt > 0)
     finally:
         for game in games:
             game.quit()

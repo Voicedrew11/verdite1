@@ -58,13 +58,16 @@ bool coop_floor_apply_writes(std::span<const std::uint8_t> writes);
 // The floor was unloaded: the writes start afresh on the next floor.
 void coop_floor_forget();
 
-// The floor's awake actors, on its owner, for the others on the floor to draw: whole records of
-// coop_floor_actor_bytes each.
-std::vector<std::uint8_t> coop_floor_actors();
-std::size_t coop_floor_actor_bytes();
+// What the others on the floor draw of it, on its owner, once a world update: its awake actors, and
+// the effects in flight that its actors launched (the others run their own traps and spells).
+std::vector<std::uint8_t> coop_floor_frame();
 // Once a world update, on a machine that does not run the floor: the owner's awake actors in place
-// of this machine's, which do not run, and every other actor asleep; the collision grid counts
-// them where they stand. False, and nothing changed, for bytes that are not actors.
-bool coop_floor_show_actors(std::span<const std::uint8_t> actors);
+// of this machine's, which do not run, and every other actor asleep, the collision grid counting
+// them where they stand; the owner's effects drawn beside this machine's own; and the sounds the
+// owner's actors and effects made since the last frame. False, and nothing changed, for bytes that
+// are not a frame or an effect this machine cannot draw.
+bool coop_floor_show_frame(std::span<const std::uint8_t> frame);
+// The owner's effects drawn no more: this machine left watching, or the floor.
+void coop_floor_hide_effects();
 
 }

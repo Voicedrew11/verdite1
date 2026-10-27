@@ -72,6 +72,10 @@ struct CoopPlayerHitArgs {
 };
 void coop_hit_other_player(u32 player, const CoopPlayerHitArgs &hit);
 
+// Whether this player's menus back out by themselves: in coop a menu does not pause the world, so a
+// player can die in one, and the death waits for the menu to close.
+bool coop_backs_out_of_menu();
+
 // map_unload_floor, before the floor goes: the floor's owner sends it live to its heir, and its
 // record to the host.
 void coop_floor_unloading();

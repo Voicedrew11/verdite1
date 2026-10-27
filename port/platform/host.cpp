@@ -66,6 +66,7 @@ struct HostState {
     u32 quick_pressed;
     bool opening_load_pressed;
     bool run_toggled;
+    bool backing_out;   // a dead coop player's menu: Back pressed on every other read
     PadLayout pad_layout;
     struct FrameLight {
         float x, y, z, radius, r, g, b, flicker;
@@ -742,6 +743,11 @@ u32 host_read_buttons() {
     buttons |= agent_buttons() | fuzz_buttons();
     if (host.input_context == InputContext::Gameplay && (buttons & (button_mask(Button::Left) | button_mask(Button::Right))))
         host_turned_with(TurnInput::Buttons);
+    // A player who died in a coop menu backs out of it, as a press and a release make an edge.
+    if (host.input_context == InputContext::Menu && coop_backs_out_of_menu()) {
+        host.backing_out = !host.backing_out;
+        return host.backing_out ? button_mask(Button::Back) : 0;
+    }
     return buttons;
 }
 
