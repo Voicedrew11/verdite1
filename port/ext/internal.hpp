@@ -3,7 +3,11 @@
 #include <kf/platform/analog.h>
 #include "online_pose.h"
 #include <verdite/options.h>
+#include <verdite/pickup_feed.h>
+#include <cstdint>
 #include <filesystem>
+#include <span>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -163,6 +167,24 @@ void online_stop();    // leaves the room
 void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
 // The other players in the room, as last heard from, for the automap.
 std::vector<OnlinePose> online_players();
+// CONTROL packets for coop: to one peer, or every open peer.
+void online_send_control(std::uint64_t peer, std::span<const std::uint8_t> bytes);
+void online_broadcast_control(std::span<const std::uint8_t> bytes);
+// Leaves the room once the session's events are handled, saying why.
+void online_leave_room(std::string_view why);
+
+// ---- coop (coop.cpp): the coop world played in a room (docs/COOP_PLAN.md) ----
+// What online.cpp hears of the room.
+void coop_room_joined(std::string_view room, bool first);
+void coop_peer_open(std::uint64_t peer, bool older);
+void coop_peer_closed(std::uint64_t peer);
+void coop_control_packet(std::uint64_t peer, std::span<const std::uint8_t> bytes);
+void coop_room_left();   // left, dropped or failed: this player's own game comes back
+// The pickup feed's lines now, oldest first, and a line's player's name.
+std::vector<verdite::PickupShown> coop_feed_lines();
+std::string coop_player_name(std::uint32_t player);
+// A line for the Online window: whose world this is, or empty outside coop.
+std::string coop_panel_line();
 
 // ---- automap ----
 void automap_draw(int input_context);   // minimap or full map, before the overlay windows

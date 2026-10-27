@@ -64,13 +64,11 @@ bool read_cause(CoopByteReader &in, CoopCause &cause) {
 void write(CoopByteWriter &out, const CoopHello &hello) {
     out.u64(hello.id);
     out.name(hello.name);
-    out.blob(hello.fresh_state);
 }
 
 bool read(CoopByteReader &in, CoopHello &hello) {
     hello.id = in.u64();
     hello.name = in.name();
-    hello.fresh_state = in.blob();
     return in.ok() && hello.id != 0 && coop_name_valid(hello.name);
 }
 
@@ -134,21 +132,25 @@ bool read(CoopByteReader &in, CoopPackRequest &request) {
 }
 
 void write(CoopByteWriter &out, const CoopWearRequest &request) {
+    out.u32(request.number);
     write_worn(out, request.worn);
 }
 
 bool read(CoopByteReader &in, CoopWearRequest &request) {
+    request.number = in.u32();
     return read_worn(in, request.worn);
 }
 
 void write(CoopByteWriter &out, const CoopPack &pack) {
     out.raw(pack.pack);
     out.u32(pack.gold);
+    out.u8(static_cast<std::uint8_t>(pack.highest_floor));
     out.u8(static_cast<std::uint8_t>(pack.players.size()));
     for (const CoopPack::Player &player : pack.players) {
         out.u64(player.id);
         write_worn(out, player.worn);
         out.u32(player.applied_through);
+        out.u32(player.worn_through);
     }
 }
 
@@ -156,14 +158,16 @@ bool read(CoopByteReader &in, CoopPack &pack) {
     if (!read_pack(in, pack.pack))
         return false;
     pack.gold = in.u32();
+    pack.highest_floor = in.u8();
     const std::uint8_t count = in.u8();
-    if (!in.ok() || count > players_most)
+    if (!in.ok() || !floor_valid(pack.highest_floor) || count > players_most)
         return false;
     for (std::uint8_t i = 0; i < count; ++i) {
-        CoopPack::Player player{in.u64(), coop_nothing_worn, 0};
+        CoopPack::Player player{in.u64(), coop_nothing_worn, 0, 0};
         if (!read_worn(in, player.worn))
             return false;
         player.applied_through = in.u32();
+        player.worn_through = in.u32();
         if (!in.ok() || player.id == 0)
             return false;
         pack.players.push_back(player);

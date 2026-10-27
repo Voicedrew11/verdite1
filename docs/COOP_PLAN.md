@@ -1,8 +1,8 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times; Order's first three steps done 2026-10-27, the fourth's
-interfaces agreed.** Built so far: the two spikes and the smooth knight
-([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to
+**Draft, 2026-10-26, red-teamed three times; Order's first four steps done 2026-10-27, the fourth
+but for public rooms.** Built so far: the two spikes, the smooth knight
+([PLAYER_MODEL.md](PLAYER_MODEL.md)) and the coop save (The coop save). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
 are [NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
 
@@ -337,8 +337,8 @@ What the table changed:
    update, a playback buffer, swings as events, height. Needed by this model whatever else
    changes. Then the room's size measured: knights drawn and poses taken on the weakest
    platform, the host's upload.
-4. **Interfaces agreed 2026-10-27** (`verdite/pickup_feed.h`, `port/ext/coop_party.h`,
-   `port/ext/coop_message.h`, `kf/platform/coop.h`). The coop save: the state map applied, the
+4. **Done 2026-10-27, but for public rooms** (The coop save; `verdite/pickup_feed.h`,
+   `port/ext/coop_party.h`, `port/ext/coop_message.h`, `kf/platform/coop.h`). The coop save: the state map applied, the
    party's pack and purse with worn gear lent from it, guest slots, the world's highest floor,
    the guarded snapshot writes, the acknowledged writes to the host, the player's own game set
    aside and put back, a world per room code. The pickup feed: libverdite's model, drawn by the
@@ -394,6 +394,77 @@ and the dialogue page. What it found:
   platform.
 - Not yet driven: a chest's lid, the boss reveal, the weapon transform, the floor-4 transform, the
   floor-2 transfer and the warp shimmer; they draw through the same two waits.
+
+## The coop save
+
+Order's fourth step, built 2026-10-27 but for public rooms: in a room the game in play is the
+room's coop world. `port/ext/coop.cpp` is the session; the party's rules and the bytes are
+`port/ext/coop_party.h` and `coop_message.h` (unit-tested), and the feed's model is libverdite's.
+
+- **Who hosts:** the client says on JOINED whether anyone was in the room first. The first in
+  hosts the world kept under the room code (`coop-<room>.kfcoop` beside the saves, with a `.bak`
+  of the one before), or starts a new one: a new game at the start, its pack the host's kit. A
+  guest says hello to every peer older than it, and the host answers with a welcome: the
+  guest's character (empty for one new to the world, who starts a new game's), the pack and
+  purse, what they wear, the world's highest floor, the world's bytes and the host's cell.
+- **Setting the game aside:** joining writes the game in play to a third card file
+  (`BISLPS-00017KF.aside`) through the quick save's path, then puts the coop world in between
+  updates as a quick load does (`player_replace_game`, the quick load's swap, now shared).
+  Leaving, the host leaving, or the connection failing puts it back and removes the file. A run
+  that quit or crashed in a room leaves the file, and the next run puts that game back before
+  it enters any room ("Your game from before the coop session is back").
+- **The pieces:** a character is the player's fields and the magic they learned, a world the
+  floors, story flags and the two shops' banks, both in the earlier builds' field stream
+  (`save_system_coop_character`, `save_system_coop_world`) and validated whole before any of
+  it is applied, with the party's pack and purse (`save_system_coop_apply`). Worn gear is
+  checked per slot against the equipment menu's ranges, since an item in the wrong slot would
+  index the game's armour table out of range.
+- **The pack:** both the host and a guest look at the game's pack every update, and take its
+  difference from what they last put in (`CoopPackMirror`). The host applies its own at once;
+  a guest sends its own, numbered. What the host decided goes into the game only between
+  updates, never while a menu or script holds it, since the drop and sell lists keep indexes
+  into the pack across their frames and a count changed under them could go below 0. So a
+  player in a menu sees the others' changes when it closes. The shop says bought and sold
+  (`coop_pack_cause`); any other change is found (more) or used (fewer).
+- **Worn gear:** a wear request is numbered and the host's pack message says the last it has, so
+  a guest takes off only what the host refused after seeing its latest request. The equipment,
+  drop and sell lists leave out what the others in the room wear.
+- **The file:** the host stores its own character every second and the guests' as they send them,
+  and writes the file at most every 5 seconds, at a save point (the whole live state is also
+  kept as the last save), and when it leaves the room, quitting included.
+- **Guards until their steps:** in a coop world F2 and F4 do nothing, a slot's game is never
+  loaded, and a death revives as if with a fruit and keeps the fruit, since the game's restart is
+  a new game, which would empty the party's pack (Order 7 replaces it). NPC stages and the floor-2
+  departure read the world's highest floor, and a stage never goes lower.
+- **The feed** is drawn by the game after its HUD (`menu_draw_pickup_feed`), at the left of the
+  picture: the line spelled by `menu_spell` with the item's name as the menus draw it, faded
+  with the shade `menu_draw_text` takes. In English "PLAYER1234 USED MEDICINAL HERB"; in Japanese
+  the name, the item, the count and a verb in kana (てにいれました, かいました, うりました,
+  つかいました). Not yet judged by eye.
+
+Checked 2026-10-27 with two headless instances in a room on a local service
+(`scripts/coop_pair.py`, with `give` and `coop` on the agent channel), 19 checks, plain and under
+ASan and UBSan: the host's new world holds one kit; a guest arrives beside the host with its own
+kit added (two swords, two herbs, 300 gold) and sees the party's pack; each sees the other's sword
+as worn; a guest's herb and gold spent reach the host and the feed on both says so; the host's
+herbs reach the guest; both using the last six herbs within a round trip leaves 0 on both; when the
+host quits the guest's own game comes back; a guest that quits in the room gets its own game (with
+an item only it held) back in its next run; and the host's world, restarted, keeps the pack as last
+changed. Under UBSan the only reports are libjuice's (`picohash.h` calls its hash through a
+mismatched function type, on its own thread, once two peers connect), so two sanitized instances in
+a room need `halt_on_error=0`.
+
+Not yet:
+
+- **Public rooms** and the service's list (NETWORKING_PLAN.md).
+- **Names:** a player is `PLAYER` and four digits of the install's id (`coop.id` in the user
+  folder); choosing one, and kana names for Japanese, whose font has no capitals, is to come.
+- **Joining from the title** waits until a game is in play, then sets it aside.
+- **A held host** answers a hello and puts the others' changes into its game when its menu
+  closes; a guest arriving while the host reads a sign waits for it.
+- The coop world's automap is not kept: each entry starts it unexplored.
+- `coop_floor_records_kept` is not called yet: until floors have owners (Order 5) only the host's
+  world goes into the save, and a guest's world is its own for the session.
 
 ## The room's size
 
@@ -555,3 +626,9 @@ What a room costs each player, for N players:
   player's own game aside and leaving puts it back, so nothing is lost either way; a world per
   room code; the host is whoever is first. Public rooms, listed by the service, each with a world
   of its own, and the host can send a player away; the trust weak point is restated for them.
+- 2026-10-27: step 4 built (The coop save), but for public rooms. Two changes to the agreed
+  messages: a hello carries no character, since the game can only make a new one by starting a
+  new game, which is safe only once its own game is set aside, so a new character's state is
+  empty and its machine starts one; and wear requests are numbered, with the pack message saying
+  the last the host has and the world's highest floor. A run that quits in a room gets its own
+  game back in the next one.

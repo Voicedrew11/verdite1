@@ -8,12 +8,15 @@
 #include <kf/game/actor.h>
 #include <kf/lib/map_types.h>
 #include <kf/game/player.h>
+#include <kf/lib/item.h>
 #include <kf/lib/codec.h>
 #include <verdite/agent.h>
 #include <verdite/crash.h>
 #include <verdite/menu_pointer.h>
 #include <SDL3/SDL.h>
+#include <algorithm>
 #include <array>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
@@ -29,6 +32,7 @@ struct Press { u32 buttons = 0; std::uint64_t until_ns = 0; };
 Press press;
 bool quit_requested;
 std::optional<std::array<int, 2>> move_request; // a cell, applied between updates
+std::optional<std::array<long, 2>> give_request; // an item (255: gold) and a count, applied between updates
 
 struct ButtonName { const char *name; Button button; };
 constexpr std::array<ButtonName, 14> button_names = {{
@@ -107,6 +111,21 @@ std::string do_move(verdite::AgentArgs args) {
         return verdite::json_error("cells are 0..99");
     move_request = std::array{static_cast<int>(x), static_cast<int>(z)};
     return verdite::json_ok("move");
+}
+
+std::string do_give(verdite::AgentArgs args) {
+    if (args.size() != 2)
+        return verdite::json_error("give <item> <count>");
+    char *end_item = nullptr, *end_count = nullptr;
+    const long item = std::strtol(args[0].c_str(), &end_item, 10), count = std::strtol(args[1].c_str(), &end_count, 10);
+    if (*end_item || *end_count || item < 0 || (item >= KF_ITEM_COUNT && item != 255) || count < -100000 || count > 100000)
+        return verdite::json_error("items are 0..79, or 255 for gold; counts -100000..100000");
+    give_request = std::array{item, count};
+    return verdite::json_ok("give");
+}
+
+std::string do_coop(verdite::AgentArgs) {
+    return verdite::json_ok("coop", "," + ext::coop_json());
 }
 
 // The awake actors on this floor: slot, definition, action, position and the player each goes
@@ -233,6 +252,8 @@ void agent_start() {
         {"move", "move <cell_x> <cell_z> - put the player on a cell of this floor at the next update", do_move},
         {"actors", "actors - the awake actors on this floor and the player each goes after", do_actors},
         {"players", "players - the other players in the room on this floor, as drawn", do_players},
+        {"give", "give <item> <count> - change the pack (item 255: the purse) at the next update, as a pickup or use would", do_give},
+        {"coop", "coop - the coop session: role, whether its world is in play, the pack, purse and what each player wears", do_coop},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
         {"point", "point <x> <y> - move the mouse over a menu (game pixels)", do_point},
         {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},
@@ -244,6 +265,16 @@ void agent_start() {
 }
 
 void agent_between_updates() {
+    if (give_request) {
+        const auto [item, count] = *give_request;
+        give_request.reset();
+        if (item == 255) {
+            player_state.gold = static_cast<u32>(std::clamp<long long>(static_cast<long long>(player_state.gold) + count, 0, UINT32_MAX));
+        } else {
+            u8 &stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][item];
+            stock = static_cast<u8>(std::clamp<long>(stock + count, 0, KF_ITEM_STACK_CAPACITY));
+        }
+    }
     if (!move_request)
         return;
     const auto [x, z] = *move_request;

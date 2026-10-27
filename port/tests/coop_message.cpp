@@ -39,10 +39,9 @@ CoopWelcome welcome() {
 } // namespace
 
 TEST_CASE("every message sent is the message received") {
-    const CoopHello hello = round_trip(CoopHello{0xfeedfacecafebeefull, "PLAYER1234", {4, 5}});
+    const CoopHello hello = round_trip(CoopHello{0xfeedfacecafebeefull, "PLAYER1234"});
     CHECK(hello.id == 0xfeedfacecafebeefull);
     CHECK(hello.name == "PLAYER1234");
-    CHECK(hello.fresh_state == std::vector<std::uint8_t>{4, 5});
 
     const CoopWelcome got = round_trip(welcome());
     CHECK(got.state == welcome().state);
@@ -69,19 +68,24 @@ TEST_CASE("every message sent is the message received") {
 
     CoopWorn worn = coop_nothing_worn;
     worn[2] = 20;
-    CHECK(round_trip(CoopWearRequest{worn}).worn == worn);
+    const CoopWearRequest wear = round_trip(CoopWearRequest{6, worn});
+    CHECK(wear.number == 6);
+    CHECK(wear.worn == worn);
 
     CoopPack pack;
     pack.pack[20] = 1;
     pack.gold = 300;
-    pack.players = {{1, worn, 0}, {2, coop_nothing_worn, 41}};
+    pack.highest_floor = 2;
+    pack.players = {{1, worn, 0, 0}, {2, coop_nothing_worn, 41, 7}};
     const CoopPack pack_got = round_trip(pack);
     CHECK(pack_got.pack == pack.pack);
     CHECK(pack_got.gold == 300);
+    CHECK(pack_got.highest_floor == 2);
     REQUIRE(pack_got.players.size() == 2);
     CHECK(pack_got.players[0].worn == worn);
     CHECK(pack_got.players[1].id == 2);
     CHECK(pack_got.players[1].applied_through == 41);
+    CHECK(pack_got.players[1].worn_through == 7);
 
     const CoopFeedLine line = round_trip(CoopFeedLine{2, CoopCause::Used, {43, -1}});
     CHECK(line.by == 2);
@@ -108,8 +112,8 @@ TEST_CASE("a message cut short, with bytes left over, or of another version or k
 }
 
 TEST_CASE("an item, stack, floor, cell, cause or name out of range is refused") {
-    CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, "lower", {}})));
-    CHECK_FALSE(coop_message_decode(encoded(CoopHello{0, "HOST", {}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, "lower"})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopHello{0, "HOST"})));
     CHECK_FALSE(coop_message_decode(encoded(CoopPackRequest{1, {80, 1}, CoopCause::Found})));
     CHECK_FALSE(coop_message_decode(encoded(CoopCharacterUpdate{1, {}, 6})));
     CHECK_FALSE(coop_message_decode(encoded(CoopCharacterUpdate{1, {}, 0})));
@@ -127,7 +131,12 @@ TEST_CASE("an item, stack, floor, cell, cause or name out of range is refused") 
     CHECK_FALSE(coop_message_decode(encoded(floor)));
     CoopWorn worn = coop_nothing_worn;
     worn[1] = 80;
-    CHECK_FALSE(coop_message_decode(encoded(CoopWearRequest{worn})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopWearRequest{1, worn})));
+    worn[1] = 43;   // an herb on the head
+    CHECK_FALSE(coop_message_decode(encoded(CoopWearRequest{1, worn})));
+    CoopPack floor_pack;
+    floor_pack.highest_floor = 0;
+    CHECK_FALSE(coop_message_decode(encoded(floor_pack)));
 }
 
 TEST_CASE("a welcome with a world too big for one message is nothing") {

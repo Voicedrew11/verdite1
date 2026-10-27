@@ -13,15 +13,14 @@
 
 namespace kf::ext {
 
-// Guest to host, on opening: who this is, and a fresh character in case they are new to the world.
+// Guest to host, on opening: who this is.
 struct CoopHello {
     CoopPlayerId id = 0;
     std::string name;
-    std::vector<std::uint8_t> fresh_state;
 };
 
-// Host to a guest, the answer: their character, the party's pack and purse, the world, and where
-// the host stands, to arrive beside.
+// Host to a guest, the answer: their character (empty for one new to the world, who starts a new
+// game's), the party's pack and purse, the world, and where the host stands, to arrive beside.
 struct CoopWelcome {
     std::vector<std::uint8_t> state;
     CoopWorn worn{};
@@ -52,17 +51,20 @@ struct CoopPackRequest {
     CoopPackChange change;
     CoopCause cause = CoopCause::Found;
 };
-// Guest to host: what they now want to wear; the answer is in the next CoopPack.
+// Guest to host: what they now want to wear, numbered; the answer is in the next CoopPack.
 struct CoopWearRequest {
-    CoopWorn worn{};
+    std::uint32_t number = 0;
+    CoopWorn worn = coop_nothing_worn;
 };
 
-// Host to everyone, after any change: the pack and purse, what each player in the room wears, and
-// for each guest the last of their changes it holds.
+// Host to everyone, after any change: the pack and purse, the world's highest floor, what each
+// player in the room wears, and for each guest the last of their pack changes and wear requests
+// it holds.
 struct CoopPack {
     CoopItems pack{};
     std::uint32_t gold = 0;
-    struct Player { CoopPlayerId id; CoopWorn worn; std::uint32_t applied_through; };
+    int highest_floor = 1;
+    struct Player { CoopPlayerId id; CoopWorn worn; std::uint32_t applied_through; std::uint32_t worn_through; };
     std::vector<Player> players;
 };
 // Host to everyone: a line for the feed.

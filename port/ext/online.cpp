@@ -59,6 +59,7 @@ struct Online {
     std::map<vo_peer, Peer> players; // open peers
     std::string status;   // what the overlay says when not in a room, or why we left
     std::array<char, room_most + 1> room_field{};
+    std::optional<std::string> leave_after_poll;   // why, once the session's events are handled
 };
 Online online;
 
@@ -77,6 +78,8 @@ std::string build_name() {
 }
 
 void leave(std::string why) {
+    if (online.session)
+        coop_room_left();
     online.session.reset();
     online.room.clear();
     online.self = 0;
@@ -115,20 +118,27 @@ void on_event(const vo_event &event) {
     case VO_EVENT_JOINED:
         online.self = event.peer;
         std::printf("[online] in room %s as %s\n", online.room.c_str(), hex(event.peer).c_str());
+        coop_room_joined(online.room, event.older == 0);
         break;
     case VO_EVENT_PEER_OPEN:
         online.players.erase(event.peer);
         online.players.emplace(event.peer, Peer{OnlinePlayback(playback_delay_updates()), {}, {}});
         std::printf("[online] %s is here\n", hex(event.peer).c_str());
+        coop_peer_open(event.peer, event.older != 0);
         break;
     case VO_EVENT_PEER_CLOSED:
         online.players.erase(event.peer);
         std::printf("[online] %s left\n", hex(event.peer).c_str());
+        coop_peer_closed(event.peer);
         break;
     case VO_EVENT_PACKET: {
         const auto known = online.players.find(event.peer);
-        if (event.channel != VO_CHANNEL_STATE || known == online.players.end())
+        if (known == online.players.end())
             break;
+        if (event.channel == VO_CHANNEL_CONTROL) {
+            coop_control_packet(event.peer, std::span(event.data, event.size));
+            break;
+        }
         if (const auto pose = online_pose_decode(std::span(event.data, event.size)))
             known->second.playback.receive(*pose);
         break;
@@ -185,6 +195,25 @@ void online_poll() {
         if (event.kind == VO_EVENT_ERROR && event.error != VO_ERROR_PEER_FAILED)
             leave(online.status); // fatal: the session only waits to be closed
     }
+    if (online.leave_after_poll) {
+        leave(*online.leave_after_poll);
+        online.leave_after_poll.reset();
+    }
+}
+
+void online_send_control(std::uint64_t peer, std::span<const std::uint8_t> bytes) {
+    if (online.session && !vo_send(online.session.get(), peer, VO_CHANNEL_CONTROL, bytes.data(), bytes.size()))
+        std::printf("[online] a message to %s was not sent\n", hex(peer).c_str());
+}
+
+void online_broadcast_control(std::span<const std::uint8_t> bytes) {
+    if (online.session)
+        vo_broadcast(online.session.get(), VO_CHANNEL_CONTROL, bytes.data(), bytes.size());
+}
+
+void online_leave_room(std::string_view why) {
+    if (online.session)
+        online.leave_after_poll = std::string(why);
 }
 
 void online_stop() {
@@ -194,6 +223,8 @@ void online_stop() {
 void online_draw_panel() {
     if (online.session) {
         ImGui::Text("Room: %s", online.room.c_str());
+        if (const std::string coop_line = coop_panel_line(); !coop_line.empty())
+            ImGui::TextUnformatted(coop_line.c_str());
         if (online.self == 0)
             ImGui::TextDisabled("Joining...");
         else if (online.players.empty())
@@ -208,8 +239,9 @@ void online_draw_panel() {
             leave("");
         return;
     }
-    ImGui::TextWrapped("Play alongside others: everyone who joins the same room code, with the same "
-                       "build of the game, sees each other on the automap.");
+    ImGui::TextWrapped("Play together: everyone who joins the same room code, with the same build of "
+                       "the game, plays one coop world, kept by whoever is in the room first. Joining sets "
+                       "this game aside; leaving puts it back.");
     ImGui::InputText("Room code", online.room_field.data(), online.room_field.size());
     if (ImGui::Button("Join") && online.room_field[0] != '\0')
         join(online.room_field.data());
@@ -236,6 +268,12 @@ void online_start() {
 void online_poll() {}
 
 void online_stop() {}
+
+void online_send_control(std::uint64_t, std::span<const std::uint8_t>) {}
+
+void online_broadcast_control(std::span<const std::uint8_t>) {}
+
+void online_leave_room(std::string_view) {}
 
 void online_draw_panel() {
     ImGui::TextWrapped("This build has no online play: it was built without libdatachannel.");

@@ -10,7 +10,6 @@ constexpr std::uint8_t short_sword = 0;
 constexpr std::uint8_t knight_plate = 20;
 constexpr std::uint8_t herb = 43;
 constexpr std::size_t body_slot = 2;
-const std::vector<std::uint8_t> fresh = {1, 2, 3};
 
 CoopWorn wearing(std::uint8_t weapon, std::uint8_t body = coop_no_item) {
     CoopWorn worn = coop_nothing_worn;
@@ -23,24 +22,24 @@ CoopWorn wearing(std::uint8_t weapon, std::uint8_t body = coop_no_item) {
 
 TEST_CASE("a new player brings the starting kit and wears its sword") {
     CoopParty party;
-    const CoopCharacter &host = party.join(1, "HOST", fresh);
-    CHECK(host.state == fresh);
+    const CoopCharacter &host = party.join(1, "HOST");
+    CHECK(host.state.empty());
     CHECK(host.wore == wearing(short_sword));
-    party.join(2, "GUEST", fresh);
+    party.join(2, "GUEST");
     CHECK(party.pack()[short_sword] == 2);
     CHECK(party.pack()[herb] == 2);
     CHECK(party.gold() == 300);
     // Back again: no second kit.
     party.leave(2);
-    party.join(2, "GUEST", fresh);
+    party.join(2, "GUEST");
     CHECK(party.pack()[short_sword] == 2);
     CHECK(party.gold() == 300);
 }
 
 TEST_CASE("what another player wears cannot be taken or worn") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
-    party.join(2, "GUEST", fresh);
+    party.join(1, "HOST");
+    party.join(2, "GUEST");
     CHECK(party.apply(1, {knight_plate, 1}) == 1);
     CHECK(party.wear(1, wearing(short_sword, knight_plate)) == wearing(short_sword, knight_plate));
     CHECK(party.free_for(2, knight_plate) == 0);
@@ -52,34 +51,36 @@ TEST_CASE("what another player wears cannot be taken or worn") {
 
 TEST_CASE("worn gear goes back to the pack when its wearer leaves, and back on if still free") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
-    party.join(2, "GUEST", fresh);
+    party.join(1, "HOST");
+    party.join(2, "GUEST");
     party.apply(1, {knight_plate, 1});
     party.wear(1, wearing(short_sword, knight_plate));
     party.leave(1);
     CHECK(party.free_for(2, knight_plate) == 1);
     CHECK(party.in_room().size() == 1);
     // Still free when they come back: they wear it again.
-    CHECK(party.join(1, "HOST", fresh).wore == wearing(short_sword, knight_plate));
+    CHECK(party.join(1, "HOST").wore == wearing(short_sword, knight_plate));
     party.leave(1);
     party.wear(2, wearing(short_sword, knight_plate));
-    CHECK(party.join(1, "HOST", fresh).wore == wearing(short_sword));
+    CHECK(party.join(1, "HOST").wore == wearing(short_sword));
 }
 
-TEST_CASE("one of an item cannot be worn in two slots, two can") {
+TEST_CASE("gear goes on only in its own slot") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
-    CoopWorn both = coop_nothing_worn;
-    both[5] = 38;
-    both[6] = 38;
-    CHECK(party.wear(1, both)[6] == coop_no_item);
-    party.apply(1, {38, 2});
-    CHECK(party.wear(1, both) == both);
+    party.join(1, "HOST");
+    party.apply(1, {knight_plate, 1});
+    CoopWorn wrong = coop_nothing_worn;
+    wrong[0] = knight_plate;
+    wrong[1] = herb;
+    CHECK(party.wear(1, wrong) == coop_nothing_worn);
+    CHECK(coop_item_fits(6, 51));
+    CHECK_FALSE(coop_item_fits(6, 52));
+    CHECK_FALSE(coop_item_fits(7, coop_no_item));
 }
 
 TEST_CASE("the pack stops at a full stack and at nothing, the purse at nothing") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
+    party.join(1, "HOST");
     CHECK(party.apply(1, {herb, 200}) == 98);
     CHECK(party.pack()[herb] == 99);
     CHECK(party.apply(1, {herb, -150}) == -99);
@@ -91,8 +92,8 @@ TEST_CASE("the pack stops at a full stack and at nothing, the purse at nothing")
 
 TEST_CASE("two players using the last herb within a round trip both heal, and the pack stays at 0") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
-    party.join(2, "GUEST", fresh);
+    party.join(1, "HOST");
+    party.join(2, "GUEST");
     party.apply(1, {herb, -1});
     CoopPackMirror guest(party.pack(), party.gold());
     CHECK(guest.pack()[herb] == 1);
@@ -132,21 +133,22 @@ TEST_CASE("the guest's mirror keeps its own changes on top until the host has th
 
 TEST_CASE("the highest floor is the highest any character has reached, and never falls") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
-    party.join(2, "GUEST", fresh);
-    party.store(2, fresh, 4);
-    party.store(2, fresh, 2);
-    party.store(1, fresh, 9);
+    party.join(1, "HOST");
+    party.join(2, "GUEST");
+    const std::vector<std::uint8_t> state = {1, 2, 3};
+    party.store(2, state, 4);
+    party.store(2, state, 2);
+    party.store(1, state, 9);
     CHECK(party.highest_floor() == 5);
     CHECK(party.characters()[1].highest_floor == 4);
-    party.store(7, fresh, 3);
+    party.store(7, state, 3);
     CHECK(party.characters().size() == 2);
 }
 
 TEST_CASE("a coop world written is the world read") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
-    party.join(0x1234567890abcdefull, "PLAYER1234", std::vector<std::uint8_t>{9, 8});
+    party.join(1, "HOST");
+    party.join(0x1234567890abcdefull, "PLAYER1234");
     party.apply(1, {knight_plate, 1});
     party.wear(1, wearing(short_sword, knight_plate));
     party.store(1, std::vector<std::uint8_t>{7}, 3);
@@ -174,7 +176,7 @@ TEST_CASE("a coop world written is the world read") {
 
 TEST_CASE("a coop world that is not one is refused") {
     CoopParty party;
-    party.join(1, "HOST", fresh);
+    party.join(1, "HOST");
     const auto good = coop_world_encode({{party, {1}}, std::nullopt});
     REQUIRE(coop_world_decode(good));
     for (std::size_t at = 0; at < good.size(); ++at) {
@@ -205,4 +207,5 @@ TEST_CASE("a coop world with a stack over 99, a bad name, a shared id or a floor
     CHECK(refused({{0, "HOST", {}, coop_nothing_worn, 1}}, {}));
     CHECK(refused({{1, "HOST", {}, coop_nothing_worn, 6}}, {}));
     CHECK(refused({{1, "HOST", {}, wearing(80), 1}}, {}));
+    CHECK(refused({{1, "HOST", {}, wearing(herb), 1}}, {}));
 }

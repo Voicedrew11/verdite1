@@ -14,6 +14,18 @@ constexpr std::uint8_t medicinal_herb = 43;   // KF_ITEM_MEDICINAL_HERB
 constexpr std::uint32_t starting_gold = 150;  // PLAYER_STARTING_GOLD
 constexpr std::size_t weapon_slot = 0;
 
+// Each worn slot's items, first and past the last: the equipment menu's ranges (menu_select.cpp).
+struct SlotItems { std::uint8_t first, end; };
+constexpr std::array<SlotItems, coop_worn_slots> slot_items = {{
+    {0, 13},    // weapons: the Short Sword .. the Moonlight Sword
+    {13, 19},   // head: the Iron Mask .. the Mist Crown
+    {19, 26},   // body: the Breastplate .. the Forest Armor
+    {26, 32},   // shield: the Small Shield .. the Wind Guard
+    {32, 35},   // arms: the Gauntlet .. the Stone Hand
+    {35, 39},   // legs: the Iron Boots .. the Feather Boots
+    {48, 52},   // accessory: the Light Ring .. the Two-Headed Dragon Ring
+}};
+
 constexpr std::array<std::uint8_t, 8> file_magic = {'K', 'F', 'C', 'O', 'O', 'P', 0, 0};
 constexpr std::uint32_t file_version = 1;
 constexpr std::size_t file_header_bytes = file_magic.size() + 12;
@@ -105,17 +117,26 @@ bool coop_pack_valid(const CoopItems &pack) {
     return std::ranges::all_of(pack, [](std::uint8_t count) { return count <= coop_stack_most; });
 }
 
+bool coop_item_fits(std::size_t slot, std::uint8_t item) {
+    if (slot >= coop_worn_slots)
+        return false;
+    return item == coop_no_item || (item >= slot_items[slot].first && item < slot_items[slot].end);
+}
+
 bool coop_worn_valid(const CoopWorn &worn) {
-    return std::ranges::all_of(worn, [](std::uint8_t item) { return item < coop_item_count || item == coop_no_item; });
+    for (std::size_t slot = 0; slot < coop_worn_slots; ++slot)
+        if (!coop_item_fits(slot, worn[slot]))
+            return false;
+    return true;
 }
 
 CoopParty::CoopParty(std::vector<CoopCharacter> characters, const CoopItems &pack, std::uint32_t gold)
     : characters_(std::move(characters)), pack_(pack), gold_(gold) {}
 
-const CoopCharacter &CoopParty::join(CoopPlayerId id, std::string_view name, std::span<const std::uint8_t> fresh_state) {
+const CoopCharacter &CoopParty::join(CoopPlayerId id, std::string_view name) {
     CoopCharacter *character = find(id);
     if (!character) {
-        CoopCharacter fresh{id, std::string(name), {fresh_state.begin(), fresh_state.end()}, coop_nothing_worn, 1};
+        CoopCharacter fresh{id, std::string(name), {}, coop_nothing_worn, 1};
         fresh.wore[weapon_slot] = short_sword;
         characters_.push_back(std::move(fresh));
         character = &characters_.back();
@@ -160,10 +181,7 @@ CoopWorn CoopParty::wear(CoopPlayerId id, const CoopWorn &worn) {
     CoopWorn now = coop_nothing_worn;
     for (std::size_t slot = 0; slot < coop_worn_slots; ++slot) {
         const std::uint8_t item = worn[slot];
-        if (item >= coop_item_count)
-            continue;
-        const auto already = std::ranges::count(now, item);
-        if (pack_[item] - worn_by_others(id, item) > already)
+        if (item != coop_no_item && coop_item_fits(slot, item) && pack_[item] > worn_by_others(id, item))
             now[slot] = item;
     }
     character->wore = now;

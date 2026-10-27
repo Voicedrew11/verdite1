@@ -31,14 +31,17 @@ inline constexpr CoopWorn coop_nothing_worn = {coop_no_item, coop_no_item, coop_
 
 // Whether a name is one menu_spell can draw: 1 to coop_name_most capitals and digits.
 bool coop_name_valid(std::string_view name);
-// Whether a pack holds no stack over 99, and worn gear only item ids and empty slots.
+// Whether a pack holds no stack over 99, and worn gear in each slot nothing or an item of that
+// slot's kind (a weapon, a helm...), as the game's equipment menu offers.
 bool coop_pack_valid(const CoopItems &pack);
+bool coop_item_fits(std::size_t slot, std::uint8_t item);
 bool coop_worn_valid(const CoopWorn &worn);
 
 struct CoopCharacter {
     CoopPlayerId id = 0;
     std::string name;                  // capitals and digits: what menu_spell draws
-    std::vector<std::uint8_t> state;   // the character as the game saves it, gold aside
+    std::vector<std::uint8_t> state;   // the character as the game saves it, gold aside; empty until
+                                       // a new character's machine first sends it
     CoopWorn wore = coop_nothing_worn; // what they wear in the room, or wore when they last left
     int highest_floor = 1;
 };
@@ -56,19 +59,19 @@ public:
     // A party as a file kept it, with no one in the room.
     CoopParty(std::vector<CoopCharacter> characters, const CoopItems &pack, std::uint32_t gold);
 
-    // A player comes into the room. On their first join their character is fresh_state, wearing
-    // the Short Sword, and the game's starting kit (a Short Sword, a Medicinal Herb, 150 gold)
-    // goes into the pack and purse; after that it is the character kept here, wearing what of
-    // what they wore no one else wears.
-    const CoopCharacter &join(CoopPlayerId id, std::string_view name, std::span<const std::uint8_t> fresh_state);
+    // A player comes into the room. On their first join their character is new, wearing the Short
+    // Sword, and the game's starting kit (a Short Sword, a Medicinal Herb, 150 gold) goes into the
+    // pack and purse; after that it is the character kept here, wearing what of what they wore no
+    // one else wears.
+    const CoopCharacter &join(CoopPlayerId id, std::string_view name);
     // They leave: what they wore stays in the pack, free for the others, and is remembered.
     void leave(CoopPlayerId id);
 
     // As much of the change as the pack allows: an item is never taken below what the others wear
     // or added past a full stack, gold never below 0. Returns the count applied.
     std::int32_t apply(CoopPlayerId by, CoopPackChange change);
-    // Puts on what of `worn` is free for them; anything not free leaves its slot empty. Returns
-    // what they now wear: nothing for a player not in the room.
+    // Puts on what of `worn` is free for them and fits its slot; anything else leaves its slot
+    // empty. Returns what they now wear: nothing for a player not in the room.
     CoopWorn wear(CoopPlayerId id, const CoopWorn &worn);
     // A character's latest state, as their machine sends it; the highest floor rises with it.
     void store(CoopPlayerId id, std::span<const std::uint8_t> state, int highest_floor);

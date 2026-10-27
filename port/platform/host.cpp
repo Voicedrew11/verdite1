@@ -1,5 +1,6 @@
 #include <kf/platform/host.h>
 #include <kf/platform/language_runtime.h>
+#include <kf/platform/coop.h>
 #include <kf/platform/saves.h>
 #include <kf/audio/sound.h>
 #include <kf/platform/input.h>
@@ -732,6 +733,7 @@ u32 host_read_buttons() {
 
 void host_between_updates() {
     host_enemy_turn_between_updates();
+    coop_between_updates();
     agent_between_updates();
     fuzz_between_updates();
 }

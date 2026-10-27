@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <verdite/crash.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -149,11 +150,30 @@ static bool sync_directory_path(int directory) {
 #endif
 
 static bool valid_slot(SaveSlot slot) {
-    return slot >= SaveSlot::First && slot <= SaveSlot::Quick;
+    return slot >= SaveSlot::First && slot <= SaveSlot::Aside;
 }
 
 static const char *card_name(SaveCard card) {
-    return card == SaveCard::Game ? "BISLPS-00017KF" : "BISLPS-00017KF.quick";
+    switch (card) {
+    case SaveCard::Game:
+        return "BISLPS-00017KF";
+    case SaveCard::Quick:
+        return "BISLPS-00017KF.quick";
+    case SaveCard::Aside:
+        return "BISLPS-00017KF.aside";
+    }
+    return "BISLPS-00017KF.unknown";
+}
+
+static bool room_valid(std::string_view room) {
+    const auto allowed = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+    };
+    return !room.empty() && room.size() <= 64 && std::all_of(room.begin(), room.end(), allowed);
+}
+
+static std::string coop_world_name(std::string_view room) {
+    return "coop-" + std::string(room) + ".kfcoop";
 }
 
 // The earlier builds named the quick save quicksave.kfs on Windows and slot4.kfs elsewhere.
@@ -168,7 +188,7 @@ static std::string earlier_name(SaveSlot slot) {
 #ifndef __EMSCRIPTEN__
 // Each crash report carries a copy of the saves, so it can be replayed from the player's state.
 static void keep_saves_in_crash_reports(const char *directory) {
-    for (const SaveCard card : {SaveCard::Game, SaveCard::Quick})
+    for (const SaveCard card : {SaveCard::Game, SaveCard::Quick, SaveCard::Aside})
         verdite::crash_keep_file((std::filesystem::path(reinterpret_cast<const char8_t *>(directory)) / card_name(card)).string());
 }
 #endif
@@ -297,7 +317,8 @@ static SaveFileResult write_named(const char *name, const u8 *data, std::size_t 
 
 #if !defined(_WIN32)
 static void copy_to_backup(const char *name) {
-    std::array<u8, save_card_bytes> data;
+    static_assert(coop_world_capacity >= save_card_bytes, "a backup holds either file");
+    std::vector<u8> data(coop_world_capacity);
     std::size_t size = 0;
     if (read_named(name, data.data(), data.size(), &size) == SaveFileResult::Ok)
         write_named((std::string(name) + ".bak").c_str(), data.data(), size, Previous::Discard);
@@ -397,6 +418,51 @@ SaveFileResult save_card_write(SaveCard card, std::span<const u8, save_card_byte
 #else
     return write_named(card_name(card), data.data(), data.size(),
                        card == SaveCard::Quick ? Previous::Keep : Previous::Discard);
+#endif
+}
+
+SaveFileResult save_card_remove(SaveCard card) {
+#ifdef __EMSCRIPTEN__
+    (void)card;
+    return SaveFileResult::Unavailable;
+#elif defined(_WIN32)
+    if (!save_directory)
+        return SaveFileResult::Unavailable;
+    std::error_code error;
+    std::filesystem::remove(*save_directory / card_name(card), error);
+    return error ? SaveFileResult::IoError : SaveFileResult::Ok;
+#else
+    if (save_directory < 0)
+        return SaveFileResult::Unavailable;
+    note_save("removing", card_name(card));
+    if (::unlinkat(save_directory, card_name(card), 0) != 0 && errno != ENOENT)
+        return io_error();
+    return sync_file(save_directory) ? SaveFileResult::Ok : io_error();
+#endif
+}
+
+SaveFileResult coop_world_read(std::string_view room, std::vector<u8> &data) {
+    data.clear();
+    if (!room_valid(room))
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    data.resize(coop_world_capacity);
+    std::size_t size = 0;
+    const auto result = read_named(coop_world_name(room).c_str(), data.data(), data.size(), &size);
+    data.resize(result == SaveFileResult::Ok ? size : 0);
+    return result;
+#endif
+}
+
+SaveFileResult coop_world_write(std::string_view room, std::span<const u8> data) {
+    if (!room_valid(room) || data.empty() || data.size() > coop_world_capacity)
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    return write_named(coop_world_name(room).c_str(), data.data(), data.size(), Previous::Keep);
 #endif
 }
 

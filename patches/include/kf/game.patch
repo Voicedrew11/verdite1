@@ -29,7 +29,7 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..c734d93227ffca1452fa03deb1f94d01
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..2d890c4773ee7d08c0bb9fdac772cd6dda45211b 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..d3663340ceea25b0576532676c3c401a02fd2b5a 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
 @@ -30,7 +30,9 @@ enum class KfMenuRootChoice : s32 {
@@ -73,7 +73,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..2d890c4773ee7d08c0bb9fdac772cd6d
  extern void menu_resources_reload(void);
  extern void menu_draw_save_slots(
      std::span<const KfSaveSlotSummary> summaries, KfSaveSlotOverlay slot_overlay);
-@@ -340,6 +348,9 @@ extern void menu_draw_number(
+@@ -340,7 +348,11 @@ extern void menu_draw_number(
      const MenuSpriteDef *font, const MenuGlyphString *string);
  extern void menu_draw_string(
      const MenuSpriteDef *font, const MenuGlyphString *string);
@@ -81,9 +81,11 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..2d890c4773ee7d08c0bb9fdac772cd6d
 +// PC extension: text spelled by menu_spell, its colour scaled by shade (1 as drawn).
 +extern void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade);
  extern void menu_draw_equipment_names(void);
++extern void menu_draw_pickup_feed(void);
  extern void menu_draw_status_summary(void);
  extern void menu_draw_status_details(void);
-@@ -358,6 +369,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+ struct MenuChoiceLabel;
+@@ -358,6 +370,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
  extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
  extern void menu_frame_begin(void);
  extern void menu_item_model_preview(KfObjectId item_id);
@@ -151,7 +153,7 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..af66c0d59f86e2537787f1f3aaabad03
 +
  #endif // KF_GAME_MENU_TEXT_H
 diff --git a/include/kf/game/player.h b/include/kf/game/player.h
-index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..fe73137f90e2f17a22f60d9af5369a9ca0c80d26 100644
+index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..c151b44f4a18565bb6247d0048491bd778cfe026 100644
 --- a/include/kf/game/player.h
 +++ b/include/kf/game/player.h
 @@ -218,6 +218,7 @@ extern void player_apply_radial_damage(
@@ -162,6 +164,15 @@ index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..fe73137f90e2f17a22f60d9af5369a9c
  extern void player_death_apply_visual_fade(const MATRIX *color_from, s32 blend);
  extern void player_death_begin(void);
  extern void player_death_restart(void);
+@@ -232,6 +233,8 @@ extern s32 player_distance_to_point_in_cone(
+ extern void player_equip_weapon(KfObjectId weapon_id);
+ extern void game_initialize_session(void);
+ extern void game_state_initialize(void);
++extern void game_state_start_new(void);
++extern bool player_replace_game(bool (*load)(void));
+ extern void player_increment_magic_training(void);
+ extern void player_increment_physical_power_training(void);
+ extern s32 player_move_horizontal(s32 heading, s32 distance);
 diff --git a/include/kf/game/render.h b/include/kf/game/render.h
 index 2f6842c54f2849a443d80daf631199b876b6cd04..cf053605d74bbf1bcbfb278fe69b614d3cc4ed2d 100644
 --- a/include/kf/game/render.h
@@ -237,15 +248,40 @@ index 7719295a3510f44a36c1d9ee37d043c141e41e4a..aefb01f134a43506e546918ff1acc8f0
  kf::Language game_text_language();
  void game_update_language_comparison();
 diff --git a/include/kf/game/save.h b/include/kf/game/save.h
-index 35636457c6d504dfede73c5568fb25701f4a9a9d..40411acc5b465454fd3ed82efa859c01528e4555 100644
+index 35636457c6d504dfede73c5568fb25701f4a9a9d..b9dee3431d0ad9977a5ce497b80cdec81b8c6ca4 100644
 --- a/include/kf/game/save.h
 +++ b/include/kf/game/save.h
-@@ -28,5 +28,9 @@ struct KfSaveSlotSummary {
+@@ -3,10 +3,13 @@
+ 
+ #include <kf/lib/enum.h>
+ #include <kf/lib/floor.h>
++#include <kf/lib/item_types.h>
+ #include <kf/lib/types.h>
+ #include <kf/platform/saves.h>
+ 
+ #include <array>
++#include <span>
++#include <vector>
+ 
+ enum class KfSaveResult : s32 {
+     KF_SAVE_RESULT_FAILED = 0,
+@@ -28,5 +31,20 @@ struct KfSaveSlotSummary {
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries);
  KfSaveResult save_system_read_slot(kf::SaveSlot slot);
  KfSaveResult save_system_write_slot(kf::SaveSlot slot);
 +bool save_system_quick_write(void);
 +bool save_system_quick_read(void);
++// PC extension (coop, port/ext/coop.cpp): the live game's character (the player and the magic
++// they learned) and world (floors, story flags, the shops' banks), as bytes; and both put back
++// with the party's pack and purse, validated whole before any live state is touched. The caller
++// reloads the floor, as after a quick load.
++std::vector<u8> save_system_coop_character(void);
++std::vector<u8> save_system_coop_world(void);
++bool save_system_coop_apply(std::span<const u8> character, std::span<const u8> world,
++                            const std::array<u8, KF_ITEM_COUNT> &pack, u32 gold);
++// The player's own game set aside while they play a coop world, and put back.
++bool save_system_aside_write(void);
++bool save_system_aside_read(void);
 +// Brings the earlier builds' per-slot files into the card files, once (save_system.cpp).
 +void save_system_import_earlier(void);
  

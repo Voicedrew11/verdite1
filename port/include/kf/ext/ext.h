@@ -52,6 +52,9 @@ std::string option_change(std::string_view id, std::string_view text);
 // control ("start", or one verdite::Setup::command takes). Empty on success, else why not.
 std::string setup_json();
 std::string setup_command(std::string_view line);
+// The coop session for the agent channel, as JSON fields: the role, whether its world is in
+// play, the pack (item: count), the purse, what this player wears and what the others wear.
+std::string coop_json();
 // For a crash report: the settings that change how the game plays or draws. Runs in the crash
 // handler, so it only reads.
 void crash_write_settings(verdite::CrashWriter &out);
