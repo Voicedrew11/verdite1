@@ -1,5 +1,5 @@
-// Online play: a room joined through the Verdite online service (online/README.md), our pose sent
-// to the others 20 times a second, and theirs kept for the automap and the world. Opt-in: nothing touches the
+// Online play: a room joined through the Verdite online service (online/README.md), our pose and
+// weapon sent to the others 20 times a second, and theirs kept for the automap and the world. Opt-in: nothing touches the
 // network until a room is joined.
 #include "internal.hpp"
 #include "online_pose.h"
@@ -29,6 +29,8 @@ namespace kf::ext {
 namespace {
 
 std::string start_room; // --online-room
+u8 own_weapon = online_no_weapon;          // online_publish_weapon, sent with each pose
+s16 own_attack_phase = online_not_attacking;
 
 #if KF_ONLINE
 
@@ -137,7 +139,8 @@ void send_pose() {
     const auto &map = automap_snapshot();
     if (map.floor == 0)
         return;
-    const auto bytes = online_pose_encode({map.floor, map.player_x, map.player_z, map.player_yaw});
+    const auto bytes = online_pose_encode(
+        {map.floor, map.player_x, map.player_z, map.player_yaw, own_weapon, own_attack_phase});
     vo_broadcast(online.session.get(), VO_CHANNEL_STATE, bytes.data(), bytes.size());
 }
 
@@ -238,11 +241,17 @@ std::vector<OnlinePlayer> online_players_on_floor(int floor) {
 #if KF_ONLINE
     for (const auto &[peer, pose] : ext::online.players)
         if (pose && pose->floor == floor)
-            players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw});
+            players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
+                pose->attack_phase});
 #else
     (void)floor;
 #endif
     return players;
+}
+
+void online_publish_weapon(u8 weapon, s16 attack_phase) {
+    ext::own_weapon = weapon;
+    ext::own_attack_phase = attack_phase;
 }
 
 }

@@ -499,10 +499,17 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..42ba9d5bc6816d9c6920539c6f4c457dedbc432b 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..cf1601ff55a1e4d2cdeeaf2eafd75eadb96d0d2b 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
-@@ -12,7 +12,6 @@
+@@ -6,13 +6,13 @@
+ #include <kf/game/resources.h>
+ #include <kf/game/save.h>
+ #include <kf/game/session.h>
++#include <kf/platform/online_players.h>
+ 
+ #include <cstdio>
+ #include <cstdlib>
  #include <cstring>
  
  enum {
@@ -510,7 +517,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..42ba9d5bc6816d9c6920539c6f4c457d
      ENDING_MASTER_FADE_STEP_Q8 = 128
  };
  
-@@ -20,8 +19,11 @@ static std::uint64_t frame_pacer_last_tick;
+@@ -20,8 +20,11 @@ static std::uint64_t frame_pacer_last_tick;
  
  GameResult game_result;
  
@@ -522,7 +529,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..42ba9d5bc6816d9c6920539c6f4c457d
      kf::language_apply_pending();
      game_graphics_runtime = {};
      actor_state = {};
-@@ -40,13 +42,29 @@ void game_main_loop(void)
+@@ -40,13 +43,29 @@ void game_main_loop(void)
      common_resources_load();
      kf::host_language_status("Language ready.");
      game_initialize_session();
@@ -552,15 +559,18 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..42ba9d5bc6816d9c6920539c6f4c457d
          player_update();
          if (game_result != GameResult::Running) {
              break;
-@@ -59,6 +77,7 @@ void game_main_loop(void)
+@@ -59,6 +78,10 @@ void game_main_loop(void)
          effect_pool_update();
          map_event_pool_update();
          render_frame(&player_position_snapshot, &player_rotation_snapshot);
 +        automap_publish();
++        // PC extension (online play): what this player holds and how far through a swing, for the
++        // others in the room to draw.
++        kf::online_publish_weapon(kf_enum_encode<u8>(player_state.equipped_weapon_id), player_state.weapon_attack_phase);
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
-@@ -88,7 +107,9 @@ void game_shutdown(void)
+@@ -88,7 +111,9 @@ void game_shutdown(void)
  
  void frame_pacer_wait(void)
  {
@@ -1842,105 +1852,294 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d58ad488d9af9ecbf8badbc026d7497319145ca
+index 0000000000000000000000000000000000000000..f84a98234ef6c8c4d161b9d3e380d3684206f0d7
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,96 @@
-+// PC extension (online play): another player in the room, drawn in the world.
-+// A stand-in until players have a model of their own: each borrows a player-sized enemy or
-+// NPC model of the current floor, in its rest pose. Only the current floor's models can be
-+// borrowed, as their textures are in VRAM only while their floor is loaded.
+@@ -0,0 +1,285 @@
++// PC extension (online play): another player in the room, drawn in the world as the knight
++// (docs/PLAYER_MODEL.md). Their right forearm is the game's own first-person weapon model
++// (WEPON/WEPxx.MIM: a gauntlet holding the weapon) on the knight's elbow, posed by its clip at
++// their attack phase, so others see the swing its player sees.
 +#include <kf/platform/prelude.h>
-+#include <kf/game/asset.h>
++#include <kf/game/equipment.h>
 +#include <kf/game/graphics.h>
 +#include <kf/game/render.h>
++#include <kf/lib/animation.h>
++#include <kf/lib/byte_reader.h>
++#include <kf/lib/codec.h>
++#include <kf/lib/fixed_math.h>
 +#include <kf/lib/geometry_types.h>
++#include <kf/lib/item_types.h>
 +#include <kf/lib/map_data.h>
 +#include <kf/lib/math.h>
++#include <kf/lib/player_stats_types.h>
++#include <kf/lib/resource_file.h>
++#include <kf/lib/tmd.h>
 +
 +#include <algorithm>
++#include <array>
 +#include <cmath>
 +#include <optional>
++#include <vector>
 +
-+struct OnlinePlayerStandIn {
-+    u16 first_asset;    // the bank it is looked for in
-+    u16 end_asset;
-+    u32 vertex_count;   // which model it is: banks hold different models from floor to floor
-+};
-+
-+// In order of preference; the first one loaded is borrowed. Player-sized (1500 to 1800 tall).
-+static constexpr OnlinePlayerStandIn online_player_stand_ins[] = {
-+    {KF_ASSET_ACTOR_FIRST, KF_ASSET_MAP_EVENT_FIRST, 334},   // an enemy of floors 1 to 3
-+    {KF_ASSET_ACTOR_FIRST, KF_ASSET_MAP_EVENT_FIRST, 417},   // an enemy of floors 3 and 4
-+    {KF_ASSET_ACTOR_FIRST, KF_ASSET_MAP_EVENT_FIRST, 328},   // an enemy of floors 4 and 5
-+    {KF_ASSET_MAP_EVENT_FIRST, KF_ASSET_WEAPON, 314},        // an NPC of floors 2 and 5
++enum {
++    ONLINE_PLAYER_WEAPON_COUNT = 16,
++    ONLINE_PLAYER_WEAPON_FILE_BYTES = 49152,  // KF_WEAPON_ASSET_BUFFER_BYTES
++    ONLINE_PLAYER_ARM_SCALE_SHIFT = 1,        // the first-person forearm is twice a body's
++    ONLINE_PLAYER_GUARD_PHASE = KF_WEAPON_ATTACK_PHASE_END - 1,  // a swing's end: a low guard
++    ONLINE_PLAYER_ATTACK_BLEND = 600,         // phase over which the guard turns into the swing
++    ONLINE_PLAYER_ARM_RAISE = -587,           // the upper arm lifts forward through a swing (0.9 rad)
++    ONLINE_PLAYER_HIT_PHASE = 3072,           // PLAYER_WEAPON_HIT_PHASE
++    ONLINE_PLAYER_COLICHEMARDE_HIT_PHASE = 1000
 +};
 +
 +static constexpr float ONLINE_PLAYER_TILE_SIZE = KF_MAP_TILE_SIZE;
 +
-+static s32 online_player_cell(float cells)
++// A weapon's first-person model, loaded the first time someone holds it.
++struct OnlineWeaponModel {
++    std::vector<u8> bytes;
++    KfTmdResource tmd;
++    KfAnimationData animation;
++    std::vector<SVECTOR> rest;   // the TMD's own vertices, before any morph
++};
++
++struct OnlineWeaponSlot {
++    bool tried;
++    std::optional<OnlineWeaponModel> model;
++};
++
++static std::array<OnlineWeaponSlot, ONLINE_PLAYER_WEAPON_COUNT> online_weapon_slots;
++
++static KfTmdContext online_player_tmd_context(const KfTmdResource &resource)
 +{
-+    return std::clamp(static_cast<s32>(cells), 0, KF_MAP_COLUMNS - 1);
++    auto context = tmd_context();
++    context.current_tmd = resource;
++    context.current_vertices = {};
++    return context;
 +}
 +
-+static std::optional<u16> online_player_stand_in_asset(void)
++static std::optional<OnlineWeaponModel> online_weapon_load(u8 weapon)
 +{
-+    for (const auto &stand_in : online_player_stand_ins) {
-+        for (u16 asset = stand_in.first_asset; asset < stand_in.end_asset; ++asset) {
-+            if (!game_graphics_runtime.asset_registry_tmds[asset].data) {
-+                continue;
-+            }
-+            asset_registry_select(asset);
-+            if (tmd_read_object(tmd_context(), 0).vertex_count == stand_in.vertex_count) {
-+                return asset;
-+            }
++    OnlineWeaponModel model;
++    model.bytes.resize(ONLINE_PLAYER_WEAPON_FILE_BYTES);
++    std::array<char, 16> path = {"WEPON/WEP00.MIM"};
++    path[9] = static_cast<char>('0' + weapon / 10);
++    path[10] = static_cast<char>('0' + weapon % 10);
++    std::size_t size = 0;
++    if (resource_file_load_into(model.bytes.data(), model.bytes.size(), path.data(), &size) != KF_RESOURCE_LOADED)
++        return std::nullopt;
++    model.bytes.resize(size);
++    try {
++        const KfAsset asset({model.bytes.data(), model.bytes.size()});
++        if (!asset.animated() || asset.tmd_offset() % alignof(KfTmdHeader) != 0)
++            return std::nullopt;
++        model.tmd = tmd_resource_view(model.bytes.data() + asset.tmd_offset(), asset.tmd().size());
++        const auto context = online_player_tmd_context(model.tmd);
++        const auto object = tmd_read_object(context, 0);
++        if (object.vertex_count == 0 || object.vertex_count > KF_MORPH_SCRATCH_CAPACITY)
++            return std::nullopt;
++        tmd_select_object_vertices(context, 0);
++        const auto vertices = tmd_vertices(context, static_cast<s32>(object.vertex_count));
++        model.rest.assign(vertices.begin(), vertices.end());
++        model.animation = asset.animation(object.vertex_count);
++    } catch (const kf::codec::Error &error) {
++        error.report();
++        return std::nullopt;
++    }
++    if (model.animation.clips.empty())
++        return std::nullopt;
++    return model;
++}
++
++static const OnlineWeaponModel *online_weapon_model(u8 weapon)
++{
++    if (weapon >= ONLINE_PLAYER_WEAPON_COUNT)
++        return nullptr;
++    auto &slot = online_weapon_slots[weapon];
++    if (!slot.tried) {
++        slot.tried = true;
++        slot.model = online_weapon_load(weapon);
++    }
++    return slot.model ? &*slot.model : nullptr;
++}
++
++static void online_weapon_add_morph(std::span<SVECTOR> vertices, const KfAnimationData &animation,
++    u16 morph_index, s32 blend)
++{
++    if (morph_index >= animation.morphs.size())
++        return;
++    const auto &morph = animation.morphs[morph_index];
++    for (std::size_t i = 0; i < morph.delta_count; ++i) {
++        SVECTOR &vertex = vertices[morph.base_vertex + i];
++        const auto &delta = animation.deltas[morph.first_delta + i];
++        vertex.vx = static_cast<s16>(vertex.vx + ((delta.x * blend) >> KF_FIXED12_BITS));
++        vertex.vy = static_cast<s16>(vertex.vy + ((delta.y * blend) >> KF_FIXED12_BITS));
++        vertex.vz = static_cast<s16>(vertex.vz + ((delta.z * blend) >> KF_FIXED12_BITS));
++    }
++}
++
++// The model's vertices at a phase of its clip, as render_bind_instance_vertices samples one.
++static void online_weapon_sample(const OnlineWeaponModel &model, u16 phase, std::span<SVECTOR> vertices)
++{
++    const auto &animation = model.animation;
++    const auto &clip = animation.clips[kf_enum_encode<u16>(KF_ANIMATION_CLIP_FIRST)];
++    std::copy(model.rest.begin(), model.rest.end(), vertices.begin());
++    std::size_t index = clip.keyframe_count - 1;
++    s32 blend = KF_FIXED12_ONE;
++    u32 phase_end = 0;
++    for (std::size_t i = 0; i < clip.keyframe_count; ++i) {
++        const auto &keyframe = animation.keyframes[clip.first_keyframe + i];
++        const u32 phase_start = phase_end;
++        phase_end += keyframe.duration;
++        if (phase < phase_end) {
++            const s32 forward = static_cast<s32>(((phase - phase_start) << KF_FIXED12_BITS) / keyframe.duration);
++            index = i;
++            blend = keyframe.reverse ? KF_FIXED12_ONE - forward : forward;
++            break;
 +        }
 +    }
-+    return std::nullopt;
++    const auto &keyframe = animation.keyframes[clip.first_keyframe + index];
++    for (std::size_t i = 0; i < keyframe.morph_count; ++i)
++        online_weapon_add_morph(vertices, animation, animation.indices[keyframe.first_morph + i], KF_FIXED12_ONE);
++    online_weapon_add_morph(vertices, animation, keyframe.rest_morph, blend);
++}
++
++// The arm at an attack phase: at rest the swing's last frame, a low guard; through the first
++// ONLINE_PLAYER_ATTACK_BLEND of a swing the guard blends into it. Halved to the knight's size.
++static std::span<SVECTOR> online_weapon_pose(const OnlineWeaponModel &model, s16 attack_phase)
++{
++    const auto count = model.rest.size();
++    auto vertices = std::span(game_graphics_runtime.morph_scratch).first(count);
++    const bool attacking = attack_phase != kf::online_not_attacking;
++    online_weapon_sample(model, attacking ? attack_phase : ONLINE_PLAYER_GUARD_PHASE, vertices);
++    if (attacking && attack_phase < ONLINE_PLAYER_ATTACK_BLEND) {
++        std::array<SVECTOR, KF_MORPH_SCRATCH_CAPACITY> guard;
++        online_weapon_sample(model, ONLINE_PLAYER_GUARD_PHASE, std::span(guard).first(count));
++        for (std::size_t i = 0; i < count; ++i) {
++            vertices[i].vx = static_cast<s16>(guard[i].vx + (vertices[i].vx - guard[i].vx) * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
++            vertices[i].vy = static_cast<s16>(guard[i].vy + (vertices[i].vy - guard[i].vy) * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
++            vertices[i].vz = static_cast<s16>(guard[i].vz + (vertices[i].vz - guard[i].vz) * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
++        }
++    }
++    for (auto &vertex : vertices) {
++        vertex.vx = static_cast<s16>(vertex.vx >> ONLINE_PLAYER_ARM_SCALE_SHIFT);
++        vertex.vy = static_cast<s16>(vertex.vy >> ONLINE_PLAYER_ARM_SCALE_SHIFT);
++        vertex.vz = static_cast<s16>(vertex.vz >> ONLINE_PLAYER_ARM_SCALE_SHIFT);
++    }
++    return vertices;
++}
++
++// How far the right upper arm lifts: forward through the wind-up, held to the hit, back by the end.
++static s16 online_player_arm_raise(u8 weapon, s16 attack_phase)
++{
++    if (attack_phase == kf::online_not_attacking)
++        return 0;
++    const s32 hit = weapon == kf_enum_encode<u8>(KF_ITEM_COLICHEMARDE) ? ONLINE_PLAYER_COLICHEMARDE_HIT_PHASE : ONLINE_PLAYER_HIT_PHASE;
++    if (attack_phase < ONLINE_PLAYER_ATTACK_BLEND)
++        return static_cast<s16>(ONLINE_PLAYER_ARM_RAISE * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
++    if (attack_phase < hit)
++        return ONLINE_PLAYER_ARM_RAISE;
++    return static_cast<s16>(ONLINE_PLAYER_ARM_RAISE * (KF_WEAPON_ATTACK_PHASE_END - attack_phase)
++        / (KF_WEAPON_ATTACK_PHASE_END - hit));
++}
++
++struct OnlinePlayerPlacement {
++    MATRIX rotation;   // the part's orientation in the world
++    VECTOR position;   // its pivot in the world
++};
++
++static void online_player_draw_object(const KfTmdResource &tmd, u16 object_index,
++    std::span<const SVECTOR> vertices, const OnlinePlayerPlacement &placement)
++{
++    SVECTOR relative_position;
++    MATRIX composed;
++    MATRIX light;
++
++    relative_position = VECTOR{
++        placement.position.vx - game_graphics_runtime.render_state.view_position.vx,
++        placement.position.vy - game_graphics_runtime.render_state.view_position.vy,
++        placement.position.vz - game_graphics_runtime.render_state.view_position.vz}.narrowed();
++    kf::render_place_model(composed, game_graphics_runtime.render_state.view_matrix, relative_position);
++    kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, placement.rotation, composed);
++    kf::matrix_multiply_rotation(render_light_matrices[KF_RENDER_LIGHT_ACTOR], placement.rotation, light);
++    auto context = tmd_context();
++    context.current_tmd = tmd;
++    const auto object = tmd_read_object(context, object_index);
++    if (vertices.empty())
++        tmd_select_object_vertices(context, object_index);
++    else
++        context.current_vertices = vertices;
++    tmd_project_vertices(static_cast<s32>(object.vertex_count), &composed, game_graphics_runtime.render_state.projection);
++    render_enqueue_tmd(object_index, 0, &light);
++}
++
++static VECTOR online_player_offset(const MATRIX &rotation, const SVECTOR &to, const SVECTOR &from)
++{
++    return kf::matrix_apply_rotation(rotation, VECTOR{to.vx - from.vx, to.vy - from.vy, to.vz - from.vz}.narrowed());
++}
++
++static void online_player_draw_weapon(const kf::OnlinePlayer &player, const OnlineWeaponModel &model,
++    const MATRIX &body, const OnlinePlayerPlacement &upper_arm)
++{
++    const auto &joints = kf::online_player_model_joints();
++    const auto &shoulder = joints[kf_enum_encode<u8>(kf::OnlinePlayerPart::UpperArmRight)].pivot;
++    MATRIX turned;
++    MATRIX view_model;
++    // The first-person orientation, turned a half turn: the camera looks along +z, actors along -z.
++    kf::matrix_set_rotation_xyz(weapon_records.entries[player.weapon].render_rotation, view_model);
++    kf::matrix_set_rotation_xyz(SVECTOR{0, KF_ANGLE_HALF_TURN, 0}, turned);
++    kf::matrix_multiply_rotation(turned, view_model, view_model);
++    OnlinePlayerPlacement placement;
++    kf::matrix_multiply_rotation(body, view_model, placement.rotation);
++    placement.position = upper_arm.position;
++    placement.position += online_player_offset(upper_arm.rotation, kf::online_player_model_right_elbow(), shoulder);
++    online_player_draw_object(model.tmd, 0, online_weapon_pose(model, player.attack_phase), placement);
 +}
 +
 +void render_online_player(const kf::OnlinePlayer &player)
 +{
-+    const auto asset = online_player_stand_in_asset();
-+    if (!asset) {
-+        return;
-+    }
-+    const s32 cell_x = online_player_cell(player.x);
-+    const s32 cell_z = online_player_cell(player.z);
-+    const VECTOR position = {
++    const auto knight = tmd_resource_view(kf::online_player_model_tmd().data(), kf::online_player_model_tmd().size());
++    const auto &joints = kf::online_player_model_joints();
++    const s32 cell_x = std::clamp(static_cast<s32>(player.x), 0, KF_MAP_COLUMNS - 1);
++    const s32 cell_z = std::clamp(static_cast<s32>(player.z), 0, KF_MAP_COLUMNS - 1);
++    const VECTOR feet = {
 +        static_cast<s32>(player.x * ONLINE_PLAYER_TILE_SIZE),
 +        map_base_floor_height(cell_x, cell_z),
 +        static_cast<s32>(player.z * ONLINE_PLAYER_TILE_SIZE)};
 +    // The automap's yaw, back in the game's angle units, is the camera's heading h; the player
-+    // walks along (-sin h, cos h). Actors and map events walk along (-sin a, -cos a), their
-+    // models' front, so the model faces where the camera looks at a = half turn - h.
++    // walks along (-sin h, cos h). Actors walk along (-sin a, -cos a), their models' front, so the
++    // knight faces where the camera looks at a = half turn - h.
 +    const auto heading = static_cast<s32>(std::lround(player.yaw * (KF_ANGLE_FULL_TURN / 6.2831853f)));
-+    const SVECTOR rotation = {0, static_cast<s16>((KF_ANGLE_HALF_TURN - heading) & KF_ANGLE_WRAP_MASK), 0};
++    MATRIX body;
++    kf::matrix_set_rotation_xyz(SVECTOR{0, static_cast<s16>((KF_ANGLE_HALF_TURN - heading) & KF_ANGLE_WRAP_MASK), 0}, body);
 +
-+    SVECTOR relative_position;
-+    MATRIX model;
-+    MATRIX composed;
-+    MATRIX light;
-+    relative_position = VECTOR{
-+        position.vx - game_graphics_runtime.render_state.view_position.vx,
-+        position.vy - game_graphics_runtime.render_state.view_position.vy,
-+        position.vz - game_graphics_runtime.render_state.view_position.vz}.narrowed();
-+    kf::render_place_model(composed, game_graphics_runtime.render_state.view_matrix, relative_position);
-+    kf::matrix_set_rotation_xyz(rotation, model);
-+    // Lit as what it borrows from: an actor's lights turn with it, a map event's do not.
-+    const MATRIX *lights = &game_graphics_runtime.map_event_light_matrix;
-+    if (*asset < KF_ASSET_MAP_EVENT_FIRST) {
-+        kf::matrix_multiply_rotation(render_light_matrices[KF_RENDER_LIGHT_ACTOR], model, light);
-+        lights = &light;
++    const OnlineWeaponModel *weapon = online_weapon_model(player.weapon);
++    const auto upper_arm_right = kf_enum_encode<u8>(kf::OnlinePlayerPart::UpperArmRight);
++    std::array<OnlinePlayerPlacement, kf::online_player_part_count> placements;
++    for (std::size_t i = 0; i < joints.size(); ++i) {
++        const auto &joint = joints[i];
++        MATRIX bend;
++        kf::matrix_set_rotation_xyz(SVECTOR{
++            static_cast<s16>(i == upper_arm_right ? online_player_arm_raise(player.weapon, player.attack_phase) : 0), 0, 0}, bend);
++        auto &placement = placements[i];
++        if (joint.parent < 0) {
++            kf::matrix_multiply_rotation(body, bend, placement.rotation);
++            placement.position = feet;
++            placement.position += kf::matrix_apply_rotation(body, joint.pivot);
++        } else {
++            const auto parent_index = static_cast<std::size_t>(static_cast<u8>(joint.parent));
++            const auto &parent = placements[parent_index];
++            kf::matrix_multiply_rotation(parent.rotation, bend, placement.rotation);
++            placement.position = parent.position;
++            placement.position += online_player_offset(parent.rotation, joint.pivot, joints[parent_index].pivot);
++        }
++        // The weapon model brings its own forearm.
++        if (weapon && i == kf_enum_encode<u8>(kf::OnlinePlayerPart::ForearmRight))
++            continue;
++        online_player_draw_object(knight, static_cast<u16>(i), {}, placement);
 +    }
-+    kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, model, composed);
-+    // The rest pose, as an actor or map event is drawn when the animation cache is full: the
-+    // cache's records name their owner's slot, and a stand-in has none that outlives a reset.
-+    asset_registry_select(*asset);
-+    const auto object = tmd_read_object(tmd_context(), 0);
-+    tmd_select_object_vertices(tmd_context(), 0);
-+    tmd_project_vertices(object.vertex_count, &composed, game_graphics_runtime.render_state.projection);
-+    render_enqueue_tmd(0, 0, lights);
++    if (weapon)
++        online_player_draw_weapon(player, *weapon, body, placements[upper_arm_right]);
 +}
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
 index a85c41405b551858ed7cb706b062dbee0826b2a9..f5823ec3c0a5cdad674bd09554386c36b48821c6 100644

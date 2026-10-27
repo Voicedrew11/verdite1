@@ -173,3 +173,8 @@ get online play by writing only their own game layer.
   turn. It is drawn in its rest pose: the animation cache's records name their owner's slot, and
   a stand-in has none that outlives a game reset. The pose (floor, x, z, yaw) has no height, so
   a player on a stair or in the air is drawn on the cell's floor.
+- 2026-10-26: the stand-in is replaced by a knight of our own in the game's style, holding the
+  player's real weapon: the game's first-person weapon model (a gauntlet with the weapon) on the
+  knight's elbow, posed by its clip at the attack phase the pose now carries (version 2, 17
+  bytes: weapon and phase). [PLAYER_MODEL.md](PLAYER_MODEL.md) has the model, its tools and
+  what is left (walking, smoother swings, height).
