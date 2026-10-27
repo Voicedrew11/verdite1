@@ -1,6 +1,6 @@
 # Coop plan
 
-**Draft, 2026-10-26, red-teamed three times.** Nothing here is built except the other players'
+**Draft, 2026-10-26, red-teamed three times; its table of the player's reads done 2026-10-27.** Nothing here is built except the other players'
 knight ([PLAYER_MODEL.md](PLAYER_MODEL.md)). When a section changes, edit it and add a line to
 "Changes" at the end rather than leaving the old text standing. Transport, rooms and the service
 are [NETWORKING_PLAN.md](NETWORKING_PLAN.md)'s.
@@ -140,8 +140,8 @@ a floor that ignores them. So authority is split by what causes a thing, not by 
   never a second copy to merge, even when the host plays alone between sessions. Key spends are
   not a floor's: they go through the host, the first claim wins and a door refuses the second.
 - **The game's own snapshot writes are guarded.** `map_world_state_persist` runs on revival
-  (`player_death.cpp`), at a restore point (`map_scripts.cpp`) and on leaving a floor
-  (`player_update.cpp`, `map_events.cpp`). On a machine that does not own the floor, those calls
+  (`player_death.cpp`), at a save point (`map_scripts.cpp`), on F2's quick save and on leaving
+  a floor (`player_update.cpp`, `map_events.cpp`). On a machine that does not own the floor, those calls
   write only its player's part; otherwise its stale copy would overwrite the owner's.
 - **NPC progress comes from the world, not the loader.** On loading a floor the game sets each
   NPC's dialogue stage to the loading player's `highest_floor`, capped by the NPC's limit, and can
@@ -165,6 +165,72 @@ player's:
 | `stock`, player bank | party | the pack; what each player wears is marked in it |
 | `stock`, the two shop banks | world | only the Gold Cross is limited (`shop_menu_buy`, `item.cpp`) |
 | `learned` (`KfMagicLearningState`) | player | magic learned |
+
+## The player's reads
+
+Order's first step, done 2026-10-27 against the decomp at the pin (`build/<preset>/decomp_src`):
+every read of `player_state`, `actor_state.player_position` and `camera_position` in the floor
+code, directly or through `player_distance_to_point`, `player_apply_damage` and the like, classed
+as the **triggerer's** (runs on the machine of the player who caused it, against that player),
+the **owner's** (the floor's owner runs it, choosing among the players on the floor) or the
+**world's** (the shared record). The player's own update, menus and drawing read their own player
+and are left out. Every read fits one of the three; the ones that changed the plan are marked †.
+
+| where | what it reads | class |
+|---|---|---|
+| `map_ambient_script_floor3` | cell on the healing row: vitals, Resist Fire and Bless | triggerer's |
+| `map_ambient_script_floor5` | cell and facing: the boss reveal, `boss_encounter_started` | triggerer's; writes the world |
+| `map_ambient_script_floor1` † | cell entering, then leaving, two regions: wakes an actor, breaks the cross, removes an object | triggerer's, but its stage is two steps (below) |
+| `map_interaction_dispatch` | the probe ahead of the camera: talk, shops, chests, pickups, gold, doors, switches, restore and save points, signboards | triggerer's; writes the world, and the pack and purse |
+| `map_action_script_floor1`, `3` † | the pack holding the Dragon Chalice (opens the passage), the Wind Blade Bracelet (teaches Wind Cutter), run after any interaction on the floor | the pack is the party's; Wind Cutter is learned by whoever interacts on floor 3 (below) |
+| `map_action_script_floor2`, `5`, `map_event_interact` | a dialogue just started: the floor-2 transfer, the weapon transform, the exchanges | triggerer's; writes the world |
+| `player_use_item` (keys, seal stones, the Dragon Chalice) | the probe ahead: `map_object_pool_trigger_link` | triggerer's; writes the world |
+| `player_use_item` (the Harp) † | floor 2 or 3: a floor deformation, an effect that raises cells of the height grid over time | started by the triggerer, then the floor's shape (below) |
+| `player_warp_trigger_update` | the warp cells, the ending with `boss_defeat` | triggerer's |
+| `player_update`, `magic.cpp` (attacks, spells) † | the actor in the aiming cone, kept in `actor_state.player_target`; the hit applied by `actor_apply_damage` | triggerer's; the hit and the aim go to the owner (below) |
+| `actor_apply_damage` † | the hit's credit (`KF_ACTOR_DAMAGE_CREDIT_PLAYER`): experience on a kill, magic or power training on any hit | experience to every player on the floor; training to the hitter only |
+| `actor_apply_damage`, `actor_play_sound_at_phase`, the death and post-death actions | current floor is 5 or 4 (the boss, the floor-4 transform) | the floor, so the owner's |
+| `actor_player_distance` (activation, active range, range exit), `actor_bearing_to_player`, pursuit | `actor_state.player_position` | owner's: the nearest player |
+| `actor_try_activate_nearby` | `player_state.allow_near_actor_spawn`, set for one update after a load or warp | owner's: kept per player, so only a player who has just arrived lets an enemy spawn beside them |
+| `actor_try_attack_player`, jump contact | the player's position at the attack frame, `player_apply_damage` | owner's choice of target; the hit judged by the victim (attack event) |
+| actor spells (`actor_behavior.cpp`, the aim in the cone) | `player_distance_to_point_in_cone`, `player_position` | owner's: aimed at a player in the cone |
+| `effect_update_homing_direction` (`KF_EFFECT_HOMING_PLAYER`), the actor-spawner effect | `camera_position` every update | owner's: the target chosen at launch and kept in the effect |
+| effects' hits (`effect_dispatch.cpp`, `effect_update.cpp`), radial blasts | `collision_query_world`'s player test, `player_apply_radial_damage` | judged by the victim, as attack events |
+| `effect_magic_power` | the player's magic for an effect flagged `KF_EFFECT_USE_PLAYER_MAGIC` | the caster's; on the owner, the weapon transform's and the boss death's blasts read the owner's magic (accepted) |
+| `collision_query_world` | the cell's occupant count, then the one player | each machine: remote players in the grid and in this test |
+| `map_object` projectile emitters | `player_distance_to_point` | owner's: any player in range |
+| `map_object` reveal pieces | current floor; `revealed_piece_count`, `revival_enabled` | world |
+| orbit sounds, `audio_*`, the warp shimmer's facing | the camera | each machine's own presentation |
+| `map_event_refresh_dialogue_stage`, `map_load` floor 2 | `highest_floor` | world (the world's highest floor) |
+| `map_world_state_persist` | current floor: revival, the **save point** (not the restore point), F2 quick save, leaving a floor | guarded: the owner's only |
+| `map_variant_assets_load`, `player_warp_same_floor` † | `player_state.map_variant` | each machine's drawing (below) |
+
+What the table changed:
+
+- **Floor 1's two-step triggers keep their stage per player.** The cross and the removed object
+  wait for one player to enter a region and then leave another. With the stage in the world, one
+  player's entry and another's position outside would finish it. The stage is the triggerer's
+  until it completes; only completion is a world write.
+- **The floor's shape is applied on every machine on the floor.** Copy regions (passages
+  opening), the Harp's floor deformation and doors change what each player collides with, so the
+  owner's world writes are not only recorded but applied by every player on the floor, the Harp's
+  deformation started on each from an event with its update number.
+- **The aim goes with the hit.** `actor_state.player_target` lets the actor a player aims at
+  choose its next action at once (`actor.cpp`); it goes to the owner with the player's hits, one
+  per player.
+- **Floor 5's variants are not regions of their own.** A variant swaps only the actor models
+  (`CHR<n>.MIM` into the actor asset slots); the placements, definitions and actor pool are the
+  floor's. Floor 5's placements (`B5/MIXA.DAT`, 55 actors) are not split by the gates: the
+  activation range is 14 cells, and the entry area's actors at (39,61) and (35,64) are within it
+  of the ending area's arrival at (39,47), so the game itself already runs some actors with
+  another variant's models out of sight. The floor stays the unit; the owner times every actor by
+  its own loaded variant, as the game does, and a machine in another variant draws a puppet with
+  its own models, the clip clamped to what that model has.
+- **More of the world blocks.** Besides menus, the boss reveal and the weapon transform:
+  the floor-4 transform (`actor_transform_definition5_to6`) runs a render loop from the owner's
+  actor update, and the floor-2 transfer fade, a chest's lid, an NPC's talk animation
+  (`map_event_advance_animation_blocking`), signboards and the warp shimmer loop on the triggering
+  machine. All join the second spike.
 
 ## Items
 
@@ -233,7 +299,7 @@ player's:
 
 ## Order
 
-1. **The table of the player's reads**, before any code: every read of `player_state`,
+1. **Done 2026-10-27** (The player's reads). **The table of the player's reads**, before any code: every read of `player_state`,
    `actor_state.player_position` and `camera_position` in the floor code (scripts, objects, events,
    actors, effects, collision), each classed as the triggerer's, the owner's or the world's, and
    every read of `player_state.map_variant` (whether floor 5's variants are regions). It is
@@ -242,7 +308,7 @@ player's:
 2. Two spikes, since either can sink the model and the knight cannot: enemies that target any of
    several players (a per-actor target in place of `actor_state.player_position`), and a world
    that does not stop while one player is held (the world update called from a menu's frame and
-   from the boss reveal's and weapon transform's loops). If either fails, the model changes.
+   from every blocking loop in the table). If either fails, the model changes.
 3. The smooth knight: poses numbered by update, a playback buffer, swings as events, height.
    Needed by this model whatever else changes. Then the room's size measured: knights drawn and
    poses taken on the weakest platform, the host's upload.
@@ -363,3 +429,12 @@ player's:
   the next, restarted from its last record rather than rebuilt from puppets. A dead player
   watches any living one and comes back beside them; the wipe is everyone down. Poses go only to
   players on the same floor.
+- 2026-10-27: the table of the player's reads (Order's first step). Every read fits the
+  triggerer's, the owner's or the world's, so the model holds, with five changes: floor 1's
+  two-step triggers keep their stage per player, the floor's shape (copy regions, the Harp's
+  deformation, doors) is applied on every machine on the floor, the aim goes to the owner with
+  the hits, training goes to the hitter while experience goes to everyone, and floor 5's variants
+  are not regions (they swap only models, and the game already runs actors across them). The
+  floor-4 transform, the floor-2 transfer, chests, talk animations, signboards and the warp
+  shimmer also block and join the second spike. The guarded snapshot writes are at the save point
+  and F2, not the restore point.
