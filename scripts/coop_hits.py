@@ -19,6 +19,7 @@ import coop_pair  # noqa: E402
 
 PORTS = (27941, 27942)  # not coop_pair.py's, title_pair.py's nor coop_floors.py's
 FIGHT = (41, 65)  # two of floor 1's enemies wake here
+SWUNG_AT = (25, 12)  # where the three at (24..26, 10..11) reach a player and swing
 
 
 def experience(game):
@@ -71,6 +72,18 @@ def main():
         games.append(b)
         b.wait("the guest's arrival", lambda s: s["inPlay"])
         coop_floors.wait_part(b, "watching")
+        # B alone beside A's enemies, A where it started: their swings are felt on B's machine.
+        b.run("move %d %d" % SWUNG_AT)
+        b.wait("beside enemies", lambda state: state["cell"] == list(SWUNG_AT))
+        hp = b.run("state")["state"]["hp"]
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and b.run("state")["state"]["hp"] >= hp:
+            time.sleep(0.25)
+        hurt = b.run("state")["state"]["hp"]
+        targets = {actor["target"] for actor in coop_floors.actors(a).values()}
+        check(f"enemies A runs go after B and hurt B on B's machine ({hp} hp before, {hurt} after, targets {targets})",
+              hurt < hp)
+
         a.run("move %d %d" % FIGHT)
         b.run("move %d %d" % FIGHT)
         for game in (a, b):
@@ -96,6 +109,7 @@ def main():
         time.sleep(1)
         check(f"A's own kill of actor {slot} gives B experience ({b_xp} before, {experience(b)} after)",
               killed and experience(b) > b_xp)
+
     finally:
         for game in games:
             game.quit()

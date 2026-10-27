@@ -1,8 +1,8 @@
 diff --git a/include/kf/game/actor.h b/include/kf/game/actor.h
-index 30a2190fa2ba0398ad16f3967485a699f31abeca..ea03253afd8435438fc489c3d27a432a3f75006d 100644
+index 30a2190fa2ba0398ad16f3967485a699f31abeca..280b95d632dac56a73a6f9bdf6c1d3676c67dd1f 100644
 --- a/include/kf/game/actor.h
 +++ b/include/kf/game/actor.h
-@@ -345,6 +345,12 @@ extern KfActorAction actor_try_select_ground_action(
+@@ -345,6 +345,19 @@ extern KfActorAction actor_try_select_ground_action(
      KfActorAction action, s32 distance, u16 chance);
  extern KfActorAction actor_try_select_profiled_action(
      KfActorAction action, s32 distance, KfActorEffectCode effect_code, u16 chance);
@@ -11,10 +11,32 @@ index 30a2190fa2ba0398ad16f3967485a699f31abeca..ea03253afd8435438fc489c3d27a432a
 +extern std::array<u32, KF_ACTOR_CAPACITY> actor_target_players;
 +// Whether the actor being updated goes after this player rather than another in the room.
 +extern bool actor_targets_this_player(void);
++// PC extension (coop): the player a homing effect an actor launched goes after, by effect slot, and
++// the eyes of a player on this floor by that id (this player's camera for this one or one not here).
++extern std::array<u32, KF_EFFECT_CAPACITY> effect_target_players;
++extern VECTOR actor_player_eyes(u32 player);
++// PC extension (coop): whether a swing reaches the player at actor_state.player_position.
++extern bool actor_swing_reaches_player(const KfActor *actor, const KfActorDefinition *definition,
++    u16 minimum_distance, u16 maximum_distance, s16 angle_offset, s16 angle_tolerance);
 +
  extern void actor_try_attack_player(
      u16 minimum_distance, u16 maximum_distance,
      s16 angle_offset, s16 angle_tolerance);
+diff --git a/include/kf/game/collision.h b/include/kf/game/collision.h
+index d95430b514ce0cfa7db0c346e990d660a46d302e..e4cb83894aacf4b9cb77f3883ee35474249bcc4b 100644
+--- a/include/kf/game/collision.h
++++ b/include/kf/game/collision.h
+@@ -37,7 +37,9 @@ enum class KfCollisionKind : u16 {
+     MapEvent,
+     Player,
+     CellFlags,
+-    EffectWithoutTargets
++    EffectWithoutTargets,
++    // PC extension (coop): another player on this floor; detail indexes player_others_on_floor().
++    OtherPlayer
+ };
+ 
+ struct KfCollisionResult {
 diff --git a/include/kf/game/effect.h b/include/kf/game/effect.h
 index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..c734d93227ffca1452fa03deb1f94d01b2b85695 100644
 --- a/include/kf/game/effect.h
@@ -158,10 +180,18 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..af66c0d59f86e2537787f1f3aaabad03
 +
  #endif // KF_GAME_MENU_TEXT_H
 diff --git a/include/kf/game/player.h b/include/kf/game/player.h
-index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..c151b44f4a18565bb6247d0048491bd778cfe026 100644
+index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..1e48b2a7fda01d46562bde722cef2940c5d00684 100644
 --- a/include/kf/game/player.h
 +++ b/include/kf/game/player.h
-@@ -218,6 +218,7 @@ extern void player_apply_radial_damage(
+@@ -13,6 +13,7 @@
+ #include <kf/lib/player_stats_types.h>
+ 
+ #include <array>
++#include <vector>
+ 
+ struct KfAnimationCacheRecord;
+ 
+@@ -218,11 +219,24 @@ extern void player_apply_radial_damage(
      u16 scale_q12, u16 multiplier_tenths);
  extern s32 player_calculate_damage_component(s32 defender_power, s32 defense, s32 attack);
  extern void player_clear_motion(void);
@@ -169,7 +199,24 @@ index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..c151b44f4a18565bb6247d0048491bd7
  extern void player_death_apply_visual_fade(const MATRIX *color_from, s32 blend);
  extern void player_death_begin(void);
  extern void player_death_restart(void);
-@@ -232,6 +233,8 @@ extern s32 player_distance_to_point_in_cone(
+ extern void player_death_update(void);
+ extern void player_death_update_reverse_fade(void);
++// PC extension (coop): the other players in the room on this floor, as their last poses have
++// them, and player_distance_to_point's test for one of them (docs/COOP_PLAN.md).
++struct KfOtherPlayer {
++    u32 id;
++    VECTOR camera_position;
++    s32 foot_height;
++};
++extern std::vector<KfOtherPlayer> player_others_on_floor(void);
++// The id of player_others_on_floor()[index], or 0 past its end.
++extern u32 player_other_id(std::size_t index);
++extern s32 player_other_distance_to_point(
++    const KfOtherPlayer &other, s32 point_x, s32 point_y, s32 point_z, s32 max_distance, s32 point_height);
+ extern s32 player_distance_to_point(
+     s32 point_x, s32 point_y, s32 point_z, s32 max_distance,
+     s32 point_height);
+@@ -232,6 +246,8 @@ extern s32 player_distance_to_point_in_cone(
  extern void player_equip_weapon(KfObjectId weapon_id);
  extern void game_initialize_session(void);
  extern void game_state_initialize(void);

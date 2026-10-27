@@ -49,6 +49,8 @@ int coop_floors_floor();
 CoopPlayerId coop_floors_self();
 // The player a peer is, 0 for one not in the roster.
 CoopPlayerId coop_floors_player(std::uint64_t peer);
+// The player the online players' list names by `online_id` (OnlinePlayer::id), 0 for none here.
+CoopPlayerId coop_floors_player_online(std::uint32_t online_id);
 // A message straight to one player in the room.
 void coop_floors_send(CoopPlayerId player, const CoopMessage &message);
 // Whether this machine runs the loaded floor's actors.

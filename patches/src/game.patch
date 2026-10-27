@@ -1,5 +1,5 @@
 diff --git a/src/game/actor.cpp b/src/game/actor.cpp
-index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..6d0e3b0534725707e6ebc0430fe0b4c358cee8bf 100644
+index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..81f3c153f3908d9538d571099b7b4d5a291ff23c 100644
 --- a/src/game/actor.cpp
 +++ b/src/game/actor.cpp
 @@ -6,6 +6,7 @@
@@ -33,23 +33,82 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..6d0e3b0534725707e6ebc0430fe0b4c3
          }
          if (definition->action_animations[KF_ACTOR_ANIM_SLOT_DEATH] != KF_ANIMATION_CLIP_NONE) {
              actor_set_action(actor, KF_ACTOR_ACTION_DYING);
-@@ -430,6 +440,10 @@ void actor_try_attack_player(
+@@ -395,17 +405,18 @@ void actor_pool_apply_radial_damage(
+     }
+ }
+ 
+-void actor_try_attack_player(
++// PC extension (coop): whether a swing reaches the player at actor_state.player_position, the test
++// both the attacker's machine and a victim on another machine run.
++bool actor_swing_reaches_player(
++    const KfActor *actor,
++    const KfActorDefinition *definition,
+     u16 minimum_distance,
+     u16 maximum_distance,
+     s16 angle_offset,
+     s16 angle_tolerance)
+ {
+-    KfActorDefinition *definition = actor_state.current_definition;
+-    KfActor *actor = actor_state.current;
+     s32 distance;
+     s32 angle;
+-    KfPlayerStatusFlags status_effect;
+ 
+     distance = actor_distance_to_point(
+         actor,
+@@ -416,13 +427,26 @@ void actor_try_attack_player(
+         definition->collision_height,
+         KF_COLLISION_PLAYER_HEIGHT);
+     if (distance == -1) {
+-        return;
++        return false;
+     }
+     if (distance < minimum_distance) {
+-        return;
++        return false;
+     }
+     angle = actor_bearing_to_player(actor);
+-    if (!angle_within_tolerance(actor->rotation.vy + angle_offset, angle, angle_tolerance)) {
++    return angle_within_tolerance(actor->rotation.vy + angle_offset, angle, angle_tolerance);
++}
++
++void actor_try_attack_player(
++    u16 minimum_distance,
++    u16 maximum_distance,
++    s16 angle_offset,
++    s16 angle_tolerance)
++{
++    KfActorDefinition *definition = actor_state.current_definition;
++    KfActor *actor = actor_state.current;
++    KfPlayerStatusFlags status_effect;
++
++    if (!actor_swing_reaches_player(actor, definition, minimum_distance, maximum_distance, angle_offset, angle_tolerance)) {
+         return;
+     }
+     status_effect = KF_PLAYER_STATUS_NONE;
+@@ -430,6 +454,13 @@ void actor_try_attack_player(
          && (kf::random_next() >> ACTOR_STATUS_CHANCE_RANDOM_SHIFT) < definition->status_effect_chance) {
          status_effect = definition->status_effect;
      }
-+    // PC extension (online play): a swing at another player is theirs to feel, not this one's.
++    // PC extension (coop): a swing at another player is theirs to feel, if it reaches them there.
 +    if (!actor_targets_this_player()) {
++        kf::coop_swing_at_other(actor_target_players[actor_state.current_index],
++            {actor_state.current_index, actor->definition_id, minimum_distance, maximum_distance, angle_offset,
++                angle_tolerance, kf_enum_encode<u16>(status_effect)});
 +        return;
 +    }
      player_apply_damage(
          definition->attack_components[KF_COMBAT_COMPONENT_CUTTING],
          definition->attack_components[KF_COMBAT_COMPONENT_STRIKING],
 diff --git a/src/game/actor_behavior.cpp b/src/game/actor_behavior.cpp
-index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584176943d8 100644
+index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d9009eef891 100644
 --- a/src/game/actor_behavior.cpp
 +++ b/src/game/actor_behavior.cpp
-@@ -7,9 +7,12 @@
+@@ -5,11 +5,15 @@
+ #include <kf/game/game.h>
+ #include <kf/lib/map_data.h>
  #include <kf/lib/random.h>
++#include <kf/platform/coop.h>
  
  #include <algorithm>
 +#include <cmath>
@@ -61,7 +120,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
  
  enum {
      ACTOR_ACTIVATION_RANGE = 28000,
-@@ -48,6 +51,8 @@ enum {
+@@ -48,6 +52,8 @@ enum {
  
  enum {
      ACTOR_BLOCKED_TURN_STEP = KF_ANGLE_FULL_TURN / 64,
@@ -70,7 +129,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
      ACTOR_LONG_DROP_HEIGHT = 600,
      ACTOR_DEEP_DROP_HEIGHT = 3000,
      ACTOR_LONG_DROP_RANDOM_MAX = (kf::random_max + 1) / 2,
-@@ -441,18 +446,27 @@ KfActorMoveResult actor_move_xz_with_collision(const struct KfVecXZs *delta, KfA
+@@ -441,18 +447,27 @@ KfActorMoveResult actor_move_xz_with_collision(const struct KfVecXZs *delta, KfA
      return KF_ACTOR_MOVE_SUCCEEDED;
  }
  
@@ -101,7 +160,67 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
      }
      angle_to_forward_xz(actor->rotation.vy, &delta);
      vector2s_scale_shift11(definition->move_speed, &delta);
-@@ -835,7 +849,9 @@ static void actor_update_pursuit(KfActor *actor, const KfActorDefinition *defini
+@@ -463,6 +478,24 @@ KfActorMoveResult actor_move_along_heading(KfActorMoveDirection direction, KfAct
+     return actor_move_xz_with_collision(&delta, collision_policy);
+ }
+ 
++// PC extension (coop): player_distance_to_point_in_cone for the actor's target, which is this player
++// alone and another player in the room as often (actor_state.player_position).
++static s32 actor_target_distance_in_cone(const VECTOR *point, s16 facing, s32 max_distance, s32 angle_tolerance)
++{
++    const VECTOR &target = actor_state.player_position;
++    const s32 dx = target.vx - point->vx;
++    const s32 dz = target.vz - point->vz;
++    if (dx < -max_distance || max_distance < dx || dz < -max_distance || max_distance < dz) {
++        return KF_PROXIMITY_NONE;
++    }
++    const s32 distance = fixed_vector2_length(dx, dz);
++    if (max_distance < distance) {
++        return KF_PROXIMITY_NONE;
++    }
++    const s16 delta = (vector_xz_to_angle(dx, point->vz - target.vz) - facing) & KF_ANGLE_WRAP_MASK;
++    return angle_tolerance < angle_error_magnitude(delta) ? KF_PROXIMITY_NONE : distance;
++}
++
+ static s32 actor_effect_travel_steps(s32 distance, s32 speed)
+ {
+     return distance <= speed ? 1 : distance / speed;
+@@ -525,7 +558,7 @@ void actor_spawn_action_effect(KfActorEffectCode effect_code, KfActorEffectSlot
+             position = kf::matrix_apply_rotation(matrix, offset);
+             position += actor->position;
+             facing = (KF_ANGLE_HALF_TURN - actor->rotation.vy) & KF_ANGLE_WRAP_MASK;
+-            distance = player_distance_to_point_in_cone(
++            distance = actor_target_distance_in_cone(   // PC extension (coop): at its target
+                 &position, facing, ACTOR_EFFECT_AIM_RANGE, KF_ACTOR_AIM_TOLERANCE);
+             if (distance == -1) {
+                 effect_rotation.vx = 0;
+@@ -588,9 +621,12 @@ void actor_spawn_action_effect(KfActorEffectCode effect_code, KfActorEffectSlot
+                 burst_rotation.vx = actor->rotation.vx;
+                 burst_rotation.vy = facing;
+                 burst_rotation.vz = actor->rotation.vz;
+-                effect_spawn_homing_projectile(definition->effect_owner_id,
+-                    KF_EFFECT_CLASS_20 | KF_EFFECT_COLLISION_TARGET_ACTORS_AND_PLAYER, position, direction,
+-                    KfEffectVariant::Alternate, burst_rotation, KF_EFFECT_HOMING_PLAYER, KF_EFFECT_SOUND_PLAY);
++                // PC extension (coop): it goes after the actor's target.
++                if (KfEffectRecord *homing = effect_spawn_homing_projectile(definition->effect_owner_id,
++                        KF_EFFECT_CLASS_20 | KF_EFFECT_COLLISION_TARGET_ACTORS_AND_PLAYER, position, direction,
++                        KfEffectVariant::Alternate, burst_rotation, KF_EFFECT_HOMING_PLAYER, KF_EFFECT_SOUND_PLAY)) {
++                    effect_target_players[homing - effect_state.records.data()] = actor_target_players[actor_state.current_index];
++                }
+                 break;
+             case KF_EFFECT_KIND_SCATTER_PROJECTILE:
+                 effect_spawn_scatter_projectile(definition->effect_owner_id,
+@@ -672,7 +708,8 @@ void actor_apply_horizontal_movement(void)
+         definition->collision_height,
+         ACTOR_VELOCITY_COLLISION_FLAGS);
+     if (result.kind != KfCollisionKind::None) {
+-        if (result.kind != KfCollisionKind::Player) {
++        // PC extension (coop): another player stops it as this one does.
++        if (result.kind != KfCollisionKind::Player && result.kind != KfCollisionKind::OtherPlayer) {
+             actor->movement_x = -actor->movement_x >> 1;
+             actor->movement_z = -actor->movement_z >> 1;
+         } else {
+@@ -835,7 +872,9 @@ static void actor_update_pursuit(KfActor *actor, const KfActorDefinition *defini
                  + KF_ACTOR_PROGRESS_BACKOFF_BASE;
              return;
          }
@@ -112,7 +231,19 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
              actor->movement_yaw = actor_bearing_to_player(actor);
          }
          break;
-@@ -1029,6 +1045,9 @@ void actor_update_current_action(void)
+@@ -914,6 +953,11 @@ static void actor_update_vertical_motion(KfActor *actor, const KfActorDefinition
+         if (hit.kind == KfCollisionKind::Player) {
+             player_apply_damage(0, ACTOR_JUMP_CONTACT_STRIKING_DAMAGE, 0, KF_PLAYER_STATUS_NONE, 0, 0, KF_FIXED12_ONE, KF_PLAYER_DAMAGE_MULTIPLIER_ONE);
+             actor_bounce_from_jump(actor);
++        } else if (hit.kind == KfCollisionKind::OtherPlayer) {
++            // PC extension (coop): another player is landed on, and feels it on their machine.
++            kf::coop_hit_other_player(player_other_id(hit.detail),
++                {0, ACTOR_JUMP_CONTACT_STRIKING_DAMAGE, 0, 0, 0, 0, KF_FIXED12_ONE, KF_PLAYER_DAMAGE_MULTIPLIER_ONE});
++            actor_bounce_from_jump(actor);
+         } else if (hit.kind == KfCollisionKind::BelowFloor) {
+             floor_height = map_floor_height_at_position(&actor->position);
+             actor_land(actor, floor_height);
+@@ -1029,6 +1073,9 @@ void actor_update_current_action(void)
                  actor->animation_phase = 0;
              }
              actor->movement_yaw = actor_bearing_to_player(actor);
@@ -122,7 +253,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
          }
          if (actor_move_along_heading(KF_ACTOR_MOVE_BACKWARD, KF_ACTOR_COLLISION_STOP) != KF_ACTOR_MOVE_SUCCEEDED) {
              actor->action = KF_ACTOR_ACTION_NONE;
-@@ -1117,7 +1136,10 @@ void actor_update_current_action(void)
+@@ -1117,7 +1164,10 @@ void actor_update_current_action(void)
                      actor->position.vx, actor->position.vy, actor->position.vz,
                      definition->collision_radius, definition->collision_height,
                      ACTOR_VELOCITY_COLLISION_FLAGS);
@@ -135,10 +266,10 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
                  }
                  actor->action_progress = KF_ACTOR_PROGRESS_COMPLETE;
 diff --git a/src/game/actor_pool.cpp b/src/game/actor_pool.cpp
-index 7c6b4de806700422183551d2b4782dd3fa5eaf47..b001a3c183a768fd71aa1a1b1bc00411a97f0704 100644
+index 7c6b4de806700422183551d2b4782dd3fa5eaf47..3ac3bbdf3c968b88eb772d1d2c805a7a9d4f8768 100644
 --- a/src/game/actor_pool.cpp
 +++ b/src/game/actor_pool.cpp
-@@ -4,20 +4,78 @@
+@@ -4,20 +4,90 @@
  #include <kf/lib/codec.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
@@ -199,6 +330,18 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..b001a3c183a768fd71aa1a1b1bc00411
 +    return *nearest;
 +}
 +
++std::array<u32, KF_EFFECT_CAPACITY> effect_target_players;
++
++VECTOR actor_player_eyes(u32 player)
++{
++    for (const auto &other : player_others_on_floor()) {
++        if (other.id == player) {
++            return other.camera_position;
++        }
++    }
++    return player_state.camera_position;
++}
++
 +bool actor_targets_this_player(void)
 +{
 +    return actor_target_players[actor_state.current_index] == KF_ACTOR_TARGET_THIS_PLAYER;
@@ -217,7 +360,7 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..b001a3c183a768fd71aa1a1b1bc00411
              actor_update_awareness();
              if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE) {
                  actor_update_current_action();
-@@ -25,6 +83,7 @@ void actor_pool_update(void)
+@@ -25,6 +95,7 @@ void actor_pool_update(void)
          }
      }
      actor_bind_current(NULL);
@@ -554,6 +697,129 @@ index 0000000000000000000000000000000000000000..a5ad45274cfa6ba796c7b87168323008
 +    }
 +    kf::automap_published();
 +}
+diff --git a/src/game/collision.cpp b/src/game/collision.cpp
+index c5e2bb779e0d28c9090fe7a91fc90c919ec3a1f2..30cacb8f1e3081641dbd1d34aba3d7bfb74ce12b 100644
+--- a/src/game/collision.cpp
++++ b/src/game/collision.cpp
+@@ -1,6 +1,7 @@
+ #include <kf/platform/prelude.h>
+ #include <kf/game/collision.h>
+ #include <kf/game/game.h>
++#include <kf/game/player.h>
+ #include <kf/lib/map_data.h>
+ 
+ #include <array>
+@@ -99,6 +100,19 @@ KfCollisionResult collision_query_world(
+             }
+             return {KfCollisionKind::Player};
+         }
++        // PC extension (coop): another player on this floor, where their last pose has them.
++        const auto others = player_others_on_floor();
++        for (std::size_t index = 0; index < others.size(); ++index) {
++            hit = player_other_distance_to_point(
++                others[index], point_x, point_y, point_z, radius + KF_COLLISION_PLAYER_RADIUS, height);
++            if (hit != KF_PROXIMITY_NONE) {
++                if (query_flags & KF_COLLISION_CAPTURE_TARGET) {
++                    collision_target.position = others[index].camera_position;
++                    collision_target.radius = KF_COLLISION_PLAYER_RADIUS;
++                }
++                return {KfCollisionKind::OtherPlayer, static_cast<u16>(index)};
++            }
++        }
+     }
+     if ((query_flags & KF_COLLISION_SKIP_ACTORS) == 0) {
+         hit = actor_pool_find_overlap(point_x, point_y, point_z, radius, height);
+diff --git a/src/game/effect_dispatch.cpp b/src/game/effect_dispatch.cpp
+index 3578ae5d19d582f500ed0cf75d496ebd7a99196e..a528282a0563efd64dac40afb60fb10b158b27a2 100644
+--- a/src/game/effect_dispatch.cpp
++++ b/src/game/effect_dispatch.cpp
+@@ -5,6 +5,7 @@
+ #include <kf/lib/map_data.h>
+ #include <kf/lib/null.h>
+ #include <kf/lib/random.h>
++#include <kf/platform/coop.h>
+ 
+ #include <array>
+ #include <cstdio>
+@@ -123,6 +124,21 @@ static void effect_begin_lightning_impact(KfEffectRecord *effect, const KfMagicR
+     }
+ }
+ 
++// PC extension (coop): a projectile's hit on this player, or on another player on this floor
++// (KfCollisionKind::OtherPlayer), who feels it on their machine.
++static void effect_hit_player(const KfCollisionResult &collision, u16 cutting_damage, u16 striking_damage,
++    u16 piercing_damage, KfPlayerStatusFlags status, u16 magic_damage, u16 fire_damage, u16 scale_q12,
++    u16 multiplier_tenths)
++{
++    if (collision.kind == KfCollisionKind::OtherPlayer) {
++        kf::coop_hit_other_player(player_other_id(collision.detail), {cutting_damage, striking_damage, piercing_damage,
++            kf_enum_encode<u16>(status), magic_damage, fire_damage, scale_q12, multiplier_tenths});
++        return;
++    }
++    player_apply_damage(cutting_damage, striking_damage, piercing_damage, status, magic_damage, fire_damage,
++        scale_q12, multiplier_tenths);
++}
++
+ // False leaves the projectile traveling, including Wind Cutter's piercing hits.
+ static bool effect_handle_projectile_collision(KfEffectRecord *effect, KfMagicRecord *magic,
+     KfEffectKind kind, u32 radius)
+@@ -164,23 +180,25 @@ static bool effect_handle_projectile_collision(KfEffectRecord *effect, KfMagicRe
+             if (kind == KF_MAGIC_WIND_CUTTER) {
+                 return false;
+             }
+-        } else if (collision_kind == KfCollisionKind::Player) {
++        } else if (collision_kind == KfCollisionKind::Player
++                   // PC extension (coop): each machine's traps fire at its own player.
++                   || (collision_kind == KfCollisionKind::OtherPlayer && kind != KF_EFFECT_KIND_MAP_EMITTER_PROJECTILE)) {
+             if (kind == KF_EFFECT_KIND_EMERGING_PROJECTILE || kind == KF_EFFECT_KIND_MAP_EMITTER_PROJECTILE || kind == KF_EFFECT_KIND_PHYSICAL_PROJECTILE) {
+-                player_apply_damage(
++                effect_hit_player(collision,
+                     impact_magic->damage_components[0],
+                     impact_magic->damage_components[2],
+                     impact_magic->damage_components[1],
+                     KF_PLAYER_STATUS_NONE, 0, 0, KF_FIXED12_ONE, effect->id);
+             } else if (kind == KF_EFFECT_KIND_DARKNESS_PROJECTILE) {
+-                player_apply_damage(
++                effect_hit_player(collision,
+                     0, 0, 0, KF_PLAYER_STATUS_DARKNESS, 0, 0, KF_FIXED12_ONE, effect->id);
+             } else if (kind == KF_EFFECT_KIND_SCATTER_PROJECTILE) {
+-                player_apply_damage(
++                effect_hit_player(collision,
+                     0, 0, 0, KF_PLAYER_STATUS_POISON, 0, 0, KF_FIXED12_ONE, effect->id);
+             } else if (kind == KF_EFFECT_KIND_CURSE_PROJECTILE) {
+-                player_apply_damage(0, 0, 0, KF_PLAYER_STATUS_CURSE, 0, 0, KF_FIXED12_ONE, effect->id);
++                effect_hit_player(collision, 0, 0, 0, KF_PLAYER_STATUS_CURSE, 0, 0, KF_FIXED12_ONE, effect->id);
+             } else {
+-                player_apply_damage(
++                effect_hit_player(collision,
+                     0, 0, 0, KF_PLAYER_STATUS_NONE,
+                     impact_magic->damage_components[0],
+                     impact_magic->damage_components[1],
+@@ -229,17 +247,19 @@ static void effect_update_homing_direction(KfEffectRecord *effect, u8 phase)
+             }
+         } else if (effect->target_mode == KF_EFFECT_HOMING_PLAYER) {
+             s32 aim_height;
++            // PC extension (coop): the player the actor that launched it went after.
++            const VECTOR target = actor_player_eyes(effect_target_players[effect - effect_state.records.data()]);
+             // Pitch uses horizontal distance; the height difference is separate.
+             const s32 target_distance = fixed_vector2_length(
+-                player_state.camera_position.vx - effect->position.vx,
+-                player_state.camera_position.vz - effect->position.vz);
++                target.vx - effect->position.vx,
++                target.vz - effect->position.vz);
+ 
+             effect->direction.vy = vector_xz_to_angle(
+-                player_state.camera_position.vx - effect->position.vx,
+-                effect->position.vz - player_state.camera_position.vz);
++                target.vx - effect->position.vx,
++                effect->position.vz - target.vz);
+             aim_height = effect->position.vy - HOMING_PLAYER_AIM_Y_OFFSET;
+             desired_pitch = vector_xz_to_angle(
+-                aim_height - player_state.camera_position.vy,
++                aim_height - target.vy,
+                 -target_distance);
+             effect->direction.vx = -desired_pitch & KF_ANGLE_WRAP_MASK;
+         } else {
 diff --git a/src/game/effect_map_collision.cpp b/src/game/effect_map_collision.cpp
 index 6379fd779cabcf6588bdddcec2e59e0e990b7262..d05909b793186ce3c156284a4c3e0f6258eafc66 100644
 --- a/src/game/effect_map_collision.cpp
@@ -636,7 +902,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..a554d6d427657516db83e03fe4dec771249064a9 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..56c96aa2c99462819f22107b8998d0c8d3b41c93 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,22 +6,36 @@
@@ -735,7 +1001,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..a554d6d427657516db83e03fe4dec771
      game_shutdown();
  }
  
-@@ -86,14 +121,67 @@ void game_shutdown(void)
+@@ -86,14 +121,76 @@ void game_shutdown(void)
      audio_close_vab(audio_state);
  }
  
@@ -766,6 +1032,12 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..a554d6d427657516db83e03fe4dec771
 +    // PC extension (coop): this player's character, pack and purse go to the host, and what the
 +    // host decided comes into the game.
 +    kf::coop_update();
++    // PC extension (coop): the other players on this floor are in the collision grid while the world
++    // updates, so enemies, NPCs and projectiles meet them.
++    const auto others = player_others_on_floor();
++    for (const auto &other : others) {
++        collision_adjust_cell_occupancy(other.camera_position.vx / KF_MAP_TILE_SIZE, other.camera_position.vz / KF_MAP_TILE_SIZE, 1);
++    }
 +    // PC extension (coop): on a floor another player runs, its actors come from that player.
 +    if (kf::coop_runs_floor()) {
 +        actor_pool_update();
@@ -773,6 +1045,9 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..a554d6d427657516db83e03fe4dec771
 +    map_object_pool_update();
 +    effect_pool_update();
 +    map_event_pool_update();
++    for (const auto &other : others) {
++        collision_adjust_cell_occupancy(other.camera_position.vx / KF_MAP_TILE_SIZE, other.camera_position.vz / KF_MAP_TILE_SIZE, -1);
++    }
 +    world_update_running = false;
 +}
 +
@@ -2811,10 +3086,18 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +        online_player_draw_weapon(player, *weapon, body, placements[upper_arm_right]);
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
-index 33680f578d7627d7bb43b29b77f58b843371198a..a480c67c14b78dde018da7ece8baafe58c7a08bc 100644
+index 33680f578d7627d7bb43b29b77f58b843371198a..df1af79f6e950578bd0affc94a360c02b016f9a6 100644
 --- a/src/game/player_core.cpp
 +++ b/src/game/player_core.cpp
-@@ -226,6 +226,15 @@ void game_initialize_session(void)
+@@ -7,6 +7,7 @@
+ #include <kf/game/resources.h>
+ #include <kf/lib/map_data.h>
+ #include <kf/lib/null.h>
++#include <kf/platform/online_players.h>
+ 
+ #include <algorithm>
+ #include <array>
+@@ -226,6 +227,15 @@ void game_initialize_session(void)
      player_state.compass_enabled = KF_PLAYER_OPTION_ON;
  }
  
@@ -2830,8 +3113,62 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..a480c67c14b78dde018da7ece8baafe5
  void player_get_floor_position(VECTOR &position)
  {
      position = {player_state.camera_position.vx, player_state.foot_height,
+@@ -304,6 +314,53 @@ s32 player_distance_to_point_in_cone(
+     return distance;
+ }
+ 
++// PC extension (coop): the other players on this floor, at their eyes as player_state.camera_position
++// is this player's.
++std::vector<KfOtherPlayer> player_others_on_floor(void)
++{
++    std::vector<KfOtherPlayer> others;
++    for (const auto &other : kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor))) {
++        const VECTOR camera = {static_cast<s32>(other.x * static_cast<float>(KF_MAP_TILE_SIZE)),
++            other.foot_height - KF_PLAYER_CAMERA_HEIGHT,
++            static_cast<s32>(other.z * static_cast<float>(KF_MAP_TILE_SIZE))};
++        if (camera.vx < 0 || camera.vx >= KF_MAP_COLUMNS * KF_MAP_TILE_SIZE
++            || camera.vz < 0 || camera.vz >= KF_MAP_ROWS * KF_MAP_TILE_SIZE) {
++            continue;
++        }
++        others.push_back({other.id, camera, other.foot_height});
++    }
++    return others;
++}
++
++u32 player_other_id(std::size_t index)
++{
++    const auto others = player_others_on_floor();
++    return index < others.size() ? others[index].id : 0;
++}
++
++// As player_distance_to_point, from another player's camera and feet.
++s32 player_other_distance_to_point(
++    const KfOtherPlayer &other, s32 point_x, s32 point_y, s32 point_z, s32 max_distance, s32 point_height)
++{
++    s32 tolerance = point_height;
++    const s32 dx = other.camera_position.vx - point_x;
++    const s32 dz = other.camera_position.vz - point_z;
++    if (dx < -max_distance || max_distance < dx || dz < -max_distance || max_distance < dz) {
++        return KF_PROXIMITY_NONE;
++    }
++    if (point_y != KF_COLLISION_IGNORE_HEIGHT) {
++        tolerance >>= 1;
++        const s32 center = point_y - tolerance + KF_COLLISION_PLAYER_HEIGHT / 2;
++        tolerance += KF_COLLISION_PLAYER_HEIGHT / 2;
++        const s32 dy = other.foot_height - center;
++        if (dy < -tolerance || tolerance < dy) {
++            return KF_PROXIMITY_NONE;
++        }
++    }
++    const s32 distance = fixed_vector2_length(dx, dz);
++    return max_distance < distance ? KF_PROXIMITY_NONE : distance;
++}
++
+ s32 player_distance_to_point(
+     s32 point_x, s32 point_y, s32 point_z, s32 max_distance, s32 point_height)
+ {
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a85c41405b551858ed7cb706b062dbee0826b2a9..7803811967640cd6e7efe532e6852cdc330e4072 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..8dd581f8e6c29065aff4783ed0822a7eb0a3d68c 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
 @@ -1,4 +1,5 @@
@@ -3065,15 +3402,15 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..7803811967640cd6e7efe532e6852cdc
 -        player_state.physical_power -= BLACK_MASK_PHYSICAL_POWER_PENALTY;
 +    if (p.equipped_head_armor_id == KF_ITEM_BLACK_MASK) {
 +        p.physical_power -= BLACK_MASK_PHYSICAL_POWER_PENALTY;
-+    }
-+    if ((p.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
-+        p.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
      }
 -    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
 -        player_state.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
++    if ((p.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
++        p.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
+     }
 +    if (p.physical_power >= KF_PLAYER_POWER_MAX + 1) {
 +        p.physical_power = KF_PLAYER_POWER_MAX;
-     }
++    }
 +    if (p.magic >= KF_PLAYER_POWER_MAX + 1) {
 +        p.magic = KF_PLAYER_POWER_MAX;
 +    }
@@ -3093,6 +3430,45 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..7803811967640cd6e7efe532e6852cdc
  }
  
  void player_increment_physical_power_training(void)
+@@ -505,6 +526,28 @@ void player_apply_damage(
+     }
+ }
+ 
++// PC extension (coop): a blast on the floor this machine runs reaches the other players on it too,
++// each feeling it on their machine. Elsewhere it is a trap's or this player's, and each machine
++// runs its own.
++static void player_apply_radial_damage_to_others(const VECTOR *origin, u32 radius, u16 falloff_q12,
++    const kf::CoopPlayerHitArgs &hit)
++{
++    if (!kf::coop_runs_floor()) {
++        return;
++    }
++    for (const auto &other : player_others_on_floor()) {
++        const s32 distance = player_other_distance_to_point(other, origin->vx, origin->vy, origin->vz, radius, radius);
++        if (distance == KF_PROXIMITY_NONE) {
++            continue;
++        }
++        kf::CoopPlayerHitArgs felt = hit;
++        if (falloff_q12 != KF_FIXED12_ONE) {
++            felt.scale_q12 = radial_damage_attenuated_scale(distance, radius, falloff_q12, hit.scale_q12);
++        }
++        kf::coop_hit_other_player(other.id, felt);
++    }
++}
++
+ void player_apply_radial_damage(
+     const VECTOR *origin,
+     u32 radius,
+@@ -520,6 +563,9 @@ void player_apply_radial_damage(
+     s32 distance;
+     u16 attenuation;
+ 
++    player_apply_radial_damage_to_others(origin, radius, falloff_q12, {cutting_damage, striking_damage,
++        piercing_damage, 0, magic_damage, fire_damage, scale_q12, multiplier_tenths});   // PC extension (coop)
++
+     distance = player_distance_to_point(origin->vx, origin->vy, origin->vz, radius, radius);
+     if (distance == -1) {
+         return;
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
 index a30de1fda381916646ae0970dd325eae46425ce7..61787ae3387d29ac01e495232d33ba284f3542f8 100644
 --- a/src/game/player_update.cpp

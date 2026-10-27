@@ -44,6 +44,34 @@ void coop_hit_actor_elsewhere(const CoopActorHitArgs &hit);
 // player its experience: every other player on the floor gets it too.
 void coop_actor_killed(u16 experience);
 
+// actor_try_attack_player on the floor's owner when the actor goes after another player (by online
+// id, as actor_target_players has it): that player's machine runs the same test against its own
+// position and the actor as it draws it, and feels the swing only if it lands there.
+struct CoopSwingArgs {
+    u16 actor;
+    u8 definition;
+    u16 minimum_distance;
+    u16 maximum_distance;
+    s16 angle_offset;
+    s16 angle_tolerance;
+    u16 status;                  // KfPlayerStatusFlags, rolled here
+};
+void coop_swing_at_other(u32 player, const CoopSwingArgs &swing);
+
+// A projectile, an actor's jump or a blast that reached another player on this floor (by online
+// id), with player_apply_damage's arguments: that player's machine applies it.
+struct CoopPlayerHitArgs {
+    u16 cutting;
+    u16 striking;
+    u16 piercing;
+    u16 status;                  // KfPlayerStatusFlags
+    u16 magic;
+    u16 fire;
+    u16 scale_q12;
+    u16 multiplier_tenths;
+};
+void coop_hit_other_player(u32 player, const CoopPlayerHitArgs &hit);
+
 // map_unload_floor, before the floor goes: the floor's owner sends it live to its heir, and its
 // record to the host.
 void coop_floor_unloading();

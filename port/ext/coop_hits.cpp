@@ -64,6 +64,31 @@ void apply(const CoopActorAim &aim) {
         actor_state.player_target = actor;
 }
 
+// On the victim: the owner's swing tested again against this player where it stands here and the
+// actor as it is drawn here, so no one feels a swing they dodged on their own screen.
+void apply(const CoopSwing &swing) {
+    const KfActor *actor = on_floor(swing.floor) ? actor_seen(swing.slot, swing.definition) : nullptr;
+    if (!actor)
+        return;
+    const KfActorDefinition &definition = actor_state.definitions.entries[swing.definition];
+    const VECTOR target = std::exchange(actor_state.player_position, player_state.camera_position);
+    const bool reaches = actor_swing_reaches_player(actor, &definition, swing.minimum_distance,
+        swing.maximum_distance, swing.angle_offset, swing.angle_tolerance);
+    actor_state.player_position = target;
+    if (!reaches)
+        return;
+    player_apply_damage(definition.attack_components[KF_COMBAT_COMPONENT_CUTTING],
+        definition.attack_components[KF_COMBAT_COMPONENT_STRIKING],
+        definition.attack_components[KF_COMBAT_COMPONENT_PIERCING], kf_enum_decode<KfPlayerStatusFlags>(swing.status),
+        0, 0, KF_FIXED12_ONE, KF_PLAYER_DAMAGE_MULTIPLIER_ONE);
+}
+
+void apply(const CoopPlayerHit &hit) {
+    if (on_floor(hit.floor))
+        player_apply_damage(hit.cutting, hit.striking, hit.piercing, kf_enum_decode<KfPlayerStatusFlags>(hit.status),
+            hit.magic, hit.fire, hit.scale_q12, hit.multiplier_tenths);
+}
+
 void apply(const CoopKill &kill) {
     if (on_floor(kill.floor))
         player_add_experience(static_cast<s16>(kill.experience));
@@ -84,7 +109,8 @@ void send_aim() {
 
 bool coop_hits_message(const CoopMessage &message) {
     return std::holds_alternative<CoopActorHit>(message) || std::holds_alternative<CoopActorAim>(message)
-        || std::holds_alternative<CoopKill>(message);
+        || std::holds_alternative<CoopKill>(message) || std::holds_alternative<CoopSwing>(message)
+        || std::holds_alternative<CoopPlayerHit>(message);
 }
 
 void coop_hits_receive(CoopPlayerId from, const CoopMessage &message) {
@@ -103,6 +129,10 @@ void coop_hits_world_update() {
             apply(*aim);
         else if (const auto *kill = std::get_if<CoopKill>(&message))
             apply(*kill);
+        else if (const auto *swing = std::get_if<CoopSwing>(&message))
+            apply(*swing);
+        else if (const auto *player_hit = std::get_if<CoopPlayerHit>(&message))
+            apply(*player_hit);
     }
     if (coop_floors_runner() != coop_floors_self())
         send_aim();
@@ -123,6 +153,24 @@ void coop_hit_actor_elsewhere(const CoopActorHitArgs &hit) {
         return;
     coop_floors_send(runner, CoopActorHit{coop_floors_floor(), static_cast<std::uint8_t>(hit.actor), hit.definition,
         hit.base_power, hit.damage, hit.scale, hit.credited});
+}
+
+void coop_swing_at_other(u32 player, const CoopSwingArgs &swing) {
+    using namespace ext;
+    const CoopPlayerId victim = coop_floors_player_online(player);
+    if (victim == 0 || swing.actor >= coop_actor_slots)
+        return;
+    coop_floors_send(victim, CoopSwing{coop_floors_floor(), static_cast<std::uint8_t>(swing.actor), swing.definition,
+        swing.minimum_distance, swing.maximum_distance, swing.angle_offset, swing.angle_tolerance, swing.status});
+}
+
+void coop_hit_other_player(u32 player, const CoopPlayerHitArgs &hit) {
+    using namespace ext;
+    const CoopPlayerId victim = coop_floors_player_online(player);
+    if (victim == 0)
+        return;
+    coop_floors_send(victim, CoopPlayerHit{coop_floors_floor(), hit.cutting, hit.striking, hit.piercing, hit.status,
+        hit.magic, hit.fire, hit.scale_q12, hit.multiplier_tenths});
 }
 
 void coop_actor_killed(u16 experience) {

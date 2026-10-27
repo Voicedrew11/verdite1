@@ -421,6 +421,13 @@ CoopPlayerId coop_floors_player(std::uint64_t peer) {
     return player != floors.players.end() ? player->second : 0;
 }
 
+CoopPlayerId coop_floors_player_online(std::uint32_t online_id) {
+    for (const auto &[peer, player] : floors.players)
+        if (static_cast<std::uint32_t>(peer) == online_id)
+            return player;
+    return 0;
+}
+
 void coop_floors_send(CoopPlayerId player, const CoopMessage &message) {
     send_to(player, message);
 }

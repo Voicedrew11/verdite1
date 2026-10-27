@@ -203,6 +203,18 @@ TEST_CASE("a hit, an aim and a kill come back as they were sent") {
     CHECK((kill.floor == 4 && kill.experience == 300));
 }
 
+TEST_CASE("a swing and a hit on a player come back as they were sent") {
+    const CoopSwing swing = round_trip(CoopSwing{2, 40, 7, 100, 2500, -512, 300, 4});
+    CHECK((swing.floor == 2 && swing.slot == 40 && swing.definition == 7));
+    CHECK((swing.minimum_distance == 100 && swing.maximum_distance == 2500));
+    CHECK((swing.angle_offset == -512 && swing.angle_tolerance == 300 && swing.status == 4));
+    const CoopPlayerHit hit = round_trip(CoopPlayerHit{5, 1, 2, 3, 8, 4, 5, 4096, 10});
+    CHECK((hit.floor == 5 && hit.cutting == 1 && hit.striking == 2 && hit.piercing == 3 && hit.status == 8));
+    CHECK((hit.magic == 4 && hit.fire == 5 && hit.scale_q12 == 4096 && hit.multiplier_tenths == 10));
+    CHECK_FALSE(coop_message_decode(encoded(CoopSwing{1, 128, 0, 0, 0, 0, 0, 0})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopPlayerHit{6})));
+}
+
 TEST_CASE("a hit or an aim on a slot past the actors is refused") {
     CHECK_FALSE(coop_message_decode(encoded(CoopActorHit{1, 128, 0, 0, {}, 0, false})));
     CHECK_FALSE(coop_message_decode(encoded(CoopActorAim{1, 200, 0})));

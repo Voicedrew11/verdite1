@@ -148,9 +148,29 @@ struct CoopKill {
     std::uint16_t experience = 0;
 };
 
+// A floor's owner to a player its actor swung at: the victim runs actor_swing_reaches_player against
+// its own position and the actor as it draws it, and feels it only if the swing lands there.
+struct CoopSwing {
+    int floor = 1;
+    std::uint8_t slot = 0;
+    std::uint8_t definition = 0;
+    std::uint16_t minimum_distance = 0, maximum_distance = 0;
+    std::int16_t angle_offset = 0, angle_tolerance = 0;
+    std::uint16_t status = 0;
+};
+// A floor's owner to a player a projectile, jump or blast reached there: player_apply_damage's
+// arguments, applied as they are.
+struct CoopPlayerHit {
+    int floor = 1;
+    std::uint16_t cutting = 0, striking = 0, piercing = 0;
+    std::uint16_t status = 0;
+    std::uint16_t magic = 0, fire = 0;
+    std::uint16_t scale_q12 = 0, multiplier_tenths = 0;
+};
+
 using CoopMessage = std::variant<CoopHello, CoopWelcome, CoopCharacterUpdate, CoopAcknowledged, CoopPackRequest,
     CoopWearRequest, CoopPack, CoopFeedLine, CoopSaveRequest, CoopRoster, CoopFloorAt, CoopFloorOrders,
-    CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites, CoopActorHit, CoopActorAim, CoopKill>;
+    CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites, CoopActorHit, CoopActorAim, CoopKill, CoopSwing, CoopPlayerHit>;
 
 inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
 

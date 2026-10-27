@@ -384,6 +384,44 @@ bool read(CoopByteReader &in, CoopKill &kill) {
     return in.ok() && floor_valid(kill.floor);
 }
 
+void write(CoopByteWriter &out, const CoopSwing &swing) {
+    out.u8(static_cast<std::uint8_t>(swing.floor));
+    out.u8(swing.slot);
+    out.u8(swing.definition);
+    out.u16(swing.minimum_distance);
+    out.u16(swing.maximum_distance);
+    out.u16(static_cast<std::uint16_t>(swing.angle_offset));
+    out.u16(static_cast<std::uint16_t>(swing.angle_tolerance));
+    out.u16(swing.status);
+}
+
+bool read(CoopByteReader &in, CoopSwing &swing) {
+    swing.floor = in.u8();
+    swing.slot = in.u8();
+    swing.definition = in.u8();
+    swing.minimum_distance = in.u16();
+    swing.maximum_distance = in.u16();
+    swing.angle_offset = static_cast<std::int16_t>(in.u16());
+    swing.angle_tolerance = static_cast<std::int16_t>(in.u16());
+    swing.status = in.u16();
+    return in.ok() && floor_valid(swing.floor) && swing.slot < coop_actor_slots;
+}
+
+void write(CoopByteWriter &out, const CoopPlayerHit &hit) {
+    out.u8(static_cast<std::uint8_t>(hit.floor));
+    for (const std::uint16_t field : {hit.cutting, hit.striking, hit.piercing, hit.status, hit.magic, hit.fire,
+             hit.scale_q12, hit.multiplier_tenths})
+        out.u16(field);
+}
+
+bool read(CoopByteReader &in, CoopPlayerHit &hit) {
+    hit.floor = in.u8();
+    for (std::uint16_t *field : {&hit.cutting, &hit.striking, &hit.piercing, &hit.status, &hit.magic, &hit.fire,
+             &hit.scale_q12, &hit.multiplier_tenths})
+        *field = in.u16();
+    return in.ok() && floor_valid(hit.floor);
+}
+
 template <typename Message>
 std::optional<CoopMessage> read_as(CoopByteReader &in) {
     Message message{};
@@ -393,11 +431,12 @@ std::optional<CoopMessage> read_as(CoopByteReader &in) {
 }
 
 using Reader = std::optional<CoopMessage> (*)(CoopByteReader &);
-constexpr std::array<Reader, 19> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
+constexpr std::array<Reader, 21> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
     &read_as<CoopAcknowledged>, &read_as<CoopPackRequest>, &read_as<CoopWearRequest>, &read_as<CoopPack>,
     &read_as<CoopFeedLine>, &read_as<CoopSaveRequest>, &read_as<CoopRoster>, &read_as<CoopFloorAt>,
     &read_as<CoopFloorOrders>, &read_as<CoopFloorRecord>, &read_as<CoopFloorSnapshot>, &read_as<CoopFloorTaken>,
-    &read_as<CoopFloorWrites>, &read_as<CoopActorHit>, &read_as<CoopActorAim>, &read_as<CoopKill>};
+    &read_as<CoopFloorWrites>, &read_as<CoopActorHit>, &read_as<CoopActorAim>, &read_as<CoopKill>,
+    &read_as<CoopSwing>, &read_as<CoopPlayerHit>};
 static_assert(readers.size() == std::variant_size_v<CoopMessage>);
 
 } // namespace
