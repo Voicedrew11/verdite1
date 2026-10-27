@@ -544,12 +544,36 @@ void write_actors(std::vector<std::byte> &out) {
     put_pointer(out, 0, offsetof(KfActorState, player_target), canonical(s.player_target, s.actors));
 }
 
+// Zeroes the bytes [from, to) of the object starting at `base` in out.
+void put_zeros(std::vector<std::byte> &out, std::size_t base, std::size_t from, std::size_t to) {
+    std::fill(out.begin() + static_cast<std::ptrdiff_t>(base + from), out.begin() + static_cast<std::ptrdiff_t>(base + to), std::byte{0});
+}
+
+// An effect record's padding and its vectors' unused pad fields hold whatever the stack held
+// where the game built them, which changes with any change to the code; they are not state.
+void put_effect_record_unused_zeros(std::vector<std::byte> &out, std::size_t base) {
+    using Record = KfEffectRecord;
+    constexpr auto deformation = offsetof(Record, floor_deformation);
+    put_zeros(out, base, offsetof(Record, unknown_0a) + sizeof(u16), offsetof(Record, position));
+    put_zeros(out, base, offsetof(Record, direction) + sizeof(SVECTOR), offsetof(Record, animation_cache));
+    put_zeros(out, base, deformation + offsetof(KfFloorDeformation, sweep_updates) + sizeof(u16),
+              deformation + offsetof(KfFloorDeformation, hold_countdown));
+    put_zeros(out, base, deformation + sizeof(KfFloorDeformation), sizeof(Record));
+    constexpr auto position_pad = offsetof(Record, position) + offsetof(VECTOR, pad);
+    put_zeros(out, base, position_pad, position_pad + sizeof(s32));
+    for (const auto vector : {offsetof(Record, rotation), offsetof(Record, direction), offsetof(Record, orbit_center)})
+        put_zeros(out, base, vector + offsetof(SVECTOR, pad), vector + offsetof(SVECTOR, pad) + sizeof(s16));
+}
+
 void write_effects(std::vector<std::byte> &out) {
     const auto &s = effect_state;
     append_bytes(out, s);
-    for (std::size_t i = 0; i < s.records.size(); ++i)
-        put_pointer(out, offsetof(KfEffectState, records) + i * sizeof(KfEffectRecord), offsetof(KfEffectRecord, animation_cache),
+    for (std::size_t i = 0; i < s.records.size(); ++i) {
+        const auto base = offsetof(KfEffectState, records) + i * sizeof(KfEffectRecord);
+        put_pointer(out, base, offsetof(KfEffectRecord, animation_cache),
                     canonical(s.records[i].animation_cache, game_graphics_runtime.animation_cache_records));
+        put_effect_record_unused_zeros(out, base);
+    }
     put_pointer(out, 0, offsetof(KfEffectState, current_magic), canonical(s.current_magic, s.magic.entries));
     put_pointer(out, 0, offsetof(KfEffectState, current_record), canonical(s.current_record, s.records));
 }
