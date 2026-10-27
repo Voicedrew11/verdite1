@@ -1,3 +1,20 @@
+diff --git a/include/kf/game/actor.h b/include/kf/game/actor.h
+index 30a2190fa2ba0398ad16f3967485a699f31abeca..ea03253afd8435438fc489c3d27a432a3f75006d 100644
+--- a/include/kf/game/actor.h
++++ b/include/kf/game/actor.h
+@@ -345,6 +345,12 @@ extern KfActorAction actor_try_select_ground_action(
+     KfActorAction action, s32 distance, u16 chance);
+ extern KfActorAction actor_try_select_profiled_action(
+     KfActorAction action, s32 distance, KfActorEffectCode effect_code, u16 chance);
++// PC extension (online play): the player each actor goes after, by online id, or this player.
++inline constexpr u32 KF_ACTOR_TARGET_THIS_PLAYER = 0;
++extern std::array<u32, KF_ACTOR_CAPACITY> actor_target_players;
++// Whether the actor being updated goes after this player rather than another in the room.
++extern bool actor_targets_this_player(void);
++
+ extern void actor_try_attack_player(
+     u16 minimum_distance, u16 maximum_distance,
+     s16 angle_offset, s16 angle_tolerance);
 diff --git a/include/kf/game/effect.h b/include/kf/game/effect.h
 index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..c734d93227ffca1452fa03deb1f94d01b2b85695 100644
 --- a/include/kf/game/effect.h
@@ -233,3 +250,19 @@ index 35636457c6d504dfede73c5568fb25701f4a9a9d..40411acc5b465454fd3ed82efa859c01
 +void save_system_import_earlier(void);
  
  #endif // KF_GAME_SAVE_H
+diff --git a/include/kf/game/system.h b/include/kf/game/system.h
+index 76c180637418194ab026f43d8a2fdef637ec9984..a0c28705d334fc0c553c95f132950ef86e70d7e1 100644
+--- a/include/kf/game/system.h
++++ b/include/kf/game/system.h
+@@ -3,6 +3,11 @@
+ 
+ extern void frame_pacer_wait(void);
+ extern void game_main_loop(void);
++// PC extension (online play): the world's update (actors, objects, effects, events), and the same
++// run from a frame drawn while this player is held (render_frame, kf::host_wait_frame), when it
++// is due, a floor is in play and the player is in a room.
++extern void game_world_update(void);
++extern void game_world_update_while_held(void);
+ extern void game_shutdown(void);
+ 
+ #endif // KF_GAME_SYSTEM_H

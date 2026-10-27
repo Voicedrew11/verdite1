@@ -1,3 +1,17 @@
+diff --git a/include/kf/lib/map.h b/include/kf/lib/map.h
+index 85501920d30d2a9c5683e9d825c129f3195d60eb..af6cb0b0037e3796905b40bdb46f4ca8ab1d1f27 100644
+--- a/include/kf/lib/map.h
++++ b/include/kf/lib/map.h
+@@ -350,6 +350,9 @@ extern s32 map_event_pool_find_overlap(s32 point_x, s32 point_z, s32 radius_padd
+ extern KfMapEvent *map_event_pool_find_target_in_cone( const VECTOR *origin, s16 facing, s32 max_distance, s32 angle_tolerance, s32 *distance_out);
+ extern void map_event_pool_load(KfResourceChunk placements);
+ extern void map_event_pool_update(void);
++// PC extension (online play): the map event this player is talking to, left out of the world's
++// update while the talk animates it (the world goes on in a room); NULL otherwise.
++extern KfMapEvent *map_event_in_conversation;
+ extern void map_event_refresh_dialogue_stage(KfMapEvent *event);
+ extern void map_event_set_current(KfMapEvent *event);
+ extern void map_event_timers_reset(void);
 diff --git a/include/kf/lib/random.h b/include/kf/lib/random.h
 index 0236cb657e7f5c29b631ed1b0b55de8d69afb163..8a8f1290081a9500104a48480d6ec7053b4c597b 100644
 --- a/include/kf/lib/random.h

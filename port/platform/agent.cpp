@@ -1,8 +1,11 @@
 #include <kf/platform/agent.h>
 #include <kf/ext/ext.h>
 #include <kf/platform/host.h>
+#include <kf/platform/fuzz.h>
 #include <kf/platform/input.h>
 #include <kf/platform/menu_pointer.h>
+#include <kf/game/actor.h>
+#include <kf/lib/map_types.h>
 #include <kf/game/player.h>
 #include <verdite/agent.h>
 #include <verdite/crash.h>
@@ -23,6 +26,7 @@ constexpr long default_hold_ms = 150, max_hold_ms = 600000;
 struct Press { u32 buttons = 0; std::uint64_t until_ns = 0; };
 Press press;
 bool quit_requested;
+std::optional<std::array<int, 2>> move_request; // a cell, applied between updates
 
 struct ButtonName { const char *name; Button button; };
 constexpr std::array<ButtonName, 14> button_names = {{
@@ -90,6 +94,34 @@ std::string do_press(verdite::AgentArgs args) {
 std::string do_release(verdite::AgentArgs) {
     press = {};
     return verdite::json_ok("release");
+}
+
+std::string do_move(verdite::AgentArgs args) {
+    if (args.size() != 2)
+        return verdite::json_error("move <cell_x> <cell_z>");
+    char *end_x = nullptr, *end_z = nullptr;
+    const long x = std::strtol(args[0].c_str(), &end_x, 10), z = std::strtol(args[1].c_str(), &end_z, 10);
+    if (*end_x || *end_z || x < 0 || z < 0 || x >= KF_MAP_COLUMNS || z >= KF_MAP_ROWS)
+        return verdite::json_error("cells are 0..99");
+    move_request = std::array{static_cast<int>(x), static_cast<int>(z)};
+    return verdite::json_ok("move");
+}
+
+// The awake actors on this floor: slot, definition, action, position and the player each goes
+// after (0 this one, else the online id).
+std::string do_actors(verdite::AgentArgs) {
+    std::string actors;
+    for (std::size_t i = 0; i < actor_state.actors.size(); ++i) {
+        const auto &actor = actor_state.actors[i];
+        if (actor.slot_state == KF_ACTOR_SLOT_FREE || actor.lifecycle != KF_ACTOR_LIFECYCLE_ACTIVE)
+            continue;
+        char text[160];
+        std::snprintf(text, sizeof text, "%s{\"slot\":%zu,\"definition\":%u,\"action\":%d,\"hp\":%d,\"pos\":[%d,%d,%d],\"target\":%u}",
+            actors.empty() ? "" : ",", i, actor.definition_id, static_cast<int>(actor.action), static_cast<int>(actor.health),
+            actor.position.vx, actor.position.vy, actor.position.vz, actor_target_players[i]);
+        actors += text;
+    }
+    return verdite::json_ok("actors", ",\"actors\":[" + actors + "]");
 }
 
 // The menu frame on screen: each row's widget (0 window, 1 list, 2 choice), box, and
@@ -182,6 +214,8 @@ void agent_start() {
         {"state", "state - the player and phase as JSON", do_state},
         {"press", "press <button>[+<button>...] [holdMs=150] - hold game buttons for game-clock ms, replacing the last press: " + buttons, do_press},
         {"release", "release - let go of the pressed buttons", do_release},
+        {"move", "move <cell_x> <cell_z> - put the player on a cell of this floor at the next update", do_move},
+        {"actors", "actors - the awake actors on this floor and the player each goes after", do_actors},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
         {"point", "point <x> <y> - move the mouse over a menu (game pixels)", do_point},
         {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},
@@ -190,6 +224,14 @@ void agent_start() {
         {"setup", "setup [start | preset <id> | choose <group> <n> | tier <id> | option <id> <value> | next | back | finish | skip] - drive the first-run setup; its view as JSON", do_setup},
         {"quit", "quit - exit the game", do_quit},
     });
+}
+
+void agent_between_updates() {
+    if (!move_request)
+        return;
+    const auto [x, z] = *move_request;
+    move_request.reset();
+    player_move_to_cell(x, z);
 }
 
 void agent_poll() {

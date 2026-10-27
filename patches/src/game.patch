@@ -1,3 +1,18 @@
+diff --git a/src/game/actor.cpp b/src/game/actor.cpp
+index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..fabae5d8608bfbb5fae617bf2648d8c66a0b1c1a 100644
+--- a/src/game/actor.cpp
++++ b/src/game/actor.cpp
+@@ -430,6 +430,10 @@ void actor_try_attack_player(
+         && (kf::random_next() >> ACTOR_STATUS_CHANCE_RANDOM_SHIFT) < definition->status_effect_chance) {
+         status_effect = definition->status_effect;
+     }
++    // PC extension (online play): a swing at another player is theirs to feel, not this one's.
++    if (!actor_targets_this_player()) {
++        return;
++    }
+     player_apply_damage(
+         definition->attack_components[KF_COMBAT_COMPONENT_CUTTING],
+         definition->attack_components[KF_COMBAT_COMPONENT_STRIKING],
 diff --git a/src/game/actor_behavior.cpp b/src/game/actor_behavior.cpp
 index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584176943d8 100644
 --- a/src/game/actor_behavior.cpp
@@ -88,6 +103,96 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..0e49a1db6b9ac6b9f917b1a858136584
                      actor->vertical_state = KF_ACTOR_VERTICAL_FALL;
                  }
                  actor->action_progress = KF_ACTOR_PROGRESS_COMPLETE;
+diff --git a/src/game/actor_pool.cpp b/src/game/actor_pool.cpp
+index 7c6b4de806700422183551d2b4782dd3fa5eaf47..66b515ad4afe3dd69991d8cb1c0685863a551b91 100644
+--- a/src/game/actor_pool.cpp
++++ b/src/game/actor_pool.cpp
+@@ -4,20 +4,77 @@
+ #include <kf/lib/codec.h>
+ #include <kf/lib/map_data.h>
+ #include <kf/lib/null.h>
++#include <kf/game/collision.h>
++#include <kf/game/player.h>
++#include <kf/platform/online_players.h>
+ 
+ #include <array>
+ #include <bit>
+ #include <cstddef>
++#include <cstdint>
+ #include <cstring>
++#include <span>
++#include <vector>
+ #include <type_traits>
+ 
+ KfActorState actor_state;
+ 
++// PC extension (online play): each actor goes after the nearest player on the floor, this one or
++// another in the room (docs/COOP_PLAN.md). The AI reads actor_state.player_position, so it is
++// pointed at the actor's target while that actor updates. Alone, the target is always this player.
++std::array<u32, KF_ACTOR_CAPACITY> actor_target_players;
++
++struct ActorPlayerPosition {
++    u32 player;
++    VECTOR position;
++};
++
++static std::vector<ActorPlayerPosition> actor_players_on_floor(const VECTOR &own_position)
++{
++    std::vector<ActorPlayerPosition> players{{KF_ACTOR_TARGET_THIS_PLAYER, own_position}};
++    for (const auto &other : kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor))) {
++        VECTOR position = {static_cast<s32>(other.x * static_cast<float>(KF_MAP_TILE_SIZE)), 0,
++            static_cast<s32>(other.z * static_cast<float>(KF_MAP_TILE_SIZE))};
++        if (position.vx < 0 || position.vx >= KF_MAP_COLUMNS * KF_MAP_TILE_SIZE
++            || position.vz < 0 || position.vz >= KF_MAP_ROWS * KF_MAP_TILE_SIZE) {
++            continue;
++        }
++        position.vy = map_floor_height_at_position(&position);
++        players.push_back({other.id, position});
++    }
++    return players;
++}
++
++static const ActorPlayerPosition &actor_nearest_player(const KfActor &actor, std::span<const ActorPlayerPosition> players)
++{
++    const ActorPlayerPosition *nearest = &players[0];
++    std::int64_t nearest_squared = INT64_MAX;
++    for (const auto &player : players) {
++        const std::int64_t dx = player.position.vx - actor.position.vx;
++        const std::int64_t dz = player.position.vz - actor.position.vz;
++        if (dx * dx + dz * dz < nearest_squared) {
++            nearest_squared = dx * dx + dz * dz;
++            nearest = &player;
++        }
++    }
++    return *nearest;
++}
++
++bool actor_targets_this_player(void)
++{
++    return actor_target_players[actor_state.current_index] == KF_ACTOR_TARGET_THIS_PLAYER;
++}
++
+ void actor_pool_update(void)
+ {
++    const VECTOR own_position = actor_state.player_position;
++    const auto players = actor_players_on_floor(own_position);
+     for (auto &actor : actor_state.actors) {
+         actor_bind_current(&actor);
+         if (actor.slot_state != KF_ACTOR_SLOT_FREE) {
++            const auto &target = actor_nearest_player(actor, players);
++            actor_target_players[actor_state.current_index] = target.player;
++            actor_state.player_position = target.position;
+             actor_update_awareness();
+             if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE) {
+                 actor_update_current_action();
+@@ -25,6 +82,7 @@ void actor_pool_update(void)
+         }
+     }
+     actor_bind_current(NULL);
++    actor_state.player_position = own_position;
+ }
+ 
+ void actor_pool_load_placements(KfResourceChunk chunk) try
 diff --git a/src/game/audio.cpp b/src/game/audio.cpp
 index 31f832db7b441760cf013f561eaf55ce8ee9842c..80c2e53fe4ef7943fcf892407d9bd9849a79840d 100644
 --- a/src/game/audio.cpp
@@ -499,13 +604,15 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bba986aede 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..b368f53fd40607898d0c6765bb44dadfc6b5ecca 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
-@@ -6,13 +6,13 @@
+@@ -6,22 +6,34 @@
  #include <kf/game/resources.h>
  #include <kf/game/save.h>
  #include <kf/game/session.h>
++#include <kf/game/system.h>
++#include <kf/platform/input.h>
 +#include <kf/platform/online_players.h>
  
  #include <cstdio>
@@ -517,8 +624,15 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bb
      ENDING_MASTER_FADE_STEP_Q8 = 128
  };
  
-@@ -20,8 +20,11 @@ static std::uint64_t frame_pacer_last_tick;
+ static std::uint64_t frame_pacer_last_tick;
  
++// PC extension (online play): in a room the world does not stop while this player is held in a
++// menu or a scripted loop (docs/COOP_PLAN.md, "What else changes"). The world's own update, the
++// part game_main_loop runs after player_update, is run from those frames at the game's rate.
++static std::uint64_t world_update_last_tick;
++static bool world_update_running;
++static bool world_in_play;
++
  GameResult game_result;
  
 +void automap_publish(void);
@@ -529,7 +643,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bb
      kf::language_apply_pending();
      game_graphics_runtime = {};
      actor_state = {};
-@@ -40,13 +43,29 @@ void game_main_loop(void)
+@@ -40,13 +52,30 @@ void game_main_loop(void)
      common_resources_load();
      kf::host_language_status("Language ready.");
      game_initialize_session();
@@ -550,6 +664,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bb
      frame_pacer_last_tick = kf::host_clock_tick();
      player_warp_shimmer_at_player(KF_WARP_SHIMMER_SHRINK_REMOVE);
      game_result = GameResult::Running;
++    world_in_play = true;
      for (;;) {
 +        // Between updates no menu or dialogue holds text, so a language change
 +        // requested from the F1 overlay can be applied here.
@@ -559,9 +674,15 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bb
          player_update();
          if (game_result != GameResult::Running) {
              break;
-@@ -59,6 +78,11 @@ void game_main_loop(void)
-         effect_pool_update();
-         map_event_pool_update();
+@@ -54,11 +83,13 @@ void game_main_loop(void)
+         player_update_transform_snapshot(&player_position_snapshot, &player_rotation_snapshot);
+         audio_set_listener_transform(audio_state, &player_position_snapshot, &player_rotation_snapshot);
+         actor_set_player_transform(&player_position_snapshot, &player_rotation_snapshot);
+-        actor_pool_update();
+-        map_object_pool_update();
+-        effect_pool_update();
+-        map_event_pool_update();
++        game_world_update();
          render_frame(&player_position_snapshot, &player_rotation_snapshot);
 +        automap_publish();
 +        // PC extension (online play): what this player holds, how far through a swing and where
@@ -571,8 +692,45 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bb
          player_state.allow_near_actor_spawn = KF_ACTOR_NEAR_SPAWN_FORBIDDEN;
          if (player_current_map_attribute()
              == KF_MAP_ATTRIBUTE_WARP) {
-@@ -88,7 +112,9 @@ void game_shutdown(void)
+@@ -78,6 +109,7 @@ void game_main_loop(void)
+             player_state.previous_map_cell.x = KF_MAP_CELL_COORD_INVALID;
+         }
+     }
++    world_in_play = false;
+     game_shutdown();
+ }
  
+@@ -86,14 +118,46 @@ void game_shutdown(void)
+     audio_close_vab(audio_state);
+ }
+ 
++void game_world_update(void)
++{
++    // A blocking loop inside the world's update (the floor-4 transform) draws frames too; the
++    // world it is part of is not run again from them.
++    if (world_update_running) {
++        return;
++    }
++    world_update_running = true;
++    world_update_last_tick = kf::host_clock_tick();
++    actor_pool_update();
++    map_object_pool_update();
++    effect_pool_update();
++    map_event_pool_update();
++    world_update_running = false;
++}
++
++void game_world_update_while_held(void)
++{
++    if (!world_in_play || world_update_running || !kf::online_world_runs_while_held()) {
++        return;
++    }
++    if (kf::host_clock_tick() - world_update_last_tick < static_cast<std::uint64_t>(kf::world_update_vblanks)) {
++        return;
++    }
++    game_world_update();
++}
++
  void frame_pacer_wait(void)
  {
 -    kf::host_wait_until_tick(frame_pacer_last_tick + FRAME_PACER_INTERVAL_TICKS);
@@ -582,6 +740,14 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..aa3ed883107d47de731ff5fa7d6955bb
      frame_pacer_last_tick = kf::host_clock_tick();
  }
  
+ void game_reset_module_state(void)
+ {
+     kf::restore_initial_value<frame_pacer_last_tick>();
++    kf::restore_initial_value<world_update_last_tick>();
++    kf::restore_initial_value<world_update_running>();
++    kf::restore_initial_value<world_in_play>();
+     kf::restore_initial_value<game_result>();
+ }
 diff --git a/src/game/geometry_render.cpp b/src/game/geometry_render.cpp
 index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe77d71614b 100644
 --- a/src/game/geometry_render.cpp
@@ -698,6 +864,34 @@ index 660386288c157b2819409141f669eb2ae4d10af9..791619bdce60bfed03fdf493c1f497ef
          }
          menu_draw_pickup_preview(item_id);
          menu_draw_two_option(
+diff --git a/src/game/map_events.cpp b/src/game/map_events.cpp
+index c71d1f33020a17fdc28c290f146f11c52383e1c3..af1bcbeefd51d5cebd9e9967923b713942125c7c 100644
+--- a/src/game/map_events.cpp
++++ b/src/game/map_events.cpp
+@@ -88,11 +88,17 @@ void map_event_update_animation_loop(void)
+     }
+ }
+ 
++KfMapEvent *map_event_in_conversation;
++
+ void map_event_pool_update(void)
+ {
+     for (auto &event : map_runtime_state.events) {
+         KfMapEventState state = event.state;
+ 
++        if (&event == map_event_in_conversation) {
++            continue;
++        }
++
+         if (state == KF_MAP_EVENT_ACTIVE) {
+             map_event_set_current(&event);
+ 
+@@ -269,4 +275,5 @@ void map_unload_floor(void)
+ void map_events_reset_module_state(void)
+ {
+     kf::restore_initial_value<map_runtime_state>();
++    map_event_in_conversation = NULL;
+ }
 diff --git a/src/game/map_object.cpp b/src/game/map_object.cpp
 index c4fee7aad3fff0d855e5f329a125281e6bba88a7..0b36c3f78a11d94f37474ee89c0334395e91dbcb 100644
 --- a/src/game/map_object.cpp
@@ -726,7 +920,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..0b36c3f78a11d94f37474ee89c033439
               || definitions[kf_enum_encode<u8>(object.object_id)].behavior_type == KF_MAP_OBJECT_OP_LINK_CLEAR_LAST)
              && object.link.link_id == link_id) {
 diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
-index 1477de2e4583d114e5e02fb014b8e8263bb7510b..78266ab7cb4c93b2c113f200623a503cf2f960a9 100644
+index 1477de2e4583d114e5e02fb014b8e8263bb7510b..ddfd14c9e3f8253fb68570f6081ef41372a39330 100644
 --- a/src/game/map_scripts.cpp
 +++ b/src/game/map_scripts.cpp
 @@ -51,6 +51,7 @@ enum {
@@ -773,7 +967,23 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..78266ab7cb4c93b2c113f200623a503c
          notify_enqueue(object->link.linked_notification);
          return;
      }
-@@ -704,7 +728,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -637,6 +661,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+         && (index = map_event_pool_find_overlap(
+                 interaction_probe.x, interaction_probe.z, MAP_INTERACTION_RADIUS_PADDING)) != -1) {
+         event = &map_runtime_state.events[index];
++        map_event_in_conversation = event;
+         switch (event->behavior) {
+             case KF_MAP_EVENT_BEHAVIOR_SHOP:
+                 event->animation_phase = 0;
+@@ -673,6 +698,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+             default:
+                 break;
+         }
++        map_event_in_conversation = NULL;
+     } else {
+         for (index = 0;; index++) {
+             index = map_object_pool_find_interaction_from(
+@@ -704,7 +730,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
                  if (object->link.link_id != KF_MAP_LINK_NONE) {
@@ -784,7 +994,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..78266ab7cb4c93b2c113f200623a503c
                      break;
                  }
                  map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_LIFT_DOOR);
-@@ -718,7 +744,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -718,7 +746,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
                  if (object->link.link_id != KF_MAP_LINK_NONE && definition->behavior_type == KF_MAP_OBJECT_OP_HINGED_DOOR) {
@@ -3141,7 +3351,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
  }
  
 diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
-index 73c6900e478aa3769791136fbf65a88230b2c272..561e7d10cdac807440e06d09547a4a36622b69e4 100644
+index 73c6900e478aa3769791136fbf65a88230b2c272..9a68e86f3a8fca472032d6f8d71d558f45bc1577 100644
 --- a/src/game/render_frame.cpp
 +++ b/src/game/render_frame.cpp
 @@ -11,6 +11,7 @@
@@ -3152,7 +3362,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..561e7d10cdac807440e06d09547a4a36
  
  enum {
      HUD_GAUGE_WIDTH = 50,
-@@ -71,6 +72,14 @@ std::array<MATRIX, KF_RENDER_LIGHT_COUNT> render_light_matrices = {
+@@ -71,9 +72,19 @@ std::array<MATRIX, KF_RENDER_LIGHT_COUNT> render_light_matrices = {
      },
  };
  
@@ -3167,7 +3377,12 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..561e7d10cdac807440e06d09547a4a36
  void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_null)
  {
      game_update_language_comparison();
-@@ -83,6 +92,16 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
++    // PC extension (online play): a scripted loop's frame moves the rest of the world on.
++    game_world_update_while_held();
+     MATRIX model;
+     SVECTOR spin;
+     KfHudSprite *poison_icon;
+@@ -83,6 +94,16 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
  
      render_set_view_transform(game_graphics_runtime.render_state, position_or_null, rotation_or_null);
      display_begin_frame(game_graphics_runtime.display_state);
@@ -3184,7 +3399,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..561e7d10cdac807440e06d09547a4a36
      animation_cache_mark_stale();
      render_map_cells();
      poison_icon = &hud_sprites[KF_HUD_POISON_ICON];
-@@ -153,24 +172,35 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -153,24 +174,35 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      kf::matrix_set_rotation_xyz(spin, model);
  
      game_graphics_runtime.active_render_material = game_graphics_runtime.notification_text_material;

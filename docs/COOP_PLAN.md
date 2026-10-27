@@ -305,7 +305,7 @@ What the table changed:
    every read of `player_state.map_variant` (whether floor 5's variants are regions). It is
    a day's work and decides whether "authority goes with the cause" holds; a read that fits none
    of the three changes the model before anything is built.
-2. Two spikes, since either can sink the model and the knight cannot: enemies that target any of
+2. **Done 2026-10-27, both hold** (The spikes). Two spikes, since either can sink the model and the knight cannot: enemies that target any of
    several players (a per-actor target in place of `actor_state.player_position`), and a world
    that does not stop while one player is held (the world update called from a menu's frame and
    from every blocking loop in the table). If either fails, the model changes.
@@ -321,6 +321,47 @@ What the table changed:
    not pause, every panel; kill credit; the exchanges.
 7. Death: watching another player (the arrival path, drawn from their camera), coming back
    beside them, the wipe loading the last save.
+
+## The spikes
+
+Order's second step, built 2026-10-27 and kept, since what they built is what coop needs. Both hold.
+
+**Enemies that target any of several players.** One substitution point: `actor_pool_update`
+points `actor_state.player_position` at each actor's nearest player on the floor (this one, or
+another in the room from their last pose, on the floor's height at their cell) while that actor
+updates, and puts it back after. Every read through `player_position` (activation, range,
+bearing, pursuit, the attack's reach) then follows the actor's target; `actor_target_players`
+keeps whom each goes after. A swing at another player is not felt here (`actor_try_attack_player`
+returns before `player_apply_damage`); the attack event that lets the victim feel it is step 6.
+Checked with two headless instances in a room: B walked to floor 1's enemies at cells (24..26,
+10..11), out of A's range; on A they woke and went after B's id as on B, and A took nothing.
+Alone, every target is this player and the game is unchanged. Still reading the one player:
+actor spells' aim (`player_distance_to_point_in_cone`), homing effects and the actor spawner
+(the table's owner's rows); each becomes the actor's target the same way.
+
+**A world that does not stop while one player is held.** The world's update after
+`player_update` is one function, `game_world_update`, and every held loop draws through
+`render_frame` (its `frame_pacer_wait`) or `kf::host_wait_frame` (menus, dialogue pages,
+full-screen images, button waits), so those two run it when it is due at the game's tick rate,
+while a floor is in play and the player is in a room (`KF_TEST_WORLD_RUNS_WHILE_HELD=1` forces
+it for tests). It never runs inside itself, so a loop in the world's own update (the floor-4
+transform) holds the world as the game does. Checked headless, plain and under ASan and UBSan:
+in the main menu floor 1's enemies kept moving and one beside the player hit it from 30 HP to 0;
+talking to the NPC at (66,81) the enemies four cells off kept moving through the talk animation
+and the dialogue page. What it found:
+
+- **The NPC being talked to is held out of the world's update.** The talk animation
+  (`map_event_advance_animation_blocking`) waits for the event's phase to reach a pose, and the
+  event update advanced and wrapped the same phase, so the talk never ended.
+  `map_event_in_conversation` is skipped by `map_event_pool_update` until the talk is over.
+- **A death in a menu lands only when the menu closes.** HP reached 0 in the menu and the menu
+  stayed open, the enemy still swinging; closing it ran the death. A menu has to close when its
+  player dies (step 6, with menus that do not pause).
+- **A slow update can step the world twice in one frame.** The main loop's `render_frame` steps it
+  again when the updates before it took longer than the tick; to watch for on the weakest
+  platform.
+- Not yet driven: a chest's lid, the boss reveal, the weapon transform, the floor-4 transform, the
+  floor-2 transfer and the warp shimmer; they draw through the same two waits.
 
 ## Questions
 
@@ -438,3 +479,8 @@ What the table changed:
   floor-4 transform, the floor-2 transfer, chests, talk animations, signboards and the warp
   shimmer also block and join the second spike. The guarded snapshot writes are at the save point
   and F2, not the restore point.
+- 2026-10-27: both spikes hold and are kept (The spikes): each actor goes after its nearest player
+  through one substitution in `actor_pool_update`, and in a room the world's update runs from
+  `render_frame` and `kf::host_wait_frame`, so menus, dialogue and scripted loops do not stop it.
+  The NPC being talked to is held out of the world's update, and a death in a menu waits for the
+  menu to close, which step 6 has to change.

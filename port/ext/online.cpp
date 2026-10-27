@@ -19,6 +19,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if KF_ONLINE
@@ -244,6 +245,20 @@ std::vector<OnlinePose> online_players() {
 }
 
 namespace kf {
+
+bool online_world_runs_while_held() {
+    static const bool forced = [] {
+        const char *value = std::getenv("KF_TEST_WORLD_RUNS_WHILE_HELD");
+        return value != nullptr && std::string_view(value) == "1";
+    }();
+    if (forced)
+        return true;
+#if KF_ONLINE
+    return ext::online.session && ext::online.self != 0;
+#else
+    return false;
+#endif
+}
 
 std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     std::vector<OnlinePlayer> players;

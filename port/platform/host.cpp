@@ -8,6 +8,7 @@
 #include <kf/platform/menu_pointer.h>
 #include <kf/platform/touch.h>
 #include <kf/platform/controls.h>
+#include <kf/game/system.h>
 #include <kf/platform/agent.h>
 #include <kf/platform/fuzz.h>
 #include <kf/platform/crash.h>
@@ -616,6 +617,8 @@ void host_wait_until_tick(std::uint64_t deadline) {
 }
 
 void host_wait_frame() {
+    // Menus, dialogue and full-screen images wait here: in a room the world goes on meanwhile.
+    game_world_update_while_held();
     host_wait_until_tick(host_clock_tick() + 1);
 }
 
@@ -729,6 +732,7 @@ u32 host_read_buttons() {
 
 void host_between_updates() {
     host_enemy_turn_between_updates();
+    agent_between_updates();
     fuzz_between_updates();
 }
 

@@ -36,6 +36,9 @@ u32 fuzz_buttons();
 QuickRequest fuzz_quick_request();
 // Between two world updates (host_between_updates): macros, invariants, the trace.
 void fuzz_between_updates();
+// Moves the player to the centre of a cell of this floor, as floor 5's teleport moves them; between
+// updates only (the fuzzer's goto, the agent's move). False for a cell off the map.
+bool player_move_to_cell(int x, int z);
 // False under the fuzzer, which declines the system menu's Quit (a "quit-declined" line).
 bool fuzz_allows_power_off();
 // --compare-traces A B: prints the comparison as JSON; 0 equal, 1 different, 2 unreadable.

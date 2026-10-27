@@ -9,6 +9,8 @@ namespace kf {
 void agent_start();
 // On every host poll: runs queued commands and the beacon.
 void agent_poll();
+// Between two world updates (host_between_updates): a requested move.
+void agent_between_updates();
 // Game buttons held by the command channel's press, or'd into the pad.
 u32 agent_buttons();
 }

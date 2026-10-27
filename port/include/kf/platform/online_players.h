@@ -25,6 +25,10 @@ struct OnlinePlayer {
     float stride;       // 0 standing .. 1 a full stride
 };
 
+// Whether the world keeps running while this player is held in a menu or a scripted loop: in a
+// room (docs/COOP_PLAN.md), or with KF_TEST_WORLD_RUNS_WHILE_HELD=1 for tests without one.
+bool online_world_runs_while_held();
+
 // The other players on this floor (1..5), as last heard from; empty when not in a room.
 std::vector<OnlinePlayer> online_players_on_floor(int floor);
 

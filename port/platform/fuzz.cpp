@@ -219,21 +219,9 @@ std::optional<std::string> choose_warp(verdite::FuzzRandom &random) {
 
 bool run_goto(std::string_view args) {
     int x = -1, z = -1;
-    if (std::sscanf(std::string(args).c_str(), "%d %d", &x, &z) != 2 || x < 0 || z < 0 ||
-        x >= KF_MAP_COLUMNS || z >= KF_MAP_ROWS)
+    if (std::sscanf(std::string(args).c_str(), "%d %d", &x, &z) != 2)
         return false;
-    // Floor 5's own teleport reloads its variant's creatures (CHR<variant>.MIM); the other
-    // floors have no such file, so the player is moved as that teleport moves them.
-    if (player_state.progress_state.current_floor == KF_FLOOR_5) {
-        player_warp_same_floor(player_state.map_variant, x, z);
-        return true;
-    }
-    const auto cell = player_state.motion_state.map_cell;
-    collision_adjust_cell_occupancy(cell.x, cell.z, -1);
-    player_state.camera_position.vx = x * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
-    player_state.camera_position.vz = z * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
-    player_sync_position_to_map();
-    return true;
+    return player_move_to_cell(x, z);
 }
 
 bool run_quick(QuickRequest request) {
@@ -735,6 +723,23 @@ QuickRequest fuzz_quick_request() {
     const auto request = fuzz.quick;
     fuzz.quick = QuickRequest::None;
     return request;
+}
+
+bool player_move_to_cell(int x, int z) {
+    if (x < 0 || z < 0 || x >= KF_MAP_COLUMNS || z >= KF_MAP_ROWS)
+        return false;
+    // Floor 5's own teleport reloads its variant's creatures (CHR<variant>.MIM); the other
+    // floors have no such file, so the player is moved as that teleport moves them.
+    if (player_state.progress_state.current_floor == KF_FLOOR_5) {
+        player_warp_same_floor(player_state.map_variant, x, z);
+        return true;
+    }
+    const auto cell = player_state.motion_state.map_cell;
+    collision_adjust_cell_occupancy(cell.x, cell.z, -1);
+    player_state.camera_position.vx = x * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
+    player_state.camera_position.vz = z * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
+    player_sync_position_to_map();
+    return true;
 }
 
 void fuzz_between_updates() {
