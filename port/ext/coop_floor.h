@@ -70,4 +70,18 @@ bool coop_floor_show_frame(std::span<const std::uint8_t> frame);
 // The owner's effects drawn no more: this machine left watching, or the floor.
 void coop_floor_hide_effects();
 
+// The other players whose spells can be drawn at once: the room's four but this one
+// (KF_EFFECT_SHOWN_PLAYERS).
+inline constexpr std::size_t coop_floor_shown_players = 3;
+// This player's spells in flight and what they spawned, as the others on its floor draw them, in
+// the frame's form for an effect: as many whole effects as fit in `most_bytes`.
+std::vector<std::uint8_t> coop_floor_player_effects(std::size_t most_bytes);
+// Another player's spells on this floor, as their pose carries them, drawn from `player`'s set of
+// effect_player_shown_records (0..coop_floor_shown_players-1) beside this machine's own, with
+// their launch and impact sounds as they come and go. Empty bytes draw none. False, and none drawn,
+// for bytes that are not effects this machine can draw.
+bool coop_floor_show_player_effects(std::size_t player, std::span<const std::uint8_t> effects);
+// That player's spells drawn no more: they left the room or this floor.
+void coop_floor_hide_player_effects(std::size_t player);
+
 }

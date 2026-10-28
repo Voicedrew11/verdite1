@@ -49,6 +49,12 @@ struct OnlinePlayerPose {
 // by the update, and plays theirs on by one update (docs/PLAYER_MODEL.md).
 void online_update(const OnlinePlayerPose &own);
 
+// A sound this player's knight makes, which the others on its floor hear from where they draw it.
+enum class OnlineSound : u8 { Swing, Death, KeyUnlock, StonePassage, Harp, WarpShimmer };
+inline constexpr std::size_t online_sound_count = 6;
+// This player made `sound` as the game played it: it goes to the others with the next pose.
+void online_sound_made(OnlineSound sound);
+
 // The knight, one TMD object per part in this order, each part's vertices relative to its pivot.
 enum class OnlinePlayerPart : u8 {
     Pelvis, Torso, Head, UpperArmRight, ForearmRight, UpperArmLeft, ForearmLeft,

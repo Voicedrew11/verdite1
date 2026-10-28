@@ -80,6 +80,36 @@ TEST_CASE("a pose says whether its player is down or in a fight") {
             CHECK(received.value_or(OnlinePose{}).fighting == fighting);
         }
     auto unknown = online_pose_encode({1, 10.0f, 20.0f, 0.5f, 3, -1, 0, 7, -400});
-    unknown.back() = 4;
+    unknown[27] = 4;
     CHECK_FALSE(online_pose_decode(unknown));
+}
+
+TEST_CASE("a pose carries its player's sounds and spells") {
+    OnlinePose pose{1, 10.0f, 20.0f, 0.5f, 3, -1, 0, 7, -400};
+    pose.sounds = {1, 0, 255, 0, 0, 9};
+    pose.effects = {4, 5, 6};
+    const auto received = online_pose_decode(online_pose_encode(pose));
+    REQUIRE(received.has_value());
+    CHECK(received.value_or(OnlinePose{}).sounds == pose.sounds);
+    CHECK(received.value_or(OnlinePose{}).effects == pose.effects);
+}
+
+TEST_CASE("spells past a packet's size are left off, and a pose longer than one is refused") {
+    OnlinePose pose{1, 10.0f, 20.0f};
+    pose.effects.assign(online_pose_effects_most + 10, 1);
+    auto bytes = online_pose_encode(pose);
+    CHECK(bytes.size() == online_pose_most);
+    const auto received = online_pose_decode(bytes);
+    REQUIRE(received.has_value());
+    CHECK(received.value_or(OnlinePose{}).effects.size() == online_pose_effects_most);
+    bytes.push_back(1);
+    CHECK_FALSE(online_pose_decode(bytes));
+}
+
+TEST_CASE("each sound whose count moved is made once, wrapping") {
+    OnlinePose was, now;
+    was.sounds = {0, 3, 255, 7, 0, 0};
+    now.sounds = {0, 5, 0, 7, 0, 1};
+    CHECK(online_pose_sounds_between(was, now) == std::vector<std::size_t>{1, 2, 5});
+    CHECK(online_pose_sounds_between(now, now).empty());
 }

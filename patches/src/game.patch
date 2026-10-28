@@ -875,22 +875,26 @@ index 6379fd779cabcf6588bdddcec2e59e0e990b7262..d05909b793186ce3c156284a4c3e0f62
              }
              if (KF_MAP_TILE_CENTER < position->vx % KF_MAP_TILE_SIZE) {
 diff --git a/src/game/effect_pool.cpp b/src/game/effect_pool.cpp
-index a7a8dab1efbefa85c3083f1f9fa7fa73154a2476..c5adfea2dcc0f04db7be5ab8b624696b53a4b0ae 100644
+index a7a8dab1efbefa85c3083f1f9fa7fa73154a2476..b5dff92e211158f11d41cc23da877f6d47d0bad1 100644
 --- a/src/game/effect_pool.cpp
 +++ b/src/game/effect_pool.cpp
-@@ -15,11 +15,21 @@ enum {
+@@ -15,11 +15,25 @@ enum {
  };
  
  KfEffectState effect_state;
 +std::array<KfEffectSource, KF_EFFECT_CAPACITY> effect_sources;
 +KfEffectSource effect_spawn_source = KfEffectSource::Other;
-+std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effect_shown_records = [] {
++static std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effect_records_free(void)
++{
 +    std::array<KfEffectRecord, KF_EFFECT_CAPACITY> records{};
 +    for (auto &record : records) {
 +        record.type = KF_EFFECT_SLOT_FREE;
 +    }
 +    return records;
-+}();
++}
++std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effect_shown_records = effect_records_free();
++std::array<std::array<KfEffectRecord, KF_EFFECT_CAPACITY>, KF_EFFECT_SHOWN_PLAYERS> effect_player_shown_records = {
++    effect_records_free(), effect_records_free(), effect_records_free()};
  
  KfEffectRecord *effect_pool_find_free(void)
  {
@@ -900,11 +904,12 @@ index a7a8dab1efbefa85c3083f1f9fa7fa73154a2476..c5adfea2dcc0f04db7be5ab8b624696b
              return &record;
          }
      }
-@@ -522,4 +532,5 @@ void effect_pool_set_current(KfEffectRecord *effect)
+@@ -522,4 +536,6 @@ void effect_pool_set_current(KfEffectRecord *effect)
  void effect_pool_reset_module_state(void)
  {
      kf::restore_initial_value<effect_state>();
 +    kf::restore_initial_value<effect_shown_records>();
++    kf::restore_initial_value<effect_player_shown_records>();
  }
 diff --git a/src/game/effect_update.cpp b/src/game/effect_update.cpp
 index b0d8a7376e2d4a10cf30719994b0a16271c57cca..9ad4a869ba594b39fe114291289538333ee1a94d 100644
@@ -949,7 +954,7 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af8a4da0ff 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..fb799f751b1c192ceb8d95df425d44aa336691c6 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,22 +6,36 @@
@@ -990,7 +995,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af
      kf::language_apply_pending();
      game_graphics_runtime = {};
      actor_state = {};
-@@ -40,13 +54,35 @@ void game_main_loop(void)
+@@ -40,27 +54,51 @@ void game_main_loop(void)
      common_resources_load();
      kf::host_language_status("Language ready.");
      game_initialize_session();
@@ -1023,10 +1028,13 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af
 +            game_result = GameResult::ReturnToTitle;
 +            break;
 +        }
++        // PC extension (coop): what the player's update spawns is this player's, sent with its pose.
++        effect_spawn_source = KfEffectSource::Player;
          player_update();
++        effect_spawn_source = KfEffectSource::Other;
          if (game_result != GameResult::Running) {
              break;
-@@ -54,13 +90,12 @@ void game_main_loop(void)
+         }
          player_update_transform_snapshot(&player_position_snapshot, &player_rotation_snapshot);
          audio_set_listener_transform(audio_state, &player_position_snapshot, &player_rotation_snapshot);
          actor_set_player_transform(&player_position_snapshot, &player_rotation_snapshot);
@@ -1044,7 +1052,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af
              == KF_MAP_ATTRIBUTE_WARP) {
              if (!map_cells_equal(player_state.previous_map_cell, player_state.motion_state.map_cell)) {
                  if (player_warp_trigger_update() != 0) {
-@@ -78,6 +113,7 @@ void game_main_loop(void)
+@@ -78,6 +116,7 @@ void game_main_loop(void)
              player_state.previous_map_cell.x = KF_MAP_CELL_COORD_INVALID;
          }
      }
@@ -1052,7 +1060,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af
      game_shutdown();
  }
  
-@@ -86,14 +122,78 @@ void game_shutdown(void)
+@@ -86,14 +125,83 @@ void game_shutdown(void)
      audio_close_vab(audio_state);
  }
  
@@ -1076,6 +1084,10 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af
 +        return;
 +    }
 +    world_update_running = true;
++    // PC extension (coop): run from inside the player's update (a blocking loop), the world's
++    // effects are not the player's, and the player's go on being after it.
++    const KfEffectSource player_spawn_source = effect_spawn_source;
++    effect_spawn_source = KfEffectSource::Other;
 +    world_update_last_tick = kf::host_clock_tick();
 +    // PC extension (online play): every update, held or not, this player's pose goes to the others
 +    // in the room and theirs play on by one, before the enemies choose whom to go after.
@@ -1101,6 +1113,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..ca928cfb46273a6fd894c2aa0944a4af
 +    for (const auto &other : others) {
 +        collision_adjust_cell_occupancy(other.camera_position.vx / KF_MAP_TILE_SIZE, other.camera_position.vz / KF_MAP_TILE_SIZE, -1);
 +    }
++    effect_spawn_source = player_spawn_source;
 +    world_update_running = false;
 +}
 +
@@ -3173,7 +3186,7 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +        online_player_draw_weapon(player, *weapon, body, placements[upper_arm_right]);
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
-index 33680f578d7627d7bb43b29b77f58b843371198a..094c09dacd336aed23ecd96269a814c5a8ce85e4 100644
+index 33680f578d7627d7bb43b29b77f58b843371198a..e07f35fdf01077adafea42f6521e3ca2c8b7610f 100644
 --- a/src/game/player_core.cpp
 +++ b/src/game/player_core.cpp
 @@ -7,6 +7,8 @@
@@ -3185,7 +3198,15 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..094c09dacd336aed23ecd96269a814c5
  
  #include <algorithm>
  #include <array>
-@@ -226,6 +228,15 @@ void game_initialize_session(void)
+@@ -144,6 +146,7 @@ void player_begin_weapon_attack(void)
+         && player_state.equipped_weapon_id != KF_OBJECT_NONE) {
+         player_state.weapon_attack_phase = 0;
+         sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_WEAPON_ATTACK], KF_AUDIO_MAX_VOLUME);
++        kf::online_sound_made(kf::OnlineSound::Swing);   // PC extension (online play)
+         player_state.attack_charge_state.committed = player_state.attack_charge_state.current;
+         if (player_state.attack_charge_state.current == KF_PLAYER_CHARGE_FULL) {
+             player_state.weapon_attack_fully_charged = KF_WEAPON_ATTACK_FULL_CHARGE;
+@@ -226,6 +229,15 @@ void game_initialize_session(void)
      player_state.compass_enabled = KF_PLAYER_OPTION_ON;
  }
  
@@ -3201,7 +3222,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..094c09dacd336aed23ecd96269a814c5
  void player_get_floor_position(VECTOR &position)
  {
      position = {player_state.camera_position.vx, player_state.foot_height,
-@@ -304,6 +315,53 @@ s32 player_distance_to_point_in_cone(
+@@ -304,6 +316,53 @@ s32 player_distance_to_point_in_cone(
      return distance;
  }
  
@@ -3255,7 +3276,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..094c09dacd336aed23ecd96269a814c5
  s32 player_distance_to_point(
      s32 point_x, s32 point_y, s32 point_z, s32 max_distance, s32 point_height)
  {
-@@ -314,6 +372,10 @@ s32 player_distance_to_point(
+@@ -314,6 +373,10 @@ s32 player_distance_to_point(
      s32 distance;
      s32 tolerance = point_height;
  
@@ -3267,16 +3288,24 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..094c09dacd336aed23ecd96269a814c5
      if (dx < -max_distance || max_distance < dx) {
          return KF_PROXIMITY_NONE;
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a85c41405b551858ed7cb706b062dbee0826b2a9..6d598d15ca5b030f8cbdff7f32439ce7e10226ac 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..81128cdbe8d57d95c34e8fd77208c15da8843b80 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/online_players.h>
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
-@@ -65,6 +66,10 @@ void player_death_begin(void)
+@@ -59,12 +61,17 @@ void player_death_begin(void)
+     player_state.death_camera_pitch_step = 0;
+     player_state.death_visual_blend = 0;
+     sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_DEATH], KF_AUDIO_MAX_VOLUME);
++    kf::online_sound_made(kf::OnlineSound::Death);   // PC extension (online play)
+     player_death_saved_color_matrix = game_graphics_runtime.render_state.lighting.color_matrix;
+     player_death_saved_fog_near = game_graphics_runtime.render_state.fog_near_distance;
+ }
  
  void game_state_initialize(void)
  {
@@ -3287,7 +3316,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..6d598d15ca5b030f8cbdff7f32439ce7
      player_state.experience = 0;
      player_state.progress_state.level = 1;
      player_state.progress_state.current_floor = KF_FLOOR_1;
-@@ -223,125 +228,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
+@@ -223,125 +230,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
      }
  }
  
@@ -3513,7 +3542,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..6d598d15ca5b030f8cbdff7f32439ce7
  }
  
  void player_increment_physical_power_training(void)
-@@ -447,6 +463,11 @@ void player_apply_damage(
+@@ -447,6 +465,11 @@ void player_apply_damage(
      s32 loss;
      s32 remaining;
  
@@ -3525,7 +3554,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..6d598d15ca5b030f8cbdff7f32439ce7
      if ((status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
          player_state.curse_timer = KF_CURSE_DURATION_UPDATES;
          player_state.status_effect_flags |= KF_PLAYER_STATUS_CURSE;
-@@ -505,6 +526,28 @@ void player_apply_damage(
+@@ -505,6 +528,28 @@ void player_apply_damage(
      }
  }
  
@@ -3554,7 +3583,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..6d598d15ca5b030f8cbdff7f32439ce7
  void player_apply_radial_damage(
      const VECTOR *origin,
      u32 radius,
-@@ -520,6 +563,9 @@ void player_apply_radial_damage(
+@@ -520,6 +565,9 @@ void player_apply_radial_damage(
      s32 distance;
      u16 attenuation;
  
@@ -3766,10 +3795,27 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
          display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
      }
 diff --git a/src/game/player_use_item.cpp b/src/game/player_use_item.cpp
-index b4dc15cd178b02cc492d80830474a514ddb80702..1873eb5e0a7385fb3aec720faa259d80f6869596 100644
+index b4dc15cd178b02cc492d80830474a514ddb80702..f82cb62f351a81ee7fd84eb808154a3187e9466f 100644
 --- a/src/game/player_use_item.cpp
 +++ b/src/game/player_use_item.cpp
-@@ -113,6 +113,8 @@ void player_use_item(KfObjectId item_id)
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <kf/platform/online_players.h>
+ #include <kf/game/audio.h>
+ #include <kf/game/game.h>
+ #include <kf/game/player.h>
+@@ -102,8 +103,10 @@ void player_use_item(KfObjectId item_id)
+                     if (object->link.link_id == kf_enum_encode<u8>(item_id)) {
+                         object->link.link_id = KF_MAP_LINK_NONE;
+                         sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_KEY_UNLOCK], PLAYER_KEY_UNLOCK_VOLUME);
++                        kf::online_sound_made(kf::OnlineSound::KeyUnlock);   // PC extension (online play)
+                         if (object->object_id == KF_MAP_OBJECT_GRAVESTONE) {
+                             sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_STONE_PASSAGE], KF_AUDIO_MAX_VOLUME);
++                            kf::online_sound_made(kf::OnlineSound::StonePassage);   // PC extension (online play)
+                         }
+                     } else {
+                         notify_enqueue(KF_NOTIFICATION_KEY_DOES_NOT_FIT);
+@@ -113,6 +116,8 @@ void player_use_item(KfObjectId item_id)
              }
              index++;
          }
@@ -3778,6 +3824,32 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..1873eb5e0a7385fb3aec720faa259d80
          break;
  
      case KF_ITEM_DRAGON_CHALICE:
+@@ -165,6 +170,7 @@ void player_use_item(KfObjectId item_id)
+             break;
+         }
+         sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_HARP], KF_AUDIO_MAX_VOLUME);
++        kf::online_sound_made(kf::OnlineSound::Harp);   // PC extension (online play)
+         used = true;
+         break;
+     case KF_ITEM_MEDICINAL_HERB:
+diff --git a/src/game/player_warp.cpp b/src/game/player_warp.cpp
+index 41c80ebec46a78661150cba8971617f367a64dd6..9f22f7a4b96c020a04a3e0be636a183a73d6a22a 100644
+--- a/src/game/player_warp.cpp
++++ b/src/game/player_warp.cpp
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <kf/platform/online_players.h>
+ #include <kf/game/audio.h>
+ #include <kf/game/collision.h>
+ #include <kf/game/game.h>
+@@ -82,6 +83,7 @@ void player_warp_shimmer(KfWarpShimmerMode shimmer_mode, VECTOR *position)
+     for (frame = 0; frame < KF_CYLINDER_TRANSITION_FRAMES; frame++) {
+         if (frame == WARP_SHIMMER_SOUND_FRAME) {
+             sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_WARP_SHIMMER], KF_AUDIO_MAX_VOLUME);
++            kf::online_sound_made(kf::OnlineSound::WarpShimmer);   // PC extension (online play)
+         }
+         for (s16 i = 0; i < KF_CYLINDER_TRANSITION_COUNT; ++i) {
+             auto *effect = effects[i];
 diff --git a/src/game/render.cpp b/src/game/render.cpp
 index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..98e50014ee530711f8e858d4fcd163dffbacabfc 100644
 --- a/src/game/render.cpp
@@ -4534,7 +4606,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8af2343413d93edf025cfdc7c01222051fa29b91 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..40b0d688b7352411e0673654370ec8ef72f8eb97 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -3,6 +3,7 @@
@@ -4610,7 +4682,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8af2343413d93edf025cfdc7c0122205
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +105,56 @@ void render_entities(void)
+@@ -77,23 +105,71 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -4642,10 +4714,25 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8af2343413d93edf025cfdc7c0122205
          }
          if (render_cell_is_visible(
                  effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
-+            tag(KF_RENDER_TAG_EFFECTS + KF_EFFECT_CAPACITY, i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
++            tag(KF_RENDER_TAG_EFFECTS + int(KF_EFFECT_CAPACITY), i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
              render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
          }
      }
++    // PC extension (coop): the other players' spells, as their poses carry them.
++    static_assert(int(KF_RENDER_TAG_EFFECTS) + (2 + KF_EFFECT_SHOWN_PLAYERS) * int(KF_EFFECT_CAPACITY) <= int(KF_RENDER_TAG_MAP_EVENTS));
++    for (std::size_t player = 0; player < std::size(effect_player_shown_records); ++player) {
++        for (std::size_t i = 0; i < KF_EFFECT_CAPACITY; ++i) {
++            auto &effect = effect_player_shown_records[player][i];
++            if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
++                continue;
++            }
++            if (render_cell_is_visible(
++                    effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
++                tag(KF_RENDER_TAG_EFFECTS + (2 + player) * KF_EFFECT_CAPACITY, i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
++                render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
++            }
++        }
++    }
  
 -    for (auto &event : map_runtime_state.events) {
 +    for (std::size_t i = 0; i < std::size(map_runtime_state.events); ++i) {

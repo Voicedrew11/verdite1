@@ -9,6 +9,7 @@
 #include <kf/platform/title.h>
 #include <kf/game/actor.h>
 #include <kf/game/effect.h>
+#include <kf/game/magic.h>
 #include <kf/lib/map_types.h>
 #include <kf/game/player.h>
 #include <kf/lib/item.h>
@@ -40,8 +41,9 @@ std::optional<std::array<int, 2>> move_request; // a cell, applied between updat
 std::optional<std::array<long, 2>> give_request; // an item (255: gold) and a count, applied between updates
 std::optional<int> warp_request;                // a floor, applied between updates
 std::optional<int> hurt_request;                // hp lost between updates, as poison takes it
-std::optional<std::size_t> take_request;
-std::optional<std::size_t> hit_request;         // an actor slot struck between updates, as the sword does        // an object slot emptied between updates, as a pickup does
+std::optional<std::size_t> take_request;        // an object slot emptied between updates, as a pickup does
+std::optional<std::size_t> hit_request;         // an actor slot struck between updates, as the sword does
+bool cast_request = false;                      // a Fire Ball launched between updates, as the magic button does
 
 struct ButtonName { const char *name; Button button; };
 constexpr std::array<ButtonName, 14> button_names = {{
@@ -208,8 +210,18 @@ std::string do_coop(verdite::AgentArgs) {
     return verdite::json_ok("coop", "," + ext::coop_json());
 }
 
-// The effects in flight on this floor: this machine's (with whether an actor launched them) and
-// those it draws from the floor's owner.
+// Launches a Fire Ball at the next update as the magic button does, without its cost.
+std::string do_cast(verdite::AgentArgs args) {
+    if (!args.empty())
+        return verdite::json_error("cast");
+    if (coop_player_down())
+        return verdite::json_error("the player is down");
+    cast_request = true;
+    return verdite::json_ok("cast");
+}
+
+// The effects in flight on this floor: this machine's (with what launched them), those it draws
+// from the floor's owner, and the other players' spells it draws.
 std::string do_effects(verdite::AgentArgs) {
     std::string effects;
     auto add = [&](std::size_t slot, const KfEffectRecord &effect, const char *from) {
@@ -220,9 +232,14 @@ std::string do_effects(verdite::AgentArgs) {
     };
     for (std::size_t i = 0; i < KF_EFFECT_CAPACITY; ++i) {
         if (effect_state.records[i].type != KF_EFFECT_SLOT_FREE)
-            add(i, effect_state.records[i], effect_sources[i] == KfEffectSource::Actor ? "actor" : "other");
+            add(i, effect_state.records[i], effect_sources[i] == KfEffectSource::Actor ? "actor"
+                    : effect_sources[i] == KfEffectSource::Player                    ? "player"
+                                                                                     : "other");
         if (effect_shown_records[i].type != KF_EFFECT_SLOT_FREE)
             add(i, effect_shown_records[i], "owner");
+        for (const auto &shown : effect_player_shown_records)
+            if (shown[i].type != KF_EFFECT_SLOT_FREE)
+                add(i, shown[i], "another player");
     }
     return verdite::json_ok("effects", ",\"effects\":[" + effects + "]");
 }
@@ -371,7 +388,8 @@ void agent_start() {
         {"release", "release - let go of the pressed buttons", do_release},
         {"move", "move <cell_x> <cell_z> - put the player on a cell of this floor at the next update", do_move},
         {"actors", "actors - the awake actors on this floor and the player each goes after", do_actors},
-        {"effects", "effects - the effects in flight on this floor: this machine's (from an actor or not) and the owner's it draws", do_effects},
+        {"effects", "effects - the effects in flight on this floor: this machine's (from an actor, this player or other), the owner's it draws and the other players' spells", do_effects},
+        {"cast", "cast - launch a Fire Ball at the next update as the magic button does, without its cost", do_cast},
         {"players", "players - the other players in the room on this floor, as drawn", do_players},
         {"warp", "warp <floor> - change floor as a warp does, onto the first open cell, at the next update", do_warp},
         {"object", "object <slot> [take] - an object slot's id on this floor (255 none); take empties it as a pickup does", do_object},
@@ -406,6 +424,15 @@ void agent_between_updates() {
             player_state.striking_attack, player_state.piercing_attack, player_state.holy_attack,
             player_state.fire_attack, KF_ACTOR_DAMAGE_SCALE_ONE, KF_ACTOR_DAMAGE_CREDIT_PLAYER);
         hit_request.reset();
+    }
+    if (cast_request) {
+        cast_request = false;
+        const KfEffectKind selected = player_state.selected_magic_id;
+        player_state.selected_magic_id = KfEffectKind::KF_MAGIC_FIRE_BALL;
+        effect_spawn_source = KfEffectSource::Player;
+        magic_cast();
+        effect_spawn_source = KfEffectSource::Other;
+        player_state.selected_magic_id = selected;
     }
     if (hurt_request) {
         if (!coop_player_down() && player_state.update_state != KF_PLAYER_UPDATE_DYING)

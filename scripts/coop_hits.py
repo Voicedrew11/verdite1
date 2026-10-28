@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Two headless instances in one coop room on a local service (online/README.md: npm run dev), for
 hits across machines: a guest's hit on an actor the host runs lands on the host's, a kill by either
-player's hit gives both of them its experience. docs/COOP_PLAN.md, "Hits across machines".
+player's hit gives both of them its experience, and each player's swing is heard and spell drawn on
+the other's machine. docs/COOP_PLAN.md, "Hits across machines" and "Other players' spells and sounds".
 
     scripts/coop_hits.py build/linux/verdite1 [--room R] [--service URL] [--work DIR]
 """
@@ -22,6 +23,8 @@ FIGHT = (41, 65)  # two of floor 1's enemies wake here
 # A walk among floor 2's casters that wakes them and comes into reach of their fire balls.
 CASTERS = ((92, 4), (92, 12), (96, 14), (88, 16))
 SWUNG_AT = (25, 12)  # where the three at (24..26, 10..11) reach a player and swing
+SWING = 0  # kf::OnlineSound::Swing, an index of the coop state's soundsHeard
+FIRE_BALL = 5  # KF_MAGIC_FIRE_BALL
 
 
 def experience(game):
@@ -42,6 +45,18 @@ def strike_until(game, slot, test, seconds=60):
         game.run(f"hit {slot}")
         time.sleep(0.15)
     return test()
+
+
+def swing(game, seconds=10):
+    """Presses Attack until `game`'s player swings (not while it is hit or fading in); whether it did."""
+    made = game.coop()["soundsMade"][SWING]
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        game.run("press attack")
+        time.sleep(0.5)
+        if game.coop()["soundsMade"][SWING] != made:
+            return True
+    return False
 
 
 def wait_state(game, test, seconds):
@@ -141,6 +156,21 @@ def main():
         time.sleep(1)
         check(f"A's own kill of actor {slot} gives B experience ({b_xp} before, {experience(b)} after)",
               killed and experience(b) > b_xp)
+
+        # Each player's swing is heard and its spell drawn on the other's machine, whoever runs the
+        # floor (docs/COOP_PLAN.md, "Other players' spells and sounds").
+        for caster, watcher, name in ((b, a, "B"), (a, b, "A")):
+            heard = watcher.coop()["soundsHeard"][SWING]
+            swung = swing(caster)
+            check(f"{name}'s swing is heard on the other machine (swung: {swung})",
+                  swung and bool(wait_state(watcher, lambda state: watcher.coop()["soundsHeard"][SWING] > heard, 5)))
+            caster.run("cast")
+            seen = set()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not seen:
+                seen = {effect["kind"] for effect in watcher.run("effects")["effects"] if effect["from"] == "another player"}
+                time.sleep(0.05)
+            check(f"{name}'s Fire Ball is drawn on the other machine (kinds {sorted(seen)})", FIRE_BALL in seen)
 
 
         # Floor 2's casters, which A runs: B draws their effects in flight.

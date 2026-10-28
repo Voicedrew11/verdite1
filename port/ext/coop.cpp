@@ -10,6 +10,7 @@
 #include "coop_message.h"
 #include "coop_party.h"
 #include "internal.hpp"
+#include "online_sounds.h"
 
 #include <kf/game/player.h>
 #include <kf/game/save.h>
@@ -840,6 +841,11 @@ std::string coop_json() {
     std::string feed_rows;
     for (const CoopFeedRow &row : kf::coop_feed_view(Language::English))
         feed_rows += (feed_rows.empty() ? "[\"" : ",[\"") + row.before + "\"," + std::to_string(row.item) + ",\"" + row.after + "\"]";
+    std::string made, heard;
+    for (const std::uint8_t count : online_sounds_made())
+        made += (made.empty() ? "" : ",") + std::to_string(count);
+    for (const std::uint32_t count : online_sounds_heard())
+        heard += (heard.empty() ? "" : ",") + std::to_string(count);
     return "\"role\":\"" + std::string(role) + "\",\"inPlay\":" + (coop.in_play ? "true" : "false") + ",\"name\":\"" +
            coop.name + "\",\"pack\":{" + pack + "},\"gold\":" + std::to_string(player_state.gold) + ",\"worn\":" +
            worn_json(game_worn()) + ",\"othersWear\":[" + others + "],\"feed\":[" + feed_rows + "],\"highestFloor\":" +
@@ -847,7 +853,7 @@ std::string coop_json() {
            ",\"floor\":" + std::to_string(kf_enum_encode<int>(player_state.progress_state.current_floor)) + ",\"cell\":[" +
            std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
            "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json() + "," +
-           coop_death_json() + ",\"life\":" + std::to_string(coop.life);
+           coop_death_json() + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
 }
 
 std::string coop_panel_line() {

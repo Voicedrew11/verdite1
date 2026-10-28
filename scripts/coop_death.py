@@ -22,6 +22,7 @@ import coop_pair  # noqa: E402
 PORTS = (27951, 27952)  # not coop_pair.py's, title_pair.py's, coop_floors.py's nor coop_hits.py's
 FIGHT = (41, 65)  # two of floor 1's enemies wake here
 KILL = "hurt 9999"
+DEATH = 1  # kf::OnlineSound::Death, an index of the coop state's soundsHeard
 
 
 def state(game):
@@ -87,9 +88,12 @@ def main():
         # clear of it, B comes back.
         a.run("move %d %d" % FIGHT)
         a.wait("A in a fight", lambda s: s["fighting"], 60)
+        deaths_heard = a.coop()["soundsHeard"][DEATH]
         b.run(KILL)
         b.wait("B down", lambda s: s["down"], 10)
         time.sleep(1)
+        check(f"A hears B die on its floor ({deaths_heard} deaths heard before, {a.coop()['soundsHeard'][DEATH]} after)",
+              a.coop()["soundsHeard"][DEATH] > deaths_heard)
         targets = {actor["target"] for actor in coop_floors.actors(a).values()}
         drawn = a.run("players")["players"]
         check(f"down, B is out of A's world: no knight drawn ({len(drawn)}), no enemy after it (targets {targets})",

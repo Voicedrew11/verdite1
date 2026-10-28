@@ -1,12 +1,14 @@
 // Online play: a room joined through the Verdite online service (online/README.md), our pose sent
 // to the others once per game update, and theirs played back for the automap and the world. Opt-in:
 // nothing touches the network until a room is joined.
+#include "coop_floor.h"
 #include "coop_floor_frames.h"
 #include "coop_death_play.h"
 #include "coop_floor_play.h"
 #include "internal.hpp"
 #include "online_playback.h"
 #include "online_pose.h"
+#include "online_sounds.h"
 #include "online_stride.h"
 
 #include <imgui.h>
@@ -54,6 +56,7 @@ struct Peer {
     OnlinePlayback playback;
     std::optional<OnlinePose> shown;   // as played back for this update
     OnlineStride stride;
+    std::optional<std::size_t> spells;   // the set of effect_player_shown_records their spells are drawn from
 };
 
 struct LobbyClose {
@@ -91,13 +94,31 @@ std::string build_name() {
     return name.substr(0, 64);
 }
 
+// The first set of effect_player_shown_records no player has; none past the room's size.
+std::optional<std::size_t> free_spells() {
+    for (std::size_t set = 0; set < coop_floor_shown_players; ++set)
+        if (std::ranges::none_of(online.players, [set](const auto &entry) { return entry.second.spells == set; }))
+            return set;
+    return std::nullopt;
+}
+
+void forget_peer(vo_peer peer) {
+    const auto known = online.players.find(peer);
+    if (known == online.players.end())
+        return;
+    if (known->second.spells)
+        coop_floor_hide_player_effects(*known->second.spells);
+    online.players.erase(known);
+}
+
 void leave(std::string why) {
     if (online.session)
         coop_room_left();
     online.session.reset();
     online.room.clear();
     online.self = 0;
-    online.players.clear();
+    while (!online.players.empty())
+        forget_peer(online.players.begin()->first);
     online.status = std::move(why);
 }
 
@@ -157,13 +178,13 @@ void on_event(const vo_event &event) {
         break;
     }
     case VO_EVENT_PEER_OPEN:
-        online.players.erase(event.peer);
-        online.players.emplace(event.peer, Peer{OnlinePlayback(playback_delay_updates()), {}, {}});
+        forget_peer(event.peer);
+        online.players.emplace(event.peer, Peer{OnlinePlayback(playback_delay_updates()), {}, {}, free_spells()});
         std::printf("[online] %s is here\n", hex(event.peer).c_str());
         coop_peer_open(event.peer, event.older != 0);
         break;
     case VO_EVENT_PEER_CLOSED:
-        online.players.erase(event.peer);
+        forget_peer(event.peer);
         std::printf("[online] %s left\n", hex(event.peer).c_str());
         coop_peer_closed(event.peer);
         break;
@@ -200,11 +221,26 @@ void send_pose(const OnlinePlayerPose &own) {
     if (online.listed)
         vo_describe(online.session.get(), static_cast<std::uint32_t>(own.floor));
     const auto bytes = online_pose_encode({own.floor, own.x, own.z, own.yaw, own.weapon, own.attack_phase, own.pitch,
-        own_update, own.foot_height, coop_death_down(), coop_death_fighting()});
+        own_update, own.foot_height, coop_death_down(), coop_death_fighting(), online_sounds_made(),
+        coop_floor_player_effects(online_pose_effects_most)});
     vo_broadcast(online.session.get(), VO_CHANNEL_STATE, bytes.data(), bytes.size());
 }
 
-void play_on(vo_peer peer, Peer &known) {
+// What another player on this floor does that is seen and heard: their spells and their knight's
+// sounds.
+void show_deeds(Peer &known, const OnlinePose &next, int floor) {
+    const bool here = next.floor == floor;
+    if (known.shown && here && known.shown->floor == floor)
+        online_sounds_play(*known.shown, next);
+    if (!known.spells)
+        return;
+    if (!here)
+        coop_floor_hide_player_effects(*known.spells);
+    else if (!coop_floor_show_player_effects(*known.spells, next.effects))
+        std::printf("[online] spells that are not ones this machine can draw were dropped\n");
+}
+
+void play_on(vo_peer peer, Peer &known, int floor) {
     const auto next = known.playback.step();
     if (!next)
         return;
@@ -212,6 +248,7 @@ void play_on(vo_peer peer, Peer &known) {
         std::printf("[online] %s is on floor %d\n", hex(peer).c_str(), next->floor);
     if (known.shown)
         known.stride = online_stride_step(known.stride, *known.shown, *next);
+    show_deeds(known, *next, floor);
     known.shown = next;
 }
 
@@ -458,7 +495,7 @@ void online_update(const OnlinePlayerPose &own) {
         return;
     ext::send_pose(own);
     for (auto &[peer, known] : ext::online.players)
-        ext::play_on(peer, known);
+        ext::play_on(peer, known, own.floor);
 #else
     (void)own;
 #endif

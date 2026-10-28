@@ -2,8 +2,10 @@
 
 #include <kf/platform/automap.h>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 
 namespace kf::ext {
@@ -11,7 +13,7 @@ namespace {
 
 static_assert(std::endian::native == std::endian::little, "poses are sent little-endian as they are");
 
-constexpr std::uint8_t pose_version = 5;
+constexpr std::uint8_t pose_version = 6;
 constexpr std::uint8_t flag_down = 1;
 constexpr std::uint8_t flag_fighting = 2;
 constexpr int floor_count = 5;
@@ -53,8 +55,8 @@ bool known_height(std::int32_t height) {
 
 }
 
-std::array<std::uint8_t, online_pose_bytes> online_pose_encode(const OnlinePose &pose) {
-    std::array<std::uint8_t, online_pose_bytes> bytes{};
+std::vector<std::uint8_t> online_pose_encode(const OnlinePose &pose) {
+    std::vector<std::uint8_t> bytes(online_pose_bytes);
     bytes[0] = pose_version;
     bytes[1] = static_cast<std::uint8_t>(pose.floor);
     put_float(&bytes[2], pose.x);
@@ -66,11 +68,14 @@ std::array<std::uint8_t, online_pose_bytes> online_pose_encode(const OnlinePose 
     std::memcpy(&bytes[19], &pose.update, sizeof pose.update);
     std::memcpy(&bytes[23], &pose.foot_height, sizeof pose.foot_height);
     bytes[27] = static_cast<std::uint8_t>((pose.down ? flag_down : 0) | (pose.fighting ? flag_fighting : 0));
+    std::memcpy(&bytes[28], pose.sounds.data(), pose.sounds.size());
+    const std::size_t effects = std::min(pose.effects.size(), online_pose_effects_most);
+    bytes.insert(bytes.end(), pose.effects.begin(), pose.effects.begin() + static_cast<std::ptrdiff_t>(effects));
     return bytes;
 }
 
 std::optional<OnlinePose> online_pose_decode(std::span<const std::uint8_t> bytes) {
-    if (bytes.size() != online_pose_bytes || bytes[0] != pose_version)
+    if (bytes.size() < online_pose_bytes || bytes.size() > online_pose_most || bytes[0] != pose_version)
         return std::nullopt;
     OnlinePose pose;
     pose.floor = bytes[1];
@@ -85,6 +90,8 @@ std::optional<OnlinePose> online_pose_decode(std::span<const std::uint8_t> bytes
     const std::uint8_t flags = bytes[27];
     pose.down = (flags & flag_down) != 0;
     pose.fighting = (flags & flag_fighting) != 0;
+    std::memcpy(pose.sounds.data(), &bytes[28], pose.sounds.size());
+    pose.effects.assign(bytes.begin() + online_pose_bytes, bytes.end());
     if ((flags & ~(flag_down | flag_fighting)) != 0)
         return std::nullopt;
     if (pose.floor < 1 || pose.floor > floor_count || !on_map(pose.x, automap_columns) ||
@@ -92,6 +99,14 @@ std::optional<OnlinePose> online_pose_decode(std::span<const std::uint8_t> bytes
         !known_attack_phase(pose.attack_phase) || !known_pitch(pose.pitch) || !known_height(pose.foot_height))
         return std::nullopt;
     return pose;
+}
+
+std::vector<std::size_t> online_pose_sounds_between(const OnlinePose &was, const OnlinePose &now) {
+    std::vector<std::size_t> sounds;
+    for (std::size_t sound = 0; sound < online_sound_kinds; ++sound)
+        if (was.sounds[sound] != now.sounds[sound])
+            sounds.push_back(sound);
+    return sounds;
 }
 
 }

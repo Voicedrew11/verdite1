@@ -695,7 +695,7 @@ machine's part in `port/ext/coop_death_play.h`, the wipe in the session (`port/e
   targets, the collision grid does not count it, the floor scripts and warps do not fire where its
   view is, and a kill gives it nothing. HP stays 0, so menus back out by themselves, and `move`,
   `warp` and `hurt` on the agent are refused.
-- **The pose says so:** a pose carries two flags (version 5, 28 bytes), down and in a fight. A down
+- **The pose says so:** a pose carries two flags (since version 5), down and in a fight. A down
   player is left out of `online_players_on_floor`, so no machine draws, targets, counts or hits it;
   the pose is the one source, as continuous as the position.
 - **Seeing through another's eyes:** each update, in place of its own, a down player looks from the
@@ -749,6 +749,36 @@ Not yet:
 - A down player's floor-5 variant is the entry's, whatever the eyes' variant.
 - The Grass Fruit still does nothing in coop.
 
+## Other players' spells and sounds
+
+Done 2026-10-27, after Order 7: the user found that no one saw another player's magic or heard
+their knight. Both travel in the pose (version 6), so they play in step with the knight drawn, and
+neither depends on who runs the floor.
+
+- **Spells:** what the player's update spawns, and what that spawns, is the player's
+  (`KfEffectSource::Player`); the caster's machine runs its flight and judges its hits, as before
+  (Hits across machines). Each pose carries those effects in flight, 30 bytes each as the owner's
+  frame writes an effect, as many as fit in a packet (35). The others draw them from one set of
+  slots for each other player (`effect_player_shown_records`, three), keeping each slot's
+  animation cache, with the launch and impact sounds as an effect comes and goes, as the owner's
+  enemies' effects are. A floor's snapshot carries the sender's spells as anyone's, not the
+  receiver's player's.
+- **Sounds:** the knight's swing, death, key, gravestone, Harp and warp shimmer, where the game
+  plays them for its own player (`kf::online_sound_made`, `port/ext/online_sounds.h`). The pose
+  carries a count of each, so a lost pose loses no sound; the others play one whose count moved,
+  from where they draw the knight's head, as an enemy's is (`audio_play_spatial_default_range`).
+  The level-up stays this player's own.
+- **Checked:** `scripts/coop_hits.py` (each player's swing heard and Fire Ball drawn on the other
+  machine, either way round), `scripts/coop_death.py` (a player's death heard on its floor); pose
+  unit tests for the counts, the spells and the packet's size.
+
+Not yet:
+
+- **Judged by ear and by eye:** the sounds' volume and distance, and the spells drawn.
+- Another player's warp shimmer is heard; its cylinder is mostly spawned outside the player's
+  update, so it is not sent, and is not checked. The Harp's floor deformation is still not sent
+  (Floor ownership).
+
 ## The room's size
 
 Order's third step, 2026-10-27. Another player is now sent a pose every game update and played
@@ -759,10 +789,11 @@ the playback cannot fill in. The attack event (Hits across machines) is for its 
 
 What a room costs each player, for N players:
 
-- **Upload:** a 28-byte pose to each of the other N - 1, at the tick rate (12 to 30 a second, 15
-  by default), about 113 bytes with the UDP, DTLS and SCTP headers (estimated, not captured):
-  1.7 KB a second to each other player at 15, so 5 KB a second for four players, 10 KB at 30
-  updates. Poses go peer to peer, so the host sends no more than anyone. Not the limit.
+- **Upload:** a 34-byte pose to each of the other N - 1, at the tick rate (12 to 30 a second, 15
+  by default), about 119 bytes with the UDP, DTLS and SCTP headers (estimated, not captured):
+  1.8 KB a second to each other player at 15, so 5.4 KB a second for four players, 11 KB at 30
+  updates, and 30 bytes more a pose for each of the player's spells in flight. Poses go peer to
+  peer, so the host sends no more than anyone. Not the limit.
 - **Drawing:** about 100 µs a knight on the desktop to pose and enqueue it, so three knights are
   0.3 ms of a 67 ms update there. The 3DS's ARM11 is far slower and has no SIMD; its cost is the
   number that sets the room's size, and it waits for a build that runs there. If it is too much,
@@ -954,3 +985,6 @@ What a room costs each player, for N players:
   their action, so the owner's frame carries it. A down player comes back after 30 seconds
   whatever the fight, since an enemy that cannot reach a player can pursue it forever. The wipe
   needs a guard against a guest's messages from before it, and a save point kept in the file.
+- 2026-10-27: other players' spells and sounds (Other players' spells and sounds) travel in the
+  pose, not in the owner's frame: they are the caster's, wherever the floor runs, and the pose is
+  already played in step with the knight. Sounds go as counts, so a lost pose loses none.

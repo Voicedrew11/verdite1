@@ -284,7 +284,11 @@ floor's owner; `coop` also counts the swings and hits this player felt from othe
 ([COOP_PLAN.md](COOP_PLAN.md), "Hits across machines"). `hurt <hp>` takes HP at the next update as
 poison does, dying at 0, and `coop` also says whether this player is down, whose eyes it sees
 through, whether it is in a fight and how many times the party went back to its last save; `move`,
-`warp` and `hurt` are refused while down ([COOP_PLAN.md](COOP_PLAN.md), "Death").
+`warp` and `hurt` are refused while down ([COOP_PLAN.md](COOP_PLAN.md), "Death"). `cast` launches
+a Fire Ball as the magic button does, without its cost; `effects` also names this player's spells
+(`player`) and the other players' it draws (`another player`), and `coop` counts the knight's
+sounds this player made (`soundsMade`) and the others' it played (`soundsHeard`), in
+`kf::OnlineSound`'s order ([COOP_PLAN.md](COOP_PLAN.md), "Other players' spells and sounds").
 `title` reads the title menu as English text (whether it is up, the page's heading, code, note and
 rows) and `title type <digits>` types a room code on its join page ([COOP_PLAN.md](COOP_PLAN.md),
 "The title menu").

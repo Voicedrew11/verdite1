@@ -179,6 +179,9 @@ get online play by writing only their own game layer.
   every update of another player is drawn ([PLAYER_MODEL.md](PLAYER_MODEL.md)).
 - 2026-10-27: the pose also says whether its player is down or in a fight (version 5, 28 bytes),
   for coop's death ([COOP_PLAN.md](COOP_PLAN.md), "Death").
+- 2026-10-27: the pose also counts the knight's sounds and carries its player's spells in flight
+  (version 6, 34 bytes and 30 a spell, at most a packet), so the others hear and see them
+  ([COOP_PLAN.md](COOP_PLAN.md), "Other players' spells and sounds").
 - 2026-10-26: coop is one seamless playthrough, not a summon (it starved the guest of items), with
   one tick rate per room, the host's. Lockstep is out, since the game holds one floor and players
   may be on different ones; authority goes with the floor ([COOP_PLAN.md](COOP_PLAN.md)).

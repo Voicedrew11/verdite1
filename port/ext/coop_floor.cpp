@@ -118,7 +118,8 @@ bool floor_valid(const Floor &floor) {
     return std::ranges::all_of(floor.actors, actor_valid) && std::ranges::all_of(floor.effects, effect_valid)
         && std::ranges::all_of(floor.events, event_valid) && std::ranges::all_of(floor.objects.objects, object_valid)
         && occupants_valid(floor) && std::ranges::all_of(floor.effect_sources, [](KfEffectSource source) {
-               return source == KfEffectSource::Other || source == KfEffectSource::Actor;
+               return source == KfEffectSource::Other || source == KfEffectSource::Actor
+                   || source == KfEffectSource::Player;
            });
 }
 
@@ -164,7 +165,10 @@ void put_floor(const Floor &floor) {
     actor_state.actors = floor.actors;
     actor_state.definitions = floor.definitions;
     effect_state.records = floor.effects;
-    effect_sources = floor.effect_sources;
+    // The sender's spells fly on here, but are not this player's to send with its pose.
+    std::ranges::transform(floor.effect_sources, effect_sources.begin(), [](KfEffectSource source) {
+        return source == KfEffectSource::Player ? KfEffectSource::Other : source;
+    });
     effect_target_players = floor.effect_targets;
     map_runtime_state.events = floor.events;
     map_runtime_state.dialogue_advance_gate = floor.dialogue_advance_gate;
@@ -720,10 +724,9 @@ void play_puppet_sound(const KfActor &was, const KfActor &now) {
 // An effect in flight as the others on its floor draw it.
 constexpr std::size_t shown_effect_bytes = 1 + 1 + 1 + 1 + 2 + 3 * 4 + 3 * 2 + 3 * 2;
 
-bool sent_to_others(std::size_t index) {
+bool sent_to_others(std::size_t index, KfEffectSource source) {
     const KfEffectRecord &effect = effect_state.records[index];
-    return effect.type != KF_EFFECT_SLOT_FREE && effect_sources[index] == KfEffectSource::Actor
-        && effect_has_visual(effect);
+    return effect.type != KF_EFFECT_SLOT_FREE && effect_sources[index] == source && effect_has_visual(effect);
 }
 
 void write_effect(CoopByteWriter &out, std::size_t index, const KfEffectRecord &effect) {
@@ -849,9 +852,46 @@ std::vector<std::uint8_t> coop_floor_frame() {
     out.u8(static_cast<std::uint8_t>(actor_count));
     out.raw(actors.bytes());
     for (std::size_t i = 0; i < KF_EFFECT_CAPACITY; ++i)
-        if (sent_to_others(i))
+        if (sent_to_others(i, KfEffectSource::Actor))
             write_effect(out, i, effect_state.records[i]);
     return std::move(out.bytes());
+}
+
+static_assert(coop_floor_shown_players == KF_EFFECT_SHOWN_PLAYERS);
+
+std::vector<std::uint8_t> coop_floor_player_effects(std::size_t most_bytes) {
+    CoopByteWriter out;
+    for (std::size_t i = 0; i < KF_EFFECT_CAPACITY && out.bytes().size() + shown_effect_bytes <= most_bytes; ++i)
+        if (sent_to_others(i, KfEffectSource::Player))
+            write_effect(out, i, effect_state.records[i]);
+    return std::move(out.bytes());
+}
+
+bool coop_floor_show_player_effects(std::size_t player, std::span<const std::uint8_t> effects_bytes) {
+    if (player >= KF_EFFECT_SHOWN_PLAYERS)
+        return false;
+    auto &shown = effect_player_shown_records[player];
+    std::array<KfEffectRecord, KF_EFFECT_CAPACITY> effects = shown;
+    for (KfEffectRecord &effect : effects)
+        effect.type = KF_EFFECT_SLOT_FREE;
+    CoopByteReader in(effects_bytes);
+    bool read = effects_bytes.size() % shown_effect_bytes == 0;
+    for (std::size_t i = 0; read && i < effects_bytes.size() / shown_effect_bytes; ++i)
+        read = read_effect(in, effects);
+    if (!read) {
+        coop_floor_hide_player_effects(player);
+        return false;
+    }
+    play_effect_sounds(shown, effects);
+    shown = effects;
+    return true;
+}
+
+void coop_floor_hide_player_effects(std::size_t player) {
+    if (player >= KF_EFFECT_SHOWN_PLAYERS)
+        return;
+    for (KfEffectRecord &effect : effect_player_shown_records[player])
+        effect.type = KF_EFFECT_SLOT_FREE;
 }
 
 bool coop_floor_show_frame(std::span<const std::uint8_t> bytes) {

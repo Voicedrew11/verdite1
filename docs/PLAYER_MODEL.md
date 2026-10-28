@@ -118,10 +118,11 @@ with the forearm bent 12 degrees, and the weapon arm holds its guard.
 - The knight's TMD and joints are `port/ext/online_player_model.cpp` (generated), behind
   `kf/platform/online_players.h`. The game draws each part with the actor lights, selecting the
   knight as the current TMD; nothing takes an asset slot.
-- The pose (`port/ext/online_pose.h`) is version 5, 28 bytes: floor, position, yaw, the equipped
-  weapon, the attack phase, the camera's pitch, the update it was sent in, the feet's height, and
-  whether the player is down or in a fight ([COOP_PLAN.md](COOP_PLAN.md), "Death"); a player who
-  is down is not drawn.
+- The pose (`port/ext/online_pose.h`) is version 6, 34 bytes: floor, position, yaw, the equipped
+  weapon, the attack phase, the camera's pitch, the update it was sent in, the feet's height,
+  whether the player is down or in a fight ([COOP_PLAN.md](COOP_PLAN.md), "Death"; a player who
+  is down is not drawn) and a count of each of the knight's sounds; then the player's spells in
+  flight ([COOP_PLAN.md](COOP_PLAN.md), "Other players' spells and sounds").
   `game_world_update` sends one every update (`kf::online_update`), in the main loop and while
   the player is held in a menu or a scripted loop, so a room sends 12 to 30 a second, the tick
   rate.
