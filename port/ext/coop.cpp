@@ -410,7 +410,10 @@ PackCause cause_of(const CoopPackChange &change) {
     return change.count < 0 ? PackCause::Used : PackCause::Found;
 }
 
+// The others' changes only: this player's own the game already shows, or this player made in a menu.
 void feed(CoopPlayerId by, CoopCause cause, const CoopPackChange &change) {
+    if (by == coop.self)
+        return;
     auto known = std::ranges::find(coop.feed_players, by);
     if (known == coop.feed_players.end())
         known = coop.feed_players.insert(known, by);

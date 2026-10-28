@@ -134,7 +134,7 @@ def main():
             host = a.wait("B's herb used", lambda s: s["pack"].get("43") == 1)
             b_name = b.coop()["name"]
             check("A's feed says B used an herb", [b_name + " USED ", 43, ""] in host["feed"])
-            check("B's feed says so too", [b_name + " USED ", 43, ""] in b.coop()["feed"])
+            check("B's own feed leaves it out", not any(row[0].startswith(b_name) for row in b.coop()["feed"]))
             b.run("give 255 -100")   # and spends gold
             host = a.wait("B's gold spent", lambda s: s["gold"] == 200)
             check("the feed says B used gold", [b_name + " USED 100 GOLD", 255, ""] in host["feed"])

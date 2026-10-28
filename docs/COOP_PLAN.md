@@ -474,13 +474,14 @@ room's coop world. `port/ext/coop.cpp` is the session; the party's rules and the
   picture: the line spelled by `menu_spell` with the item's name as the menus draw it, faded
   with the shade `menu_draw_text` takes. In English "PLAYER1234 USED MEDICINAL HERB"; in Japanese
   the name, the item, the count and a verb in kana (てにいれました, かいました, うりました,
-  つかいました). Not yet judged by eye.
+  つかいました). A player's own changes are left out of its feed: its game already says so, or it
+  made them in a menu. Not yet judged by eye.
 
 Checked 2026-10-27 with two headless instances in a room on a local service
 (`scripts/coop_pair.py`, with `give` and `coop` on the agent channel), 19 checks, plain and under
 ASan and UBSan: the host's new world holds one kit; a guest arrives beside the host with its own
 kit added (two swords, two herbs, 300 gold) and sees the party's pack; each sees the other's sword
-as worn; a guest's herb and gold spent reach the host and the feed on both says so; the host's
+as worn; a guest's herb and gold spent reach the host and the host's feed says so, the guest's own not; the host's
 herbs reach the guest; both using the last six herbs within a round trip leaves 0 on both; when the
 host quits the guest's own game comes back; a guest that quits in the room gets its own game (with
 an item only it held) back in its next run; and the host's world, restarted, keeps the pack as last
