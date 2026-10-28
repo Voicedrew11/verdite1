@@ -313,11 +313,13 @@ bool resource_tree_read(const char *directory, AssetTable &assets) {
         std::string path = directory;
         path += '/';
         path += entry.path;
-        // Windows drops a trailing dot from file names ("E0." is stored as "E0").
-        if (!path.empty() && path.back() == '.')
-            path.pop_back();
         std::size_t size;
         FILE *file = open_image(path.c_str(), &size);
+        // A tree copied through Windows lost the trailing dot ("E0." is stored as "E0").
+        if (!file && path.back() == '.') {
+            path.pop_back();
+            file = open_image(path.c_str(), &size);
+        }
         if (!file)
             return false;
         ByteBuffer bytes;
