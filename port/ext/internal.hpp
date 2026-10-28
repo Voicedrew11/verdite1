@@ -1,6 +1,7 @@
 #pragma once
 #include <kf/ext/ext.h>
 #include <kf/platform/analog.h>
+#include "coop_profile.h"
 #include "online_pose.h"
 #include <verdite/options.h>
 #include <verdite/pickup_feed.h>
@@ -217,7 +218,12 @@ bool coop_ready_from_title();
 void coop_start_from_title();
 // A game a crashed run left set aside stays in its file this run (the title loaded a slot).
 void coop_keep_leftover_aside();
-std::string coop_own_name();
+// This player's profile (coop_profile.h), kept in the user folder; a new one is kept at once and
+// goes to the others from the next room.
+CoopProfile coop_own_profile();
+void coop_set_own_profile(const CoopProfile &profile);
+// The profile of the player on `peer`, as the room's roster has it.
+CoopProfile coop_profile_of_peer(std::uint64_t peer);
 // ---- the title menu (title.cpp) ----
 // A coop session started from the title ended: back to the title at the next point between updates.
 void title_return();

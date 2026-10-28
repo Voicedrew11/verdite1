@@ -2,7 +2,8 @@
 """The title menu, driven through the agent channel by headless instances on a local service
 (online/README.md: npm run dev): its top page, a new game from it, a private world hosted from it and
 joined by its code, a public world joined from the list, a code no one hosts, and the way back to the
-title when the host leaves, and CONTINUE loading a card slot. docs/COOP_PLAN.md, "The title menu".
+title when the host leaves, and CONTINUE loading a card slot; and PROFILE, its name typed and its
+colour stepped, kept and played as. docs/COOP_PLAN.md, "The title menu".
 
     scripts/title_pair.py build/linux/verdite1 [--service URL] [--work DIR]
 """
@@ -136,6 +137,24 @@ def main():
               not top["rows"][0]["enabled"] and top["rows"][1]["selected"], top["rows"])
 
         a.choose("COOP")
+        a.choose("PROFILE")
+        rows = a.title()["rows"]
+        check("PROFILE shows the name, colour and helmet",
+              [(row["text"], row["value"]) for row in rows][1:] == [("COLOUR", "BLUE"), ("HELMET", "GREAT HELM")]
+              and rows[0]["text"] == "NAME" and rows[0]["value"].startswith("PLAYER"), rows)
+        a.choose("NAME")
+        for _ in range(len(a.title()["code"])):
+            a.choose("DELETE")
+        a.run("title type alice")
+        check("the name page shows the name typed, in capitals", a.title()["code"] == "ALICE", a.title())
+        a.choose("DONE")
+        a.choose("COLOUR")   # Confirm steps it, as Right does
+        rows = a.title()["rows"]
+        check("the profile has the new name and the next colour",
+              [row["value"] for row in rows] == ["ALICE", "RED", "GREAT HELM"], rows)
+        kept = a.home / "Verdite" / "Verdite1" / "coop.profile"   # SDL's pref path under XDG_DATA_HOME
+        check("the profile is kept", kept.exists() and kept.read_text() == "name=ALICE\ncolour=1\nhelmet=0\n")
+        a.tap("back")
         a.choose("HOST")
         a.choose("NEW WORLD")   # the first is PRIVATE
         code_page = a.title()
@@ -144,6 +163,7 @@ def main():
         a.choose("START")
         host = a.wait("the host's world", a.coop, lambda s: s["inPlay"])
         check("A hosts the world from the title", host["role"] == "host" and not a.title()["open"], host)
+        check("A plays as its profile", (host["name"], host["colour"]) == ("ALICE", 1), host)
 
         b = Game("b", PORTS[1])
         b.to_title()
@@ -189,7 +209,8 @@ def main():
         b.choose("PUBLIC ROOMS")
         listing = b.wait("A's room on the list", b.title, lambda t: any(row["text"] == host["name"] for row in t["rows"]))
         row = next(row for row in listing["rows"] if row["text"] == host["name"])
-        check("the list shows A's room: its host, floor and players", row["value"] == "FLOOR 1  1/4" and row["enabled"], row)
+        check("the list shows A's room: its host, floor and players",
+              row["text"] == "ALICE" and row["value"] == "FLOOR 1  1/4" and row["enabled"], row)
         b.choose(host["name"])
         guest = b.wait("the guest's arrival", b.coop, lambda s: s["inPlay"])
         check("B joins the public world from the list", guest["role"] == "guest", guest)

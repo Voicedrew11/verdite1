@@ -86,6 +86,12 @@ is the agent channel; its KF1 half is `port/platform/agent.cpp`.
 - **Agent tooling first.** The beacon, command channel, headless/turbo mode and
   fuzzer are what let an agent measure without the user, so they come before
   the visual features.
+- **Language handling.** Text the players write (coop names) is drawn with the menu font of the
+  language in play, and the two fonts share cells: the English patch draws its capitals over
+  kana, so Japanese has no A to Z and English no kana. For now a name is A to Z and digits, and
+  in Japanese the generated `PLAYER1234` is shown as プレイヤー1234 (`name_text` in
+  `port/ext/title.cpp`); a chosen name loses its letters there. To be replaced by proper
+  language handling: text that draws the same whatever the language in play.
 - **Licensing is simpler.** The decomps are CC0; nothing from the disc ships.
 
 ## Layout

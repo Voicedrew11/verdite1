@@ -352,8 +352,10 @@ static void process_keyboard_event(const SDL_KeyboardEvent &event) {
     }
 }
 
-// A digit or Backspace on the title's join page types the room code instead of being a button.
+// A digit, a letter or Backspace on the title's join or name page types instead of being a button.
 static bool title_took_key(const SDL_KeyboardEvent &key) {
+    if (key.key >= SDLK_A && key.key <= SDLK_Z)
+        return title_type(static_cast<char>('A' + (key.key - SDLK_A)));
     if (key.key >= SDLK_0 && key.key <= SDLK_9)
         return title_type(static_cast<char>('0' + (key.key - SDLK_0)));
     if (key.key >= SDLK_KP_1 && key.key <= SDLK_KP_9)

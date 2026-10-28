@@ -9,6 +9,7 @@
 #include "coop_hits.h"
 #include "coop_message.h"
 #include "coop_party.h"
+#include "coop_profile.h"
 #include "internal.hpp"
 #include "online_sounds.h"
 
@@ -26,6 +27,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <random>
@@ -54,6 +56,7 @@ struct Entering {
 struct HostSide {
     CoopWorldFile file;
     std::map<std::uint64_t, CoopPlayerId> guests;   // peers that said hello
+    std::map<CoopPlayerId, CoopProfile> profiles;   // as each said it, kept after they leave
     std::map<CoopPlayerId, std::uint32_t> applied_through, worn_through;
     std::vector<std::pair<std::uint64_t, CoopHello>> waiting;   // hellos to answer between updates
     bool pack_changed = false;
@@ -77,7 +80,7 @@ struct Coop {
     Role role = Role::None;
     std::string room;
     CoopPlayerId self = 0;
-    std::string name;
+    CoopProfile profile;
     bool in_play = false;    // the coop world is the game in play
     bool from_title = false; // no game was set aside: leaving goes back to the title
     bool entering = false;   // to set this game aside and put the coop world in
@@ -119,11 +122,27 @@ CoopPlayerId install_id() {
     return id;
 }
 
-// Names are an install's until players can choose one.
-std::string name_of(CoopPlayerId id) {
-    char name[coop_name_most + 1];
-    std::snprintf(name, sizeof name, "PLAYER%04u", static_cast<unsigned>(id % 10000));
-    return name;
+// This player's profile, chosen on the title, beside the install's id.
+std::filesystem::path profile_path() {
+    return user_dir() / "coop.profile";
+}
+
+CoopProfile read_own_profile(CoopPlayerId id) {
+    std::ifstream in(profile_path(), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return coop_profile_read(text, coop_profile_default(id));
+}
+
+// Anyone's in the room: as they said it, else the first an install has.
+CoopProfile profile_of(CoopPlayerId id) {
+    if (id == coop.self)
+        return coop.profile;
+    if (const auto said = coop.host.profiles.find(id); said != coop.host.profiles.end())
+        return said->second;
+    for (const CoopRoster::Player &player : coop.guest.roster.players)
+        if (player.id == id)
+            return player.profile;
+    return coop_profile_default(id);
 }
 
 CoopSavePoint standing_here() {
@@ -136,7 +155,7 @@ void know_self() {
     if (coop.self != 0)
         return;
     coop.self = install_id();
-    coop.name = name_of(coop.self);
+    coop.profile = read_own_profile(coop.self);
 }
 
 void send(std::uint64_t peer, const CoopMessage &message) {
@@ -154,9 +173,9 @@ void broadcast(const CoopMessage &message) {
 // Who is in the room and their peers, the host first, to everyone: a snapshot goes straight from
 // one player to another.
 void host_roster() {
-    CoopRoster roster{{{coop.self, online_self_peer()}}};
+    CoopRoster roster{{{coop.self, online_self_peer(), coop.profile}}};
     for (const auto &[peer, id] : coop.host.guests)
-        roster.players.push_back({id, peer});
+        roster.players.push_back({id, peer, profile_of(id)});
     broadcast(roster);
     coop_floors_roster(roster);
 }
@@ -232,11 +251,11 @@ bool load_coop_world() {
 
 void reset_session() {
     const CoopPlayerId self = coop.self;
-    const std::string name = coop.name;
+    const CoopProfile profile = coop.profile;
     const bool looked_for_aside = coop.looked_for_aside;
     coop = Coop{};
     coop.self = self;
-    coop.name = name;
+    coop.profile = profile;
     coop.looked_for_aside = looked_for_aside;
 }
 
@@ -361,7 +380,7 @@ void enter_as_host() {
     }
     HostSide &host = coop.host;
     host.file = std::move(*file);
-    const CoopCharacter character = host.file.live.party.join(coop.self, coop.name);
+    const CoopCharacter character = host.file.live.party.join(coop.self, coop.profile.name);
     CoopParty &party = host.file.live.party;
     coop.enter = {character.state, host.file.live.world, party.pack(), party.gold(), character.wore, std::nullopt};
     enter_world();
@@ -471,8 +490,9 @@ void host_wear(CoopPlayerId id, std::uint32_t number, const CoopWorn &worn) {
 void host_welcome(std::uint64_t peer, const CoopHello &hello) {
     HostSide &host = coop.host;
     map_world_state_persist();
-    const CoopCharacter character = host.file.live.party.join(hello.id, hello.name);
+    const CoopCharacter character = host.file.live.party.join(hello.id, hello.profile.name);
     host.guests[peer] = hello.id;
+    host.profiles[hello.id] = hello.profile;
     const CoopParty &party = host.file.live.party;
     const auto &cell = player_state.motion_state.map_cell;
     send(peer, CoopWelcome{character.state, character.wore, party.pack(), party.gold(), party.highest_floor(),
@@ -480,7 +500,7 @@ void host_welcome(std::uint64_t peer, const CoopHello &hello) {
     host.pack_changed = true;
     host.file_changed = true;
     host_roster();
-    std::printf("[coop] %s joined the world\n", hello.name.c_str());
+    std::printf("[coop] %s joined the world\n", hello.profile.name.c_str());
 }
 
 CoopWelcome start_at_save(const CoopCharacter &character) {
@@ -734,7 +754,7 @@ void coop_room_joined(std::string_view room, bool first) {
     coop.room = room;
     coop.role = first ? Role::Host : Role::Guest;
     coop.entering = first;
-    std::printf("[coop] in room %s as %s (%s)\n", coop.room.c_str(), coop.name.c_str(), first ? "host" : "guest");
+    std::printf("[coop] in room %s as %s (%s)\n", coop.room.c_str(), coop.profile.name.c_str(), first ? "host" : "guest");
 }
 
 bool coop_ready_from_title() {
@@ -753,14 +773,32 @@ void coop_keep_leftover_aside() {
     coop.looked_for_aside = true;
 }
 
-std::string coop_own_name() {
+CoopProfile coop_own_profile() {
     know_self();
-    return coop.name;
+    return coop.profile;
+}
+
+void coop_set_own_profile(const CoopProfile &profile) {
+    know_self();
+    if (!coop_profile_valid(profile) || profile == coop.profile)
+        return;
+    coop.profile = profile;
+    std::ofstream out(profile_path(), std::ios::binary);
+    out << coop_profile_text(profile);
+    if (!out)
+        std::printf("[coop] cannot keep this player's profile in %s\n", profile_path().string().c_str());
+}
+
+CoopProfile coop_profile_of_peer(std::uint64_t peer) {
+    for (const CoopRoster::Player &player : coop_floors_room())
+        if (player.peer == peer)
+            return player.profile;
+    return coop_profile_default(peer);
 }
 
 void coop_peer_open(std::uint64_t peer, bool older) {
     if (coop.role == Role::Guest && older && coop.guest.host == 0)
-        send(peer, CoopHello{coop.self, coop.name});
+        send(peer, CoopHello{coop.self, coop.profile});
 }
 
 void coop_peer_closed(std::uint64_t peer) {
@@ -824,11 +862,11 @@ std::vector<verdite::PickupShown> coop_feed_lines() {
 }
 
 std::string coop_player_name(std::uint32_t player) {
-    return player < coop.feed_players.size() ? name_of(coop.feed_players[player]) : std::string();
+    return player < coop.feed_players.size() ? profile_of(coop.feed_players[player]).name : std::string();
 }
 
 std::string coop_player_name_of(std::uint64_t player) {
-    return name_of(player);
+    return profile_of(player).name;
 }
 
 std::string coop_json() {
@@ -849,8 +887,13 @@ std::string coop_json() {
         made += (made.empty() ? "" : ",") + std::to_string(count);
     for (const std::uint32_t count : online_sounds_heard())
         heard += (heard.empty() ? "" : ",") + std::to_string(count);
+    std::string profiles;
+    for (const CoopRoster::Player &player : coop_floors_room())
+        profiles += (profiles.empty() ? "[\"" : ",[\"") + player.profile.name + "\"," + std::to_string(player.profile.colour) +
+                    "," + std::to_string(player.profile.helmet) + "]";
     return "\"role\":\"" + std::string(role) + "\",\"inPlay\":" + (coop.in_play ? "true" : "false") + ",\"name\":\"" +
-           coop.name + "\",\"pack\":{" + pack + "},\"gold\":" + std::to_string(player_state.gold) + ",\"worn\":" +
+           coop.profile.name + "\",\"colour\":" + std::to_string(coop.profile.colour) + ",\"helmet\":" +
+           std::to_string(coop.profile.helmet) + ",\"roster\":[" + profiles + "],\"pack\":{" + pack + "},\"gold\":" + std::to_string(player_state.gold) + ",\"worn\":" +
            worn_json(game_worn()) + ",\"othersWear\":[" + others + "],\"feed\":[" + feed_rows + "],\"highestFloor\":" +
            std::to_string(kf::coop_highest_floor(kf_enum_encode<u8>(player_state.progress_state.highest_floor))) +
            ",\"floor\":" + std::to_string(kf_enum_encode<int>(player_state.progress_state.current_floor)) + ",\"cell\":[" +
@@ -864,9 +907,9 @@ std::string coop_panel_line() {
     case Role::None:
         return {};
     case Role::Host:
-        return coop.in_play ? "Your coop world (" + coop.name + ")" : "Opening your coop world...";
+        return coop.in_play ? "Your coop world (" + coop.profile.name + ")" : "Opening your coop world...";
     case Role::Guest:
-        return coop.in_play ? "Playing the host's coop world as " + coop.name : "Asking the host to join...";
+        return coop.in_play ? "Playing the host's coop world as " + coop.profile.name : "Asking the host to join...";
     }
     return {};
 }

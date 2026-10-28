@@ -25,6 +25,8 @@ struct OnlinePlayer {
     float stride_phase; // 0..1 through the walk; the right foot leaves the ground at 0, the left at 0.5
     float stride;       // 0 standing .. 1 a full stride
     bool eyes;          // this player, down, sees through theirs: their knight is not drawn here
+    u8 colour;          // the player's profile (port/ext/coop_profile.h): an index of the colours
+    u8 helmet;          // and of the helmets, each below its count
 };
 
 // Whether the world keeps running while this player is held in a menu or a scripted loop: in a
@@ -73,6 +75,17 @@ std::span<const u8> online_player_model_tmd();
 std::span<const OnlinePlayerPartJoint, online_player_part_count> online_player_model_joints();
 // Where the right forearm meets the hand, in the model's space: a held weapon's wrist.
 SVECTOR online_player_model_right_wrist();
+
+// The helmets the head can wear, the first the knight's great helm. Each is a TMD object after the
+// parts, its vertices relative to the head's pivot, drawn with the head.
+inline constexpr std::size_t online_player_helmet_count = 1;
+u16 online_player_model_helmet_object(u8 helmet);
+// Where the TMD's primitives drawn in the player's colour hold it: each the offset of an R, G, B.
+std::span<const u32> online_player_model_colour_offsets();
+// The knight's TMD in one of the profile's colours (port/ext/coop_profile.h; the first past them
+// is the first), made the first time it is asked for and kept, since the renderer reads it until
+// the frame is drawn.
+std::span<const u8> online_player_tmd_in(u8 colour);
 }
 
 #endif // KF_PLATFORM_ONLINE_PLAYERS_H

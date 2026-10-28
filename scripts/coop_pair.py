@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Two headless instances in one coop room on a local service (online/README.md: npm run dev): the
-host's world, a guest's arrival, the pack settled both ways and in the feed, the guest's own game
-put back when the host quits and in the next run after the guest quits, and the host's file.
+host's world, a guest's arrival, each playing as its profile and seeing the other's, the pack
+settled both ways and in the feed, the guest's own game put back when the host quits and in the
+next run after the guest quits, and the host's file.
 docs/COOP_PLAN.md, "The coop save".
 
     scripts/coop_pair.py build/linux/verdite1 [--room R] [--service URL] [--work DIR]
@@ -36,12 +37,16 @@ def kill_all():
 
 
 class Game:
-    def __init__(self, name, port, room="", give=None):
-        """room: the test's room by default, None for none."""
+    def __init__(self, name, port, room="", give=None, profile=None):
+        """room: the test's room by default, None for none. profile: the coop.profile's text."""
         room = ROOM if room == "" else room
         self.name = name
         self.home = WORK / name
         (self.home / "saves").mkdir(parents=True, exist_ok=True)
+        if profile:
+            user = self.home / "Verdite" / "Verdite1"   # SDL's pref path under XDG_DATA_HOME
+            user.mkdir(parents=True, exist_ok=True)
+            (user / "coop.profile").write_text(profile)
         # Reported, not halted on: libjuice's picohash.h is UB under UBSan once two peers connect.
         env = dict(os.environ, KF_SHELL=str(port), XDG_DATA_HOME=str(self.home),
                    KF_ONLINE_SERVICE=SERVICE,
@@ -107,7 +112,7 @@ def main():
         checks.append((what, ok))
         print(("PASS " if ok else "FAIL ") + what)
 
-    a = Game("a", PORTS[0])
+    a = Game("a", PORTS[0], profile="name=ALICE\ncolour=1\nhelmet=0\n")
     try:
         host = a.wait("the host's world", lambda s: s["inPlay"])
         show("A alone", host)
@@ -116,7 +121,7 @@ def main():
         a.run("give 20 1")   # a Knight Plate found
         a.wait("the plate", lambda s: s["pack"].get("20") == 1)
 
-        b = Game("b", PORTS[1])
+        b = Game("b", PORTS[1], profile="name=BOB7\ncolour=3\n")
         try:
             own = b.coop()
             guest = b.wait("the guest's arrival", lambda s: s["inPlay"])
@@ -127,6 +132,10 @@ def main():
             check("B's kit joins the pack", host["pack"] == {"0": 2, "20": 1, "43": 2} and host["gold"] == 300)
             check("B sees the party's pack", b.wait("the pack", lambda s: s["pack"] == host["pack"])["gold"] == 300)
             check("B arrived beside A", guest["floor"] == host["floor"] and guest["cell"] == host["cell"])
+            check("each plays as its profile", (host["name"], host["colour"]) == ("ALICE", 1)
+                  and (b.coop()["name"], b.coop()["colour"], b.coop()["helmet"]) == ("BOB7", 3, 0))
+            check("each sees the other's profile", ["BOB7", 3, 0] in host["roster"]
+                  and ["ALICE", 1, 0] in b.coop()["roster"])
             check("each sees the other's sword", host["othersWear"] == [[0, 255, 255, 255, 255, 255, 255]]
                   and b.coop()["othersWear"] == [[0, 255, 255, 255, 255, 255, 255]])
 

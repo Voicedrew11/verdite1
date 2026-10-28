@@ -39,9 +39,9 @@ CoopWelcome welcome() {
 } // namespace
 
 TEST_CASE("every message sent is the message received") {
-    const CoopHello hello = round_trip(CoopHello{0xfeedfacecafebeefull, "PLAYER1234"});
+    const CoopHello hello = round_trip(CoopHello{0xfeedfacecafebeefull, {"PLAYER1234", 5, 0}});
     CHECK(hello.id == 0xfeedfacecafebeefull);
-    CHECK(hello.name == "PLAYER1234");
+    CHECK(hello.profile == CoopProfile{"PLAYER1234", 5, 0});
 
     const CoopWelcome got = round_trip(welcome());
     CHECK(got.state == welcome().state);
@@ -104,7 +104,7 @@ TEST_CASE("a message cut short, with bytes left over, or of another version or k
     longer.push_back(0);
     CHECK_FALSE(coop_message_decode(longer));
     auto version = good;
-    version[0] = 2;
+    version[0] = 1;
     CHECK_FALSE(coop_message_decode(version));
     auto kind = encoded(CoopSaveRequest{});
     kind[1] = 16;
@@ -112,8 +112,11 @@ TEST_CASE("a message cut short, with bytes left over, or of another version or k
 }
 
 TEST_CASE("an item, stack, floor, cell, cause or name out of range is refused") {
-    CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, "lower"})));
-    CHECK_FALSE(coop_message_decode(encoded(CoopHello{0, "HOST"})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, {"lower", 0, 0}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopHello{0, {"HOST", 0, 0}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, {"HOST", coop_colour_count, 0}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, {"HOST", 0, kf::online_player_helmet_count}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopRoster{{{1, 2, {"HOST", coop_colour_count, 0}}}})));
     CHECK_FALSE(coop_message_decode(encoded(CoopPackRequest{1, {80, 1}, CoopCause::Found})));
     CHECK_FALSE(coop_message_decode(encoded(CoopCharacterUpdate{1, {}, 6})));
     CHECK_FALSE(coop_message_decode(encoded(CoopCharacterUpdate{1, {}, 0})));
@@ -140,10 +143,11 @@ TEST_CASE("an item, stack, floor, cell, cause or name out of range is refused") 
 }
 
 TEST_CASE("the floor messages sent are the messages received") {
-    const CoopRoster roster = round_trip(CoopRoster{{{1, 0x10}, {2, 0x20}}});
+    const CoopRoster roster = round_trip(CoopRoster{{{1, 0x10, {"HOST", 0, 0}}, {2, 0x20, {"GUEST", 6, 0}}}});
     REQUIRE(roster.players.size() == 2);
     CHECK(roster.players[1].id == 2);
     CHECK(roster.players[1].peer == 0x20);
+    CHECK(roster.players[1].profile == CoopProfile{"GUEST", 6, 0});
 
     const CoopFloorAt at = round_trip(CoopFloorAt{4, 9});
     CHECK(at.floor == 4);
@@ -183,7 +187,7 @@ TEST_CASE("a floor message with a floor, order or purpose out of range is refuse
     CHECK_FALSE(coop_message_decode(encoded(CoopFloorAt{6, 0})));
     CHECK_FALSE(coop_message_decode(encoded(CoopFloorTaken{6})));
     CHECK_FALSE(coop_message_decode(encoded(CoopFloorRecord{0, {}})));
-    CHECK_FALSE(coop_message_decode(encoded(CoopRoster{{{0, 1}}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopRoster{{{0, 1, {"HOST", 0, 0}}}})));
     auto order = encoded(CoopFloorOrders{{CoopRunFromRecord{1, 2}}});
     order[3] = 4;   // the order's kind
     CHECK_FALSE(coop_message_decode(order));

@@ -36,9 +36,9 @@ struct TitleRowText {
 };
 struct TitleText {
     std::string heading;   // the page's title box; empty on the top page
-    std::string code;      // a room's code, new or typed so far, drawn under the heading; usually empty
+    std::string code;      // a room's code or the player's name, new or typed so far, drawn under the heading
     std::vector<TitleRowText> rows;
-    u32 grid_cells = 0;    // the join page: its first rows are a grid of digits, this many,
+    u32 grid_cells = 0;    // the join and name pages: their first rows are a grid of letters, this many,
     u32 grid_columns = 0;  // this many to a line
     std::string note;      // a line under the rows: the code typed, "CONNECTING", why a join failed
 };
@@ -48,8 +48,8 @@ TitleText title_text(Language language);
 // menu.
 bool title_is_open();
 
-// A key the host's keyboard typed while the title is open: a digit, or '\b' to erase. True when
-// the join page took it, so it is not also a button.
+// A key the host's keyboard typed while the title is open: a digit, a letter, or '\b' to erase.
+// True when the join or name page took it, so it is not also a button.
 bool title_type(char key);
 
 // Between updates (host_between_updates): CONTINUE's slot goes in at the game's first.

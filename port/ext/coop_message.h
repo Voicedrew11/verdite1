@@ -4,6 +4,7 @@
 // the party goes through it (docs/COOP_PLAN.md, "The lasting world is the host's save").
 #include "coop_floor_owners.h"
 #include "coop_party.h"
+#include "coop_profile.h"
 
 #include <array>
 #include <cstdint>
@@ -15,10 +16,10 @@
 
 namespace kf::ext {
 
-// Guest to host, on opening: who this is.
+// Guest to host, on opening: who this is, and how the others see them.
 struct CoopHello {
     CoopPlayerId id = 0;
-    std::string name;
+    CoopProfile profile;
 };
 
 // Host to a guest, the answer: their character (empty for one new to the world, who starts a new
@@ -81,10 +82,10 @@ struct CoopSaveRequest {
     CoopSavePoint at;
 };
 
-// Host to everyone, when anyone comes or goes: each player in the room and their peer, so a
-// snapshot can go straight from one player to another.
+// Host to everyone, when anyone comes or goes: each player in the room, their peer, so a
+// snapshot can go straight from one player to another, and their profile.
 struct CoopRoster {
-    struct Player { CoopPlayerId id; std::uint64_t peer; };
+    struct Player { CoopPlayerId id; std::uint64_t peer; CoopProfile profile; };
     std::vector<Player> players;
 };
 // A player to everyone, when it comes onto a floor: where it is now, and whom its machine handed

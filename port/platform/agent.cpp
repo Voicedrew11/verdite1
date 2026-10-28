@@ -290,14 +290,14 @@ std::string do_menu(verdite::AgentArgs) {
 }
 
 // The title menu as English text: whether it is up, the page's heading, code and note, and its rows.
-// "title type <digits>" types on the join page, as the keyboard does.
+// "title type <text>" types on the join or name page, as the keyboard does.
 std::string do_title(verdite::AgentArgs args) {
     if (args.size() == 2 && args[0] == "type") {
         for (const char key : args[1])
             if (!title_type(key))
-                return verdite::json_error("the join page is not up, or that is not a digit");
+                return verdite::json_error("the join or name page is not up, or it does not take that key");
     } else if (!args.empty()) {
-        return verdite::json_error("title [type <digits>]");
+        return verdite::json_error("title [type <text>]");
     }
     const TitleText text = title_text(Language::English);
     std::string rows;

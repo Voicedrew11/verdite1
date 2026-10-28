@@ -1,12 +1,37 @@
 """The knight: its part table (builder space, see body.py) and the rig that poses it."""
 import math
 import numpy as np
-from body import Part
+from body import Part, PLAYER
 
 DARK = (24, 22, 20)
 LEATHER = 'leather'
+HEAD_PIVOT = (0, 1530, 0)
 
-def knight(colour=(60, 84, 180)):
+# The helmets, in kf::online_player_helmet_count's order: each builds its pieces on a part that
+# follows the head. A new helmet is a new entry here and its name in port/ext/coop_profile.cpp.
+def great_helm(helm, colour):
+    """A great helm with a T visor, a crest in the player's colour."""
+    M = 'knight'
+    helm.loft([((0, 1565, 0), 116, 128), ((0, 1680, 0), 126, 138), ((0, 1770, 0), 108, 120), ((0, 1826, 0), 58, 64)], 8, M)
+    helm.box((-86, 1664, 120), (86, 1688, 140), DARK)
+    helm.box((-14, 1606, 126), (14, 1668, 142), DARK)
+    helm.loft([((0, 1770, -124), 15, 44), ((0, 1846, -22), 15, 50), ((0, 1856, 76), 15, 40), ((0, 1796, 130), 11, 22)],
+              4, colour, axis='z', phase=math.pi / 4)
+
+HELMETS = [great_helm]
+
+def helmets(colour=PLAYER):
+    """Each helmet as a part of its own on the head's pivot."""
+    out = []
+    for i, build in enumerate(HELMETS):
+        helm = Part(f'helmet_{i}', 'head', HEAD_PIVOT)
+        build(helm, colour)
+        out.append(helm)
+    return out
+
+def knight(helmet=0, colour=PLAYER):
+    """The knight's parts; with a helmet (an index of HELMETS) it follows them, as a picture
+    shows it; with None the parts alone, as the game's model has them."""
     parts = []
     def part(name, parent, pivot):
         p = Part(name, parent, pivot); parts.append(p); return p
@@ -29,14 +54,9 @@ def knight(colour=(60, 84, 180)):
         torso.loft([((s * 190, 1470, 0), 108, 138), ((s * 290, 1485, 0), 104, 134), ((s * 356, 1440, 0), 70, 96)],
                    6, M, axis='x', phase=0)
 
-    # Head: mail coif, helm with a T visor, a crest in the player's colour.
-    head = part('head', 'torso', (0, 1530, 0))
+    # Head: the mail coif; the helmet is a part of its own (helmets()).
+    head = part('head', 'torso', HEAD_PIVOT)
     head.loft([((0, 1500, 0), 80, 80), ((0, 1580, 0), 78, 80)], 6, M, caps=(False, False))
-    head.loft([((0, 1565, 0), 116, 128), ((0, 1680, 0), 126, 138), ((0, 1770, 0), 108, 120), ((0, 1826, 0), 58, 64)], 8, M)
-    head.box((-86, 1664, 120), (86, 1688, 140), DARK)
-    head.box((-14, 1606, 126), (14, 1668, 142), DARK)
-    head.loft([((0, 1770, -124), 15, 44), ((0, 1846, -22), 15, 50), ((0, 1856, 76), 15, 40), ((0, 1796, 130), 11, 22)],
-              4, colour, axis='z', phase=math.pi / 4)
 
     # Arms: a sleeve in the player's colour from the shoulder, a flared gauntlet from the elbow.
     # The hands are parts of their own, after the legs: the right one gives way to a weapon's.
@@ -60,6 +80,8 @@ def knight(colour=(60, 84, 180)):
     for side, s in (('r', 1), ('l', -1)):
         hand = part('hand_' + side, 'forearm_' + side, (s * 278, 900, 8))
         hand.loft([((s * 278, 900, 10), 54, 46), ((s * 278, 820, 14), 52, 40), ((s * 278, 755, 18), 40, 30)], 6, 'plate')
+    if helmet is not None:
+        parts.append(helmets(colour)[helmet])
     return parts
 
 # ---- rig: part transforms about pivots, parents first ------------------------------------

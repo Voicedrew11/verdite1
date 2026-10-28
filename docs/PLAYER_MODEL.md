@@ -12,10 +12,10 @@ of a walk and a swing is drawn, on the height they stand at.
 | --- | --- |
 | `kfmodel.py` | Reads the game's formats (MIX chunk streams, model archives, assets with morph clips, TMD, TIM) and renders a model to a picture, culling faces as the game does. |
 | `body.py` | Builds parts from lofted cross-sections, boxes and panels, and writes them as a TMD. |
-| `knight.py` | The knight's part table and the rig that poses it. |
+| `knight.py` | The knight's part table, its helmets, and the rig that poses it. |
 | `arm.py` | The weapon hold: a first-person weapon model's gauntlet and weapon in the knight's hand, at rest and through an attack. |
 | `walk.py` | The stance and the walk: legs and free arm standing ready, breathing and through a cycle, and how far the body drops onto the planted foot. |
-| `preview.py` | The command: `survey`, `floor N`, `knight`, `swing W`, `rest W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
+| `preview.py` | The command: `survey`, `floor N`, `knight`, `swing W`, `rest W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight, its helmets and its colour offsets into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
 | `gltf.py` | Writes a posed model as `knight.glb`, to turn around in Blender. |
 
 After changing the knight, run `preview.py cpp` and rebuild; the part order is
@@ -50,11 +50,22 @@ So the knight costs no texture memory and looks the same on every floor.
 
 ## The knight
 
-529 vertices in 13 parts (pelvis, torso, head, upper arms, forearms, thighs, shins, hands), each
+461 vertices in 13 parts (pelvis, torso, head, upper arms, forearms, thighs, shins, hands), each
 its own TMD object with its vertices relative to its pivot, about 1850 tall (the player's collision
-height is 1700). Grey metal from page 151 for the armour, page 142's darker metal for the
-gauntlets, as the weapons' own gauntlet, leather belt and boots. Tabard, sleeves, knee
+height is 1700), then the helmets. Grey metal from page 151 for the armour, page 142's darker metal
+for the gauntlets, as the weapons' own gauntlet, leather belt and boots. Tabard, sleeves, knee
 bands and crest are in the player's colour, to tell players apart.
+
+- **The colour** is the player's profile's ([COOP_PLAN.md](COOP_PLAN.md), "The profile"). Those
+  faces are flat-coloured primitives written in the first colour (`PLAYER` in `body.py`), and the
+  model lists where each holds its R, G, B (140 of them); `online_player_tmd_in` paints a copy
+  of the TMD per colour the first time one is drawn, 26 KB each, 8 at most.
+- **The helmet** is a TMD object of its own after the parts (`helmets()` in `knight.py`, in
+  `online_player_helmet_count`'s order), its vertices relative to the head's pivot, drawn with
+  the head; the head keeps only the mail coif. The first, and so far only, is the great helm
+  (68 vertices): a T visor and the crest. A new helmet is an entry in `knight.py`'s `HELMETS`, its
+  name in `port/ext/coop_profile.cpp`, and the count raised; `preview.py cpp` refuses a count
+  that differs. `preview.py knight` draws the knight with the first helmet.
 
 ## The weapon
 

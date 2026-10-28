@@ -2653,10 +2653,10 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +}
 diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f42949da371449a1e1c6d37e7c184789ccbe866c
+index 0000000000000000000000000000000000000000..3477b71c3ce52813dacbf961e02532772e26f416
 --- /dev/null
 +++ b/src/game/menu_title.cpp
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,160 @@
 +// PC extension: the title menu (kf/platform/title.h) over the opening's logo, drawn with the
 +// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a short column
 +// under the logo; the others fill the picture as the menu's pages do, over the logo dimmed.
@@ -2687,6 +2687,7 @@ index 0000000000000000000000000000000000000000..f42949da371449a1e1c6d37e7c184789
 +    TITLE_CODE_WIDTH = 110,
 +    TITLE_GRID_CELL_WIDTH = 28,
 +    TITLE_GRID_CELL_STEP = 34,
++    TITLE_GRID_CELL_GAP = 4,
 +    TITLE_NOTE_Y = 206,
 +    TITLE_TEXT_INSET = 6,
 +    // A translucent box sprite sits this far up and left of its text's place.
@@ -2745,18 +2746,21 @@ index 0000000000000000000000000000000000000000..f42949da371449a1e1c6d37e7c184789
 +        title_draw_row(text.rows[i], i, MenuPoint{at_x(x), at_x(TITLE_TOP_FIRST_ROW_Y + i * TITLE_ROW_STEP)}, language);
 +}
 +
-+// The join page's digits, grid_columns to a line; returns the y below the grid.
++// The join or name page's letters, grid_columns to a line, narrower when a line holds many;
++// returns the y below the grid.
 +s32 title_draw_grid(const kf::TitleText &text, s32 y, kf::Language language)
 +{
 +    const auto &assets = menu_resources().assets;
 +    const s32 columns = static_cast<s32>(text.grid_columns);
 +    const s32 cells = std::min<s32>(static_cast<s32>(text.rows.size()), static_cast<s32>(text.grid_cells));
++    const s32 step = std::min<s32>(TITLE_GRID_CELL_STEP, (TITLE_SCREEN_WIDTH - 2 * TITLE_ROW_X) / columns);
++    const s32 width = std::min<s32>(TITLE_GRID_CELL_WIDTH, step - TITLE_GRID_CELL_GAP);
 +    for (s32 i = 0; i < cells; i++) {
-+        const s32 x = TITLE_ROW_X + (i % columns) * TITLE_GRID_CELL_STEP;
++        const s32 x = TITLE_ROW_X + (i % columns) * step;
 +        const s32 row_y = y + (i / columns) * TITLE_ROW_STEP;
 +        const bool held = kf::host_menu_row(i, x - TITLE_BOX_X_OFFSET, row_y - TITLE_BOX_Y_OFFSET,
-+            TITLE_GRID_CELL_WIDTH, assets.option_background.height);
-+        title_draw_box(text.rows[i].text, x, row_y, TITLE_GRID_CELL_WIDTH, text.rows[i].selected || held, language);
++            width, assets.option_background.height);
++        title_draw_box(text.rows[i].text, x, row_y, width, text.rows[i].selected || held, language);
 +    }
 +    return y + (cells + columns - 1) / columns * TITLE_ROW_STEP;
 +}
@@ -2771,9 +2775,11 @@ index 0000000000000000000000000000000000000000..f42949da371449a1e1c6d37e7c184789
 +        MenuPoint{TITLE_HEADING_X + TITLE_TEXT_INSET - TITLE_BOX_X_OFFSET, TITLE_HEADING_Y}, 1.0f);
 +
 +    s32 y = TITLE_FIRST_ROW_Y;
-+    if (!text.code.empty()) {
-+        title_draw_box(text.code, (TITLE_SCREEN_WIDTH - TITLE_CODE_WIDTH) / 2 + TITLE_BOX_X_OFFSET, y, TITLE_CODE_WIDTH,
-+            true, language);
++    // A grid's page keeps its box while the text typed is empty, so the grid does not move.
++    if (!text.code.empty() || text.grid_columns > 0) {
++        // As wide as a long name needs.
++        const s32 width = std::max<s32>(TITLE_CODE_WIDTH, menu_text_width(menu_spell(text.code, language)) + 2 * TITLE_TEXT_INSET);
++        title_draw_box(text.code, (TITLE_SCREEN_WIDTH - width) / 2 + TITLE_BOX_X_OFFSET, y, width, true, language);
 +        y += 2 * TITLE_ROW_STEP;
 +    }
 +    s32 first = 0;
@@ -2813,10 +2819,10 @@ index 0000000000000000000000000000000000000000..f42949da371449a1e1c6d37e7c184789
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..9dae4d9c6b49c5117b7068f93646e48aff6b3adf
+index 0000000000000000000000000000000000000000..c79ba46ef27f4019645c8cd2582dd6044e105609
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,476 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
 +// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
@@ -3231,7 +3237,10 @@ index 0000000000000000000000000000000000000000..9dae4d9c6b49c5117b7068f93646e48a
 +void render_online_player(const kf::OnlinePlayer &player)
 +{
 +    using Part = kf::OnlinePlayerPart;
-+    const auto knight = tmd_resource_view(kf::online_player_model_tmd().data(), kf::online_player_model_tmd().size());
++    // In the player's colour, wearing their helmet (port/ext/coop_profile.h).
++    const auto painted = kf::online_player_tmd_in(player.colour);
++    const auto knight = tmd_resource_view(painted.data(), painted.size());
++    const u8 helmet = player.helmet < kf::online_player_helmet_count ? player.helmet : 0;
 +    const auto &joints = kf::online_player_model_joints();
 +    const auto pose = online_player_pose(player);
 +    const VECTOR feet = {
@@ -3284,6 +3293,8 @@ index 0000000000000000000000000000000000000000..9dae4d9c6b49c5117b7068f93646e48a
 +        if (weapon && i == kf_enum_encode<u8>(Part::HandRight))
 +            continue;
 +        online_player_draw_object(knight, static_cast<u16>(i), {}, placement);
++        if (i == kf_enum_encode<u8>(Part::Head))
++            online_player_draw_object(knight, kf::online_player_model_helmet_object(helmet), {}, placement);
 +    }
 +    if (weapon)
 +        online_player_draw_held(*weapon, body, held, placements[forearm_right]);

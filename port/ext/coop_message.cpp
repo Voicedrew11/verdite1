@@ -11,7 +11,7 @@
 namespace kf::ext {
 namespace {
 
-constexpr std::uint8_t message_version = 1;
+constexpr std::uint8_t message_version = 2;
 constexpr std::uint8_t cause_count = 4;
 constexpr std::size_t players_most = 64;
 
@@ -60,17 +60,29 @@ bool read_cause(CoopByteReader &in, CoopCause &cause) {
     return in.ok() && value < cause_count;
 }
 
+void write_profile(CoopByteWriter &out, const CoopProfile &profile) {
+    out.name(profile.name);
+    out.u8(profile.colour);
+    out.u8(profile.helmet);
+}
+
+bool read_profile(CoopByteReader &in, CoopProfile &profile) {
+    profile.name = in.name();
+    profile.colour = in.u8();
+    profile.helmet = in.u8();
+    return in.ok() && coop_profile_valid(profile);
+}
+
 // One writer and one reader per message, in the variant's order.
 
 void write(CoopByteWriter &out, const CoopHello &hello) {
     out.u64(hello.id);
-    out.name(hello.name);
+    write_profile(out, hello.profile);
 }
 
 bool read(CoopByteReader &in, CoopHello &hello) {
     hello.id = in.u64();
-    hello.name = in.name();
-    return in.ok() && hello.id != 0 && coop_name_valid(hello.name);
+    return read_profile(in, hello.profile) && hello.id != 0;
 }
 
 void write(CoopByteWriter &out, const CoopWelcome &welcome) {
@@ -213,6 +225,7 @@ void write(CoopByteWriter &out, const CoopRoster &roster) {
     for (const CoopRoster::Player &player : roster.players) {
         out.u64(player.id);
         out.u64(player.peer);
+        write_profile(out, player.profile);
     }
 }
 
@@ -221,8 +234,8 @@ bool read(CoopByteReader &in, CoopRoster &roster) {
     if (!in.ok() || count > players_most)
         return false;
     for (std::uint8_t i = 0; i < count; ++i) {
-        const CoopRoster::Player player{in.u64(), in.u64()};
-        if (!in.ok() || player.id == 0 || player.peer == 0)
+        CoopRoster::Player player{in.u64(), in.u64(), {}};
+        if (!read_profile(in, player.profile) || player.id == 0 || player.peer == 0)
             return false;
         roster.players.push_back(player);
     }

@@ -478,10 +478,12 @@ std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     // A player who is down is out of the world (docs/COOP_PLAN.md, "Death is the party's").
     const std::uint64_t eyes = ext::coop_death_eyes_peer();
     for (const auto &[peer, known] : ext::online.players)
-        if (const auto &pose = known.shown; pose && pose->floor == floor && !pose->down)
+        if (const auto &pose = known.shown; pose && pose->floor == floor && !pose->down) {
+            const ext::CoopProfile profile = ext::coop_profile_of_peer(peer);
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
                 pose->attack_phase, pose->pitch, pose->foot_height, known.stride.phase, known.stride.amount,
-                peer == eyes});
+                peer == eyes, profile.colour, profile.helmet});
+        }
 #else
     (void)floor;
 #endif

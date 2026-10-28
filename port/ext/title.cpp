@@ -66,6 +66,12 @@ std::vector<verdite::TitleSave> read_saves() {
     return saves;
 }
 
+// The player's profile as the menu shows it: the colours' and helmets' counts are coop's.
+verdite::TitleProfile read_profile() {
+    const CoopProfile profile = coop_own_profile();
+    return {profile.name, profile.colour, coop_colour_count, profile.helmet, online_player_helmet_count};
+}
+
 // The worlds this machine hosts whose codes the menu can show.
 std::vector<verdite::TitleWorld> read_worlds() {
     std::vector<verdite::TitleWorld> worlds;
@@ -140,7 +146,7 @@ std::optional<TitleStart> take(const verdite::TitleChoice &choice) {
         coop_keep_leftover_aside();
         return finish(TitleStart::Continue);
     case TitleAction::Host:
-        wait_on(choice.code, RoomRole::First, choice.listed ? coop_own_name() : std::string());
+        wait_on(choice.code, RoomRole::First, choice.listed ? coop_own_profile().name : std::string());
         break;
     case TitleAction::Join:
         wait_on(choice.code, RoomRole::Later, {});
@@ -148,6 +154,10 @@ std::optional<TitleStart> take(const verdite::TitleChoice &choice) {
     case TitleAction::CancelJoin:
         online_stop();
         title.waiting = false;
+        break;
+    case TitleAction::Profile:
+        coop_set_own_profile({choice.profile.name, static_cast<std::uint8_t>(choice.profile.colour),
+            static_cast<std::uint8_t>(choice.profile.helmet)});
         break;
     }
     return std::nullopt;
@@ -206,7 +216,9 @@ constexpr Words continue_word{"CONTINUE", "つづきから"}, new_game_word{"NEW
     join_word{"JOIN", "さんか"}, connecting_word{"CONNECTING", "つないでいます"},
     no_rooms_word{"NO PUBLIC ROOMS", "ルームはありません"}, no_list_word{"THE LIST CANNOT BE REACHED", "いちらんがよめません"},
     empty_word{"EMPTY", "データなし"}, damaged_word{"DAMAGED", "こわれています"},
-    experience_word{"EXP", "けいけんち"}, share_word{"TELL YOUR FRIENDS THIS CODE", "このコードをともだちに"};
+    experience_word{"EXP", "けいけんち"}, share_word{"TELL YOUR FRIENDS THIS CODE", "このコードをともだちに"},
+    profile_word{"PROFILE", "プレイヤー"}, name_word{"NAME", "なまえ"}, colour_word{"COLOUR", "いろ"},
+    helmet_word{"HELMET", "かぶと"}, done_word{"DONE", "おわり"};
 
 struct Failure {
     std::string_view id;
@@ -232,12 +244,17 @@ std::string floor_text(std::uint32_t floor, Language language) {
     return language == Language::English ? "FLOOR " + std::to_string(floor) : std::to_string(floor) + "かい";
 }
 
-// Names are PLAYER and four digits until players choose one; the kana font has no capitals.
+// A generated name is PLAYER and four digits. The kana font has no capitals, so in Japanese PLAYER is
+// プレイヤー and a chosen name loses its letters (docs/verdite-port.md, "Language handling").
 std::string name_text(std::string_view name, Language language) {
     constexpr std::string_view generated = "PLAYER";
     if (language != Language::English && name.starts_with(generated))
         return "プレイヤー" + std::string(name.substr(generated.size()));
     return std::string(name);
+}
+
+std::string profile_words(const CoopProfileWords &words, Language language) {
+    return std::string(language == Language::English ? words.english : words.japanese);
 }
 
 std::string slot_text(const KfSaveSlotSummary &slot, Language language) {
@@ -268,13 +285,25 @@ std::string row_text(const verdite::TitleRowView &row, std::size_t index, Langua
     case TitleRowKind::Delete: return std::string(delete_word.in(language));
     case TitleRowKind::Join: return std::string(join_word.in(language));
     case TitleRowKind::Room: return name_text(row.room->host, language);
+    case TitleRowKind::Profile: return std::string(profile_word.in(language));
+    case TitleRowKind::ProfileName: return std::string(name_word.in(language));
+    case TitleRowKind::ProfileColour: return std::string(colour_word.in(language));
+    case TitleRowKind::ProfileHelmet: return std::string(helmet_word.in(language));
+    case TitleRowKind::Done: return std::string(done_word.in(language));
     }
     return {};
 }
 
-std::string row_value(const verdite::TitleRowView &row, Language language) {
+std::string row_value(const verdite::TitleView &view, const verdite::TitleRowView &row, Language language) {
     using verdite::TitleRowKind;
+    const verdite::TitleProfile &profile = view.profile;
     switch (row.kind) {
+    case TitleRowKind::ProfileName: return name_text(profile.name, language);
+    case TitleRowKind::ProfileColour:
+        return profile.colour < coop_colour_count ? profile_words(coop_colours()[profile.colour].name, language) : std::string();
+    case TitleRowKind::ProfileHelmet:
+        return profile.helmet < online_player_helmet_count ? profile_words(coop_helmet_names()[profile.helmet], language)
+                                                           : std::string();
     case TitleRowKind::NewPrivateWorld: return std::string(private_word.in(language));
     case TitleRowKind::NewPublicWorld: return std::string(public_word.in(language));
     case TitleRowKind::KeptWorld: return floor_text(row.world->highest_floor, language);
@@ -296,6 +325,8 @@ std::string heading(verdite::TitlePage page, Language language) {
     case TitlePage::JoinCode: return std::string(room_code_word.in(language));
     case TitlePage::RoomList: return std::string(room_list_word.in(language));
     case TitlePage::Waiting: return std::string(connecting_word.in(language));
+    case TitlePage::Profile: return std::string(profile_word.in(language));
+    case TitlePage::NameEntry: return std::string(name_word.in(language));
     }
     return {};
 }
@@ -331,7 +362,7 @@ namespace kf {
 using ext::title;
 
 void title_open() {
-    ext::menu().open(ext::read_saves(), ext::read_worlds());
+    ext::menu().open(ext::read_saves(), ext::read_worlds(), ext::read_profile());
     title.open = true;
     title.returning = false;
     title.waiting = false;
@@ -363,11 +394,13 @@ TitleText title_text(Language language) {
     text.grid_cells = static_cast<u32>(std::ranges::count(view.rows, verdite::TitleRowKind::Letter, &verdite::TitleRowView::kind));
     for (std::size_t i = 0; i < view.rows.size(); ++i) {
         const verdite::TitleRowView &row = view.rows[i];
-        text.rows.push_back({ext::row_text(row, i, language), ext::row_value(row, language), row.enabled, row.selected});
+        text.rows.push_back({ext::row_text(row, i, language), ext::row_value(view, row, language), row.enabled, row.selected});
     }
     text.note = ext::note(view, language);
     if (view.page == verdite::TitlePage::HostCode || view.page == verdite::TitlePage::JoinCode)
         text.code = view.code;
+    if (view.page == verdite::TitlePage::NameEntry)
+        text.code = ext::name_text(view.code, language);
     return text;
 }
 
@@ -376,11 +409,15 @@ bool title_is_open() {
 }
 
 bool title_type(char key) {
-    if (!title.open || ext::menu().view().page != verdite::TitlePage::JoinCode)
+    if (!title.open)
+        return false;
+    const verdite::TitlePage page = ext::menu().view().page;
+    const bool letter = (key >= 'a' && key <= 'z') || (key >= 'A' && key <= 'Z');
+    if (page != verdite::TitlePage::JoinCode && page != verdite::TitlePage::NameEntry)
         return false;
     if (key == '\b')
         ext::menu().erase();
-    else if (key >= '0' && key <= '9')
+    else if ((key >= '0' && key <= '9') || (letter && page == verdite::TitlePage::NameEntry))
         ext::menu().type(key);
     else
         return false;

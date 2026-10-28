@@ -511,8 +511,8 @@ SETTINGS page is, with the mouse and touch through the menu pointer:
 - **NEW GAME**: the story scroll, then a new game, as a button at the logo was.
 - **COOP**: HOST (a new private world, whose 8-digit code is shown to read out before START; a new
   public one; or a world this machine already keeps), JOIN BY CODE (a grid of digits, or the
-  keyboard's) and PUBLIC ROOMS (the service's list, kept up to date while shown: the host's name,
-  floor and players; a full room is dimmed).
+  keyboard's), PUBLIC ROOMS (the service's list, kept up to date while shown: the host's name,
+  floor and players; a full room is dimmed) and PROFILE ("The profile").
 
 Any button in the attract scene goes to the menu, which waits as long as the logo did before
 going back to the attract scene, on its top page only. F4's quick load still goes straight in.
@@ -541,11 +541,37 @@ behind the inner pages).
 
 Not yet:
 
-- **Room codes in Japanese**: the kana font has no capitals and Japanese names are still to come,
-  so a host named `PLAYER1234` is listed as プレイヤー1234; a public room's code is never shown.
+- **Names in Japanese**: the kana font has no capitals, so a generated `PLAYER1234` is shown as
+  プレイヤー1234 and a chosen name loses its letters (a workaround until proper language handling,
+  `verdite-port.md`, "Things to plan for"); a public room's code is never shown.
 - **Sounds**: the menu's cursor and confirm sounds are the game's bank, which the opening has not
   loaded; the title menu is silent.
 - **Sending a player away** from a public room, and the service's check of names.
+
+## The profile
+
+Built 2026-10-27. What the others in a room see of a player: a name, a colour and a helmet,
+chosen under COOP, PROFILE, on the title menu:
+
+- **NAME**: a grid of the capitals and digits (12 to a line, three lines), or the keyboard's, with
+  DELETE and DONE; 1 to 12 of them, which the menu font draws. Back leaves the name as it was.
+- **COLOUR**: one of eight, Left and Right (or Confirm) stepping it: blue (the knight's first),
+  red, green, gold, white, black, purple, orange. It paints the tabard, sleeves, knee bands and
+  crest.
+- **HELMET**: one of the helmets; there is one for now, the great helm, so the row is dimmed.
+
+A change is kept at once in `coop.profile` in the user folder, beside the install's id
+(`name=`, `colour=`, `helmet=` lines; a part missing or bad is the default's: `PLAYER` and four
+digits of the id, blue, the great helm). It goes to the others in the next room: in the guest's
+hello, and in the host's roster to everyone, so the feed, the watching line and the public list
+name players by it and each knight is drawn in its player's colour and helmet. A profile is not
+changed inside a room.
+
+The rules are `port/ext/coop_profile.h` (unit-tested) and the menu's pages libverdite's.
+`scripts/coop_pair.py` checks that two players each play as their profile and see the other's;
+`scripts/title_pair.py` types a name, steps the colour, and sees it kept, played as and listed.
+Not judged by eye: the name grid's narrower cells, the colours on the knight. In Japanese a
+chosen name loses its letters (the title menu's "Not yet").
 
 ## Floor ownership
 
@@ -989,3 +1015,6 @@ What a room costs each player, for N players:
 - 2026-10-27: other players' spells and sounds (Other players' spells and sounds) travel in the
   pose, not in the owner's frame: they are the caster's, wherever the floor runs, and the pose is
   already played in step with the knight. Sounds go as counts, so a lost pose loses none.
+- 2026-10-27: the profile (The profile): chosen on the title, not in a room, so it travels in
+  the hello and the roster rather than every pose. A player's own pack changes are left out of
+  its feed, since its game already says so.

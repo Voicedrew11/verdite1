@@ -7,7 +7,10 @@ written as (-X, -Y, -Z). Each part is its own TMD object, its vertices relative 
 import math, struct
 import numpy as np
 
-# Materials: always-resident common textures (COM/MIX.TIM), or flat colours (r, g, b).
+# Materials: always-resident common textures (COM/MIX.TIM), flat colours (r, g, b), or PLAYER: a
+# flat colour the game paints in each player's own (port/ext/coop_profile.h), written as the first.
+PLAYER = 'player'
+PLAYER_DEFAULT = (60, 84, 180)
 TPAGE_142, CLUT_142 = 142, 31296   # 8-bit page at (896, 0), palette row 489: the weapon arm's
 TPAGE_151, CLUT_151 = 151, 31552   # 8-bit page at (448, 256), palette row 493: the NPC knights'
 MATERIALS = {
@@ -95,7 +98,7 @@ class Part:
 def to_game(p):
     return np.array((-p[0], -p[1], -p[2]))
 
-def build_tmd(parts):
+def build_tmd_with_colours(parts):
     # Textures are projected once across the whole body, as the game's NPC knights are.
     lo = np.min([v for p in parts for v in p.verts], axis=0)
     hi = np.max([v for p in parts for v in p.verts], axis=0)
@@ -119,7 +122,9 @@ def build_tmd(parts):
         prims = []
         for (ids, mat, g), fn in zip(part.faces, face_normal):
             ns = [normal_id(acc[(i, g)]) for i in ids]
-            if isinstance(mat, str):
+            if mat == PLAYER:
+                prims.append(('col', ids, ns, PLAYER_DEFAULT, True))
+            elif isinstance(mat, str):
                 m = MATERIALS[mat]
                 W = [part.verts[i] for i in ids]
                 # A side view for every face (U from depth, V from height): front faces smear one
@@ -133,13 +138,19 @@ def build_tmd(parts):
                                int(round(m['v'][0] + b * (m['v'][1] - m['v'][0])))))
                 prims.append(('tex', ids, ns, uv, m['tpage'], m['clut']))
             else:
-                prims.append(('col', ids, ns, mat))
+                prims.append(('col', ids, ns, mat, False))
         objects.append(([tuple(int(round(c)) for c in v) for v in verts], normals, prims))
     return write_tmd(objects)
 
+def build_tmd(parts):
+    return build_tmd_with_colours(parts)[0]
+
 def write_tmd(objects):
+    """The TMD, and the offsets of the R, G, B of each primitive in the player's colour."""
+    header = 12
     table_size = 28 * len(objects)
     blobs, table, cursor = [], b'', table_size
+    colours = []
     for verts, normals, prims in objects:
         vb = b''.join(struct.pack('<4h', *v, 0) for v in verts)
         nb = b''.join(struct.pack('<4h', *n, 0) for n in normals)
@@ -154,10 +165,12 @@ def write_tmd(objects):
             else:
                 mode = 0x38 if n == 4 else 0x30
                 body = struct.pack('<4B', *p[3], mode)
+                if p[4]:
+                    colours.append(header + cursor + len(vb) + len(nb) + len(pb) + 4)
             body += b''.join(struct.pack('<HH', ns[i], ids[i]) for i in range(n))
             pb += struct.pack('<4B', len(body) // 4 + 1, len(body) // 4, 0, mode) + body
         table += struct.pack('<6Ii', cursor, len(verts), cursor + len(vb), len(normals),
                              cursor + len(vb) + len(nb), len(prims), 0)
         cursor += len(vb) + len(nb) + len(pb)
         blobs += [vb, nb, pb]
-    return struct.pack('<3I', 0x41, 0, len(objects)) + table + b''.join(blobs)
+    return struct.pack('<3I', 0x41, 0, len(objects)) + table + b''.join(blobs), colours
