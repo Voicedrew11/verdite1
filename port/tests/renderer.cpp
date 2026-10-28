@@ -7,12 +7,15 @@
 #include "../renderer/view_rotation.h"
 #include "../renderer/view_smoothing.h"
 
+#include <kf/renderer/constants.h>
 #include <kf/renderer/projection.h>
+#include <kf/renderer/textures.h>
 
 #include <kf/lib/fixed_math.h>
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -110,6 +113,57 @@ TEST_CASE("texture layers: invalidate uploads again") {
     layers.begin_update();
     layers.layer_for(page(0));
     CHECK(layers.take_uploads().size() == 1);
+}
+
+namespace {
+// A TIM block: its length, place and size in words, then the words.
+void tim_block(std::vector<u8> &tim, u16 x, u16 y, u16 width, u16 height, u16 word) {
+    auto put16 = [&](u16 value) {
+        tim.push_back(static_cast<u8>(value));
+        tim.push_back(static_cast<u8>(value >> 8));
+    };
+    const std::uint32_t length = 12 + 2u * width * height;
+    put16(static_cast<u16>(length));
+    put16(static_cast<u16>(length >> 16));
+    for (const u16 value : {x, y, width, height})
+        put16(value);
+    for (int i = 0; i < width * height; ++i)
+        put16(word);
+}
+} // namespace
+
+TEST_CASE("texture store: a moved rectangle lands at its new place only") {
+    // A 4-bit TIM: a palette of 0x1111 at (0,480), a 4 x 2 page of 0x2222 at (320,256).
+    std::vector<u8> tim = {0x10, 0, 0, 0, 0x08, 0, 0, 0};
+    tim_block(tim, 0, 480, 16, 1, 0x1111);
+    tim_block(tim, 320, 256, 4, 2, 0x2222);
+    TextureStore store;
+    const std::array<TextureMove, 2> moves = {{{{320, 256, 4, 2}, 64, 0}, {{0, 480, 16, 1}, 128, 0}}};
+    REQUIRE(texture_store_upload_tim_moved(&store, tim.data(), tim.size(), moves));
+    const auto at = [&](int x, int y) { return store.words[static_cast<std::size_t>(y) * texture_store_width + x]; };
+    CHECK(at(64, 0) == 0x2222);
+    CHECK(at(67, 1) == 0x2222);
+    CHECK(at(68, 0) == 0);
+    CHECK(at(64, 2) == 0);
+    CHECK(at(128, 0) == 0x1111);
+    CHECK(at(143, 0) == 0x1111);
+    CHECK(at(144, 0) == 0);
+    CHECK(at(320, 256) == 0);   // not at the TIM's own places
+    CHECK(at(0, 480) == 0);
+    CHECK(store.generation == 1);
+}
+
+TEST_CASE("texture store: a move past the store's edge is cut, a broken TIM changes nothing") {
+    std::vector<u8> tim = {0x10, 0, 0, 0, 0x08, 0, 0, 0};
+    tim_block(tim, 0, 480, 16, 1, 0x1111);
+    tim_block(tim, 320, 256, 4, 2, 0x2222);
+    TextureStore store;
+    const std::array<TextureMove, 1> edge = {{{{320, 256, 4, 2}, 1022, 511}}};
+    REQUIRE(texture_store_upload_tim_moved(&store, tim.data(), tim.size(), edge));
+    CHECK(store.words[511 * texture_store_width + 1023] == 0x2222);
+    tim.resize(tim.size() - 2);
+    CHECK_FALSE(texture_store_upload_tim_moved(&store, tim.data(), tim.size(), edge));
+    CHECK(store.generation == 1);
 }
 
 namespace {

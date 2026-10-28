@@ -68,6 +68,33 @@ bool texture_store_upload_tim_within(TextureStore *store, const u8 *bytes, std::
     return false;
 }
 
+bool texture_store_upload_tim_moved(TextureStore *store, const u8 *bytes, std::size_t size,
+                                    std::span<const TextureMove> moves) try {
+    if (store->words.empty())
+        store->words.resize(texture_word_count);
+    std::vector<u16> composed(texture_word_count);
+    kf_tim_compose({bytes, size}, composed);
+    for (const TextureMove &move : moves) {
+        const TextureArea &from = move.from;
+        const int width = std::min({int{from.width}, texture_store_width - from.x, texture_store_width - move.to_x});
+        const int height = std::min({int{from.height}, texture_store_height - from.y, texture_store_height - move.to_y});
+        if (width <= 0)
+            continue;
+        for (int row = 0; row < height; ++row) {
+            const auto first = static_cast<std::ptrdiff_t>(from.y + row) * texture_store_width + from.x;
+            const auto to = static_cast<std::ptrdiff_t>(move.to_y + row) * texture_store_width + move.to_x;
+            std::copy(composed.begin() + first, composed.begin() + first + width, store->words.begin() + to);
+        }
+    }
+    ++store->generation;
+    return true;
+} catch (const codec::Error &error) {
+    error.report();
+    return false;
+} catch (const std::bad_alloc &) {
+    return false;
+}
+
 bool texture_decode(Image *image, TextureSource source, const u16 *words, std::size_t count) try {
     const auto mode = static_cast<unsigned>(source.format);
     if (!words || count < texture_word_count || source.format > TextureFormat::Direct16 || source.x >= texture_store_width ||

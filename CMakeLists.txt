@@ -303,10 +303,11 @@ if(KF_ONLINE)
   add_subdirectory(online/client)
 endif()
 
-# The renderer frontend's API-free parts: batching, texture layers, smoothing. Tested on their own.
+# The renderer frontend's API-free parts: batching, the texture store and layers, smoothing. Tested on their own.
 add_library(kf_frontend STATIC port/renderer/frame_batch.cpp port/renderer/texture_layers.cpp
   port/renderer/view_smoothing.cpp port/renderer/view_rotation.cpp port/renderer/vertex_carry.cpp port/renderer/model_transform.cpp
-  port/renderer/lighting.cpp port/renderer/projection.cpp port/renderer/texture_mips.cpp port/renderer/light_sets.cpp)
+  port/renderer/lighting.cpp port/renderer/projection.cpp port/renderer/texture_mips.cpp port/renderer/light_sets.cpp
+  port/renderer/textures.cpp)
 target_link_libraries(kf_frontend PUBLIC kf_support)
 target_compile_options(kf_frontend PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
@@ -357,7 +358,7 @@ target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/fuzz.cpp port/platform/saves.cpp port/platform/language_runtime.cpp
-  port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp port/platform/enemy_turn.cpp port/platform/menu_pointer.cpp port/platform/touch.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/textures.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
+  port/platform/automap.cpp port/platform/screen.cpp port/platform/analog.cpp port/platform/enemy_turn.cpp port/platform/menu_pointer.cpp port/platform/touch.cpp ${KF_SRC}/src/audio/sound.cpp port/renderer/frontend.cpp port/renderer/null_backend.cpp)
 target_sources(kf_host PRIVATE port/platform/crash.cpp port/platform/logcat.cpp)
 target_include_directories(kf_host PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(kf_host PUBLIC kf_support kf_frontend kf_vulkan SDL3::SDL3 kf_ext verdite)

@@ -31,6 +31,14 @@ struct TextureArea {
 // menu's font beside the opening's pictures, whose other pages overlap.
 bool texture_store_upload_tim_within(TextureStore *store, const u8 *bytes, std::size_t size,
                                      std::span<const TextureArea> areas);
+// A rectangle of a TIM put elsewhere in the store: the English font beside the Japanese one.
+struct TextureMove {
+    TextureArea from;
+    u16 to_x, to_y;
+};
+// Uploads only the moved rectangles, each at its new place; the rest of the store is kept.
+bool texture_store_upload_tim_moved(TextureStore *store, const u8 *bytes, std::size_t size,
+                                    std::span<const TextureMove> moves);
 bool texture_decode(Image *image, TextureSource source, const u16 *words, std::size_t count);
 }
 
