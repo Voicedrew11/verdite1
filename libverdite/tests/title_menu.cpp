@@ -34,9 +34,20 @@ TitleChoice taken(TitleMenu &menu) {
     return choice.value_or(TitleChoice{});
 }
 
+TitleProfile profile() {
+    return {"PLAYER1234", 0, 8, 0, 2};
+}
+
 TitleMenu open_menu(std::vector<TitleSave> slots = saves(false, false, false), std::vector<TitleWorld> worlds = {}) {
     TitleMenu menu(1234);
-    menu.open(std::move(slots), std::move(worlds));
+    menu.open(std::move(slots), std::move(worlds), profile());
+    return menu;
+}
+
+TitleMenu open_profile() {
+    auto menu = open_menu();
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Profile);
     return menu;
 }
 
@@ -262,4 +273,111 @@ TEST_CASE("a failed join goes back to its page saying why; Back while waiting ca
     // A failure arriving after the cancel changes nothing.
     menu.coop_failed("late");
     CHECK(menu.view().failure.empty());
+}
+
+TEST_CASE("names: capitals and digits, 1 to name_most") {
+    CHECK(name_valid("PLAYER1234"));
+    CHECK(name_valid("A"));
+    CHECK_FALSE(name_valid(""));
+    CHECK_FALSE(name_valid("ABCDEFGHIJKLM"));
+    CHECK_FALSE(name_valid("Andrew"));
+    CHECK_FALSE(name_valid("AN DREW"));
+}
+
+TEST_CASE("PROFILE shows the profile; Left and Right step the colour and helmet, chosen at once") {
+    auto menu = open_profile();
+    REQUIRE(menu.view().page == TitlePage::Profile);
+    CHECK(menu.view().profile.name == "PLAYER1234");
+    menu.press(TitleInput::Down);
+    CHECK(selected(menu) == TitleRowKind::ProfileColour);
+    menu.press(TitleInput::Left);
+    TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::Profile);
+    CHECK(choice.profile.colour == 7);
+    menu.press(TitleInput::Right);
+    menu.press(TitleInput::Right);
+    CHECK(taken(menu).profile.colour == 1);
+    menu.press(TitleInput::Down);
+    menu.press(TitleInput::Confirm);
+    choice = taken(menu);
+    CHECK(choice.profile.helmet == 1);
+    CHECK(choice.profile.colour == 1);
+    CHECK(menu.view().profile.helmet == 1);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Coop);
+    CHECK(selected(menu) == TitleRowKind::Profile);
+}
+
+TEST_CASE("a single helmet is dimmed and does not step") {
+    TitleMenu menu(1);
+    menu.open({}, {}, {"A", 0, 8, 0, 1});
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Profile);
+    menu.point(2);
+    CHECK(selected(menu) == TitleRowKind::ProfileHelmet);
+    CHECK_FALSE(menu.view().rows[2].enabled);
+    menu.press(TitleInput::Right);
+    menu.press(TitleInput::Confirm);
+    CHECK_FALSE(menu.take_choice().has_value());
+}
+
+TEST_CASE("the name page starts from the name, takes letters as capitals, and DONE chooses it") {
+    auto menu = open_profile();
+    go_to(menu, TitleRowKind::ProfileName);
+    REQUIRE(menu.view().page == TitlePage::NameEntry);
+    CHECK(menu.view().code == "PLAYER1234");
+    for (int i = 0; i < 10; ++i)
+        menu.erase();
+    const auto done = [&] {
+        const auto rows = menu.view().rows;
+        return *std::ranges::find(rows, TitleRowKind::Done, &TitleRowView::kind);
+    };
+    CHECK_FALSE(done().enabled);
+    for (char letter : std::string_view("an-drew 7"))
+        menu.type(letter);
+    CHECK(menu.view().code == "ANDREW7");
+    // The grid's first letter is A; Right moves along its line.
+    menu.point(0);
+    menu.press(TitleInput::Right);
+    menu.press(TitleInput::Confirm);
+    CHECK(menu.view().code == "ANDREW7B");
+    for (int i = 0; i < 10; ++i)
+        menu.type('Z');
+    CHECK(menu.view().code.size() == name_most);
+    go_to(menu, TitleRowKind::Done);
+    const TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::Profile);
+    CHECK(choice.profile.name == "ANDREW7BZZZZ");
+    CHECK(menu.view().page == TitlePage::Profile);
+    CHECK(menu.view().profile.name == "ANDREW7BZZZZ");
+}
+
+TEST_CASE("Back from the name page leaves the name as it was") {
+    auto menu = open_profile();
+    go_to(menu, TitleRowKind::ProfileName);
+    menu.erase();
+    menu.type('X');
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Profile);
+    CHECK(selected(menu) == TitleRowKind::ProfileName);
+    CHECK(menu.view().profile.name == "PLAYER1234");
+    CHECK_FALSE(menu.take_choice().has_value());
+}
+
+TEST_CASE("the name grid: Down from its last line reaches DELETE, Up from DELETE goes back; a line wraps") {
+    auto menu = open_profile();
+    go_to(menu, TitleRowKind::ProfileName);
+    const std::size_t columns = menu.view().grid_columns;
+    const std::size_t lines = (name_letters.size() + columns - 1) / columns;
+    menu.point(0);
+    menu.press(TitleInput::Left);
+    CHECK(menu.view().rows[columns - 1].selected);
+    for (std::size_t i = 0; i < lines; ++i)
+        menu.press(TitleInput::Down);
+    CHECK(selected(menu) == TitleRowKind::Delete);
+    menu.press(TitleInput::Down);
+    CHECK(selected(menu) == TitleRowKind::Done);
+    menu.press(TitleInput::Up);
+    menu.press(TitleInput::Up);
+    CHECK(menu.view().rows[(lines - 1) * columns].selected);
 }

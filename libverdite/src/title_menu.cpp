@@ -8,6 +8,7 @@ namespace {
 
 constexpr std::size_t public_letter_bits = 5;   // public_code_letters has 32
 constexpr std::size_t join_grid_columns = 5;
+constexpr std::size_t name_grid_columns = 12;
 
 bool is_digit(char c) {
     return private_code_digits.find(c) != std::string_view::npos;
@@ -15,6 +16,30 @@ bool is_digit(char c) {
 
 bool is_public_letter(char c) {
     return public_code_letters.find(c) != std::string_view::npos;
+}
+
+bool is_name_letter(char c) {
+    return name_letters.find(c) != std::string_view::npos;
+}
+
+// A page's grid of letters: the join page's digits, the name page's letters.
+struct Grid {
+    std::string_view letters;
+    std::size_t columns = 0;
+    std::size_t most = 0;   // the text's length
+};
+
+std::optional<Grid> grid_of(TitlePage page) {
+    if (page == TitlePage::JoinCode)
+        return Grid{private_code_digits, join_grid_columns, private_code_length};
+    if (page == TitlePage::NameEntry)
+        return Grid{name_letters, name_grid_columns, name_most};
+    return std::nullopt;
+}
+
+std::size_t step_wrapping(std::size_t at, int delta, std::size_t count) {
+    const auto signed_count = static_cast<std::ptrdiff_t>(count);
+    return static_cast<std::size_t>(((static_cast<std::ptrdiff_t>(at) + delta) % signed_count + signed_count) % signed_count);
 }
 
 // splitmix64: a new room's code from the menu's seed.
@@ -46,6 +71,8 @@ std::optional<Parent> parent_of(TitlePage page) {
     case TitlePage::HostCode: return Parent{TitlePage::Host, TitleRowKind::NewPrivateWorld};
     case TitlePage::JoinCode: return Parent{TitlePage::Coop, TitleRowKind::JoinCode};
     case TitlePage::RoomList: return Parent{TitlePage::Coop, TitleRowKind::RoomList};
+    case TitlePage::Profile: return Parent{TitlePage::Coop, TitleRowKind::Profile};
+    case TitlePage::NameEntry: return Parent{TitlePage::Profile, TitleRowKind::ProfileName};
     case TitlePage::Top:
     case TitlePage::Waiting: return std::nullopt;
     }
@@ -81,11 +108,16 @@ bool room_code_is_public(std::string_view code) {
     return code.size() == public_code_length && code.front() == 'P' && std::ranges::all_of(code, is_public_letter);
 }
 
+bool name_valid(std::string_view name) {
+    return !name.empty() && name.size() <= name_most && std::ranges::all_of(name, is_name_letter);
+}
+
 TitleMenu::TitleMenu(std::uint64_t random_seed) : random_(random_seed) {}
 
-void TitleMenu::open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds) {
+void TitleMenu::open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile) {
     saves_ = std::move(saves);
     worlds_ = std::move(worlds);
+    profile_ = std::move(profile);
     rooms_.clear();
     list_state_ = RoomListState::Connecting;
     code_.clear();
@@ -112,8 +144,14 @@ void TitleMenu::press(TitleInput input) {
     switch (input) {
     case TitleInput::Up: move_vertically(-1, count); break;
     case TitleInput::Down: move_vertically(1, count); break;
-    case TitleInput::Left: move_in_grid(-1); break;
-    case TitleInput::Right: move_in_grid(1); break;
+    case TitleInput::Left:
+        move_in_grid(-1);
+        step_profile(-1);
+        break;
+    case TitleInput::Right:
+        move_in_grid(1);
+        step_profile(1);
+        break;
     case TitleInput::Confirm: confirm(); break;
     case TitleInput::Back: back(); break;
     }
@@ -122,30 +160,48 @@ void TitleMenu::press(TitleInput input) {
 void TitleMenu::move_vertically(int delta, std::size_t count) {
     if (count == 0)
         return;
-    const std::size_t letters = private_code_digits.size();
-    if (page_ == TitlePage::JoinCode && row_ < letters) {
-        // Down a column of the grid to DELETE below its last line; up from its first to JOIN.
+    const auto grid = grid_of(page_);
+    const std::size_t letters = grid ? grid->letters.size() : 0;
+    if (grid && row_ < letters) {
+        // Down a column of the grid to DELETE below its last line; up from its first to the last row.
         if (delta > 0)
-            row_ = row_ + join_grid_columns < letters ? row_ + join_grid_columns : letters;
+            row_ = row_ + grid->columns < letters ? row_ + grid->columns : letters;
         else
-            row_ = row_ >= join_grid_columns ? row_ - join_grid_columns : count - 1;
+            row_ = row_ >= grid->columns ? row_ - grid->columns : count - 1;
         return;
     }
-    if (page_ == TitlePage::JoinCode && row_ == letters && delta < 0) {
-        row_ = letters - join_grid_columns;
+    if (grid && row_ == letters && delta < 0) {
+        row_ = (letters - 1) / grid->columns * grid->columns;
         return;
     }
-    const auto signed_count = static_cast<std::ptrdiff_t>(count);
-    row_ = static_cast<std::size_t>(((static_cast<std::ptrdiff_t>(row_) + delta) % signed_count + signed_count) % signed_count);
+    row_ = step_wrapping(row_, delta, count);
 }
 
 void TitleMenu::move_in_grid(int delta) {
-    if (page_ != TitlePage::JoinCode || row_ >= private_code_digits.size())
+    const auto grid = grid_of(page_);
+    if (!grid || row_ >= grid->letters.size())
         return;
-    const std::size_t line = row_ / join_grid_columns * join_grid_columns;
-    const auto columns = static_cast<std::ptrdiff_t>(join_grid_columns);
-    const auto column = static_cast<std::ptrdiff_t>(row_ - line);
-    row_ = line + static_cast<std::size_t>(((column + delta) % columns + columns) % columns);
+    const std::size_t line = row_ / grid->columns * grid->columns;
+    const std::size_t width = std::min(grid->columns, grid->letters.size() - line);
+    row_ = line + step_wrapping(row_ - line, delta, width);
+}
+
+void TitleMenu::step_profile(int delta) {
+    const auto rows = view().rows;
+    if (page_ != TitlePage::Profile || row_ >= rows.size())
+        return;
+    const TitleRowKind on = rows[row_].kind;
+    if (on == TitleRowKind::ProfileColour && profile_.colours > 1)
+        profile_.colour = step_wrapping(profile_.colour, delta, profile_.colours);
+    else if (on == TitleRowKind::ProfileHelmet && profile_.helmets > 1)
+        profile_.helmet = step_wrapping(profile_.helmet, delta, profile_.helmets);
+    else
+        return;
+    choose_profile();
+}
+
+void TitleMenu::choose_profile() {
+    choice_ = TitleChoice{TitleAction::Profile, 0, {}, false, profile_};
 }
 
 void TitleMenu::confirm() {
@@ -155,9 +211,9 @@ void TitleMenu::confirm() {
     const TitleRowView &chosen = rows[row_];
     switch (chosen.kind) {
     case TitleRowKind::Continue: go(TitlePage::Continue, std::nullopt); break;
-    case TitleRowKind::NewGame: choice_ = TitleChoice{TitleAction::NewGame, 0, {}, false}; break;
+    case TitleRowKind::NewGame: choice_ = TitleChoice{TitleAction::NewGame, 0, {}, false, {}}; break;
     case TitleRowKind::Coop: go(TitlePage::Coop, std::nullopt); break;
-    case TitleRowKind::Slot: choice_ = TitleChoice{TitleAction::Continue, row_, {}, false}; break;
+    case TitleRowKind::Slot: choice_ = TitleChoice{TitleAction::Continue, row_, {}, false, {}}; break;
     case TitleRowKind::Host: go(TitlePage::Host, std::nullopt); break;
     case TitleRowKind::JoinCode:
         code_.clear();
@@ -172,15 +228,28 @@ void TitleMenu::confirm() {
         code_ = room_code_private(next_random(random_));
         go(TitlePage::HostCode, TitleRowKind::Start);
         break;
-    case TitleRowKind::NewPublicWorld: wait_for({TitleAction::Host, 0, room_code_public(next_random(random_)), true}); break;
+    case TitleRowKind::NewPublicWorld: wait_for({TitleAction::Host, 0, room_code_public(next_random(random_)), true, {}}); break;
     case TitleRowKind::KeptWorld:
-        wait_for({TitleAction::Host, 0, chosen.world->code, room_code_is_public(chosen.world->code)});
+        wait_for({TitleAction::Host, 0, chosen.world->code, room_code_is_public(chosen.world->code), {}});
         break;
-    case TitleRowKind::Start: wait_for({TitleAction::Host, 0, code_, false}); break;
+    case TitleRowKind::Start: wait_for({TitleAction::Host, 0, code_, false, {}}); break;
     case TitleRowKind::Letter: type(chosen.letter); break;
     case TitleRowKind::Delete: erase(); break;
-    case TitleRowKind::Join: wait_for({TitleAction::Join, 0, code_, false}); break;
-    case TitleRowKind::Room: wait_for({TitleAction::Join, 0, chosen.room->code, false}); break;
+    case TitleRowKind::Join: wait_for({TitleAction::Join, 0, code_, false, {}}); break;
+    case TitleRowKind::Room: wait_for({TitleAction::Join, 0, chosen.room->code, false, {}}); break;
+    case TitleRowKind::Profile: go(TitlePage::Profile, std::nullopt); break;
+    case TitleRowKind::ProfileName:
+        code_ = profile_.name;
+        go(TitlePage::NameEntry, std::nullopt);
+        break;
+    case TitleRowKind::ProfileColour:
+    case TitleRowKind::ProfileHelmet: step_profile(1); break;
+    case TitleRowKind::Done:
+        profile_.name = code_;
+        code_.clear();
+        choose_profile();
+        go(TitlePage::Profile, TitleRowKind::ProfileName);
+        break;
     }
 }
 
@@ -195,10 +264,12 @@ void TitleMenu::wait_for(TitleChoice choice) {
 
 void TitleMenu::back() {
     if (page_ == TitlePage::Waiting) {
-        choice_ = TitleChoice{TitleAction::CancelJoin, 0, code_, false};
+        choice_ = TitleChoice{TitleAction::CancelJoin, 0, code_, false, {}};
         return_from_waiting();
         return;
     }
+    if (page_ == TitlePage::NameEntry)
+        code_.clear();
     if (const auto parent = parent_of(page_))
         go(parent->page, parent->row);
 }
@@ -211,17 +282,20 @@ void TitleMenu::return_from_waiting() {
     code_.clear();
 }
 
-void TitleMenu::type(char digit) {
-    if (page_ != TitlePage::JoinCode)
+void TitleMenu::type(char letter) {
+    const auto grid = grid_of(page_);
+    if (!grid)
         return;
     failure_.clear();
-    if (!is_digit(digit) || code_.size() >= private_code_length)
+    if (page_ == TitlePage::NameEntry && letter >= 'a' && letter <= 'z')
+        letter = static_cast<char>(letter - 'a' + 'A');
+    if (grid->letters.find(letter) == std::string_view::npos || code_.size() >= grid->most)
         return;
-    code_ += digit;
+    code_ += letter;
 }
 
 void TitleMenu::erase() {
-    if (page_ != TitlePage::JoinCode)
+    if (!grid_of(page_))
         return;
     failure_.clear();
     if (!code_.empty())
@@ -274,6 +348,7 @@ TitleView TitleMenu::view() const {
     view.code = code_;
     view.list_state = list_state_;
     view.failure = failure_;
+    view.profile = profile_;
     auto &rows = view.rows;
     switch (page_) {
     case TitlePage::Top:
@@ -291,6 +366,7 @@ TitleView TitleMenu::view() const {
         rows.push_back(row(TitleRowKind::Host));
         rows.push_back(row(TitleRowKind::JoinCode));
         rows.push_back(row(TitleRowKind::RoomList));
+        rows.push_back(row(TitleRowKind::Profile));
         break;
     case TitlePage::Host:
         rows.push_back(row(TitleRowKind::NewPrivateWorld));
@@ -302,13 +378,26 @@ TitleView TitleMenu::view() const {
         break;
     case TitlePage::HostCode: rows.push_back(row(TitleRowKind::Start)); break;
     case TitlePage::JoinCode:
-        view.grid_columns = join_grid_columns;
-        for (const char letter : private_code_digits) {
+    case TitlePage::NameEntry: {
+        const auto grid = grid_of(page_);
+        if (!grid)
+            break;
+        view.grid_columns = grid->columns;
+        for (const char letter : grid->letters) {
             rows.push_back(row(TitleRowKind::Letter));
             rows.back().letter = letter;
         }
         rows.push_back(row(TitleRowKind::Delete, !code_.empty()));
-        rows.push_back(row(TitleRowKind::Join, code_.size() == private_code_length));
+        if (page_ == TitlePage::JoinCode)
+            rows.push_back(row(TitleRowKind::Join, code_.size() == private_code_length));
+        else
+            rows.push_back(row(TitleRowKind::Done, name_valid(code_)));
+        break;
+    }
+    case TitlePage::Profile:
+        rows.push_back(row(TitleRowKind::ProfileName));
+        rows.push_back(row(TitleRowKind::ProfileColour, profile_.colours > 1));
+        rows.push_back(row(TitleRowKind::ProfileHelmet, profile_.helmets > 1));
         break;
     case TitlePage::RoomList:
         for (const TitleRoom &room : rooms_) {
