@@ -5,7 +5,9 @@ settled both ways and in the feed, the guest's own game put back when the host q
 next run after the guest quits, and the host's file.
 docs/COOP_PLAN.md, "The coop save".
 
-    scripts/coop_pair.py build/linux/verdite1 [--room R] [--service URL] [--work DIR]
+    scripts/coop_pair.py build/linux/verdite1 [--room R] [--service URL] [--work DIR] [--japanese a|b]
+
+--japanese plays that player in Japanese, from data/ja.
 """
 import argparse
 import json
@@ -27,7 +29,14 @@ BINARY = ""
 WORK = Path()
 ROOM = ""
 SERVICE = ""
+JAPANESE = set()
 STARTED = []
+
+
+def game_files(name):
+    if name in JAPANESE:
+        return ["--data", str(ROOT / "data/ja"), "--language", "ja"]
+    return ["--data", str(ROOT / "data/en")]
 
 
 def kill_all():
@@ -55,7 +64,7 @@ class Game:
             env["KF_TEST_GIVE"] = give
         self.log = open(self.home / "log.txt", "a")
         self.process = subprocess.Popen(
-            [BINARY, "--data", str(ROOT / "data/en"), "--saves", str(self.home / "saves"), "--headless",
+            [BINARY, *game_files(name), "--saves", str(self.home / "saves"), "--headless",
              "--skip-intro", *(["--online-room", room] if room else [])], env=env, stdout=self.log,
             stderr=subprocess.STDOUT)
         STARTED.append(self.process)
@@ -207,14 +216,17 @@ def main():
 
 
 def parse():
-    global BINARY, WORK, ROOM, SERVICE
+    global BINARY, WORK, ROOM, SERVICE, JAPANESE
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("binary")
     parser.add_argument("--room", default=f"cooptest{random.randrange(1 << 30)}")
     parser.add_argument("--service", default="http://127.0.0.1:8787")
     parser.add_argument("--work", help="a new folder for the instances' files and logs, kept")
+    parser.add_argument("--japanese", action="append", choices=("a", "b"), default=[],
+                        help="play this player in Japanese, from data/ja")
     args = parser.parse_args()
     BINARY, ROOM, SERVICE = args.binary, args.room, args.service
+    JAPANESE = set(args.japanese)
     return args.work
 
 
