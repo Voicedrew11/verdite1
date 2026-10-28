@@ -84,6 +84,13 @@ std::string library_folder(Language language) {
     return utf8(utf8_path(temporary_root) / "en");
 }
 
+// Writes a new language folder, making the library it goes in when it is not there yet.
+bool write_language_folder(const AssetTable &assets, const std::string &folder) {
+    std::error_code error;
+    std::filesystem::create_directories(utf8_path(folder).parent_path(), error);
+    return !error && resource_tree_write(assets, folder.c_str());
+}
+
 void run_task(std::function<bool(std::string *)> work) {
     {
         std::lock_guard guard(lock);
@@ -272,7 +279,7 @@ bool languages_add_disc(const char *image, Language *added, std::string *message
         *message = std::string("The ") + language_name(language) + " game files are already set up.";
     else if (folder.empty())
         *message = "There is no folder to copy the game files to.";
-    else if (!resource_tree_write(assets, folder.c_str()))
+    else if (!write_language_folder(assets, folder))
         *message = "The game files could not be written to " + folder + ".";
     else {
         ok = true;
@@ -312,7 +319,7 @@ bool languages_make_english(const std::vector<u8> &ppf, std::string *message) {
     } else {
         ok = ok && translation_apply_ppf(assets, ppf, message);
     }
-    if (ok && !resource_tree_write(assets, folder.c_str())) {
+    if (ok && !write_language_folder(assets, folder)) {
         *message = "The English game files could not be written to " + folder + ".";
         ok = false;
     }

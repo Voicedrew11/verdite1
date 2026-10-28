@@ -5,6 +5,7 @@
 #include <kf/platform/files.h>
 #include <kf/platform/disc.h>
 #include <kf/platform/language_runtime.h>
+#include <kf/platform/translation.h>
 #include <kf/platform/translation_ppf.h>
 #include <kf/platform/saves.h>
 #include <kf/platform/crash.h>
@@ -180,6 +181,22 @@ bool add_english(const std::string &source) {
     return ok;
 }
 
+// Adds English once when only the Japanese files are there: from the translation built in, if
+// any, or else the translator's patch downloaded from the Internet Archive. True when English is
+// ready or cannot be made from these files.
+bool fetch_english() {
+    if (!kf::language_folder(kf::Language::English).empty() ||
+        kf::language_folder(kf::Language::Japanese).empty())
+        return true;
+    if (kf::translation_available()) {
+        std::string message;
+        const bool ok = kf::languages_make_english({}, &message);
+        std::printf("%s\n", message.c_str());
+        return ok;
+    }
+    return add_english("download");
+}
+
 void offer_english() {
     for (;;) {
         const int choice = ask(
@@ -324,7 +341,7 @@ bool prepare_release_data(const char *dropped) {
                 return false;
             }
             show_error(message.c_str());
-        } else if (added == kf::Language::Japanese && !kf::language_available(kf::Language::English)) {
+        } else if (added == kf::Language::Japanese && !fetch_english()) {
             offer_english();
         }
     }
@@ -457,8 +474,13 @@ int main(int argc, char **argv) {
     if (!data_selected && !disc)
         kf::languages_add_folder("data");
 #endif
-    if (english_patch && !kf::language_available(kf::Language::English) && !add_english(english_patch))
+    if (english_patch && kf::language_folder(kf::Language::English).empty() && !add_english(english_patch))
         return 1;
+#if !defined(__EMSCRIPTEN__)
+    // Without English the game still starts, in Japanese.
+    if (!language_selected || language != kf::Language::Japanese)
+        fetch_english();
+#endif
     // Start in English when it is there; the saved preference may change it below.
     std::string root = kf::languages_start(language_selected ? language : kf::Language::English);
     if (root.empty() || !kf::data_files_set_root(root.c_str()))

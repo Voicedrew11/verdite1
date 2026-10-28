@@ -197,6 +197,16 @@ file, from `$APPIMAGE`, not the mount), or under the user folder when that
 folder cannot be written; otherwise a `.cue`, `.bin`, `.iso` or `.chd` beside the game
 is copied there once, otherwise a file dialog asks for one.
 
+English is added on its own when only the Japanese files are there (any start but `--language
+ja`): from the translation built in, if any, or else the translator's archive downloaded from the
+Internet Archive (6 MB, checked against its SHA-256), its PPF applied and the result checked as
+English v1.0, written as `en` beside `ja` in the library (made if missing). It is fetched once. When
+the download fails the game starts in Japanese; in the release flow, the dialog then offers the
+patch file. Checked 2026-10-27 from the user's Japanese disc: the built-in delta, `--english-patch`
+with the archive (also under ASan and UBSan) and the download each give a tree byte-identical to
+`data/en`; offline, the game starts in Japanese. Nothing from the translation is in the repository
+or a release build: the translator's release has no licence.
+
 A `.chd` is read through libverdite's `verdite/disc_image.h` (libchdr, vendored in
 `third_party/libchdr`), which hands the importer the same bytes as the `.bin`, so the checks, the
 English patch and the extracted folders are unchanged. Checked 2026-10-24: `chdman createcd` of
@@ -415,7 +425,7 @@ branch point.
 | Z-buffer | `depth_buffer` | |
 | AO, per-pixel lighting | dynamic lights, AO, shadows, flame glow | different designs: judge, do not merge blindly. AO and the game's lighting per pixel are done on Vulkan (`RENDERER_PLAN.md`); dynamic lights, shadows and glow were drawn only by GL and are not drawn yet |
 | mouse look, free look | mouse look, `look_limit` | |
-| English translation | language switch, ppf/rar import | |
+| English translation | language switch, ppf/rar import | fetched at start from the Japanese files (2026-10-27, "Build and run (Linux)"). Not yet: a LANGUAGE row in the game's menu; Android, 3DS and the web have no curl or bsdtar, so they cannot download or open the `.rar` |
 | keyboard layout | controls | |
 | settings UI (Verdite Core) | F1 overlay | the settings in the game's own menu done (2026-10-26), as Verdite2's and Verdite3's PORT SETTINGS: see "The settings page in the game's menu" below |
 
