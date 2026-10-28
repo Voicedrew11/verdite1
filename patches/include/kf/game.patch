@@ -73,7 +73,7 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..a8863e1adf19527767e95fc5b78781dc
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..e5d30a81fa7da67e653f481dc7fcf5226ae02bf6 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..37169e8f44ca50e420c28ff1988f7e41addca635 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
 @@ -30,7 +30,9 @@ enum class KfMenuRootChoice : s32 {
@@ -104,7 +104,20 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..e5d30a81fa7da67e653f481dc7fcf522
      KF_MENU_CONFIG_LANGUAGE_ROW = KF_MENU_CONFIG_SETTING_COUNT,
      KF_MENU_CONFIG_RETURN_ROW = KF_MENU_CONFIG_LANGUAGE_ROW + 1,
      KF_MENU_CONFIG_ROW_COUNT = KF_MENU_CONFIG_RETURN_ROW + 1
-@@ -329,7 +332,12 @@ extern void menu_blit_sprite(
+@@ -271,6 +274,12 @@ struct KfMenuResources {
+ 
+ const KfMenuResources &menu_resources();
+ bool menu_prepare_language(kf::Language language);
++// PC extension: a language's menu resources; null until menu_prepare_language has read them.
++const KfMenuResources *menu_resources_of(kf::Language language);
++// PC extension: the English label font, for capitals in either language (players' names). In
++// Japanese it is the English font page put on a page of its own; null while the English game
++// files are missing.
++const MenuSpriteDef *menu_latin_font();
+ 
+ typedef struct KfMenuList {
+     MenuPoint title_position;
+@@ -329,7 +338,12 @@ extern void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position);
  extern void menu_blit_sprite_translucent(
      const MenuSpriteDef *sprite, const MenuPoint *position);
@@ -117,7 +130,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..e5d30a81fa7da67e653f481dc7fcf522
  extern void menu_resources_reload(void);
  extern void menu_draw_save_slots(
      std::span<const KfSaveSlotSummary> summaries, KfSaveSlotOverlay slot_overlay);
-@@ -340,7 +348,16 @@ extern void menu_draw_number(
+@@ -340,7 +354,16 @@ extern void menu_draw_number(
      const MenuSpriteDef *font, const MenuGlyphString *string);
  extern void menu_draw_string(
      const MenuSpriteDef *font, const MenuGlyphString *string);
@@ -134,7 +147,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..e5d30a81fa7da67e653f481dc7fcf522
  extern void menu_draw_status_summary(void);
  extern void menu_draw_status_details(void);
  struct MenuChoiceLabel;
-@@ -358,6 +375,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+@@ -358,6 +381,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
  extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
  extern void menu_frame_begin(void);
  extern void menu_item_model_preview(KfObjectId item_id);
@@ -144,7 +157,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..e5d30a81fa7da67e653f481dc7fcf522
  extern KfMenuResult menu_list_confirm(
      const KfMenuList *list, KfMenuConfirmKind confirm_kind, KfMenuPreviewMode preview_mode,
 diff --git a/include/kf/game/menu_text.h b/include/kf/game/menu_text.h
-index 87ebaf4e17ad51009ffb9735cd87841961d6765f..af66c0d59f86e2537787f1f3aaabad037c3fb4b3 100644
+index 87ebaf4e17ad51009ffb9735cd87841961d6765f..903a11b2f549b3c439550592f4c325a140efb670 100644
 --- a/include/kf/game/menu_text.h
 +++ b/include/kf/game/menu_text.h
 @@ -5,6 +5,10 @@
@@ -180,15 +193,16 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..af66c0d59f86e2537787f1f3aaabad03
      case MenuLabel::Pickup:
          return english ? MenuGlyphRow{{0x00, 0x06, MENU_TEXT_END}}
                         : MenuGlyphRow{{0x53, 0x6a, MENU_TEXT_END}};
-@@ -123,4 +127,20 @@ inline MenuGlyphRow menu_label(MenuLabel label)
+@@ -123,4 +127,21 @@ inline MenuGlyphRow menu_label(MenuLabel label)
      return {{MENU_TEXT_END}};
  }
  
 +// PC extension: free text in the menu font, for the port's SETTINGS page. The
 +// label font holds English's individual capitals or Japanese's kana (without
 +// small kana or を), not both; digits and '/' come from the number font in
-+// either. Characters the language's font lacks are left out.
-+enum class MenuTextFont : u8 { Label, Number };
++// either. In Japanese, capitals come from the English font (menu_latin_font)
++// while its files are there. Characters no font has are left out.
++enum class MenuTextFont : u8 { Label, Number, Latin };
 +
 +struct MenuTextGlyph {
 +    MenuTextFont font;

@@ -332,6 +332,21 @@ bool languages_make_english(const std::vector<u8> &ppf, std::string *message) {
     return ok;
 }
 
+bool languages_add_english(std::string *message) {
+    if (translation_available())
+        return languages_make_english({}, message);
+    std::printf("Downloading the English patch from %s\n", english_patch_url);
+    std::vector<u8> ppf;
+    return translation_download(&ppf, message) && languages_make_english(ppf, message);
+}
+
+void language_task_add_english() {
+    run_task([](std::string *message) {
+        task_progress(translation_available() ? "Making the English game files..." : "Downloading the English patch...");
+        return languages_add_english(message);
+    });
+}
+
 void language_task_download_english() {
     run_task([](std::string *message) {
         task_progress("Downloading the English patch...");

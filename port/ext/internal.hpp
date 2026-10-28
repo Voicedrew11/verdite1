@@ -177,7 +177,9 @@ std::map<std::uint64_t, OnlinePose> online_room_poses();
 // that host name (a public code only).
 enum class RoomRole : std::uint8_t { First, Later };
 void online_join_from_title(std::string_view room, RoomRole expected, std::string_view listed_as);
-enum class OnlineFailure : std::uint8_t { None, NoHost, InUse, Full, OtherBuild, Unreachable, NoOnline, Other };
+// NeedsEnglish: coop draws players' names with the English font in either language, and the
+// English game files were missing; they are being added (language_task_state).
+enum class OnlineFailure : std::uint8_t { None, NoHost, InUse, Full, OtherBuild, Unreachable, NoOnline, NeedsEnglish, Other };
 struct OnlineStatus {
     bool joining = false;   // asked, not yet in the room
     bool in_room = false;

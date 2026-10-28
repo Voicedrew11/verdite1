@@ -14,6 +14,7 @@
 #include <imgui.h>
 #include <kf/platform/automap.h>
 #include <kf/platform/input.h>
+#include <kf/platform/language_runtime.h>
 #include <kf/platform/online_players.h>
 #include <kf/platform/title.h>
 
@@ -126,6 +127,12 @@ void join(const std::string &room, std::string_view listed_as = {}) {
     leave("");
     online.expected.reset();
     online.failure = OnlineFailure::None;
+    if (language_folder(Language::English).empty()) {
+        language_task_add_english();
+        online.status = "Coop needs the English game files; they are being added.";
+        online.failure = OnlineFailure::NeedsEnglish;
+        return;
+    }
     const std::string service = service_url();
     const std::string build = build_name();
     const std::string host(listed_as);

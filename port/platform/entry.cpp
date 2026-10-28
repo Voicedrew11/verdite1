@@ -5,7 +5,6 @@
 #include <kf/platform/files.h>
 #include <kf/platform/disc.h>
 #include <kf/platform/language_runtime.h>
-#include <kf/platform/translation.h>
 #include <kf/platform/translation_ppf.h>
 #include <kf/platform/saves.h>
 #include <kf/platform/crash.h>
@@ -188,13 +187,10 @@ bool fetch_english() {
     if (!kf::language_folder(kf::Language::English).empty() ||
         kf::language_folder(kf::Language::Japanese).empty())
         return true;
-    if (kf::translation_available()) {
-        std::string message;
-        const bool ok = kf::languages_make_english({}, &message);
-        std::printf("%s\n", message.c_str());
-        return ok;
-    }
-    return add_english("download");
+    std::string message;
+    const bool ok = kf::languages_add_english(&message);
+    std::printf("%s\n", message.c_str());
+    return ok;
 }
 
 void offer_english() {

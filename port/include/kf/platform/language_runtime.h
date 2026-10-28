@@ -44,8 +44,11 @@ bool languages_add_disc(const char *image, Language *added, std::string *message
 // Builds English from the Japanese files and the translator's patch (a PPF), or
 // with an empty patch from the translation embedded in the build, if any.
 bool languages_make_english(const std::vector<u8> &ppf, std::string *message);
+// Makes English with the translation built in, if any, or else the translator's patch downloaded.
+bool languages_add_english(std::string *message);
 
 enum class LanguageTask : u8 { Idle, Working, Done, Failed };
+void language_task_add_english();
 void language_task_download_english();
 void language_task_patch_file(const std::string &path);
 void language_task_add_disc(const std::string &path);

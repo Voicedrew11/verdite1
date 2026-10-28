@@ -1209,7 +1209,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
  
  enum {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
-index 660386288c157b2819409141f669eb2ae4d10af9..ed8f7b4effe2cffc0b8bc0b7cc0fad8e96272fdb 100644
+index 660386288c157b2819409141f669eb2ae4d10af9..171f2d6d1e6b7d5f07c752c8aecec01dd17f72c9 100644
 --- a/src/game/item.cpp
 +++ b/src/game/item.cpp
 @@ -10,9 +10,12 @@
@@ -1244,7 +1244,20 @@ index 660386288c157b2819409141f669eb2ae4d10af9..ed8f7b4effe2cffc0b8bc0b7cc0fad8e
      for (auto &row : resources.items)
          menu_data_glyphs(reader, &row);
      for (auto &row : resources.magic)
-@@ -297,6 +308,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
+@@ -211,6 +222,12 @@ const KfMenuResources &menu_resources()
+     return menu_languages[static_cast<std::size_t>(game_text_language())].value();
+ }
+ 
++const KfMenuResources *menu_resources_of(kf::Language language)
++{
++    const auto &slot = menu_languages[static_cast<std::size_t>(language)];
++    return slot ? &*slot : nullptr;
++}
++
+ void menu_resources_reload(void)
+ {
+     if (!menu_prepare_language(kf::game_language()))
+@@ -297,6 +314,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1255,7 +1268,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..ed8f7b4effe2cffc0b8bc0b7cc0fad8e
          }
          menu_draw_window(KF_MENU_WINDOW_SHOP, KF_SHOP_CHOICE_COUNT, cursor, confirm);
      }
-@@ -393,6 +408,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+@@ -393,6 +414,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1263,7 +1276,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..ed8f7b4effe2cffc0b8bc0b7cc0fad8e
          if (selection == kf_enum_encode<s32>(KF_ITEM_GOLD_CROSS))
              stock[kf_enum_encode<u8>(KF_ITEM_GOLD_CROSS)]--;
          player_state.gold -= item_buy_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
-@@ -422,6 +438,8 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+@@ -422,6 +444,8 @@ void shop_menu_sell(KfItemStockBank shop_bank)
              available[found] = stock[slot];
              if (player_item_is_equipped(kf_enum_decode<KfObjectId>(slot)))
                  available[found]--;
@@ -1272,7 +1285,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..ed8f7b4effe2cffc0b8bc0b7cc0fad8e
              if (available[found] != 0) {
                  item_ids[found] = kf_enum_decode<KfObjectId>(slot);
                  found++;
-@@ -483,6 +501,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+@@ -483,6 +507,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1280,7 +1293,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..ed8f7b4effe2cffc0b8bc0b7cc0fad8e
          stock[selection]--;
          player_state.gold += item_sell_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
      }
-@@ -568,6 +587,10 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
+@@ -568,6 +593,10 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_DECLINED;
@@ -1671,7 +1684,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..7b6eb0a4a802299aab1bd40e4a8ec4d3b964044c 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc76ee28d7 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,13 @@
@@ -2198,7 +2211,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..7b6eb0a4a802299aab1bd40e4a8ec4d3
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2196,82 @@ void menu_draw_number(
+@@ -1854,10 +2196,87 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -2251,7 +2264,12 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..7b6eb0a4a802299aab1bd40e4a8ec4d3
 +
 +    for (const MenuTextGlyph &glyph : glyphs) {
 +        const bool number = glyph.font == MenuTextFont::Number;
-+        const MenuSpriteDef &font = number ? number_font : label_font;
++        const MenuSpriteDef *latin_font = glyph.font == MenuTextFont::Latin ? menu_latin_font() : nullptr;
++        if (glyph.font == MenuTextFont::Latin && !latin_font) {
++            x += glyph.advance;
++            continue;
++        }
++        const MenuSpriteDef &font = number ? number_font : latin_font ? *latin_font : label_font;
 +        std::array<std::array<s32, 2>, 3> uvs{};
 +        s32 layers = 0;
 +        if (number) {
@@ -2333,10 +2351,10 @@ index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..4ce1f0a0c0edbb1c337b086273e4c687
          switch (equipment_category) {
 diff --git a/src/game/menu_settings.cpp b/src/game/menu_settings.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38601aa796
+index 0000000000000000000000000000000000000000..80bc7e7625ad1f0bd36c8ccb739f86412f937d67
 --- /dev/null
 +++ b/src/game/menu_settings.cpp
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,316 @@
 +// PC extension: the port's SETTINGS page under System, drawn with the menu's own
 +// boxes, cursor, font and sounds (kf/platform/settings_page.h has the settings).
 +#include <kf/platform/prelude.h>
@@ -2432,14 +2450,16 @@ index 0000000000000000000000000000000000000000..6895e776c9ff0c0d5982403f741ced38
 +        return MenuTextGlyph{MenuTextFont::Number, static_cast<s16>(c - U'0'), 0, MENU_NUMBER_ADVANCE};
 +    if (c == U'/')
 +        return MenuTextGlyph{MenuTextFont::Number, number_slash, 0, MENU_NUMBER_ADVANCE};
-+    if (language == kf::Language::English) {
-+        if (c >= U'A' && c <= U'Z') {
-+            const Capital &capital = english_capitals[c - U'A'];
-+            return MenuTextGlyph{MenuTextFont::Label, capital.code, capital.left,
-+                static_cast<s16>(capital.width + letter_gap)};
-+        }
-+        return std::nullopt;
++    if (c >= U'A' && c <= U'Z') {
++        const bool english = language == kf::Language::English;
++        if (!english && !menu_latin_font())
++            return std::nullopt;
++        const Capital &capital = english_capitals[c - U'A'];
++        return MenuTextGlyph{english ? MenuTextFont::Label : MenuTextFont::Latin, capital.code, capital.left,
++            static_cast<s16>(capital.width + letter_gap)};
 +    }
++    if (language == kf::Language::English)
++        return std::nullopt;
 +    if (const auto code = kana_code(c))
 +        return MenuTextGlyph{MenuTextFont::Label, *code, 0, kana_advance};
 +    return std::nullopt;
@@ -4884,7 +4904,7 @@ index 55e9edcbc4495d8cc7075c10334d57e8863d727d..f02ffdf13e557f83b720bb2c9acc01d6
          kf::FaceShading::Flat, HUD_SPRITE_OT_DEPTH);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..443ad56529e5f879218f52eed540e33136a1a838 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466029f4951 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
 @@ -2,6 +2,8 @@
@@ -4937,7 +4957,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..443ad56529e5f879218f52eed540e331
              before.data(), before.size(), after.data(), after.size()))
          kf::host_fail("Cannot replace language graphics.");
      displayed_language = language;
-@@ -69,6 +84,22 @@ bool show_text_language(kf::Language language)
+@@ -69,6 +84,66 @@ bool show_text_language(kf::Language language)
  }
  }
  
@@ -4955,6 +4975,50 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..443ad56529e5f879218f52eed540e331
 +    }};
 +    const auto &images = language_images[static_cast<std::size_t>(language)];
 +    return kf::texture_store_upload_tim_within(&kf::host_textures(), images.data(), images.size(), menu_areas);
++}
++
++namespace {
++// Where the English label font goes beside the Japanese one: a 4-bit page and a palette row that
++// none of the disc's 436 TIMs touches (both languages' files, checked 2026-10-28).
++enum : u16 {
++    LATIN_PAGE_X = 64,
++    LATIN_PAGE_Y = 0,
++    LATIN_PALETTE_X = 128,
++    LATIN_PALETTE_Y = 0,
++    FONT_PAGE_WORDS = 64,
++    FONT_PAGE_ROWS = 256,
++    FONT_PALETTE_WORDS = 16
++};
++
++std::optional<MenuSpriteDef> latin_font;
++}
++
++const MenuSpriteDef *menu_latin_font()
++{
++    if (game_text_language() == kf::Language::English)
++        return &menu_resources().assets.glyph_atlas;
++    if (latin_font)
++        return &*latin_font;
++    // Only when the English files are there: making them here would stall the frame.
++    if (kf::language_folder(kf::Language::English).empty() || !prepare_text_language(kf::Language::English))
++        return nullptr;
++    const KfMenuResources *english_menu = menu_resources_of(kf::Language::English);
++    if (!english_menu)
++        return nullptr;
++    const MenuSpriteDef &english = english_menu->assets.glyph_atlas;
++    const kf::TextureSource &from = english.material.source;
++    if (from.format != kf::TextureFormat::Indexed4)
++        return nullptr;
++    const std::array<kf::TextureMove, 2> moves = {{
++        {{from.x, from.y, FONT_PAGE_WORDS, FONT_PAGE_ROWS}, LATIN_PAGE_X, LATIN_PAGE_Y},
++        {{from.palette_x, from.palette_y, FONT_PALETTE_WORDS, 1}, LATIN_PALETTE_X, LATIN_PALETTE_Y},
++    }};
++    const auto &images = language_images[static_cast<std::size_t>(kf::Language::English)];
++    if (!kf::texture_store_upload_tim_moved(&kf::host_textures(), images.data(), images.size(), moves))
++        return nullptr;
++    latin_font = english;
++    latin_font->material.source = {LATIN_PAGE_X, LATIN_PAGE_Y, LATIN_PALETTE_X, LATIN_PALETTE_Y, from.format};
++    return &*latin_font;
 +}
 +
  kf::Language game_text_language()

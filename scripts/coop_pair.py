@@ -7,7 +7,7 @@ docs/COOP_PLAN.md, "The coop save".
 
     scripts/coop_pair.py build/linux/verdite1 [--room R] [--service URL] [--work DIR] [--japanese a|b]
 
---japanese plays that player in Japanese, from data/ja.
+--japanese plays that player in Japanese, from data/ja (with data/en beside it, as coop needs).
 """
 import argparse
 import json
@@ -35,7 +35,8 @@ STARTED = []
 
 def game_files(name):
     if name in JAPANESE:
-        return ["--data", str(ROOT / "data/ja"), "--language", "ja"]
+        # Coop draws the players' names with the English font, so it needs the English files too.
+        return ["--data", str(ROOT / "data/ja"), "--data-en", str(ROOT / "data/en"), "--language", "ja"]
     return ["--data", str(ROOT / "data/en")]
 
 

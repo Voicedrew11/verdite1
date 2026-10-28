@@ -8,6 +8,7 @@
 #include <kf/game/save.h>
 #include <kf/platform/host.h>
 #include <kf/platform/input.h>
+#include <kf/platform/language_runtime.h>
 #include <kf/platform/menu_pointer.h>
 #include <kf/platform/saves.h>
 #include <kf/platform/title.h>
@@ -115,6 +116,7 @@ const char *failure_id(OnlineFailure failure) {
     case OnlineFailure::OtherBuild: return "other_build";
     case OnlineFailure::Unreachable: return "unreachable";
     case OnlineFailure::NoOnline: return "no_online";
+    case OnlineFailure::NeedsEnglish: return "needs_english";
     case OnlineFailure::None:
     case OnlineFailure::Other: break;
     }
@@ -224,7 +226,7 @@ struct Failure {
     std::string_view id;
     Words words;
 };
-constexpr std::array<Failure, 8> failures = {{
+constexpr std::array<Failure, 11> failures = {{
     {"no_host", {"NO ONE IS HOSTING THAT ROOM", "そのルームにホストがいません"}},
     {"in_use", {"THAT ROOM IS ALREADY IN USE", "そのルームはつかわれています"}},
     {"full", {"THAT ROOM IS FULL", "そのルームはまんいんです"}},
@@ -232,6 +234,9 @@ constexpr std::array<Failure, 8> failures = {{
     {"unreachable", {"THE SERVER CANNOT BE REACHED", "サーバーにつながりません"}},
     {"no_online", {"THIS BUILD HAS NO ONLINE PLAY", "オンラインはつかえません"}},
     {"no_answer", {"THE HOST DID NOT ANSWER", "ホストのへんじがありません"}},
+    {"needs_english", {"COOP NEEDS THE ENGLISH FILES", "マルチプレイには えいごばんが いります"}},
+    {"adding_english", {"ADDING THE ENGLISH FILES", "えいごばんを ついかしています"}},
+    {"english_ready", {"THE ENGLISH FILES ARE READY", "えいごばんの じゅんびが できました"}},
     {"other", {"COULD NOT JOIN THE ROOM", "さんかできませんでした"}},
 }};
 
@@ -242,15 +247,6 @@ std::string failure_text(std::string_view id, Language language) {
 
 std::string floor_text(std::uint32_t floor, Language language) {
     return language == Language::English ? "FLOOR " + std::to_string(floor) : std::to_string(floor) + "かい";
-}
-
-// A generated name is PLAYER and four digits. The kana font has no capitals, so in Japanese PLAYER is
-// プレイヤー and a chosen name loses its letters (docs/verdite-port.md, "Language handling").
-std::string name_text(std::string_view name, Language language) {
-    constexpr std::string_view generated = "PLAYER";
-    if (language != Language::English && name.starts_with(generated))
-        return "プレイヤー" + std::string(name.substr(generated.size()));
-    return std::string(name);
 }
 
 std::string profile_words(const CoopProfileWords &words, Language language) {
@@ -284,7 +280,7 @@ std::string row_text(const verdite::TitleRowView &row, std::size_t index, Langua
     case TitleRowKind::Letter: return std::string(1, row.letter);
     case TitleRowKind::Delete: return std::string(delete_word.in(language));
     case TitleRowKind::Join: return std::string(join_word.in(language));
-    case TitleRowKind::Room: return name_text(row.room->host, language);
+    case TitleRowKind::Room: return row.room->host;
     case TitleRowKind::Profile: return std::string(profile_word.in(language));
     case TitleRowKind::ProfileName: return std::string(name_word.in(language));
     case TitleRowKind::ProfileColour: return std::string(colour_word.in(language));
@@ -298,7 +294,7 @@ std::string row_value(const verdite::TitleView &view, const verdite::TitleRowVie
     using verdite::TitleRowKind;
     const verdite::TitleProfile &profile = view.profile;
     switch (row.kind) {
-    case TitleRowKind::ProfileName: return name_text(profile.name, language);
+    case TitleRowKind::ProfileName: return profile.name;
     case TitleRowKind::ProfileColour:
         return profile.colour < coop_colour_count ? profile_words(coop_colours()[profile.colour].name, language) : std::string();
     case TitleRowKind::ProfileHelmet:
@@ -331,8 +327,21 @@ std::string heading(verdite::TitlePage page, Language language) {
     return {};
 }
 
+// While coop waits on the English game files: being added, ready to try again, or failed.
+std::string_view english_note() {
+    switch (language_task_state(nullptr)) {
+    case LanguageTask::Working: return "adding_english";
+    case LanguageTask::Done: return "english_ready";
+    case LanguageTask::Idle:
+    case LanguageTask::Failed: break;
+    }
+    return "needs_english";
+}
+
 std::string note(const verdite::TitleView &view, Language language) {
     using verdite::TitlePage;
+    if (view.failure == "needs_english")
+        return failure_text(english_note(), language);
     if (!view.failure.empty())
         return failure_text(view.failure, language);
     switch (view.page) {
@@ -400,7 +409,7 @@ TitleText title_text(Language language) {
     if (view.page == verdite::TitlePage::HostCode || view.page == verdite::TitlePage::JoinCode)
         text.code = view.code;
     if (view.page == verdite::TitlePage::NameEntry)
-        text.code = ext::name_text(view.code, language);
+        text.code = view.code;
     return text;
 }
 

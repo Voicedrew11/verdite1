@@ -541,9 +541,7 @@ behind the inner pages).
 
 Not yet:
 
-- **Names in Japanese**: the kana font has no capitals, so a generated `PLAYER1234` is shown as
-  プレイヤー1234 and a chosen name loses its letters (a workaround until proper language handling,
-  `verdite-port.md`, "Things to plan for"); a public room's code is never shown.
+- **A public room's code** is never shown.
 - **Sounds**: the menu's cursor and confirm sounds are the game's bank, which the opening has not
   loaded; the title menu is silent.
 - **Sending a player away** from a public room, and the service's check of names.
@@ -570,8 +568,9 @@ changed inside a room.
 The rules are `port/ext/coop_profile.h` (unit-tested) and the menu's pages libverdite's.
 `scripts/coop_pair.py` checks that two players each play as their profile and see the other's;
 `scripts/title_pair.py` types a name, steps the colour, and sees it kept, played as and listed.
-Not judged by eye: the name grid's narrower cells, the colours on the knight. In Japanese a
-chosen name loses its letters (the title menu's "Not yet").
+Not judged by eye: the name grid's narrower cells, the colours on the knight. In Japanese a name is
+drawn with the English font's capitals, so coop needs the English files (`verdite-port.md`,
+"Language handling"); `coop_pair.py --japanese a|b` plays either player in Japanese.
 
 ## Floor ownership
 

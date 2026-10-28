@@ -86,12 +86,16 @@ is the agent channel; its KF1 half is `port/platform/agent.cpp`.
 - **Agent tooling first.** The beacon, command channel, headless/turbo mode and
   fuzzer are what let an agent measure without the user, so they come before
   the visual features.
-- **Language handling.** Text the players write (coop names) is drawn with the menu font of the
-  language in play, and the two fonts share cells: the English patch draws its capitals over
-  kana, so Japanese has no A to Z and English no kana. For now a name is A to Z and digits, and
-  in Japanese the generated `PLAYER1234` is shown as プレイヤー1234 (`name_text` in
-  `port/ext/title.cpp`); a chosen name loses its letters there. To be replaced by proper
-  language handling: text that draws the same whatever the language in play.
+- **Language handling.** The two menu fonts share cells: the English patch draws its capitals
+  over kana, so the Japanese font has no A to Z and the English one no kana. Text the players
+  write (coop names) is A to Z and digits, drawn the same in either language: in Japanese the
+  capitals come from the English font, its page and palette copied from the English
+  `KF/COM/MIX.TIM` to a 4-bit page (x 64, y 0) and a palette row (x 128, y 0) that none of the
+  disc's 436 TIMs touches (`menu_latin_font`, `MenuTextFont::Latin`; checked 2026-10-28 against
+  both languages' files). So coop needs the English files: joining a room without them fails
+  (`OnlineFailure::NeedsEnglish`) and starts adding them, from the translation built in or the
+  download, and the title says when they are ready. A player still plays in the language chosen.
+  Android, the 3DS and the web need a way to get the patch before they have coop.
 - **Licensing is simpler.** The decomps are CC0; nothing from the disc ships.
 
 ## Layout
@@ -425,7 +429,7 @@ branch point.
 | Z-buffer | `depth_buffer` | |
 | AO, per-pixel lighting | dynamic lights, AO, shadows, flame glow | different designs: judge, do not merge blindly. AO and the game's lighting per pixel are done on Vulkan (`RENDERER_PLAN.md`); dynamic lights, shadows and glow were drawn only by GL and are not drawn yet |
 | mouse look, free look | mouse look, `look_limit` | |
-| English translation | language switch, ppf/rar import | fetched at start from the Japanese files (2026-10-27, "Build and run (Linux)"). Not yet: a LANGUAGE row in the game's menu; Android, 3DS and the web have no curl or bsdtar, so they cannot download or open the `.rar` |
+| English translation | language switch, ppf/rar import | fetched at start from the Japanese files (2026-10-27, "Build and run (Linux)"). Coop needs it, for the players' names ("Language handling"). Not yet: a LANGUAGE row in the game's menu; Android, 3DS and the web have no curl or bsdtar, so they cannot download or open the `.rar` |
 | keyboard layout | controls | |
 | settings UI (Verdite Core) | F1 overlay | the settings in the game's own menu done (2026-10-26), as Verdite2's and Verdite3's PORT SETTINGS: see "The settings page in the game's menu" below |
 
