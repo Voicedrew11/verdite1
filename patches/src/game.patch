@@ -2813,15 +2813,15 @@ index 0000000000000000000000000000000000000000..f42949da371449a1e1c6d37e7c184789
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355bc7aa992
+index 0000000000000000000000000000000000000000..9dae4d9c6b49c5117b7068f93646e48aff6b3adf
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,471 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
-+// (docs/PLAYER_MODEL.md). Their right forearm is the game's own first-person weapon model
-+// (WEPON/WEPxx.MIM: a gauntlet holding the weapon) on the knight's elbow, posed by its clip at
-+// their attack phase, so others see the swing its player sees. They walk by the distance they move,
-+// in a gait shaped on the game's own skeletons'.
++// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
++// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
++// swing its player sees, the arm following it (kf/platform/online_weapon_hold.h). They stand ready,
++// breathing, and walk by the distance they move, in a gait shaped on the game's own skeletons'.
 +#include <kf/platform/prelude.h>
 +#include <kf/game/equipment.h>
 +#include <kf/game/graphics.h>
@@ -2837,6 +2837,8 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +#include <kf/lib/player_stats_types.h>
 +#include <kf/lib/resource_file.h>
 +#include <kf/lib/tmd.h>
++#include <kf/platform/host.h>
++#include <kf/platform/online_weapon_hold.h>
 +
 +#include <algorithm>
 +#include <array>
@@ -2847,16 +2849,35 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +enum {
 +    ONLINE_PLAYER_WEAPON_COUNT = 16,
 +    ONLINE_PLAYER_WEAPON_FILE_BYTES = 49152,  // KF_WEAPON_ASSET_BUFFER_BYTES
-+    ONLINE_PLAYER_ARM_SCALE_SHIFT = 1,        // the first-person forearm is twice a body's
-+    ONLINE_PLAYER_GUARD_PHASE = KF_WEAPON_ATTACK_PHASE_END - 1,  // a swing's end: a low guard
-+    ONLINE_PLAYER_ATTACK_BLEND = 600,         // phase over which the guard turns into the swing
-+    ONLINE_PLAYER_ARM_RAISE = -587,           // the upper arm lifts forward through a swing (0.9 rad)
-+    ONLINE_PLAYER_HIT_PHASE = 3072,           // PLAYER_WEAPON_HIT_PHASE
++    ONLINE_PLAYER_HELD_SCALE_SHIFT = 1,       // the first-person gauntlet and weapon are twice a body's
++    ONLINE_PLAYER_HIT_PHASE = 3072,           // PLAYER_WEAPON_HIT_PHASE: the clip's full size
 +    ONLINE_PLAYER_COLICHEMARDE_HIT_PHASE = 1000,
 +    ONLINE_PLAYER_GAIT_PHASE_END = 4096,
 +    ONLINE_PLAYER_GAIT_MIDDLE = 114,          // the thigh's middle angle through a stride (10 degrees)
 +    ONLINE_PLAYER_FOREARM_BEND = 137,         // the free forearm bends while walking (12 degrees)
 +    ONLINE_PLAYER_HEAD_PITCH_MOST = 683,      // the head follows the camera's pitch this far (60 degrees)
++    ONLINE_PLAYER_BREATH_MS = 3600,
++    ONLINE_PLAYER_BREATH_TORSO = 9,           // the torso leans with a breath (0.8 degrees)
++    ONLINE_PLAYER_BREATH_ARMS = 17,           // and the arms rise with it (1.5 degrees)
++    ONLINE_PLAYER_BREATH_SPREAD = 997,        // each player's breath at its own point
++};
++
++// Standing ready, each part's forward pitch and roll out from the body (4096 a turn); the gait
++// takes over as the stride grows. The left foot a little ahead, knees soft, feet apart, the free
++// arm bent; the weapon arm a little forward and out, its forearm past level so the hand is ahead
++// of the belt, whether standing or walking.
++enum {
++    ONLINE_PLAYER_STANCE_THIGH_RIGHT = -80,   // -7 degrees: behind
++    ONLINE_PLAYER_STANCE_THIGH_LEFT = 102,    // 9 degrees
++    ONLINE_PLAYER_STANCE_THIGH_ROLL = 68,     // 6 degrees
++    ONLINE_PLAYER_STANCE_KNEE_RIGHT = 102,
++    ONLINE_PLAYER_STANCE_KNEE_LEFT = 148,
++    ONLINE_PLAYER_STANCE_UPPER_ARM_LEFT = 91,
++    ONLINE_PLAYER_STANCE_UPPER_ARM_LEFT_ROLL = 80,
++    ONLINE_PLAYER_STANCE_FOREARM_LEFT = 341,  // 30 degrees
++    ONLINE_PLAYER_REST_UPPER_ARM_RIGHT = 205, // 18 degrees
++    ONLINE_PLAYER_REST_UPPER_ARM_RIGHT_ROLL = 102,
++    ONLINE_PLAYER_REST_FOREARM_RIGHT = 774,   // 68 degrees
 +};
 +
 +// One leg through a walk, from its foot leaving the ground behind, linear between keys as the
@@ -2884,6 +2905,10 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +    KfTmdResource tmd;
 +    KfAnimationData animation;
 +    std::vector<SVECTOR> rest;   // the TMD's own vertices, before any morph
++    kf::OnlineWeaponHold hold;
++    // As drawn: the hit's vertices halved, the model's forearm folded onto the wrist so its faces
++    // have no area and are culled.
++    std::vector<SVECTOR> held;
 +};
 +
 +struct OnlineWeaponSlot {
@@ -2934,18 +2959,6 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +    return model;
 +}
 +
-+static const OnlineWeaponModel *online_weapon_model(u8 weapon)
-+{
-+    if (weapon >= ONLINE_PLAYER_WEAPON_COUNT)
-+        return nullptr;
-+    auto &slot = online_weapon_slots[weapon];
-+    if (!slot.tried) {
-+        slot.tried = true;
-+        slot.model = online_weapon_load(weapon);
-+    }
-+    return slot.model ? &*slot.model : nullptr;
-+}
-+
 +static void online_weapon_add_morph(std::span<SVECTOR> vertices, const KfAnimationData &animation,
 +    u16 morph_index, s32 blend)
 +{
@@ -2987,43 +3000,77 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +    online_weapon_add_morph(vertices, animation, keyframe.rest_morph, blend);
 +}
 +
-+// The arm at an attack phase: at rest the swing's last frame, a low guard; through the first
-+// ONLINE_PLAYER_ATTACK_BLEND of a swing the guard blends into it. Halved to the knight's size.
-+static std::span<SVECTOR> online_weapon_pose(const OnlineWeaponModel &model, s16 attack_phase)
++// The model's faces, for finding its pieces.
++static std::vector<kf::OnlineModelFace> online_weapon_faces(const OnlineWeaponModel &model)
 +{
-+    const auto count = model.rest.size();
-+    auto vertices = std::span(game_graphics_runtime.morph_scratch).first(count);
-+    const bool attacking = attack_phase != kf::online_not_attacking;
-+    online_weapon_sample(model, attacking ? attack_phase : ONLINE_PLAYER_GUARD_PHASE, vertices);
-+    if (attacking && attack_phase < ONLINE_PLAYER_ATTACK_BLEND) {
-+        std::array<SVECTOR, KF_MORPH_SCRATCH_CAPACITY> guard;
-+        online_weapon_sample(model, ONLINE_PLAYER_GUARD_PHASE, std::span(guard).first(count));
-+        for (std::size_t i = 0; i < count; ++i) {
-+            vertices[i].vx = static_cast<s16>(guard[i].vx + (vertices[i].vx - guard[i].vx) * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
-+            vertices[i].vy = static_cast<s16>(guard[i].vy + (vertices[i].vy - guard[i].vy) * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
-+            vertices[i].vz = static_cast<s16>(guard[i].vz + (vertices[i].vz - guard[i].vz) * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
++    std::vector<kf::OnlineModelFace> faces;
++    const auto context = online_player_tmd_context(model.tmd);
++    const auto object = tmd_read_object(context, 0);
++    auto stream = tmd_primitive_stream(context, object);
++    while (stream.remaining != 0) {
++        const auto packet = tmd_next_packet(stream);
++        u8 corners;
++        switch (tmd_opaque_mode(packet.mode)) {
++        case KF_TMD_MODE_F3: case KF_TMD_MODE_FT3: case KF_TMD_MODE_G3: case KF_TMD_MODE_GT3:
++            corners = 3;
++            break;
++        case KF_TMD_MODE_F4: case KF_TMD_MODE_FT4: case KF_TMD_MODE_G4: case KF_TMD_MODE_GT4:
++            corners = 4;
++            break;
++        default:
++            continue;
 +        }
++        const auto face = tmd_decode_face(packet, object.vertex_count);
++        faces.push_back({face.vertices, corners});
 +    }
-+    for (auto &vertex : vertices) {
-+        vertex.vx = static_cast<s16>(vertex.vx >> ONLINE_PLAYER_ARM_SCALE_SHIFT);
-+        vertex.vy = static_cast<s16>(vertex.vy >> ONLINE_PLAYER_ARM_SCALE_SHIFT);
-+        vertex.vz = static_cast<s16>(vertex.vz >> ONLINE_PLAYER_ARM_SCALE_SHIFT);
-+    }
-+    return vertices;
++    return faces;
 +}
 +
-+// How far the right upper arm lifts: forward through the wind-up, held to the hit, back by the end.
-+static s16 online_player_arm_raise(u8 weapon, s16 attack_phase)
++// The model's space into the knight's body: the first-person orientation, turned a half turn
++// since the camera looks along +z and actors along -z.
++static kf::OnlineRotation online_weapon_view(u8 weapon)
 +{
-+    if (attack_phase == kf::online_not_attacking)
-+        return 0;
-+    const s32 hit = weapon == kf_enum_encode<u8>(KF_ITEM_COLICHEMARDE) ? ONLINE_PLAYER_COLICHEMARDE_HIT_PHASE : ONLINE_PLAYER_HIT_PHASE;
-+    if (attack_phase < ONLINE_PLAYER_ATTACK_BLEND)
-+        return static_cast<s16>(ONLINE_PLAYER_ARM_RAISE * attack_phase / ONLINE_PLAYER_ATTACK_BLEND);
-+    if (attack_phase < hit)
-+        return ONLINE_PLAYER_ARM_RAISE;
-+    return static_cast<s16>(ONLINE_PLAYER_ARM_RAISE * (KF_WEAPON_ATTACK_PHASE_END - attack_phase)
-+        / (KF_WEAPON_ATTACK_PHASE_END - hit));
++    MATRIX turned;
++    MATRIX view_model;
++    kf::matrix_set_rotation_xyz(weapon_records.entries[weapon].render_rotation, view_model);
++    kf::matrix_set_rotation_xyz(SVECTOR{0, KF_ANGLE_HALF_TURN, 0}, turned);
++    kf::matrix_multiply_rotation(turned, view_model, view_model);
++    return kf::online_rotation(view_model);
++}
++
++// How the knight holds the weapon, and what it draws of the model: the hit's vertices halved,
++// the model's forearm folded onto the wrist.
++static bool online_weapon_prepare(OnlineWeaponModel &model, u8 weapon)
++{
++    const u16 hit = weapon == kf_enum_encode<u8>(KF_ITEM_COLICHEMARDE) ? ONLINE_PLAYER_COLICHEMARDE_HIT_PHASE : ONLINE_PLAYER_HIT_PHASE;
++    model.held.resize(model.rest.size());
++    online_weapon_sample(model, hit, model.held);
++    auto hold = kf::online_weapon_hold(model.held, online_weapon_faces(model), online_weapon_view(weapon));
++    if (!hold)
++        return false;
++    model.hold = std::move(*hold);
++    for (const u16 vertex : model.hold.forearm)
++        model.held[vertex] = model.hold.wrist;
++    for (auto &vertex : model.held) {
++        vertex.vx = static_cast<s16>(vertex.vx >> ONLINE_PLAYER_HELD_SCALE_SHIFT);
++        vertex.vy = static_cast<s16>(vertex.vy >> ONLINE_PLAYER_HELD_SCALE_SHIFT);
++        vertex.vz = static_cast<s16>(vertex.vz >> ONLINE_PLAYER_HELD_SCALE_SHIFT);
++    }
++    return true;
++}
++
++static const OnlineWeaponModel *online_weapon_model(u8 weapon)
++{
++    if (weapon >= ONLINE_PLAYER_WEAPON_COUNT)
++        return nullptr;
++    auto &slot = online_weapon_slots[weapon];
++    if (!slot.tried) {
++        slot.tried = true;
++        slot.model = online_weapon_load(weapon);
++        if (slot.model && !online_weapon_prepare(*slot.model, weapon))
++            slot.model.reset();
++    }
++    return slot.model ? &*slot.model : nullptr;
 +}
 +
 +// A leg at a phase of the walk, scaled by the stride (KF_FIXED12_ONE a full one).
@@ -3050,34 +3097,57 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +}
 +
 +struct OnlinePlayerPose {
-+    std::array<s16, kf::online_player_part_count> bends;  // about each part's pivot, forward is negative
-+    s32 drop;                                              // the body lowered to stand on the planted foot
++    std::array<SVECTOR, kf::online_player_part_count> turns;  // about each part's pivot: pitch (forward is
++                                                              // negative), roll (out from the body on the right)
++    s32 drop;                                                 // the body lowered to stand on the planted foot
 +};
 +
-+// The knight walking: legs half a cycle apart, the free arm swung against the right leg, the right
-+// upper arm lifted through a swing, the head tilted as the player looks up or down.
++// Where a player is through a breath, from -KF_FIXED12_ONE to KF_FIXED12_ONE.
++static s32 online_player_breath(const kf::OnlinePlayer &player)
++{
++    const std::uint64_t ms = kf::host_clock_ns() / 1000000;
++    const u32 through = static_cast<u32>((ms % ONLINE_PLAYER_BREATH_MS) * KF_ANGLE_FULL_TURN / ONLINE_PLAYER_BREATH_MS);
++    return kf::angle_sine(static_cast<s32>((through + player.id * ONLINE_PLAYER_BREATH_SPREAD) & KF_ANGLE_WRAP_MASK));
++}
++
++// The knight standing ready, breathing, or walking: legs half a cycle apart, the free arm swung
++// against the right leg, the head tilted as the player looks up or down. The weapon arm is at rest
++// here; a held weapon's hold turns it through a swing.
 +static OnlinePlayerPose online_player_pose(const kf::OnlinePlayer &player)
 +{
 +    using Part = kf::OnlinePlayerPart;
 +    const auto &joints = kf::online_player_model_joints();
 +    const s32 stride = std::clamp(static_cast<s32>(std::lround(player.stride * KF_FIXED12_ONE)), 0, KF_FIXED12_ONE);
 +    const s32 phase = static_cast<s32>(std::lround(player.stride_phase * static_cast<float>(ONLINE_PLAYER_GAIT_PHASE_END)));
-+    const auto right = online_player_leg(phase, stride);
-+    const auto left = online_player_leg(phase + ONLINE_PLAYER_GAIT_PHASE_END / 2, stride);
++    const auto gait_right = online_player_leg(phase, stride);
++    const auto gait_left = online_player_leg(phase + ONLINE_PLAYER_GAIT_PHASE_END / 2, stride);
 +    const auto part = [](Part part) { return kf_enum_encode<u8>(part); };
++    // A stance angle, fading as the stride grows.
++    const auto standing = [stride](s32 angle) { return static_cast<s16>((angle * (KF_FIXED12_ONE - stride)) >> KF_FIXED12_BITS); };
++    const s32 breath = online_player_breath(player);
++    const s16 breath_arms = standing((ONLINE_PLAYER_BREATH_ARMS * breath) >> KF_FIXED12_BITS);
++    const OnlinePlayerLeg right = {gait_right.thigh + standing(ONLINE_PLAYER_STANCE_THIGH_RIGHT),
++        gait_right.knee + standing(ONLINE_PLAYER_STANCE_KNEE_RIGHT)};
++    const OnlinePlayerLeg left = {gait_left.thigh + standing(ONLINE_PLAYER_STANCE_THIGH_LEFT),
++        gait_left.knee + standing(ONLINE_PLAYER_STANCE_KNEE_LEFT)};
 +
 +    OnlinePlayerPose pose{};
-+    pose.bends[part(Part::ThighRight)] = static_cast<s16>(-right.thigh);
-+    pose.bends[part(Part::ShinRight)] = static_cast<s16>(right.knee);
-+    pose.bends[part(Part::ThighLeft)] = static_cast<s16>(-left.thigh);
-+    pose.bends[part(Part::ShinLeft)] = static_cast<s16>(left.knee);
-+    pose.bends[part(Part::UpperArmLeft)] = static_cast<s16>(
-+        -2 * (right.thigh - ((ONLINE_PLAYER_GAIT_MIDDLE * stride) >> KF_FIXED12_BITS)) / 5);
-+    pose.bends[part(Part::ForearmLeft)] = static_cast<s16>(-((ONLINE_PLAYER_FOREARM_BEND * stride) >> KF_FIXED12_BITS));
-+    pose.bends[part(Part::UpperArmRight)] = online_player_arm_raise(player.weapon, player.attack_phase);
++    pose.turns[part(Part::ThighRight)] = {static_cast<s16>(-right.thigh), 0, standing(ONLINE_PLAYER_STANCE_THIGH_ROLL)};
++    pose.turns[part(Part::ShinRight)] = {static_cast<s16>(right.knee), 0, 0};
++    pose.turns[part(Part::ThighLeft)] = {static_cast<s16>(-left.thigh), 0, static_cast<s16>(-standing(ONLINE_PLAYER_STANCE_THIGH_ROLL))};
++    pose.turns[part(Part::ShinLeft)] = {static_cast<s16>(left.knee), 0, 0};
++    pose.turns[part(Part::Torso)] = {standing((ONLINE_PLAYER_BREATH_TORSO * breath) >> KF_FIXED12_BITS), 0, 0};
++    pose.turns[part(Part::UpperArmLeft)] = {static_cast<s16>(-standing(ONLINE_PLAYER_STANCE_UPPER_ARM_LEFT)
++        - 2 * (gait_right.thigh - ((ONLINE_PLAYER_GAIT_MIDDLE * stride) >> KF_FIXED12_BITS)) / 5 - breath_arms),
++        0, static_cast<s16>(-standing(ONLINE_PLAYER_STANCE_UPPER_ARM_LEFT_ROLL))};
++    pose.turns[part(Part::ForearmLeft)] = {static_cast<s16>(-standing(ONLINE_PLAYER_STANCE_FOREARM_LEFT)
++        - ((ONLINE_PLAYER_FOREARM_BEND * stride) >> KF_FIXED12_BITS)), 0, 0};
++    pose.turns[part(Part::UpperArmRight)] = {static_cast<s16>(-ONLINE_PLAYER_REST_UPPER_ARM_RIGHT - breath_arms), 0,
++        ONLINE_PLAYER_REST_UPPER_ARM_RIGHT_ROLL};
++    pose.turns[part(Part::ForearmRight)] = {-ONLINE_PLAYER_REST_FOREARM_RIGHT, 0, 0};
 +    // An upright part tips forward at a positive bend, as the camera looks down at a positive pitch.
-+    pose.bends[part(Part::Head)] = static_cast<s16>(
-+        std::clamp<s32>(player.pitch, -ONLINE_PLAYER_HEAD_PITCH_MOST, ONLINE_PLAYER_HEAD_PITCH_MOST));
++    pose.turns[part(Part::Head)] = {static_cast<s16>(
++        std::clamp<s32>(player.pitch, -ONLINE_PLAYER_HEAD_PITCH_MOST, ONLINE_PLAYER_HEAD_PITCH_MOST)), 0, 0};
 +
 +    const auto &hip = joints[part(Part::ThighRight)].pivot;
 +    const auto &knee = joints[part(Part::ShinRight)].pivot;
@@ -3087,6 +3157,21 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +        online_player_leg_reach(left, thigh_length, shin_length));
 +    pose.drop = thigh_length + shin_length - reach;
 +    return pose;
++}
++
++// The weapon arm's parts in the body: the stance's at rest, through a swing as the hold has them
++// at the attack phase.
++static kf::OnlineWeaponArm online_player_weapon_arm(const kf::OnlinePlayer &player, const OnlineWeaponModel &model,
++    const MATRIX &upper_arm, const MATRIX &forearm)
++{
++    const auto rest = kf::online_weapon_arm_at_rest(model.hold, kf::online_rotation(upper_arm), kf::online_rotation(forearm));
++    if (player.attack_phase == kf::online_not_attacking)
++        return rest;
++    const auto vertices = std::span(game_graphics_runtime.morph_scratch).first(model.rest.size());
++    online_weapon_sample(model, static_cast<u16>(player.attack_phase), vertices);
++    const auto &followed = model.hold.followed;
++    const std::array<SVECTOR, 3> at_phase = {vertices[followed[0]], vertices[followed[1]], vertices[followed[2]]};
++    return kf::online_weapon_arm_swinging(model.hold, rest, at_phase, kf::online_attack_weight(player.attack_phase));
 +}
 +
 +struct OnlinePlayerPlacement {
@@ -3124,26 +3209,28 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +    return kf::matrix_apply_rotation(rotation, VECTOR{to.vx - from.vx, to.vy - from.vy, to.vz - from.vz}.narrowed());
 +}
 +
-+static void online_player_draw_weapon(const kf::OnlinePlayer &player, const OnlineWeaponModel &model,
-+    const MATRIX &body, const OnlinePlayerPlacement &upper_arm)
++// The held gauntlet and weapon, their wrist on the end of the right forearm.
++static void online_player_draw_held(const OnlineWeaponModel &model, const MATRIX &body, const MATRIX &held,
++    const OnlinePlayerPlacement &forearm)
 +{
-+    const auto &joints = kf::online_player_model_joints();
-+    const auto &shoulder = joints[kf_enum_encode<u8>(kf::OnlinePlayerPart::UpperArmRight)].pivot;
-+    MATRIX turned;
-+    MATRIX view_model;
-+    // The first-person orientation, turned a half turn: the camera looks along +z, actors along -z.
-+    kf::matrix_set_rotation_xyz(weapon_records.entries[player.weapon].render_rotation, view_model);
-+    kf::matrix_set_rotation_xyz(SVECTOR{0, KF_ANGLE_HALF_TURN, 0}, turned);
-+    kf::matrix_multiply_rotation(turned, view_model, view_model);
++    const auto &elbow = kf::online_player_model_joints()[kf_enum_encode<u8>(kf::OnlinePlayerPart::ForearmRight)].pivot;
++    const SVECTOR wrist = {static_cast<s16>(model.hold.wrist.vx >> ONLINE_PLAYER_HELD_SCALE_SHIFT),
++        static_cast<s16>(model.hold.wrist.vy >> ONLINE_PLAYER_HELD_SCALE_SHIFT),
++        static_cast<s16>(model.hold.wrist.vz >> ONLINE_PLAYER_HELD_SCALE_SHIFT), 0};
 +    OnlinePlayerPlacement placement;
-+    kf::matrix_multiply_rotation(body, view_model, placement.rotation);
-+    placement.position = upper_arm.position;
-+    placement.position += online_player_offset(upper_arm.rotation, kf::online_player_model_right_elbow(), shoulder);
-+    online_player_draw_object(model.tmd, 0, online_weapon_pose(model, player.attack_phase), placement);
++    kf::matrix_multiply_rotation(body, held, placement.rotation);
++    const VECTOR from_wrist = kf::matrix_apply_rotation(placement.rotation, wrist);
++    placement.position = forearm.position;
++    placement.position += online_player_offset(forearm.rotation, kf::online_player_model_right_wrist(), elbow);
++    placement.position.vx -= from_wrist.vx;
++    placement.position.vy -= from_wrist.vy;
++    placement.position.vz -= from_wrist.vz;
++    online_player_draw_object(model.tmd, 0, model.held, placement);
 +}
 +
 +void render_online_player(const kf::OnlinePlayer &player)
 +{
++    using Part = kf::OnlinePlayerPart;
 +    const auto knight = tmd_resource_view(kf::online_player_model_tmd().data(), kf::online_player_model_tmd().size());
 +    const auto &joints = kf::online_player_model_joints();
 +    const auto pose = online_player_pose(player);
@@ -3158,32 +3245,48 @@ index 0000000000000000000000000000000000000000..e344b13d43615cffb7af9aa00f07b355
 +    MATRIX body;
 +    kf::matrix_set_rotation_xyz(SVECTOR{0, static_cast<s16>((KF_ANGLE_HALF_TURN - heading) & KF_ANGLE_WRAP_MASK), 0}, body);
 +
++    // Each part's turn in the body, parents first.
++    std::array<MATRIX, kf::online_player_part_count> turned;
++    for (std::size_t i = 0; i < joints.size(); ++i) {
++        MATRIX bend;
++        kf::matrix_set_rotation_xyz(pose.turns[i], bend);
++        if (joints[i].parent < 0)
++            turned[i] = bend;
++        else
++            kf::matrix_multiply_rotation(turned[static_cast<u8>(joints[i].parent)], bend, turned[i]);
++    }
++    // A held weapon turns the weapon arm; the right hand, under its gauntlet, is not drawn.
 +    const OnlineWeaponModel *weapon = online_weapon_model(player.weapon);
-+    const auto upper_arm_right = kf_enum_encode<u8>(kf::OnlinePlayerPart::UpperArmRight);
++    const auto upper_arm_right = kf_enum_encode<u8>(Part::UpperArmRight);
++    const auto forearm_right = kf_enum_encode<u8>(Part::ForearmRight);
++    MATRIX held{};
++    if (weapon) {
++        const auto arm = online_player_weapon_arm(player, *weapon, turned[upper_arm_right], turned[forearm_right]);
++        turned[upper_arm_right] = kf::online_matrix(arm.upper_arm);
++        turned[forearm_right] = kf::online_matrix(arm.forearm);
++        held = kf::online_matrix(kf::online_compose(arm.held, weapon->hold.view));
++    }
++
 +    std::array<OnlinePlayerPlacement, kf::online_player_part_count> placements;
 +    for (std::size_t i = 0; i < joints.size(); ++i) {
 +        const auto &joint = joints[i];
-+        MATRIX bend;
-+        kf::matrix_set_rotation_xyz(SVECTOR{pose.bends[i], 0, 0}, bend);
 +        auto &placement = placements[i];
++        kf::matrix_multiply_rotation(body, turned[i], placement.rotation);
 +        if (joint.parent < 0) {
-+            kf::matrix_multiply_rotation(body, bend, placement.rotation);
 +            placement.position = feet;
 +            placement.position += kf::matrix_apply_rotation(body, joint.pivot);
 +        } else {
 +            const auto parent_index = static_cast<std::size_t>(static_cast<u8>(joint.parent));
 +            const auto &parent = placements[parent_index];
-+            kf::matrix_multiply_rotation(parent.rotation, bend, placement.rotation);
 +            placement.position = parent.position;
 +            placement.position += online_player_offset(parent.rotation, joint.pivot, joints[parent_index].pivot);
 +        }
-+        // The weapon model brings its own forearm.
-+        if (weapon && i == kf_enum_encode<u8>(kf::OnlinePlayerPart::ForearmRight))
++        if (weapon && i == kf_enum_encode<u8>(Part::HandRight))
 +            continue;
 +        online_player_draw_object(knight, static_cast<u16>(i), {}, placement);
 +    }
 +    if (weapon)
-+        online_player_draw_weapon(player, *weapon, body, placements[upper_arm_right]);
++        online_player_draw_held(*weapon, body, held, placements[forearm_right]);
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
 index 33680f578d7627d7bb43b29b77f58b843371198a..e07f35fdf01077adafea42f6521e3ca2c8b7610f 100644

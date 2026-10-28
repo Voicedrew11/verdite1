@@ -56,11 +56,12 @@ inline constexpr std::size_t online_sound_count = 6;
 void online_sound_made(OnlineSound sound);
 
 // The knight, one TMD object per part in this order, each part's vertices relative to its pivot.
+// A part comes after its parent; the right hand gives way to a held weapon's gauntlet.
 enum class OnlinePlayerPart : u8 {
     Pelvis, Torso, Head, UpperArmRight, ForearmRight, UpperArmLeft, ForearmLeft,
-    ThighRight, ShinRight, ThighLeft, ShinLeft
+    ThighRight, ShinRight, ThighLeft, ShinLeft, HandRight, HandLeft
 };
-inline constexpr std::size_t online_player_part_count = 11;
+inline constexpr std::size_t online_player_part_count = 13;
 
 struct OnlinePlayerPartJoint {
     s8 parent;     // a part index, or -1 for the pelvis
@@ -70,8 +71,8 @@ struct OnlinePlayerPartJoint {
 // The knight's TMD (4-byte aligned, as the TMD reader requires) and its joints, in part order.
 std::span<const u8> online_player_model_tmd();
 std::span<const OnlinePlayerPartJoint, online_player_part_count> online_player_model_joints();
-// Where the right forearm meets the upper arm, in the model's space: the weapon arm's origin.
-SVECTOR online_player_model_right_elbow();
+// Where the right forearm meets the hand, in the model's space: a held weapon's wrist.
+SVECTOR online_player_model_right_wrist();
 }
 
 #endif // KF_PLATFORM_ONLINE_PLAYERS_H

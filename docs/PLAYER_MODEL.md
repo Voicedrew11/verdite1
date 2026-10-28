@@ -13,9 +13,9 @@ of a walk and a swing is drawn, on the height they stand at.
 | `kfmodel.py` | Reads the game's formats (MIX chunk streams, model archives, assets with morph clips, TMD, TIM) and renders a model to a picture, culling faces as the game does. |
 | `body.py` | Builds parts from lofted cross-sections, boxes and panels, and writes them as a TMD. |
 | `knight.py` | The knight's part table and the rig that poses it. |
-| `arm.py` | The weapon arm: a first-person weapon model on the knight's elbow, through an attack. |
-| `walk.py` | The walk: legs and free arm through a cycle, and how far the body drops onto the planted foot. |
-| `preview.py` | The command: `survey`, `floor N`, `knight`, `swing W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
+| `arm.py` | The weapon hold: a first-person weapon model's gauntlet and weapon in the knight's hand, at rest and through an attack. |
+| `walk.py` | The stance and the walk: legs and free arm standing ready, breathing and through a cycle, and how far the body drops onto the planted foot. |
+| `preview.py` | The command: `survey`, `floor N`, `knight`, `swing W`, `rest W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
 | `gltf.py` | Writes a posed model as `knight.glb`, to turn around in Blender. |
 
 After changing the knight, run `preview.py cpp` and rebuild; the part order is
@@ -50,36 +50,63 @@ So the knight costs no texture memory and looks the same on every floor.
 
 ## The knight
 
-529 vertices in 11 parts (pelvis, torso, head, upper arms, forearms, thighs, shins), each its
-own TMD object with its vertices relative to its pivot, about 1850 tall (the player's collision
+529 vertices in 13 parts (pelvis, torso, head, upper arms, forearms, thighs, shins, hands), each
+its own TMD object with its vertices relative to its pivot, about 1850 tall (the player's collision
 height is 1700). Grey metal from page 151 for the armour, page 142's darker metal for the
-gauntlets so both arms match the weapon arm, leather belt and boots. Tabard, sleeves, knee
+gauntlets, as the weapons' own gauntlet, leather belt and boots. Tabard, sleeves, knee
 bands and crest are in the player's colour, to tell players apart.
 
-## The weapon arm
+## The weapon
 
 `WEPON/WEPxx.MIM` (one asset each, loaded into asset 20 for the equipped weapon) is not a
-weapon alone: it is a forearm and gauntlet holding it, 200 to 370 vertices, with one clip (six
-keyframes for 4096 of attack phase; seven for the Colichemarde's thrust). Its origin is the
-elbow, which moves under 230 units through a swing. All its textures are on pages 140 and 142,
-both common, so any player's weapon can be drawn on any floor.
+weapon alone: it is a forearm, a gauntlet and the weapon, 200 to 370 vertices, with one clip (six
+keyframes for 4096 of attack phase; seven for the Colichemarde's thrust), turned into the camera's
+space by the weapon table's own first-person rotation (`COM/COM.DAT` chunk 2, 44-byte records,
+yaw mirrored on load); the table's translation and projection distance are tuned for the view.
+All its textures are on pages 140 and 142, both common, so any player's weapon can be drawn on any
+floor. Measured over the twelve:
 
-On the knight, the remote player's right forearm is that model:
+- The pieces are separate meshes. The forearm (102 vertices) runs from the elbow, the model's
+  origin, and is open at both ends: made for the one view, it shows holes from any other. The
+  gauntlet (44) and the weapon are closed but for a few edges on some crossguards' fins.
+- The gauntlet and weapon move as one rigid piece through the clip (within 4 units); the forearm
+  bends.
+- The clip's last frame, a low guard the first-person view never shows at rest (it draws no weapon
+  then), is the rest shrunk to 0.74 to 0.81; every other frame is within 5% of the hit's size.
+  Drawn at rest, it made the weapon grow by 40% as a swing began. The Colichemarde's clip keeps
+  its size.
+- At 0.5 of the hit's size the weapons are as long as they should be beside a 1850-tall knight:
+  the Short Sword 718 (0.7 m), the Bastard Sword 1245, the Colichemarde 1197.
+- The swings are an overhead chop: the blade back over the shoulder in the wind-up (the hand above
+  the head), up at the hit, down ahead after it; the Colichemarde thrusts.
 
-- scaled by 0.5 (the first-person forearm is about twice a body's), at the end of the right
-  upper arm;
-- turned by the weapon table's own first-person rotation (`COM/COM.DAT` chunk 2, 44-byte
-  records, yaw mirrored on load) and a half turn, since the camera looks along +z and actors
-  face -z; the table's translation and projection distance are tuned for the view and unused;
-- posed by its clip at the peer's attack phase, so others see the swing its player sees.
+The knight holds the gauntlet and weapon in its right hand, its own hand not drawn
+(`kf/platform/online_weapon_hold.h`, unit-tested):
 
-At rest the arm holds the clip's last frame, a low guard with the blade at the side, which is
-also where every swing ends. An attack blends the guard into the swing's first frame over 600
-of phase (two updates of `KF_WEAPON_ATTACK_PHASE_STEP`), and the upper arm lifts forward 0.9
-radians until the hit (phase 3072, the Colichemarde's 1000), then lowers by the end.
+- Drawn from the hit's vertices, halved, the model's forearm folded onto the wrist (the end of its
+  long axis) so its faces have no area and are culled; the wrist on the end of the knight's own
+  forearm.
+- Three vertices of the gauntlet and weapon, far apart, are followed through the clip: the frame
+  they make at a phase against the hit's is the piece's turn, in the body after the table's
+  rotation and a half turn (the camera looks along +z, actors along -z).
+- At rest (standing or walking) the upper arm is 18 degrees forward and 9 out and the forearm 68
+  further, so the hand is ahead of the belt; the blade points ahead and 42 degrees up, its flat to
+  the side.
+- Through a swing the forearm points from the elbow toward where the clip has the wrist, and the
+  upper arm lifts to 0.7 of the forearm's angle from hanging down, past overhead when the forearm
+  points up and back, so the wind-up's hand is above the head. The arm turns from rest into the
+  swing over the first 600 of phase (two updates of `KF_WEAPON_ATTACK_PHASE_STEP`) and back over
+  the last 600, each part the short way round.
+- `preview.py swing W` draws every update of an attack, `preview.py rest W` the knight at rest from
+  round about and below.
 
-Known flaw: the blend moves vertices in straight lines, so on its first update the arm briefly
-folds toward the body.
+## The stance
+
+Standing, the knight is ready: the left foot 9 degrees ahead and the right 7 behind, knees soft
+(9 and 13), feet 6 degrees apart, the free arm 8 forward and 7 out with its forearm bent 30. It
+breathes: every 3.6 seconds of game time (`host_clock_ns`) the torso leans 0.8 degrees and the
+arms rise 1.5, each player at its own point of the breath. The walk takes over as the stride grows,
+the stance and breath fading by the same amount.
 
 ## The walk
 
@@ -99,7 +126,7 @@ reach past the landing angle, settles onto it, and sweeps back through the stanc
 cycle; the feet barely lift (the skeleton's by about 12 units). The other leg is half a cycle
 behind. The knight's range is a little wider than the skeleton's, since a player runs 180 units
 an update and the skeleton walks 110; the left arm swings against the right leg (0.4 of its swing)
-with the forearm bent 12 degrees, and the weapon arm holds its guard.
+with the forearm bent 12 degrees, and the weapon arm holds its rest.
 
 - The body drops so the longer leg stands on the floor (by 9 to 81 units through the cycle,
   lowest when both feet are down), as the skeleton's hips bob by about 33.
@@ -141,8 +168,9 @@ with the forearm bent 12 degrees, and the weapon arm holds its guard.
 - The head bends about the neck by the player's pitch, so others see where they look up or
   down; held to 60 degrees, a neck's reach, though the look limit allows 85.
 - A remote player's weapon file is loaded the first time someone holds it (16 at most, about
-  25 KB each), sampled into the morph scratch as the game samples its own, halved, and drawn on
-  the elbow; a player with no weapon keeps the knight's own forearm.
+  25 KB each) and its hold found once; through a swing it is sampled into the morph scratch as the
+  game samples its own, for the three followed vertices. A player with no weapon keeps the knight's
+  own hand.
 - Checked 2026-10-27 with two headless instances in a room at 15 updates a second: after the
   first two, every one of the other's updates was played, two behind, through a walk and a swing
   (all 13 of its updates, 300 to 3900), and on through a menu held open on this side. The

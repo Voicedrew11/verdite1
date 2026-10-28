@@ -8,6 +8,7 @@ they go under build/ (gitignored). See docs/PLAYER_MODEL.md.
   preview.py floor N                floor N's map-event and actor models, three angles each
   preview.py knight                 the knight beside floor 2's standing knight, four angles
   preview.py swing W [--yaw A,B]    the knight attacking with weapon W, one picture per update
+  preview.py rest W                 the knight standing with weapon W, from round about and above
   preview.py walk [W]                the knight's walk cycle (holding weapon W) above the skeleton's
   preview.py tmd OUT.tmd            write the knight's TMD
   preview.py cpp [OUT.cpp]          write the knight as the game's source
@@ -93,31 +94,62 @@ def knight_sheet(args):
             for m in (flat, reference.tmd) for y in yaws]
     return kf.grid(imgs, len(yaws))
 
+def holding(parts, tmd, pose, lift, hold, phase):
+    """The knight posed with the weapon arm through the hold at an attack phase (None at rest),
+    the hand and weapon drawn on its wrist, joined for kf.render."""
+    if hold is None:
+        return flatten(parts, tmd, pose, lift=lift)
+    pose = dict(pose)
+    if phase is not None:
+        w = arm.attack_weight(phase, hold.hit)
+        rest_upper, _ = knight.posed(parts, pose, lift)['upper_arm_r']
+        rest_forearm = rest_upper @ pose.get('forearm_r', np.eye(3))
+        forearm = arm.slerp(rest_forearm, hold.swing(phase)[1], w)
+        upper = arm.slerp(rest_upper, arm.upper_arm_follow(forearm), w)
+        torso, _ = knight.posed(parts, pose, lift)['torso']
+        pose['upper_arm_r'] = torso.T @ upper
+        pose['forearm_r'] = upper.T @ forearm
+    M, T = knight.posed(parts, pose, lift)['forearm_r']
+    hand = hold.placed(hold.turn(phase), -(M @ arm.WRIST + T))
+    shown = [p for p in parts if p.name != 'hand_r']
+    return flatten(shown, build_tmd(shown), pose, [hand], lift)
+
 def swing(args):
     vr = vram(args.data)
-    parts = [p for p in knight.knight() if p.name != 'forearm_r']   # the weapon arm replaces it
+    parts = knight.knight()
     tmd = build_tmd(parts)
-    weapon = arm.WeaponArm(args.data, args.weapon)
+    hold = arm.WeaponHold(args.data, args.weapon)
     phases = [None] + list(range(0, arm.PHASE_END, 300))           # KF_WEAPON_ATTACK_PHASE_STEP
+    stance, lift = walk.pose(0, 0.0)
     imgs = []
     for yaw in args.yaw:
         for phase in phases:
-            vertices, pitch = weapon.state(phase)
-            pose = {'upper_arm_r': knight.rot('x', pitch)}
-            M, T = knight.posed(parts, pose)['upper_arm_r']
-            elbow = -(M @ arm.ELBOW + T)
-            flat = flatten(parts, tmd, pose, [weapon.placed(vertices, elbow)])
+            flat = holding(parts, tmd, stance, lift, hold, phase)
             imgs.append(kf.render(flat, vr, yaw=yaw, pitch=0.1, size=args.size, extent=1300,
                                   center=np.array([0, -1100, -250])))
     return kf.grid(imgs, len(phases))
+
+def rest(args):
+    """The knight standing with weapon W, from round about, at four points of a breath."""
+    vr = vram(args.data, 2)
+    parts = knight.knight()
+    tmd = build_tmd(parts)
+    hold = arm.WeaponHold(args.data, args.weapon)
+    imgs = []
+    for pitch in (0.1, -0.5):
+        for yaw in np.linspace(0, 2 * math.pi, args.views, endpoint=False):
+            pose, lift = walk.pose(0, 0.0)
+            imgs.append(kf.render(holding(parts, tmd, pose, lift, hold, None), vr, yaw=yaw, pitch=pitch,
+                                  size=args.size, extent=1250, center=np.array([0, -950, -150])))
+    return kf.grid(imgs, args.views)
 
 def walk_sheet(args):
     """The knight through its walk cycle holding weapon W at rest, above the skeleton's walk
     (B1 actor model 5, its move clip) at the same phases."""
     vr = vram(args.data, 1)
-    parts = [p for p in knight.knight() if p.name != 'forearm_r']
+    parts = knight.knight()
     tmd = build_tmd(parts)
-    weapon = arm.WeaponArm(args.data, args.weapon)
+    hold = arm.WeaponHold(args.data, args.weapon)
     skeleton = floor_banks(args.data, 1)['actor'][5]
     frames = 8
     centre = np.array([0, -950, 0])
@@ -125,10 +157,8 @@ def walk_sheet(args):
     for yaw in args.yaw:
         for k in range(frames):
             pose, lift = walk.pose(k / frames, args.amount)
-            vertices, _ = weapon.state(None)
-            M, T = knight.posed(parts, pose, lift)['upper_arm_r']
-            flat = flatten(parts, tmd, pose, [weapon.placed(vertices, -(M @ arm.ELBOW + T))], lift)
-            imgs.append(kf.render(flat, vr, yaw=yaw, pitch=0.05, size=args.size, extent=1100, center=centre))
+            imgs.append(kf.render(holding(parts, tmd, pose, lift, hold, None), vr, yaw=yaw, pitch=0.05,
+                                  size=args.size, extent=1100, center=centre))
         for k in range(frames):
             v = skeleton.pose(1, k * 4096 // frames)
             imgs.append(kf.render(skeleton.tmd, vr, verts=v, yaw=yaw, pitch=0.05, size=args.size, extent=1100,
@@ -138,16 +168,10 @@ def walk_sheet(args):
 def gltf_model(args):
     import gltf
     vr = vram(args.data)
-    if args.weapon is None:
-        parts = knight.knight()
-        flat = flatten(parts, build_tmd(parts), {})
-    else:
-        parts = [p for p in knight.knight() if p.name != 'forearm_r']
-        weapon = arm.WeaponArm(args.data, args.weapon)
-        vertices, pitch = weapon.state(args.phase)
-        pose = {'upper_arm_r': knight.rot('x', pitch)}
-        M, T = knight.posed(parts, pose)['upper_arm_r']
-        flat = flatten(parts, build_tmd(parts), pose, [weapon.placed(vertices, -(M @ arm.ELBOW + T))])
+    parts = knight.knight()
+    hold = None if args.weapon is None else arm.WeaponHold(args.data, args.weapon)
+    pose, lift = walk.pose(0, 0.0)
+    flat = holding(parts, build_tmd(parts), pose, lift, hold, args.phase)
     os.makedirs(args.out, exist_ok=True)
     path = os.path.join(args.out, 'knight.glb')
     gltf.write(flat, vr, path)
@@ -155,7 +179,7 @@ def gltf_model(args):
 
 # The order of kf::OnlinePlayerPart (port/include/kf/platform/online_players.h).
 PART_ORDER = ['pelvis', 'torso', 'head', 'upper_arm_r', 'forearm_r', 'upper_arm_l', 'forearm_l',
-              'thigh_r', 'shin_r', 'thigh_l', 'shin_l']
+              'thigh_r', 'shin_r', 'thigh_l', 'shin_l', 'hand_r', 'hand_l']
 
 def write_cpp(path):
     parts = knight.knight()
@@ -196,8 +220,8 @@ std::span<const OnlinePlayerPartJoint, online_player_part_count> online_player_m
     return knight_joints;
 }}
 
-SVECTOR online_player_model_right_elbow() {{
-    return {actor(arm.ELBOW)};
+SVECTOR online_player_model_right_wrist() {{
+    return {actor(arm.WRIST)};
 }}
 
 }}
@@ -217,6 +241,9 @@ def main():
     p = sub.add_parser('swing'); p.add_argument('weapon', type=int, choices=range(12))
     p.add_argument('--yaw', type=lambda s: [float(x) for x in s.split(',')], default=[0.8, math.pi / 2])
     p.add_argument('--size', type=int, default=200)
+    p = sub.add_parser('rest'); p.add_argument('weapon', type=int, choices=range(12))
+    p.add_argument('--views', type=int, default=6)
+    p.add_argument('--size', type=int, default=320)
     p = sub.add_parser('walk'); p.add_argument('weapon', type=int, choices=range(12), nargs='?', default=0)
     p.add_argument('--yaw', type=lambda s: [float(x) for x in s.split(',')], default=[math.pi / 2, 0.8])
     p.add_argument('--size', type=int, default=200)
@@ -238,10 +265,11 @@ def main():
         with open(args.path, 'wb') as f:
             f.write(build_tmd(knight.knight()))
         return
-    image = {'floor': floor, 'knight': knight_sheet, 'swing': swing, 'walk': walk_sheet}[args.command](args)
+    image = {'floor': floor, 'knight': knight_sheet, 'swing': swing, 'rest': rest, 'walk': walk_sheet}[args.command](args)
     os.makedirs(args.out, exist_ok=True)
     name = {'floor': lambda: f'floor{args.floor}', 'knight': lambda: 'knight',
-            'swing': lambda: f'swing{args.weapon:02d}', 'walk': lambda: 'walk'}[args.command]()
+            'swing': lambda: f'swing{args.weapon:02d}', 'rest': lambda: f'rest{args.weapon:02d}',
+            'walk': lambda: 'walk'}[args.command]()
     path = os.path.join(args.out, name + '.png')
     kf.save(image, path)
     print(path)

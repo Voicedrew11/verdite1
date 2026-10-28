@@ -39,13 +39,13 @@ def knight(colour=(60, 84, 180)):
               4, colour, axis='z', phase=math.pi / 4)
 
     # Arms: a sleeve in the player's colour from the shoulder, a flared gauntlet from the elbow.
+    # The hands are parts of their own, after the legs: the right one gives way to a weapon's.
     for side, s in (('r', 1), ('l', -1)):
         upper = part('upper_arm_' + side, 'torso', (s * 272, 1455, 0))
         upper.loft([((s * 272, 1460, 0), 82, 84), ((s * 276, 1310, 0), 78, 80), ((s * 278, 1170, 0), 72, 74)], 6, colour)
         fore = part('forearm_' + side, 'upper_arm_' + side, (s * 278, 1160, 0))
         fore.loft([((s * 278, 1175, 0), 76, 78), ((s * 278, 1060, 6), 78, 80), ((s * 278, 940, 8), 64, 66),
                    ((s * 278, 900, 8), 86, 88)], 6, 'plate')
-        fore.loft([((s * 278, 900, 10), 54, 46), ((s * 278, 820, 14), 52, 40), ((s * 278, 755, 18), 40, 30)], 6, 'plate')
 
     # Legs: thigh, knee cop, greave, boot.
     for side, s in (('r', 1), ('l', -1)):
@@ -56,6 +56,10 @@ def knight(colour=(60, 84, 180)):
         shin.loft([((s * 114, 470, 4), 76, 84), ((s * 114, 310, -4), 74, 86), ((s * 114, 140, 0), 60, 66)], 6, M)
         shin.loft([((s * 114, 84, -78), 64, 84), ((s * 114, 74, 44), 66, 72), ((s * 114, 48, 186), 52, 46)],
                   6, LEATHER, axis='z', phase=0)
+
+    for side, s in (('r', 1), ('l', -1)):
+        hand = part('hand_' + side, 'forearm_' + side, (s * 278, 900, 8))
+        hand.loft([((s * 278, 900, 10), 54, 46), ((s * 278, 820, 14), 52, 40), ((s * 278, 755, 18), 40, 30)], 6, 'plate')
     return parts
 
 # ---- rig: part transforms about pivots, parents first ------------------------------------
