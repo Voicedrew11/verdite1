@@ -1,16 +1,17 @@
 diff --git a/src/game/actor.cpp b/src/game/actor.cpp
-index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..a3d974233b1bdd0b143c86f85770f7d3a8fa8d0c 100644
+index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1bcbc68bf1 100644
 --- a/src/game/actor.cpp
 +++ b/src/game/actor.cpp
-@@ -6,6 +6,7 @@
+@@ -6,6 +6,8 @@
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
  #include <kf/lib/random.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/play_overrides.h>
  
  #include <algorithm>
  #include <array>
-@@ -308,6 +309,9 @@ void actor_apply_damage(
+@@ -308,6 +310,9 @@ void actor_apply_damage(
      if (damage == 0) {
          return;
      }
@@ -20,7 +21,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..a3d974233b1bdd0b143c86f85770f7d3
      if (actor->health != 0 && hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
          if (cutting_damage == 0 && striking_damage == 0 && piercing_damage == 0) {
              player_increment_magic_training();
-@@ -315,6 +319,14 @@ void actor_apply_damage(
+@@ -315,6 +320,14 @@ void actor_apply_damage(
              player_increment_physical_power_training();
          }
      }
@@ -35,7 +36,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..a3d974233b1bdd0b143c86f85770f7d3
      if (actor->action == KF_ACTOR_ACTION_DRIFT) {
          actor->vertical_state = KF_ACTOR_VERTICAL_FALL;
          actor->vertical_velocity = 0;
-@@ -325,6 +337,7 @@ void actor_apply_damage(
+@@ -325,6 +338,7 @@ void actor_apply_damage(
          remaining = 0;
          if (health != 0 && hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
              player_add_experience(definition->experience_reward);
@@ -43,7 +44,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..a3d974233b1bdd0b143c86f85770f7d3
          }
          if (definition->action_animations[KF_ACTOR_ANIM_SLOT_DEATH] != KF_ANIMATION_CLIP_NONE) {
              actor_set_action(actor, KF_ACTOR_ACTION_DYING);
-@@ -395,17 +408,18 @@ void actor_pool_apply_radial_damage(
+@@ -395,17 +409,18 @@ void actor_pool_apply_radial_damage(
      }
  }
  
@@ -66,7 +67,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..a3d974233b1bdd0b143c86f85770f7d3
  
      distance = actor_distance_to_point(
          actor,
-@@ -416,13 +430,26 @@ void actor_try_attack_player(
+@@ -416,13 +431,30 @@ void actor_try_attack_player(
          definition->collision_height,
          KF_COLLISION_PLAYER_HEIGHT);
      if (distance == -1) {
@@ -92,11 +93,15 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..a3d974233b1bdd0b143c86f85770f7d3
 +    KfActor *actor = actor_state.current;
 +    KfPlayerStatusFlags status_effect;
 +
++    // PC extension (mods): peaceful, no enemy swings at anyone.
++    if (!kf::host_play_overrides().enemies_attack) {
++        return;
++    }
 +    if (!actor_swing_reaches_player(actor, definition, minimum_distance, maximum_distance, angle_offset, angle_tolerance)) {
          return;
      }
      status_effect = KF_PLAYER_STATUS_NONE;
-@@ -430,6 +457,13 @@ void actor_try_attack_player(
+@@ -430,6 +462,13 @@ void actor_try_attack_player(
          && (kf::random_next() >> ACTOR_STATUS_CHANCE_RANDOM_SHIFT) < definition->status_effect_chance) {
          status_effect = definition->status_effect;
      }
@@ -3678,19 +3683,20 @@ index 0000000000000000000000000000000000000000..c79ba46ef27f4019645c8cd2582dd604
 +        online_player_draw_held(*weapon, body, held, placements[forearm_right]);
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
-index 33680f578d7627d7bb43b29b77f58b843371198a..e07f35fdf01077adafea42f6521e3ca2c8b7610f 100644
+index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec40264c9e 100644
 --- a/src/game/player_core.cpp
 +++ b/src/game/player_core.cpp
-@@ -7,6 +7,8 @@
+@@ -7,6 +7,9 @@
  #include <kf/game/resources.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
 +#include <kf/platform/coop.h>
 +#include <kf/platform/online_players.h>
++#include <kf/platform/play_overrides.h>
  
  #include <algorithm>
  #include <array>
-@@ -144,6 +146,7 @@ void player_begin_weapon_attack(void)
+@@ -144,6 +147,7 @@ void player_begin_weapon_attack(void)
          && player_state.equipped_weapon_id != KF_OBJECT_NONE) {
          player_state.weapon_attack_phase = 0;
          sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_WEAPON_ATTACK], KF_AUDIO_MAX_VOLUME);
@@ -3698,7 +3704,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..e07f35fdf01077adafea42f6521e3ca2
          player_state.attack_charge_state.committed = player_state.attack_charge_state.current;
          if (player_state.attack_charge_state.current == KF_PLAYER_CHARGE_FULL) {
              player_state.weapon_attack_fully_charged = KF_WEAPON_ATTACK_FULL_CHARGE;
-@@ -226,6 +229,15 @@ void game_initialize_session(void)
+@@ -226,6 +230,15 @@ void game_initialize_session(void)
      player_state.compass_enabled = KF_PLAYER_OPTION_ON;
  }
  
@@ -3714,7 +3720,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..e07f35fdf01077adafea42f6521e3ca2
  void player_get_floor_position(VECTOR &position)
  {
      position = {player_state.camera_position.vx, player_state.foot_height,
-@@ -304,6 +316,53 @@ s32 player_distance_to_point_in_cone(
+@@ -304,6 +317,53 @@ s32 player_distance_to_point_in_cone(
      return distance;
  }
  
@@ -3768,7 +3774,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..e07f35fdf01077adafea42f6521e3ca2
  s32 player_distance_to_point(
      s32 point_x, s32 point_y, s32 point_z, s32 max_distance, s32 point_height)
  {
-@@ -314,6 +373,10 @@ s32 player_distance_to_point(
+@@ -314,6 +374,10 @@ s32 player_distance_to_point(
      s32 distance;
      s32 tolerance = point_height;
  
@@ -3779,18 +3785,41 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..e07f35fdf01077adafea42f6521e3ca2
      dx = player_state.camera_position.vx - point_x;
      if (dx < -max_distance || max_distance < dx) {
          return KF_PROXIMITY_NONE;
+@@ -363,6 +427,21 @@ s32 player_move_horizontal(s32 heading, s32 distance)
+     dx = (-kf::angle_sine(heading) * distance) >> KF_FIXED12_BITS;
+     new_z = dz + player_state.camera_position.vz;
+     new_x = dx + player_state.camera_position.vx;
++    // PC extension (mods): with walls off (noclip), the full distance is walked, through walls and
++    // steps; an axis that would leave the grid stays where it is.
++    if (!kf::host_play_overrides().walls_block_player) {
++        cell_z = new_z / KF_MAP_TILE_SIZE;
++        cell_x = new_x / KF_MAP_TILE_SIZE;
++        if (cell_z < KF_MAP_ROWS) {
++            player_state.camera_position.vz = new_z;
++            cell.z = cell_z;
++        }
++        if (cell_x < KF_MAP_COLUMNS) {
++            player_state.camera_position.vx = new_x;
++            cell.x = cell_x;
++        }
++        return 1;
++    }
+     for (;;) {
+         const auto collision = collision_query_world(new_x, player_state.foot_height, new_z,
+                 KF_COLLISION_PLAYER_RADIUS, KF_COLLISION_PLAYER_HEIGHT,
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a85c41405b551858ed7cb706b062dbee0826b2a9..81128cdbe8d57d95c34e8fd77208c15da8843b80 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..1cd0cd230e8897af63be1cc11c58e0343304419d 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,7 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/coop.h>
 +#include <kf/platform/online_players.h>
++#include <kf/platform/play_overrides.h>
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
-@@ -59,12 +61,17 @@ void player_death_begin(void)
+@@ -59,12 +62,14 @@ void player_death_begin(void)
      player_state.death_camera_pitch_step = 0;
      player_state.death_visual_blend = 0;
      sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_DEATH], KF_AUDIO_MAX_VOLUME);
@@ -3801,14 +3830,22 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..81128cdbe8d57d95c34e8fd77208c15d
  
  void game_state_initialize(void)
  {
-+    u8 *cursor;
-+    s32 count;
-+
 +    kf::automap_reset();
      player_state.experience = 0;
      player_state.progress_state.level = 1;
      player_state.progress_state.current_floor = KF_FLOOR_1;
-@@ -223,125 +230,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
+@@ -188,6 +193,10 @@ void player_adjust_hp(s32 delta)
+ {
+     s32 value = player_state.vitals.current_hp;
+ 
++    // PC extension (mods): invincible, a loss is ignored; healing still applies.
++    if (delta < 0 && !kf::host_play_overrides().player_takes_damage) {
++        return;
++    }
+     value += delta;
+ 
+     if (value <= 0) {
+@@ -223,125 +232,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
      }
  }
  
@@ -4009,15 +4046,15 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..81128cdbe8d57d95c34e8fd77208c15d
 +    }
 +    if ((p.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
 +        p.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
-     }
--    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
--        player_state.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
++    }
 +    if (p.physical_power >= KF_PLAYER_POWER_MAX + 1) {
 +        p.physical_power = KF_PLAYER_POWER_MAX;
      }
+-    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
+-        player_state.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
 +    if (p.magic >= KF_PLAYER_POWER_MAX + 1) {
 +        p.magic = KF_PLAYER_POWER_MAX;
-+    }
+     }
 +}
 +
 +void player_recalculate_combat_stats(void)
@@ -4034,7 +4071,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..81128cdbe8d57d95c34e8fd77208c15d
  }
  
  void player_increment_physical_power_training(void)
-@@ -447,6 +465,11 @@ void player_apply_damage(
+@@ -447,6 +467,11 @@ void player_apply_damage(
      s32 loss;
      s32 remaining;
  
@@ -4046,7 +4083,18 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..81128cdbe8d57d95c34e8fd77208c15d
      if ((status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
          player_state.curse_timer = KF_CURSE_DURATION_UPDATES;
          player_state.status_effect_flags |= KF_PLAYER_STATUS_CURSE;
-@@ -505,6 +528,28 @@ void player_apply_damage(
+@@ -495,6 +520,10 @@ void player_apply_damage(
+     damage += KF_DAMAGE_SUBUNITS_PER_HP / 2;
+     damage = (scale_q12 * (damage / KF_DAMAGE_SUBUNITS_PER_HP)) >> KF_FIXED12_BITS;
+     loss = (multiplier_tenths * damage) / KF_PLAYER_DAMAGE_MULTIPLIER_ONE;
++    // PC extension (mods): invincible, a blow takes no HP; its status effects still land.
++    if (!kf::host_play_overrides().player_takes_damage) {
++        return;
++    }
+     if (loss != 0) {
+         remaining = player_state.vitals.current_hp - loss;
+         remaining = std::max<s32>(remaining, 0);
+@@ -505,6 +534,28 @@ void player_apply_damage(
      }
  }
  
@@ -4075,7 +4123,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..81128cdbe8d57d95c34e8fd77208c15d
  void player_apply_radial_damage(
      const VECTOR *origin,
      u32 radius,
-@@ -520,6 +565,9 @@ void player_apply_radial_damage(
+@@ -520,6 +571,9 @@ void player_apply_radial_damage(
      s32 distance;
      u16 attenuation;
  
@@ -4109,16 +4157,17 @@ index b90adbb1ec3e303bc920fd26705f1850209ad267..4e225c97c936afe0f29462ea8a8ae98d
          player_death_apply_visual_fade(&player_death_saved_color_matrix, blend);
      }
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1cf5bada1 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8fc90c214 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/play_overrides.h>
  #include <kf/game/audio.h>
  #include <kf/game/collision.h>
  #include <kf/game/game.h>
-@@ -7,7 +8,10 @@
+@@ -7,7 +9,10 @@
  #include <kf/game/session.h>
  #include <kf/lib/null.h>
  #include <kf/lib/random.h>
@@ -4129,7 +4178,20 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
  
  #include <algorithm>
  #include <array>
-@@ -349,9 +353,17 @@ static void player_update_movement_input(u32 input)
+@@ -335,6 +340,12 @@ static void player_apply_armor_periodic_effects(const KfArmorRecord &armor)
+     }
+ }
+ 
++// PC extension (mods): value times a permille (kf.play's speeds; 1000 is unchanged).
++static s32 player_scale_permille(s32 value, s32 permille)
++{
++    return value * permille / 1000;
++}
++
+ static void player_update_movement_input(u32 input)
+ {
+     auto &motion = player_state.motion_state;
+@@ -349,9 +360,17 @@ static void player_update_movement_input(u32 input)
          player_turn_step_limit = PLAYER_SLOWED_TURN_LIMIT;
      } else {
          player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
@@ -4148,7 +4210,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
          forward = motion.forward_velocity
              + (player_movement_velocity_limit >> PLAYER_FORWARD_ACCEL_SHIFT);
          motion.forward_velocity = std::min<s32>(forward, player_movement_velocity_limit);
-@@ -368,7 +380,10 @@ static void player_update_movement_input(u32 input)
+@@ -368,7 +387,10 @@ static void player_update_movement_input(u32 input)
              player_movement_velocity_limit >> PLAYER_FORWARD_DECEL_SHIFT;
          motion.forward_velocity = std::min<s32>(motion.forward_velocity, 0);
      }
@@ -4160,7 +4222,35 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
          strafe = motion.strafe_velocity
              + (player_movement_velocity_limit >> PLAYER_STRAFE_ACCEL_DECEL_SHIFT);
          motion.strafe_velocity = std::min<s32>(strafe, player_movement_velocity_limit);
-@@ -424,7 +439,11 @@ static void player_update_view_input(u32 input)
+@@ -404,18 +426,23 @@ static void player_update_movement_input(u32 input)
+         }
+     }
+     motion.movement_speed = kf::length_square_root(strafe * strafe + forward * forward);
++    // PC extension (mods): the speed scale applies to the distance walked, not to the head bob.
++    const s32 move_permille = kf::host_play_overrides().move_scale_permille;
+     if (forward > 0) {
+-        player_move_horizontal(player_state.camera_rotation.vy, forward);
++        player_move_horizontal(player_state.camera_rotation.vy, player_scale_permille(forward, move_permille));
+     } else if (forward < 0) {
+         player_move_horizontal(
+-            (player_state.camera_rotation.vy + KF_ANGLE_HALF_TURN) & KF_ANGLE_WRAP_MASK, -forward);
++            (player_state.camera_rotation.vy + KF_ANGLE_HALF_TURN) & KF_ANGLE_WRAP_MASK,
++            player_scale_permille(-forward, move_permille));
+     }
+     if (strafe > 0) {
+         player_move_horizontal(
+-            (player_state.camera_rotation.vy - KF_ANGLE_QUARTER_TURN) & KF_ANGLE_WRAP_MASK, strafe);
++            (player_state.camera_rotation.vy - KF_ANGLE_QUARTER_TURN) & KF_ANGLE_WRAP_MASK,
++            player_scale_permille(strafe, move_permille));
+     } else if (strafe < 0) {
+         player_move_horizontal(
+-            (player_state.camera_rotation.vy + KF_ANGLE_QUARTER_TURN) & KF_ANGLE_WRAP_MASK, -strafe);
++            (player_state.camera_rotation.vy + KF_ANGLE_QUARTER_TURN) & KF_ANGLE_WRAP_MASK,
++            player_scale_permille(-strafe, move_permille));
+     }
+     player_update_view_bob();
+ }
+@@ -424,7 +451,11 @@ static void player_update_view_input(u32 input)
  {
      auto &motion = player_state.motion_state;
  
@@ -4173,11 +4263,17 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
          motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
          motion.yaw_step = std::min<s32>(motion.yaw_step, player_turn_step_limit);
      } else if (input & kf::Button::Right) {
-@@ -439,7 +458,10 @@ static void player_update_view_input(u32 input)
+@@ -437,9 +468,14 @@ static void player_update_view_input(u32 input)
+         motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
+         motion.yaw_step = std::min<s32>(motion.yaw_step, 0);
      }
-     player_state.camera_rotation.vy =
-         (player_state.camera_rotation.vy + motion.yaw_step) & KF_ANGLE_WRAP_MASK;
+-    player_state.camera_rotation.vy =
+-        (player_state.camera_rotation.vy + motion.yaw_step) & KF_ANGLE_WRAP_MASK;
 -    if (input & kf::Button::LookDown) {
++    // PC extension (mods): the turn scale (kf.play's turn_speed) applies to the turn.
++    player_state.camera_rotation.vy = (player_state.camera_rotation.vy
++        + player_scale_permille(motion.yaw_step, kf::host_play_overrides().turn_scale_permille))
++        & KF_ANGLE_WRAP_MASK;
 +    if (const auto stick = kf::host_analog_velocity(kf::AnalogAxis::Pitch, motion.pitch_step,
 +            {PLAYER_PITCH_STEP_LIMIT, PLAYER_PITCH_ACCEL})) {
 +        motion.pitch_step = *stick;
@@ -4185,7 +4281,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
          motion.pitch_step += PLAYER_PITCH_ACCEL;
          motion.pitch_step = std::min<s32>(motion.pitch_step, PLAYER_PITCH_STEP_LIMIT);
      } else if (input & kf::Button::LookUp) {
-@@ -455,11 +477,11 @@ static void player_update_view_input(u32 input)
+@@ -455,11 +491,11 @@ static void player_update_view_input(u32 input)
      if (motion.pitch_step > 0) {
          player_state.camera_rotation.vx += motion.pitch_step;
          player_state.camera_rotation.vx =
@@ -4199,7 +4295,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
      }
  }
  
-@@ -642,6 +664,52 @@ static void player_restore_loaded_game()
+@@ -642,6 +678,52 @@ static void player_restore_loaded_game()
      player_select_magic(player_state.selected_magic_id);
  }
  
@@ -4252,7 +4348,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -649,6 +717,27 @@ void player_update(void)
+@@ -649,6 +731,27 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -4280,7 +4376,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
          player_death_update();
          return;
-@@ -662,7 +751,7 @@ void player_update(void)
+@@ -662,7 +765,7 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,
@@ -4289,7 +4385,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
      if (input & kf::Button::Select) {
          display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
      }
-@@ -688,7 +777,11 @@ void player_update(void)
+@@ -688,7 +791,11 @@ void player_update(void)
          }
          player_previous_input = input;
      } else {

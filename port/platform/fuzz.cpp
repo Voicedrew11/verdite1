@@ -833,6 +833,19 @@ QuickRequest fuzz_quick_request() {
     return request;
 }
 
+// The first cell, by rows, whose four neighbours are floor too: somewhere to stand after a warp.
+std::optional<std::array<int, 2>> first_open_cell() {
+    auto walkable = [](int x, int z) {
+        return x >= 0 && z >= 0 && x < KF_MAP_COLUMNS && z < KF_MAP_ROWS
+            && map_collision_grid.cells[z][x] == KF_MAP_CELL_FLOOR;
+    };
+    for (int z = 0; z < KF_MAP_ROWS; ++z)
+        for (int x = 0; x < KF_MAP_COLUMNS; ++x)
+            if (walkable(x, z) && walkable(x - 1, z) && walkable(x + 1, z) && walkable(x, z - 1) && walkable(x, z + 1))
+                return std::array{x, z};
+    return std::nullopt;
+}
+
 bool player_move_to_cell(int x, int z) {
     if (x < 0 || z < 0 || x >= KF_MAP_COLUMNS || z >= KF_MAP_ROWS)
         return false;

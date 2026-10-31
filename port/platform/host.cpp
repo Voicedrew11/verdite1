@@ -76,6 +76,10 @@ struct HostState {
     std::vector<LightSet> frame_light_sets;
     std::uint64_t frames_presented;
     Uint64 turbo_ns;   // the game clock under turbo
+    // The game clock runs at game_speed times real time from the point where it was last rebased.
+    double game_speed = 1;
+    std::uint64_t speed_from_elapsed_ns = 0;
+    std::uint64_t speed_from_clock_ns = 0;
     LookDelta look_consumed;   // by the game update being drawn
 };
 static HostState host;
@@ -589,11 +593,26 @@ void host_poll() {
     }
 }
 
+// Real time since start, without the pauses.
+static std::uint64_t host_elapsed_ns() {
+    const auto now = host.paused ? host.pause_start : SDL_GetTicksNS();
+    return now - host.epoch - host.paused_ns;
+}
+
 std::uint64_t host_clock_ns() {
     if (options.turbo)
         return host.turbo_ns;
-    const auto now = host.paused ? host.pause_start : SDL_GetTicksNS();
-    return now - host.epoch - host.paused_ns;
+    const auto scaled = static_cast<double>(host_elapsed_ns() - host.speed_from_elapsed_ns) * host.game_speed;
+    return host.speed_from_clock_ns + static_cast<std::uint64_t>(scaled);
+}
+
+void host_set_game_speed(float multiple) {
+    if (host.game_speed == static_cast<double>(multiple))
+        return;
+    // Rebased at the clock's current value, so the game clock does not jump.
+    host.speed_from_clock_ns = host_clock_ns();
+    host.speed_from_elapsed_ns = host_elapsed_ns();
+    host.game_speed = multiple;
 }
 
 std::uint64_t host_clock_tick() {
@@ -758,6 +777,9 @@ void host_between_updates() {
     title_between_updates();
     coop_between_updates();
     agent_between_updates();
+#if KF_EXT
+    ext::mods_between_updates();
+#endif
     fuzz_between_updates();
 }
 

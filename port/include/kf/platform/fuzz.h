@@ -27,6 +27,8 @@
 //     KF_FLOOR_DUMP=<update>      at that update, each floor trace region's bytes beside the trace
 #include <kf/lib/types.h>
 #include <kf/platform/input.h>
+#include <array>
+#include <optional>
 
 namespace kf {
 // In host_start, after the agent channel.
@@ -42,6 +44,8 @@ void fuzz_between_updates();
 // Moves the player to the centre of a cell of this floor, as floor 5's teleport moves them; between
 // updates only (the fuzzer's goto, the agent's move). False for a cell off the map.
 bool player_move_to_cell(int x, int z);
+// The first cell, by rows, whose four neighbours are floor too: somewhere to stand after a warp.
+std::optional<std::array<int, 2>> first_open_cell();
 // False under the fuzzer, which declines the system menu's Quit (a "quit-declined" line).
 bool fuzz_allows_power_off();
 // --compare-traces A B: prints the comparison as JSON; 0 equal, 1 different, 2 unreadable.

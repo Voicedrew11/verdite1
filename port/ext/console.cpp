@@ -50,8 +50,9 @@ void reader(int fd) {
         const int count = kf_read(fd, buffer, sizeof buffer);
         if (count <= 0)
             return;
-        if (original_stdout >= 0)
-            kf_write(original_stdout, buffer, static_cast<unsigned>(count));
+        // A terminal that went away stops being echoed to; the log file still gets the text.
+        if (original_stdout >= 0 && kf_write(original_stdout, buffer, static_cast<unsigned>(count)) < 0)
+            original_stdout = -1;
         if (log_file) {
             std::fwrite(buffer, 1, static_cast<std::size_t>(count), log_file);
             std::fflush(log_file);

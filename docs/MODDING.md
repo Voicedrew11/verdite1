@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.2, what ships today. Where it is going, API 1.0, is
+This page documents API 0.3, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `mod.*`) is libverdite's `verdite/mods.h`; KF1's
 tables are rows in `port/ext/mods.cpp`.
@@ -134,8 +134,9 @@ end
 | `kf.view_original()` | `x, y, w, h` of the original 320×240 area, centred in the picture |
 | `kf.player.<field>` | read/write player state (below) |
 | `kf.player_fields()` | list of field names |
+| `kf.warp(floor [, cell_x, cell_z [, yaw]])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.2"` |
+| `kf.api_version` | `"0.3"` |
 
 `kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
@@ -148,6 +149,48 @@ slowed_timer`, plus read-only `floor`. Writes go straight into the game's
 the field's range (a negative `gold`, an `hp` over 65535) is an error, not
 truncated. `status_flags` is bits: 1 curse, 2 darkness, 4 poison, 8 slowed,
 16 fire defense boost.
+
+Position: `x`, `y`, `z` are read-only world units, 2000 per cell; `y` is the
+eye height. `cell_x`, `cell_z` and `map_variant` are read-only, and so is
+`highest_floor`. `yaw` (0–4095, wraps) and `pitch` (−191..191) are read/write.
+
+### `kf.warp`
+
+`kf.warp(floor [, cell_x, cell_z [, yaw]])` is queued and runs between game
+updates. To another floor it loads that floor (floor 5 by its entry), then
+moves the player to the cell, or to the first open cell when none is given. On
+the same floor it only moves. A floor outside 1–5, a cell off the map, or a
+blocked cell on the current floor is an error at the call; a cell on another
+floor that turns out blocked once it loads falls back to the first open cell.
+
+### `kf.world`
+
+| field | notes |
+|---|---|
+| `floor`, `map_variant` | read-only |
+| `cell_blocked(x, z)` | boolean |
+| `floor1_passage_opened`, `floor1_revival_enabled`, `floor5_character_arrived`, `floor5_weapon_transformed`, `floor5_boss_encounter_started`, `floor5_boss_defeated` | story flags, booleans, read/write |
+| `floor3_revealed_pieces` | story flag, integer 0–4, read/write |
+
+### `kf.game`
+
+| field | notes |
+|---|---|
+| `speed` | number, 0.25–8: game time at that multiple of real time |
+| `paused` | boolean. `on_update` does not run while paused, so unpause from `on_draw` |
+
+### `kf.play`
+
+| field | notes |
+|---|---|
+| `noclip` | boolean: walls do not stop the player; height still follows the floor |
+| `invincible` | boolean: HP losses are ignored, so no death |
+| `peaceful` | boolean: enemies never attack the player |
+| `move_speed`, `turn_speed` | number, 0.25–8 |
+
+Each mod's `kf.play` and `kf.game` values are its own; the game combines them.
+A switch is on when any mod turns it on, speeds multiply, and the product is
+held to 0.25–8. A mod's values are dropped when it unloads, reloads or fails.
 
 ## `ui` (Dear ImGui)
 
@@ -171,8 +214,9 @@ interface scale.
 
 ## Examples
 
-`mods/stathud` (HUD drawing + settings) and `mods/quickheal` (hotkey + writing
-player state) in this repository. Copy them into the mods folder to try them.
+`mods/stathud` (HUD drawing + settings), `mods/quickheal` (hotkey + writing
+player state) and `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) in
+this repository. Copy them into the mods folder to try them.
 
 ## The plan: API 1.0
 
@@ -271,8 +315,11 @@ gameplay mods, compared by a hash; visual and HUD mods are free.
 1. ~~Move the host into libverdite. Add the sandbox, budgets, `on_update`, and
    generation of the definitions file.~~ Done in 0.2 (2026-10-31). `ui` stays
    in `port/`, bound as a table like the rest, since ImGui is the platform's.
-2. Player position, world and game flow, then a debug mod (noclip, god mode,
-   infinite MP, peaceful, speed, warp) in place of Verdite's debug menu.
+2. ~~Player position, world and game flow, then a debug mod (noclip, god mode,
+   infinite MP, peaceful, speed, warp) in place of Verdite's debug menu.~~
+   Done in 0.3 (2026-10-31): position, `kf.warp`, `kf.world`'s story flags,
+   `kf.game`, `kf.play` and `mods/debug`. Not yet: equipment, inventory, magic,
+   doors, chests and the automap, which the decomp keeps no reveal state for.
 3. Events and the per-save `save` table.
 4. Entities and rules.
 5. The generated raw layer.

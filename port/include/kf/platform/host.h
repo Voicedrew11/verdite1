@@ -34,6 +34,8 @@ bool host_start();
 void host_shutdown();
 void host_poll();
 std::uint64_t host_clock_ns();
+// Game time runs at this multiple of real time (kf.game.speed); 1 is the game's own.
+void host_set_game_speed(float multiple);
 std::uint64_t host_clock_tick();
 void host_wait_until_tick(std::uint64_t deadline);
 // PC extension: between two world updates, where the game state is whole (the fuzzer's

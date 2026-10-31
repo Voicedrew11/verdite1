@@ -366,14 +366,15 @@ bool overlay_captures_input() { return covered(); }
 // Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
     return settings_panel_open() || setup_open() || (open && settings().pause_when_open)
-        || (automap_full_open() && settings().map_pause);
+        || (automap_full_open() && settings().map_pause) || mods_pause_requested();
 }
 bool pause_keeps_music() {
     return !settings_panel_open() && !(open && settings().pause_when_open) && automap_full_open()
         && settings().map_keep_music;
 }
 // Nothing of the game shows under Android's panel, so it is not redrawn.
-bool redraw_while_paused() { return open || setup_open() || automap_full_open(); }
+// A paused mod still gets on_draw, which is how it unpauses.
+bool redraw_while_paused() { return open || setup_open() || automap_full_open() || mods_pause_requested(); }
 bool wants_cursor() { return covered() || automap_full_open(); }
 
 ViewRect game_view() {

@@ -28,6 +28,8 @@ bool process_event(const SDL_Event &event);
 bool overlay_open();
 // The game clock and audio stop while this is true.
 bool pause_requested();
+// Between two world updates: a warp the mods queued with kf.warp.
+void mods_between_updates();
 // While pause_requested: whether the music keeps playing (the full map).
 bool pause_keeps_music();
 // The overlay or full map is showing while the game is held.

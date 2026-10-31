@@ -139,19 +139,6 @@ std::string do_warp(verdite::AgentArgs args) {
     return verdite::json_ok("warp");
 }
 
-// The first cell, by rows, whose four neighbours are floor too: somewhere to stand after a warp.
-std::optional<std::array<int, 2>> first_open_cell() {
-    auto floor = [](int x, int z) {
-        return x >= 0 && z >= 0 && x < KF_MAP_COLUMNS && z < KF_MAP_ROWS
-            && map_collision_grid.cells[z][x] == KF_MAP_CELL_FLOOR;
-    };
-    for (int z = 0; z < KF_MAP_ROWS; ++z)
-        for (int x = 0; x < KF_MAP_COLUMNS; ++x)
-            if (floor(x, z) && floor(x - 1, z) && floor(x + 1, z) && floor(x, z - 1) && floor(x, z + 1))
-                return std::array{x, z};
-    return std::nullopt;
-}
-
 // An object slot of this floor: its id (255 for none), and `take` empties it at the next update.
 std::string do_object(verdite::AgentArgs args) {
     if (args.empty() || args.size() > 2 || (args.size() == 2 && args[1] != "take"))

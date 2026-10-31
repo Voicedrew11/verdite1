@@ -268,6 +268,7 @@ void mods_frame(int input_context);
 void mods_draw_hud();             // each enabled mod's on_draw, inside the ImGui frame
 void mods_draw_panel();           // the Mods window contents
 int mods_loaded_count();
+bool mods_pause_requested();      // kf.game.paused, combined over the running mods
 
 // ---- overlay helpers shared with the mod API ----
 // Slider with a typed-value box beside it. `committed` (optional) is set when an
