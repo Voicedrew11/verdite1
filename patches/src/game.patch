@@ -1684,7 +1684,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff289638fc7f7a 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee1a299965 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,15 @@
@@ -2213,7 +2213,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff2896
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2198,121 @@ void menu_draw_number(
+@@ -1854,10 +2198,119 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -2249,9 +2249,8 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff2896
 +        std::vector<MenuTextGlyph> glyphs = menu_spell(row.before, language);
 +        if (row.item < KF_ITEM_COUNT)
 +            menu_append_item_name(glyphs, row.item);
-+        const auto after = menu_spell(row.after, language);
-+        glyphs.insert(glyphs.end(), after.begin(), after.end());
-+        menu_draw_text(glyphs, MenuPoint{feed_left_x, y}, row.opacity);
++        menu_spell_onto(glyphs, row.after, language);
++        menu_draw_text(glyphs, MenuPoint{feed_left_x, y}, row.opacity, MENU_HUD_OT_DEPTH);
 +        y += feed_row_step;
 +    }
 +    // A player who is down: whose eyes it sees through, low in the middle of the picture.
@@ -2259,7 +2258,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff2896
 +    const auto watching = menu_spell(kf::coop_watching_text(language), language);
 +    if (!watching.empty()) {
 +        const s32 width = static_cast<s32>(watching.size()) * MENU_FONT_CELL_WIDTH;
-+        menu_draw_text(watching, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), watching_y}, 1.0f);
++        menu_draw_text(watching, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), watching_y}, 1.0f, MENU_HUD_OT_DEPTH);
 +    }
 +}
 +
@@ -2268,7 +2267,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff2896
 +{
 +    constexpr s16 picture_middle_x = 160;
 +    const s32 width = menu_text_width(glyphs);
-+    menu_draw_text(glyphs, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), y}, 1.0f);
++    menu_draw_text(glyphs, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), y}, 1.0f, MENU_HUD_OT_DEPTH);
 +}
 +
 +// PC extension (messages on the ground): the message the action button opens, centred low in the
@@ -2283,8 +2282,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff2896
 +        return;
 +    std::vector<MenuTextGlyph> line;
 +    for (const kf::MessageTextPiece &piece : reading->pieces) {
-+        const auto spelled = menu_spell(piece.text, language);
-+        line.insert(line.end(), spelled.begin(), spelled.end());
++        menu_spell_onto(line, piece.text, language);
 +        if (piece.item < KF_ITEM_COUNT)
 +            menu_append_item_name(line, piece.item);
 +    }
@@ -2292,7 +2290,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff2896
 +    menu_draw_centred_line(menu_spell(reading->prompt, language), static_cast<s16>(message_y + prompt_row_step));
 +}
 +
-+void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade)
++void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade, s32 depth)
 +{
 +    const MenuSpriteDef &label_font = menu_resources().assets.glyph_atlas;
 +    const MenuSpriteDef &number_font = menu_resources().assets.number_atlas;
@@ -2326,7 +2324,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff2896
 +                vertex.g *= shade;
 +                vertex.b *= shade;
 +            }
-+            menu_submit_template(face, MENU_CONTENT_OT_DEPTH);
++            menu_submit_template(face, depth);
 +        }
 +        x += glyph.advance;
 +    }
@@ -2387,10 +2385,10 @@ index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..4ce1f0a0c0edbb1c337b086273e4c687
          switch (equipment_category) {
 diff --git a/src/game/menu_settings.cpp b/src/game/menu_settings.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..80bc7e7625ad1f0bd36c8ccb739f86412f937d67
+index 0000000000000000000000000000000000000000..539afbdc9dc7f75c9f50919cb9fb246168585ca2
 --- /dev/null
 +++ b/src/game/menu_settings.cpp
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,321 @@
 +// PC extension: the port's SETTINGS page under System, drawn with the menu's own
 +// boxes, cursor, font and sounds (kf/platform/settings_page.h has the settings).
 +#include <kf/platform/prelude.h>
@@ -2506,6 +2504,12 @@ index 0000000000000000000000000000000000000000..80bc7e7625ad1f0bd36c8ccb739f8641
 +std::vector<MenuTextGlyph> menu_spell(std::string_view text, kf::Language language)
 +{
 +    std::vector<MenuTextGlyph> glyphs;
++    menu_spell_onto(glyphs, text, language);
++    return glyphs;
++}
++
++void menu_spell_onto(std::vector<MenuTextGlyph> &glyphs, std::string_view text, kf::Language language)
++{
 +    for (const char32_t c : decode_utf8(text)) {
 +        const auto glyph = spell_one(c, language);
 +        if (!glyph)
@@ -2518,7 +2522,6 @@ index 0000000000000000000000000000000000000000..80bc7e7625ad1f0bd36c8ccb739f8641
 +        }
 +        glyphs.push_back(*glyph);
 +    }
-+    return glyphs;
 +}
 +
 +s32 menu_text_width(std::span<const MenuTextGlyph> glyphs)

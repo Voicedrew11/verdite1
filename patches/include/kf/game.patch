@@ -73,7 +73,7 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..a8863e1adf19527767e95fc5b78781dc
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..a5a92bd9e6566a0b2ba0adc14694ded6c4ac6154 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d300f304dc 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
 @@ -30,7 +30,9 @@ enum class KfMenuRootChoice : s32 {
@@ -104,7 +104,17 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..a5a92bd9e6566a0b2ba0adc14694ded6
      KF_MENU_CONFIG_LANGUAGE_ROW = KF_MENU_CONFIG_SETTING_COUNT,
      KF_MENU_CONFIG_RETURN_ROW = KF_MENU_CONFIG_LANGUAGE_ROW + 1,
      KF_MENU_CONFIG_ROW_COUNT = KF_MENU_CONFIG_RETURN_ROW + 1
-@@ -271,6 +274,12 @@ struct KfMenuResources {
+@@ -182,6 +185,9 @@ enum {
+ };
+ 
+ enum {
++    // PC extension: text drawn with the HUD in play (the pickup feed, a message being read), in
++    // front of the world as the HUD's sprites are; the world sorts from KF_SCENE_MIN_OT_DEPTH up.
++    MENU_HUD_OT_DEPTH = 1,
+     MENU_OVERLAY_OT_DEPTH = 500,
+     MENU_CONTENT_OT_DEPTH = 1000,
+     MENU_WIDGET_OT_DEPTH = 2000,
+@@ -271,6 +277,12 @@ struct KfMenuResources {
  
  const KfMenuResources &menu_resources();
  bool menu_prepare_language(kf::Language language);
@@ -117,7 +127,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..a5a92bd9e6566a0b2ba0adc14694ded6
  
  typedef struct KfMenuList {
      MenuPoint title_position;
-@@ -329,7 +338,12 @@ extern void menu_blit_sprite(
+@@ -329,7 +341,12 @@ extern void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position);
  extern void menu_blit_sprite_translucent(
      const MenuSpriteDef *sprite, const MenuPoint *position);
@@ -130,13 +140,15 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..a5a92bd9e6566a0b2ba0adc14694ded6
  extern void menu_resources_reload(void);
  extern void menu_draw_save_slots(
      std::span<const KfSaveSlotSummary> summaries, KfSaveSlotOverlay slot_overlay);
-@@ -340,7 +354,18 @@ extern void menu_draw_number(
+@@ -340,7 +357,20 @@ extern void menu_draw_number(
      const MenuSpriteDef *font, const MenuGlyphString *string);
  extern void menu_draw_string(
      const MenuSpriteDef *font, const MenuGlyphString *string);
 +struct MenuTextGlyph;
-+// PC extension: text spelled by menu_spell, its colour scaled by shade (1 as drawn).
-+extern void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade);
++// PC extension: text spelled by menu_spell, its colour scaled by shade (1 as drawn), at depth in
++// the ordering table (a menu's content, or MENU_HUD_OT_DEPTH in play).
++extern void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade,
++    s32 depth = MENU_CONTENT_OT_DEPTH);
  extern void menu_draw_equipment_names(void);
 +extern void menu_draw_pickup_feed(void);
 +// PC extension (messages on the ground): the message the action button opens, low in the picture.
@@ -149,7 +161,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..a5a92bd9e6566a0b2ba0adc14694ded6
  extern void menu_draw_status_summary(void);
  extern void menu_draw_status_details(void);
  struct MenuChoiceLabel;
-@@ -358,6 +383,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+@@ -358,6 +388,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
  extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
  extern void menu_frame_begin(void);
  extern void menu_item_model_preview(KfObjectId item_id);
@@ -159,7 +171,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..a5a92bd9e6566a0b2ba0adc14694ded6
  extern KfMenuResult menu_list_confirm(
      const KfMenuList *list, KfMenuConfirmKind confirm_kind, KfMenuPreviewMode preview_mode,
 diff --git a/include/kf/game/menu_text.h b/include/kf/game/menu_text.h
-index 87ebaf4e17ad51009ffb9735cd87841961d6765f..903a11b2f549b3c439550592f4c325a140efb670 100644
+index 87ebaf4e17ad51009ffb9735cd87841961d6765f..29bcde285bb7b06623e70dfd5cec8e7b9c6b9bde 100644
 --- a/include/kf/game/menu_text.h
 +++ b/include/kf/game/menu_text.h
 @@ -5,6 +5,10 @@
@@ -195,7 +207,7 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..903a11b2f549b3c439550592f4c325a1
      case MenuLabel::Pickup:
          return english ? MenuGlyphRow{{0x00, 0x06, MENU_TEXT_END}}
                         : MenuGlyphRow{{0x53, 0x6a, MENU_TEXT_END}};
-@@ -123,4 +127,21 @@ inline MenuGlyphRow menu_label(MenuLabel label)
+@@ -123,4 +127,24 @@ inline MenuGlyphRow menu_label(MenuLabel label)
      return {{MENU_TEXT_END}};
  }
  
@@ -214,6 +226,9 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..903a11b2f549b3c439550592f4c325a1
 +};
 +
 +std::vector<MenuTextGlyph> menu_spell(std::string_view text, kf::Language language);
++// PC extension: text spelled onto the end of a line, so a space it starts with moves on from the
++// line's last glyph (menu_spell alone has none to move on from, and drops it).
++void menu_spell_onto(std::vector<MenuTextGlyph> &line, std::string_view text, kf::Language language);
 +s32 menu_text_width(std::span<const MenuTextGlyph> glyphs);
 +
  #endif // KF_GAME_MENU_TEXT_H
