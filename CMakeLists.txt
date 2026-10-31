@@ -213,6 +213,13 @@ endif()
 set(KF_IMGUI ${CMAKE_SOURCE_DIR}/third_party/imgui)
 file(GLOB KF_LUA_SOURCES ${CMAKE_SOURCE_DIR}/third_party/lua/l*.c)
 list(FILTER KF_LUA_SOURCES EXCLUDE REGEX "/(lua|luac|ltests|onelua)\\.c$")
+# Lua is compiled as C++, so a Lua error unwinds C++ frames (an exception) instead of jumping past
+# their destructors (longjmp); its headers are then included without extern "C".
+set_source_files_properties(${KF_LUA_SOURCES} PROPERTIES LANGUAGE CXX)
+add_library(lua54 STATIC ${KF_LUA_SOURCES})
+target_include_directories(lua54 PUBLIC ${CMAKE_SOURCE_DIR}/third_party/lua)
+add_library(cjson STATIC third_party/cjson/cJSON.c)
+target_include_directories(cjson PUBLIC ${CMAKE_SOURCE_DIR}/third_party/cjson)
 # Dear ImGui's core and its SDL platform backend; each renderer brings its own renderer backend.
 add_library(kf_imgui STATIC
   ${KF_IMGUI}/imgui.cpp ${KF_IMGUI}/imgui_draw.cpp ${KF_IMGUI}/imgui_tables.cpp ${KF_IMGUI}/imgui_widgets.cpp
@@ -227,10 +234,10 @@ if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE} AND NOT ANDROID)
 endif()
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp port/ext/automap.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/extra_items.cpp ${KF_LUA_SOURCES} third_party/cjson/cJSON.c)
-target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI} third_party/lua third_party/cjson)
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/extra_items.cpp)
+target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI})
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
-target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite)
+target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite lua54 cjson)
 target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}")
 target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated")
 if(KF_ONLINE)
@@ -277,9 +284,9 @@ add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp lib
   libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/fuzz.cpp libverdite/src/memory_card.cpp
   libverdite/src/menu_pointer.cpp libverdite/src/menu_settings.cpp libverdite/src/places.cpp libverdite/src/state_trace.cpp libverdite/src/stick.cpp
   libverdite/src/options.cpp libverdite/src/pickup_feed.cpp libverdite/src/setup.cpp libverdite/src/title_menu.cpp libverdite/src/touch.cpp
-  libverdite/src/message_sample.cpp)
+  libverdite/src/message_sample.cpp libverdite/src/mods.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
-target_link_libraries(verdite PUBLIC Threads::Threads PRIVATE cpptrace::cpptrace chdr-static)
+target_link_libraries(verdite PUBLIC Threads::Threads lua54 PRIVATE cpptrace::cpptrace chdr-static cjson)
 if(WIN32)
   target_link_libraries(verdite PUBLIC ws2_32)
 endif()
@@ -293,7 +300,7 @@ if(doctest_FOUND)
     libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp libverdite/tests/fuzz.cpp libverdite/tests/memory_card.cpp
     libverdite/tests/menu_pointer.cpp libverdite/tests/menu_settings.cpp libverdite/tests/places.cpp libverdite/tests/state_trace.cpp libverdite/tests/stick.cpp
     libverdite/tests/options.cpp libverdite/tests/pickup_feed.cpp libverdite/tests/setup.cpp libverdite/tests/title_menu.cpp libverdite/tests/touch.cpp
-    libverdite/tests/message_sample.cpp)
+    libverdite/tests/message_sample.cpp libverdite/tests/mods.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_DATA="${CMAKE_SOURCE_DIR}/libverdite/tests/data")
   target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

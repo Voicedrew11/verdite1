@@ -15,11 +15,9 @@
 #include <type_traits>
 #include <kf/platform/prelude.h>
 #include <kf/game/player.h>
-extern "C" {
 #include <lauxlib.h>
 #include <lua.h>
 #include <lualib.h>
-}
 
 namespace kf::ext {
 namespace fs = std::filesystem;

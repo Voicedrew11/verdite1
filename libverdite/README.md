@@ -16,6 +16,7 @@ here is its own commit.
 | `include/verdite/disc_image.h`, `src/disc_image.cpp` | a CD image's data track as flat bytes, stored plain (`.bin`, `.iso`) or as a CHD (MAME's compressed format, through libchdr in `third_party/libchdr`); a CHD of a raw track reads back byte for byte as its `.bin`. Test images from `tools/make_disc_fixtures.py` in `tests/data/disc/` |
 | `include/verdite/discord.h`, `src/discord.cpp` | Discord Rich Presence over the Discord app's local IPC (Unix socket or named pipe), no SDK: a thread of its own connects, retries and sends the latest activity, paced so a counting value does not flood Discord |
 | `include/verdite/memory_card.h`, `src/memory_card.cpp` | PlayStation memory card images (the raw 128 KB `.mcd`/`.mcr` dump, the C# builds' `carda.sav`): the files on a card by name, read along their block chains, and a formatted card written from files |
+| `include/verdite/mods.h`, `src/mods.cpp` | Lua 5.4 mods with live reload: discovery and `mod.json`, a sandboxed state per mod (no `io`, `os`, C modules or bytecode; `require` and `mod.fs` only in the mod's folder), an instruction budget per call and a memory cap that stop a mod even when it catches the error, `config` stored where the game keeps settings, and the game's API as tables of functions and fields, from which the editors' `---@meta` definitions file is written (`docs/MODDING.md`) |
 | `include/verdite/places.h`, `src/places.cpp` | place names over a floor's grid of cells, spread from named seed cells through walkable cells |
 | `include/verdite/setup.h`, `src/setup.cpp` | the first-run setup: a welcome with presets, pages of groups (one choice per tier: Original, Balanced, Modern) and options over the option table, and a summary; nothing is set until Finish, and only as ordinary settings. A platform draws it by implementing `SetupScreen`; another language drives it as JSON and text commands |
 | `include/verdite/touch.h`, `src/touch.cpp` | on-screen controls for a touch screen: a layout as a table of sticks, buttons, D-pads, look areas and taps, each finger kept on the control it landed on, read back as a gamepad is |
@@ -24,5 +25,5 @@ Tests are in `tests/` (doctest), built as `verdite_tests` when doctest is instal
 shell has it) and run with `ctest --preset linux`. New logic here comes with tests.
 
 Built as the `verdite` CMake target (`libverdite.a`); it needs the C++ standard library, the
-platform's sockets (and, for Discord, its named pipes), cpptrace (crash reports) and libchdr (CHD
-images).
+platform's sockets (and, for Discord, its named pipes), cpptrace (crash reports), libchdr (CHD
+images), Lua 5.4 (`third_party/lua`, compiled as C++ so its errors unwind C++ frames) and cJSON.
