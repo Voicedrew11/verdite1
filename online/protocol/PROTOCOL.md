@@ -50,7 +50,7 @@ frames over 64 KiB are an error. The first frame from the service is `welcome` o
 
 | type | fields | meaning |
 |---|---|---|
-| `welcome` | `protocol`, `peer`, `peers` | you joined as `peer`; `peers` are already in the room |
+| `welcome` | `protocol`, `peer`, `peers` | you joined as `peer`; `peers` are already in the room, oldest first, so the first is the one in it longest (a game's host) |
 | `join` | `peer` | a peer joined after you |
 | `leave` | `peer` | a peer left |
 | `signal` | `from`, `data` | a peer sent you `data` |
@@ -198,8 +198,8 @@ sends `records` at once; then the client may send:
 | client sends | fields | service answers |
 |---|---|---|
 | `post` | `record` | `posted` with `id` and `good` 0, or `error` `refused` (bad bytes or signature, another area than the socket's, a serial not above the author's newest, or rate-limited: 10 posts a minute per address) |
-| `rate` | `rating` | `rated` with `id` and `good`; `error` `refused` for a bad signature, an unknown record or one's own |
-| `mine` | `author` (base64 key) | `mine` with `records`: that author's records out, in any area, newest first |
+| `rate` | `rating` | `rated` with `id` and `good`; `error` `refused` for a bad signature, an unknown record, one's own, or rate-limited: 30 ratings a minute per address |
+| `mine` | `author` (base64 key) | `mine` with `records`: that author's records out, in any area, newest first; `error` `rate_limited` past 60 a minute per address |
 
 | service sends | fields | meaning |
 |---|---|---|
@@ -240,8 +240,10 @@ On a mesh connection's `control` channel the clients gossip records, each packet
 
 | byte 0 | byte 1 | then |
 |---|---|---|
-| 1 (version) | 1: **shown** | a count (1 byte), then that many records (118 bytes each): what the sender shows, sent once when the connection opens |
+| 1 (version) | 1: **shown** | a count (1 byte), then that many records (118 bytes each): what the sender shows, sent once when the connection opens; a second is malformed |
 | 1 | 2: **new** | hops left (1 byte, at most 3), then one record: a new post; a receiver that did not hold it forwards it to its other links with one hop fewer, while hops are left |
 
 A receiver checks every record (bytes, signature, retirement) before keeping or forwarding it,
-and ignores everything more from a peer that sent a malformed or forged one.
+and ignores everything more from a peer that sent a malformed or forged one. A receiver keeps at most
+256 records from gossip in an area (the service's sample and its own posts still go in), since anyone
+can sign as many as they like with new keys; past that it drops what gossip brings and forwards nothing.

@@ -70,7 +70,7 @@ struct ServiceFrame {
     Kind kind = Kind::Error;
     int protocol = 0;                   // Welcome
     PeerId peer = 0;                    // Welcome: you; Join, Leave, Link: them; Signal: the sender
-    std::vector<PeerId> peers;          // Welcome: already in the room
+    std::vector<PeerId> peers;          // Welcome: already in the room, oldest first
     Signal signal;                      // Signal
     std::vector<IceServer> ice_servers; // Turn: one per URL
     int seconds = 0;                    // Turn: how long the credential lasts

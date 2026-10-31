@@ -80,6 +80,8 @@ typedef struct vo_event {
     const char *message; /* ERROR: what went wrong, for the log; valid as data is */
     const uint8_t *data; /* PACKET: valid until the next vo_poll or vo_close */
     size_t size;
+    vo_peer first;       /* JOINED: the room's first peer, the one in it longest (a game's host);
+                          * 0 when you are */
 } vo_event;
 
 /* The next event, oldest first; 0 when there is none. Call it each frame until it returns 0. */

@@ -181,14 +181,14 @@ void on_event(const vo_event &event) {
         }
         online.self = event.peer;
         std::printf("[online] in room %s as %s\n", online.room.c_str(), hex(event.peer).c_str());
-        coop_room_joined(online.room, found == RoomRole::First);
+        coop_room_joined(online.room, found == RoomRole::First ? 0 : event.first);
         break;
     }
     case VO_EVENT_PEER_OPEN:
         forget_peer(event.peer);
         online.players.emplace(event.peer, Peer{OnlinePlayback(playback_delay_updates()), {}, {}, free_spells()});
         std::printf("[online] %s is here\n", hex(event.peer).c_str());
-        coop_peer_open(event.peer, event.older != 0);
+        coop_peer_open(event.peer);
         break;
     case VO_EVENT_PEER_CLOSED:
         forget_peer(event.peer);

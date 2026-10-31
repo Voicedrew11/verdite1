@@ -108,6 +108,26 @@ const cases = {
     b.close();
   },
 
+  async "welcome lists the peers oldest first, so the first is the host"() {
+    const peers = [];
+    const ids = [];
+    for (let i = 0; i < 3; i++) {
+      const p = connect(roomUrl("order"));
+      const welcome = await p.next();
+      assert.deepEqual(welcome.peers, ids);
+      for (const other of peers) assert.equal((await other.next()).type, "join");
+      peers.push(p);
+      ids.push(welcome.peer);
+    }
+    peers[1].close();
+    for (const other of [peers[0], peers[2]]) assert.deepEqual(await other.next(), { type: "leave", peer: ids[1] });
+    const late = connect(roomUrl("order"));
+    assert.deepEqual((await late.next()).peers, [ids[0], ids[2]]);
+    late.close();
+    peers[0].close();
+    peers[2].close();
+  },
+
   async "a fifth peer is refused"() {
     const peers = [];
     for (let i = 0; i < 4; i++) {

@@ -12,15 +12,18 @@ std::vector<Handover::Packet> Handover::received(From from, Packet packet) {
             deliver.push_back(std::move(packet));
         return deliver;
     }
-    if (peer_moved_)
+    if (peer_moved_) {
         deliver.push_back(std::move(packet));
-    else
+    } else {
+        held_bytes_ += packet.size();
         held_.push_back(std::move(packet));
+    }
     return deliver;
 }
 
 std::vector<Handover::Packet> Handover::peer_moved() {
     peer_moved_ = true;
+    held_bytes_ = 0;
     return std::exchange(held_, {});
 }
 

@@ -214,8 +214,10 @@ void online_leave_room(std::string_view why);
 
 // ---- coop (coop.cpp): the coop world played in a room (docs/COOP_PLAN.md) ----
 // What online.cpp hears of the room.
-void coop_room_joined(std::string_view room, bool first);
-void coop_peer_open(std::uint64_t peer, bool older);
+// host_peer: the room's first peer, whose welcome alone a guest takes; 0 when this machine is first
+// and hosts.
+void coop_room_joined(std::string_view room, std::uint64_t host_peer);
+void coop_peer_open(std::uint64_t peer);
 void coop_peer_closed(std::uint64_t peer);
 void coop_control_packet(std::uint64_t peer, std::span<const std::uint8_t> bytes);
 void coop_room_left();   // left, dropped or failed: this player's own game comes back

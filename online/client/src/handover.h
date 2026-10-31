@@ -44,6 +44,10 @@ public:
     bool sending_on_new() const {
         return sent_moved_;
     }
+    // The bytes held from the new connection, waiting for the peer's "moved".
+    std::size_t held_bytes() const {
+        return held_bytes_;
+    }
     // Neither side has anything left on the old connection, so it can close.
     bool finished() const {
         return sent_moved_ && peer_moved_ && peer_saw_moved_;
@@ -54,6 +58,7 @@ private:
     bool peer_moved_ = false;
     bool peer_saw_moved_ = false;
     std::vector<Packet> held_; // from the new connection, before the peer's "moved"
+    std::size_t held_bytes_ = 0;
 };
 
 } // namespace vo

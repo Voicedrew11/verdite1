@@ -110,6 +110,7 @@ struct Event {
     vo_channel channel = VO_CHANNEL_CONTROL;
     vo_error error = VO_ERROR_NONE;
     bool older = false;
+    PeerId first = 0; // JOINED
     std::string message;
     rtc::binary bytes;
 };
@@ -166,6 +167,7 @@ struct Link {
     std::optional<Clock::time_point> retry_move_at;
     std::uint32_t newest_generation = 0; // never reused, so a gone one's late news is ignored
     std::vector<Event> early; // packets that came before PEER_OPEN
+    std::size_t early_bytes = 0;
 
     Connection *connection_of(std::uint32_t generation) {
         if (current.generation == generation)
@@ -530,6 +532,7 @@ struct vo_session {
         self = frame.peer;
         Event joined = event_of(VO_EVENT_JOINED, self);
         joined.older = !frame.peers.empty();
+        joined.first = frame.peers.empty() ? 0 : frame.peers.front(); // the service lists them oldest first
         push(std::move(joined));
         for (const PeerId peer : frame.peers)
             links[peer].older = true;
@@ -657,6 +660,7 @@ struct vo_session {
             push(std::move(open));
             for (auto &packet : std::exchange(link.early, {}))
                 push(std::move(packet));
+            link.early_bytes = 0;
             return;
         }
         if (link.move && connection == &link.move->next && !link.move->handover.sending_on_new()) {
@@ -711,8 +715,14 @@ struct vo_session {
         Link &link = it->second;
         const PeerId peer = happening.peer;
         if (!link.announced) {
-            if (happening.generation == link.current.generation)
-                link.early.push_back(packet_event(peer, happening.channel, std::move(happening.bytes)));
+            if (happening.generation != link.current.generation)
+                return;
+            link.early_bytes += happening.bytes.size();
+            if (link.early_bytes > VO_CONTROL_QUEUE_BYTES) {
+                drop_peer(peer, "the peer sent too much before its channels opened");
+                return;
+            }
+            link.early.push_back(packet_event(peer, happening.channel, std::move(happening.bytes)));
             return;
         }
         if (happening.channel == VO_CHANNEL_STATE || !link.move) {
@@ -727,6 +737,8 @@ struct vo_session {
             return;
         for (auto &packet : link.move->handover.received(from, std::move(happening.bytes)))
             push(packet_event(peer, VO_CHANNEL_CONTROL, std::move(packet)));
+        if (link.move->handover.held_bytes() > VO_CONTROL_QUEUE_BYTES)
+            drop_peer(peer, "the peer sent too much on a connection it had not moved to");
     }
 
     void on_local_signal(const Happening &happening) {
@@ -948,6 +960,7 @@ int vo_poll(vo_session *session, vo_event *event) {
         .message = current.message.empty() ? nullptr : current.message.c_str(),
         .data = reinterpret_cast<const uint8_t *>(current.bytes.data()),
         .size = current.bytes.size(),
+        .first = current.first,
     };
     return 1;
 }

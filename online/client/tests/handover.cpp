@@ -67,3 +67,17 @@ TEST_CASE("the old connection closes only when both sides have moved and ours wa
     handover.peer_saw_moved();
     CHECK(handover.finished());
 }
+
+TEST_CASE("the bytes held from the new connection are counted until the peer's moved") {
+    Handover handover;
+    CHECK(handover.held_bytes() == 0);
+    handover.received(Handover::From::Old, Handover::Packet(100));
+    CHECK(handover.held_bytes() == 0);
+    handover.received(Handover::From::New, Handover::Packet(300));
+    handover.received(Handover::From::New, Handover::Packet(20));
+    CHECK(handover.held_bytes() == 320);
+    CHECK(handover.peer_moved().size() == 2);
+    CHECK(handover.held_bytes() == 0);
+    handover.received(Handover::From::New, Handover::Packet(50));
+    CHECK(handover.held_bytes() == 0);
+}

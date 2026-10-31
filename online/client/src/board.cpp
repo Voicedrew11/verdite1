@@ -45,6 +45,9 @@ using vo::RecordPool;
 // The mesh checks no build, but the service asks for one: a name in the form of the record format.
 constexpr const char *mesh_build = "records-1";
 constexpr auto mine_refresh = std::chrono::seconds(5); // counts change without a word to us
+// Records the mesh may add to an area's pool: anyone can sign as many as they like with new keys.
+// Past it gossip is dropped, but the service's sample and our own posts still go in.
+constexpr std::size_t gossip_held_most = 256;
 constexpr std::size_t serial_file_bytes = 16;
 
 // What a records socket's libdatachannel thread saw.
@@ -236,6 +239,7 @@ struct vo_board {
     std::set<std::uint64_t> sample_ids; // the service's sample of this area: shown to a new link
     std::set<std::uint64_t> rated;      // every record this board has rated
     std::set<vo_peer> ignored;          // peers that sent a forged or malformed packet
+    std::set<vo_peer> shown_by;         // peers whose one shown packet came
     std::set<vo_peer> open_peers;       // the mesh's peers whose channels are open
 
     std::shared_ptr<SocketMailbox> mail;
@@ -286,6 +290,7 @@ void vo_board::leave() {
     pool.clear();
     sample_ids.clear();
     ignored.clear();
+    shown_by.clear();
     open_peers.clear();
     forget_unanswered();
     ++records_version;
@@ -648,6 +653,10 @@ void vo_board::on_gossip(vo_peer peer, std::span<const std::uint8_t> bytes) {
         return;
     }
     if (packet->kind == vo::GossipPacket::Kind::Shown) {
+        if (!shown_by.insert(peer).second) {
+            ignore_peer(peer, "a second shown packet");
+            return;
+        }
         on_shown(peer, packet->records);
         return;
     }
@@ -676,8 +685,10 @@ void vo_board::forward(vo_peer from, const Record &record, std::uint8_t hops) {
 }
 
 // The pool's answer for a record a peer sent; nothing when the record is forged or of another
-// area, and then the peer is ignored from here on.
+// area, and then the peer is ignored from here on, or when gossip has filled the pool.
 std::optional<RecordPool::Added> vo_board::take_from(vo_peer peer, const Record &record) {
+    if (pool.held().size() >= gossip_held_most)
+        return std::nullopt;
     const RecordPool::Added added = in_area(record) ? pool.add(record) : RecordPool::Added::Forged;
     if (added == RecordPool::Added::Forged) {
         ignore_peer(peer, "a forged record or one of another area");

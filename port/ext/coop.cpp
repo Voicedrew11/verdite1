@@ -65,6 +65,7 @@ struct HostSide {
 };
 
 struct GuestSide {
+    std::uint64_t room_host = 0;   // the room's first peer: the only one asked for a welcome, and heard
     std::uint64_t host = 0;
     std::optional<CoopWelcome> welcome;   // until it is in the game
     std::optional<CoopWipe> wipe;         // until it is in the game
@@ -682,7 +683,7 @@ void host_receives(std::uint64_t peer, const CoopMessage &message) {
 void guest_receives(std::uint64_t peer, const CoopMessage &message) {
     GuestSide &guest = coop.guest;
     if (const auto *welcome = std::get_if<CoopWelcome>(&message)) {
-        if (guest.host != 0 || coop.in_play)
+        if (guest.host != 0 || coop.in_play || peer != guest.room_host)
             return;
         guest.host = peer;
         guest.welcome = *welcome;
@@ -748,11 +749,13 @@ std::string worn_json(const CoopWorn &worn) {
 
 } // namespace
 
-void coop_room_joined(std::string_view room, bool first) {
+void coop_room_joined(std::string_view room, std::uint64_t host_peer) {
+    const bool first = host_peer == 0;
     know_self();
     reset_session();
     coop.room = room;
     coop.role = first ? Role::Host : Role::Guest;
+    coop.guest.room_host = host_peer;
     coop.entering = first;
     std::printf("[coop] in room %s as %s (%s)\n", coop.room.c_str(), coop.profile.name.c_str(), first ? "host" : "guest");
 }
@@ -796,8 +799,8 @@ CoopProfile coop_profile_of_peer(std::uint64_t peer) {
     return coop_profile_default(peer);
 }
 
-void coop_peer_open(std::uint64_t peer, bool older) {
-    if (coop.role == Role::Guest && older && coop.guest.host == 0)
+void coop_peer_open(std::uint64_t peer) {
+    if (coop.role == Role::Guest && peer == coop.guest.room_host && coop.guest.host == 0)
         send(peer, CoopHello{coop.self, coop.profile});
 }
 

@@ -101,7 +101,8 @@ The URL is public and anything can speak the protocol, so the service cannot tel
 another program; it limits what anyone can take instead:
 
 - credentials only to a peer with another peer in its room, for an hour, revoked on leaving;
-- per address: 30 joins and 10 credentials a minute (approximate, per Cloudflare location);
+- per address: 30 joins, 10 credentials, 10 posts, 30 ratings and 60 `mine` requests a minute
+  (approximate, per Cloudflare location);
 - the month's budget: a scheduled check every 10 minutes reads the TURN key's egress (what
   Cloudflare bills, $0.05/GB past 1,000 GB a month) from the analytics API, and past
   `TURN_BUDGET_GB` (500) rooms get `unavailable` instead of credentials. Cloudflare itself has

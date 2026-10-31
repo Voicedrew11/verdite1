@@ -233,6 +233,11 @@ export class Floor extends DurableObject<Env> {
   }
 
   private async rate(ws: WebSocket, encoded: unknown): Promise<void> {
+    const client = attachment<Client>(ws);
+    if (!client || !(await this.env.RATE_LIMIT.limit({ key: client.ip })).success) {
+      fail(ws, "refused", "too many ratings from this address");
+      return;
+    }
     const bytes = fromBase64(encoded, RATING_BYTES);
     const rating = bytes && decodeRating(bytes);
     if (!rating || !(await verifyRating(this.game, rating))) {
@@ -255,6 +260,11 @@ export class Floor extends DurableObject<Env> {
   }
 
   private async mine(ws: WebSocket, encoded: unknown): Promise<void> {
+    const client = attachment<Client>(ws);
+    if (!client || !(await this.env.MINE_LIMIT.limit({ key: client.ip })).success) {
+      fail(ws, "rate_limited", "too many mine requests from this address");
+      return;
+    }
     const author = fromBase64(encoded, KEY_BYTES);
     if (!author) {
       fail(ws, "bad_message", "author is a base64 key of 32 bytes");

@@ -17,6 +17,8 @@ export interface Env {
   JOIN_LIMIT: RateLimit; // joins per address
   TURN_LIMIT: RateLimit; // TURN credentials per address
   POST_LIMIT: RateLimit; // record posts per address
+  RATE_LIMIT: RateLimit; // ratings per address: each can come from a fresh key
+  MINE_LIMIT: RateLimit; // mine requests per address
   TURN_BUDGET_GB?: string;
   TURN_CREDENTIAL_SECONDS?: string; // 3600 when unset; shorter only to test renewal
   // secrets (online/README.md, "Secrets")

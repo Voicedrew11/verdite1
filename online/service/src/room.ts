@@ -38,6 +38,7 @@ interface Listing {
 
 interface Peer extends Member {
   build: string;
+  seq: number; // orders peers by joining: welcome lists them oldest first, so the first is the host
 }
 
 export class Room extends DurableObject<Env> {
@@ -68,11 +69,12 @@ export class Room extends DurableObject<Env> {
 
     // Nothing here waits, so each pair of peers is introduced once: the later one finds the
     // other in its welcome and offers.
-    const ids = new Set(present.map(({ peer }) => peer.peer));
-    const id = freshPeerId(ids);
+    const oldest = [...present].sort((a, b) => (a.peer.seq ?? 0) - (b.peer.seq ?? 0)).map(({ peer }) => peer.peer);
+    const id = freshPeerId(new Set(oldest));
+    const seq = Math.max(0, ...present.map(({ peer }) => peer.seq ?? 0)) + 1;
     this.ctx.acceptWebSocket(server);
-    store<Peer>(server, { peer: id, build, ip, turnUsers: [] });
-    send(server, { type: "welcome", protocol: PROTOCOL, peer: id, peers: [...ids] });
+    store<Peer>(server, { peer: id, build, ip, turnUsers: [], seq });
+    send(server, { type: "welcome", protocol: PROTOCOL, peer: id, peers: oldest });
     for (const { ws: other } of present) send(other, { type: "join", peer: id });
     await this.listOnJoin(new URL(request.url), id, build, present.length === 0);
     return new Response(null, { status: 101, webSocket: client });
