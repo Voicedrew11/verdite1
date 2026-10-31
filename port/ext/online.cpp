@@ -269,6 +269,10 @@ void online_join_at_start(std::string_view room) {
 
 #if KF_ONLINE
 
+std::string online_service_url() {
+    return service_url();
+}
+
 void online_start() {
     if (!start_room.empty())
         join(start_room);
@@ -409,6 +413,10 @@ std::map<std::uint64_t, OnlinePose> online_room_poses() {
 }
 
 #else
+
+std::string online_service_url() {
+    return {};
+}
 
 void online_start() {
     if (!start_room.empty())

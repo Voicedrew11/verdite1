@@ -553,6 +553,11 @@ void draw_full_map(const AutomapSnapshot &map) {
 }
 }
 
+// The name the message writer lists an item by (messages_board.cpp).
+std::string automap_item_name(u8 id) {
+    return item_name(id);
+}
+
 void automap_toggle_full() {
     if (settings().classic)
         return;   // no automap in Classic mode

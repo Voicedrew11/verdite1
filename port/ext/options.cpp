@@ -741,7 +741,21 @@ OptionSection interface_discord() {
     return section;
 }
 
+#if KF_ONLINE
+OptionSection interface_online() {
+    Settings &s = settings();
+    return {"Online", {
+        toggle("online.messages", "Messages",
+               "Messages other players left on the ground, and leaving your own (F1, Leave a message). "
+               "Connects to the Verdite online service while you play.",
+               s.online_messages, store_only),
+    }};
+}
+
+OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_discord(), interface_online()}}; }
+#else
 OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_discord()}}; }
+#endif
 
 } // namespace
 

@@ -111,6 +111,7 @@ struct Settings {
     bool discord_location = true;   // floor and place
     bool discord_vitals = true;     // HP and MP
     bool discord_exp = true;        // EXP to the next level
+    bool online_messages = false;   // messages on the ground: opt-in, as online play is
     int setup_seen = 0;             // the first-run setup's version last finished or skipped
 };
 Settings &settings();
@@ -159,6 +160,15 @@ void discord_poll();      // on every host poll: composes the presence and hands
 void discord_stop();      // takes the presence down
 bool discord_forced();    // KF_DISCORD decides for this run
 bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
+
+// ---- messages on the ground (messages_board.cpp, docs/MESSAGES_PLAN.md) ----
+void messages_poll();            // on every host poll: the floor's board, entered and left
+bool messages_available();       // a floor is entered: the writer is offered
+void messages_draw_panel();      // the Leave a message window: the writer and the player's own
+// The item's name as the automap spells it (automap.cpp), for the writer's English lines.
+std::string automap_item_name(u8 id);
+// The Verdite service the online play uses (online.cpp), for the messages' board.
+std::string online_service_url();
 
 // ---- online play (online.cpp, on online/client) ----
 // Opt-in: nothing touches the network until a room is joined, from the overlay's Online window

@@ -1684,10 +1684,10 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc76ee28d7 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..e04f6a8e3ad70548e075465722ff289638fc7f7a 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
-@@ -7,8 +7,13 @@
+@@ -7,8 +7,15 @@
  #include <kf/game/resources.h>
  #include <kf/lib/null.h>
  #include <kf/lib/render_face.h>
@@ -1695,13 +1695,15 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
 +#include <kf/platform/coop.h>
  #include <kf/platform/input.h>
 +#include <kf/platform/menu_pointer.h>
++#include <kf/platform/automap.h>
++#include <kf/platform/messages.h>
 +#include <kf/platform/settings_page.h>
  
 +#include <algorithm>
  #include <array>
  #include <cstdio>
  #include <cstdlib>
-@@ -94,12 +99,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
+@@ -94,12 +101,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
      kf::host_enqueue_face(face);
  }
  
@@ -1742,7 +1744,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
  }
  
  static void menu_draw_backdrop_tile(s32 x, s32 y, bool flip_x, bool flip_y)
-@@ -176,6 +209,8 @@ void menu_drop_item_panel(void)
+@@ -176,6 +211,8 @@ void menu_drop_item_panel(void)
              quantities[found] = player_stock[item_id];
              if (player_item_is_equipped(kf_enum_decode<KfObjectId>(item_id)))
                  quantities[found]--;
@@ -1751,7 +1753,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
              if (quantities[found] != 0) {
                  item_ids[found] = kf_enum_decode<KfObjectId>(item_id);
                  found++;
-@@ -266,6 +301,9 @@ KfMenuAction menu_system_panel(void)
+@@ -266,6 +303,9 @@ KfMenuAction menu_system_panel(void)
          case KF_MENU_SYSTEM_ACTION_QUIT:
              result = menu_two_option_prompt(
                  KF_MENU_WINDOW_SYSTEM, KF_MENU_SYSTEM_ROW_COUNT, cursor, {});
@@ -1761,7 +1763,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
              if (result == KF_MENU_RESULT_ACCEPTED) {
                  menu_load_texture(MENU_TEXTURE_POWER_OFF);
                  audio_stop_sequence_fade();
-@@ -313,6 +351,10 @@ KfMenuAction menu_system_panel(void)
+@@ -313,6 +353,10 @@ KfMenuAction menu_system_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1772,7 +1774,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
          }
  
          menu_frame_begin();
-@@ -415,6 +457,10 @@ KfMenuResult menu_save_panel(void)
+@@ -415,6 +459,10 @@ KfMenuResult menu_save_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1783,7 +1785,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
          }
  
          menu_frame_begin();
-@@ -518,6 +564,10 @@ KfMenuResult menu_load_panel(void)
+@@ -518,6 +566,10 @@ KfMenuResult menu_load_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1794,7 +1796,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
          }
  
          menu_frame_begin();
-@@ -630,11 +680,21 @@ void menu_config_panel(void)
+@@ -630,11 +682,21 @@ void menu_config_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1817,7 +1819,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
              menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1173,6 +1233,212 @@ enum {
+@@ -1173,6 +1235,212 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -2030,7 +2032,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1180,10 +1446,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1448,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -2049,7 +2051,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1241,9 +1512,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1241,9 +1514,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -2066,7 +2068,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1480,6 +1755,10 @@ static KfMenuResult menu_list_confirm_impl(
+@@ -1480,6 +1757,10 @@ static KfMenuResult menu_list_confirm_impl(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2077,7 +2079,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
          }
          draw_preview();
          menu_list_render(list);
-@@ -1546,6 +1825,10 @@ KfMenuResult menu_two_option_prompt(
+@@ -1546,6 +1827,10 @@ KfMenuResult menu_two_option_prompt(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2088,7 +2090,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
          }
  
          menu_frame_begin();
-@@ -1556,12 +1839,22 @@ KfMenuResult menu_two_option_prompt(
+@@ -1556,12 +1841,22 @@ KfMenuResult menu_two_option_prompt(
      }
  }
  
@@ -2111,7 +2113,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
      if (layout->title.position.x != 0) {
          menu_blit_sprite_translucent(
              &menu_resources().assets.row_background, &layout->title.position);
-@@ -1570,7 +1863,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1570,7 +1865,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
      if (row_count > 0) {
          row = 0;
          do {
@@ -2122,7 +2124,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
                  menu_blit_sprite_translucent(&menu_resources().assets.row_confirmed_background,
                      &layout->rows[row].position);
              } else {
-@@ -1587,6 +1882,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1587,6 +1884,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
                  text.position.x = CONFIG_OPTION_ON_X;
                  text.glyphs = menu_label(MenuLabel::LanguageName);
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
@@ -2135,7 +2137,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
              } else {
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &layout->rows[row]);
              }
-@@ -1622,6 +1923,7 @@ void menu_list_render(const KfMenuList *list)
+@@ -1622,6 +1925,7 @@ void menu_list_render(const KfMenuList *list)
      u32 tens;
      u32 ones;
  
@@ -2143,7 +2145,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
      const MenuGlyphString title{list->title_position,
          menu_resources().windows[kf_enum_encode<s32>(list->title_window)].rows[list->title_row].glyphs};
      if (list->title_position.x != 0) {
-@@ -1637,6 +1939,10 @@ void menu_list_render(const KfMenuList *list)
+@@ -1637,6 +1941,10 @@ void menu_list_render(const KfMenuList *list)
              text.position.x = list->list_x + MENU_LIST_TEXT_INSET;
              text.position.y = list->list_y + MENU_LIST_TEXT_INSET;
              text.position.y += row * MENU_LIST_ROW_HEIGHT;
@@ -2154,7 +2156,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
              const auto index = list->scroll_offset + row;
              text.glyphs = std::visit([index](auto entries) {
                  const auto id = entries[index];
-@@ -1701,6 +2007,12 @@ enum {
+@@ -1701,6 +2009,12 @@ enum {
      MENU_PICKUP_BACKDROP_RIGHT_X = MENU_PICKUP_BACKDROP_LEFT_X + MENU_BACKDROP_COLUMN_STEP
  };
  
@@ -2167,7 +2169,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
  enum {
      MENU_FONT_COLUMNS = 16,
      MENU_FONT_CELL_WIDTH = 14,
-@@ -1716,6 +2028,16 @@ void menu_draw_two_option(
+@@ -1716,6 +2030,16 @@ void menu_draw_two_option(
      const MenuChoiceLabel *accept_label, const MenuChoiceLabel *decline_label,
      KfMenuConfirmChoice selected_choice, KfMenuConfirmState confirmation)
  {
@@ -2184,7 +2186,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
      if (selected_choice == KF_MENU_CHOICE_ACCEPT) {
          menu_blit_sprite(&menu_resources().assets.selection_cursor, &accept_label->position);
      } else {
-@@ -1791,6 +2113,26 @@ void menu_blit_sprite_translucent(
+@@ -1791,6 +2115,26 @@ void menu_blit_sprite_translucent(
      menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
  }
  
@@ -2211,7 +2213,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2196,87 @@ void menu_draw_number(
+@@ -1854,10 +2198,121 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -2226,6 +2228,16 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
  
 +// PC extension: free text (kf/game/menu_text.h), each glyph as menu_draw_string
 +// or menu_draw_number draws it; numbers sit a pixel lower, to share a baseline.
++// PC extension: an item's name as the menus draw it, after glyphs (item below KF_ITEM_COUNT).
++static void menu_append_item_name(std::vector<MenuTextGlyph> &glyphs, s32 item)
++{
++    for (const s16 code : menu_resources().items[item].codes) {
++        if (code == MENU_TEXT_END)
++            break;
++        glyphs.push_back({MenuTextFont::Label, code, 0, MENU_FONT_CELL_WIDTH});
++    }
++}
++
 +// PC extension (coop): the pickup feed at the picture's left, each line spelled in the menu font
 +// with the item's name as the menus draw it (kf/platform/coop.h).
 +void menu_draw_pickup_feed(void)
@@ -2235,13 +2247,8 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
 +    s16 y = feed_top_y;
 +    for (const kf::CoopFeedRow &row : kf::coop_feed_view(language)) {
 +        std::vector<MenuTextGlyph> glyphs = menu_spell(row.before, language);
-+        if (row.item < KF_ITEM_COUNT) {
-+            for (const s16 code : menu_resources().items[row.item].codes) {
-+                if (code == MENU_TEXT_END)
-+                    break;
-+                glyphs.push_back({MenuTextFont::Label, code, 0, MENU_FONT_CELL_WIDTH});
-+            }
-+        }
++        if (row.item < KF_ITEM_COUNT)
++            menu_append_item_name(glyphs, row.item);
 +        const auto after = menu_spell(row.after, language);
 +        glyphs.insert(glyphs.end(), after.begin(), after.end());
 +        menu_draw_text(glyphs, MenuPoint{feed_left_x, y}, row.opacity);
@@ -2254,6 +2261,35 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..df39f92fceb6d536ad0bb504b9a655dc
 +        const s32 width = static_cast<s32>(watching.size()) * MENU_FONT_CELL_WIDTH;
 +        menu_draw_text(watching, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), watching_y}, 1.0f);
 +    }
++}
++
++// PC extension (messages on the ground): centred on the picture's middle at y, as a line of glyphs.
++static void menu_draw_centred_line(std::span<const MenuTextGlyph> glyphs, s16 y)
++{
++    constexpr s16 picture_middle_x = 160;
++    const s32 width = menu_text_width(glyphs);
++    menu_draw_text(glyphs, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), y}, 1.0f);
++}
++
++// PC extension (messages on the ground): the message the action button opens, centred low in the
++// picture, and what the button does now a row below it. Spelled as the pickup feed spells its lines.
++void menu_draw_message_reading(void)
++{
++    constexpr s16 message_y = 180, prompt_row_step = 14;
++    const auto language = kf::game_language();
++    const kf::AutomapSnapshot &at = kf::automap_snapshot();
++    const auto reading = kf::messages_reading(language, at.floor, at.player_x, at.player_z);
++    if (!reading)
++        return;
++    std::vector<MenuTextGlyph> line;
++    for (const kf::MessageTextPiece &piece : reading->pieces) {
++        const auto spelled = menu_spell(piece.text, language);
++        line.insert(line.end(), spelled.begin(), spelled.end());
++        if (piece.item < KF_ITEM_COUNT)
++            menu_append_item_name(line, piece.item);
++    }
++    menu_draw_centred_line(line, message_y);
++    menu_draw_centred_line(menu_spell(reading->prompt, language), static_cast<s16>(message_y + prompt_row_step));
 +}
 +
 +void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade)
@@ -2836,6 +2872,76 @@ index 0000000000000000000000000000000000000000..3477b71c3ce52813dacbf961e0253277
 +    if (!text.note.empty())
 +        title_draw_centred(menu_spell(text.note, language), 0, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y + (top ? 14 : 0), 1.0f);
 +    return top;
++}
+diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..067a5acaedf58714bf5501c9d9340203b5aebeab
+--- /dev/null
++++ b/src/game/message_render.cpp
+@@ -0,0 +1,64 @@
++// PC extension (messages on the ground, docs/MESSAGES_PLAN.md): a message's mark is a flat, pale
++// quad on the floor of its cell, a third of a cell across, drawn additively so it glows.
++#include <kf/platform/prelude.h>
++#include <kf/game/graphics.h>
++#include <kf/game/render.h>
++#include <kf/lib/geometry_types.h>
++#include <kf/lib/map_data.h>
++#include <kf/lib/render_face.h>
++#include <kf/platform/messages.h>
++
++#include <array>
++
++enum {
++    MESSAGE_MARK_HALF_WIDTH = KF_MAP_TILE_SIZE / 6,  // a third of a cell across
++    MESSAGE_MARK_LIFT = 8,                           // above the floor (up is -y), so it does not z-fight
++};
++
++static constexpr CVECTOR message_mark_colour = {200, 225, 255, 0};
++
++void render_message_mark(const kf::GroundMark &mark, const MATRIX *lights)
++{
++    const auto &view = game_graphics_runtime.render_state;
++    const s32 cell_x = mark.cell_x, cell_z = mark.cell_z;
++    const SVECTOR relative = VECTOR{
++        cell_x * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER - view.view_position.vx,
++        map_base_floor_height(cell_x, cell_z) - MESSAGE_MARK_LIFT - view.view_position.vy,
++        cell_z * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER - view.view_position.vz}.narrowed();
++    // The mark's corners lie along the world's axes, so the model turns with the view.
++    MATRIX model;
++    MATRIX identity;
++    kf::matrix_set_rotation_xyz(SVECTOR{0, 0, 0, 0}, identity);
++    kf::render_place_model(model, view.view_matrix, relative);
++    kf::matrix_multiply_rotation(view.view_matrix, identity, model);
++
++    const auto centre = kf::render_project_point(model, view.projection, SVECTOR{0, 0, 0, 0});
++    const s32 otz = centre.depth >> KF_GTE_DEPTH_TO_OT_SHIFT;
++    if (otz < KF_SCENE_MIN_OT_DEPTH)
++        return;
++    const std::array<SVECTOR, 4> offsets = {{
++        {-MESSAGE_MARK_HALF_WIDTH, 0, -MESSAGE_MARK_HALF_WIDTH, 0},
++        {MESSAGE_MARK_HALF_WIDTH, 0, -MESSAGE_MARK_HALF_WIDTH, 0},
++        {-MESSAGE_MARK_HALF_WIDTH, 0, MESSAGE_MARK_HALF_WIDTH, 0},
++        {MESSAGE_MARK_HALF_WIDTH, 0, MESSAGE_MARK_HALF_WIDTH, 0}}};
++
++    kf::DrawFace face {};
++    face.shape = kf::FaceShape::Quad;
++    face.casts_shadow = false;
++    face.transparency = kf::FaceTransparency::Blend;
++    face.material = {kf::SurfaceKind::Solid, {}, kf::BlendMode::add};
++    for (unsigned i = 0; i < 4; ++i) {
++        const auto corner = kf::render_project_point(model, view.projection, offsets[i]);
++        face.vertices[i].x = kf::render_subpixel ? corner.fx : corner.x;
++        face.vertices[i].y = kf::render_subpixel ? corner.fy : corner.y;
++        face.vertices[i].w = kf::render_perspective ? corner.w : 0.0f;
++        const bool world = !kf::render_camera_fixed && corner.cz > 0;
++        face.vertices[i].cx = world ? corner.cx : 0.0f;
++        face.vertices[i].cy = world ? corner.cy : 0.0f;
++        face.vertices[i].cz = world ? corner.cz : 0.0f;
++    }
++    const SVECTOR up = {0, -KF_FIXED12_ONE, 0, 0};
++    const kf::DepthCuedColor color = kf::render_light_normal_cued(view.lighting, *lights, up,
++        message_mark_colour, centre.fog);
++    render_face_submit(&face, {&color, 1}, kf::FaceShading::Flat, otz & KF_ORDERING_TABLE_INDEX_MASK);
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
@@ -3751,7 +3857,7 @@ index b90adbb1ec3e303bc920fd26705f1850209ad267..4e225c97c936afe0f29462ea8a8ae98d
          player_death_apply_visual_fade(&player_death_saved_color_matrix, blend);
      }
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fcc564ea0d 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1cf5bada1 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
 @@ -1,4 +1,5 @@
@@ -3760,15 +3866,18 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
  #include <kf/game/audio.h>
  #include <kf/game/collision.h>
  #include <kf/game/game.h>
-@@ -7,6 +8,7 @@
+@@ -7,7 +8,10 @@
  #include <kf/game/session.h>
  #include <kf/lib/null.h>
  #include <kf/lib/random.h>
 +#include <kf/platform/analog.h>
  #include <kf/platform/input.h>
++#include <kf/platform/automap.h>
++#include <kf/platform/messages.h>
  
  #include <algorithm>
-@@ -349,9 +351,17 @@ static void player_update_movement_input(u32 input)
+ #include <array>
+@@ -349,9 +353,17 @@ static void player_update_movement_input(u32 input)
          player_turn_step_limit = PLAYER_SLOWED_TURN_LIMIT;
      } else {
          player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
@@ -3787,7 +3896,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
          forward = motion.forward_velocity
              + (player_movement_velocity_limit >> PLAYER_FORWARD_ACCEL_SHIFT);
          motion.forward_velocity = std::min<s32>(forward, player_movement_velocity_limit);
-@@ -368,7 +378,10 @@ static void player_update_movement_input(u32 input)
+@@ -368,7 +380,10 @@ static void player_update_movement_input(u32 input)
              player_movement_velocity_limit >> PLAYER_FORWARD_DECEL_SHIFT;
          motion.forward_velocity = std::min<s32>(motion.forward_velocity, 0);
      }
@@ -3799,7 +3908,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
          strafe = motion.strafe_velocity
              + (player_movement_velocity_limit >> PLAYER_STRAFE_ACCEL_DECEL_SHIFT);
          motion.strafe_velocity = std::min<s32>(strafe, player_movement_velocity_limit);
-@@ -424,7 +437,11 @@ static void player_update_view_input(u32 input)
+@@ -424,7 +439,11 @@ static void player_update_view_input(u32 input)
  {
      auto &motion = player_state.motion_state;
  
@@ -3812,7 +3921,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
          motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
          motion.yaw_step = std::min<s32>(motion.yaw_step, player_turn_step_limit);
      } else if (input & kf::Button::Right) {
-@@ -439,7 +456,10 @@ static void player_update_view_input(u32 input)
+@@ -439,7 +458,10 @@ static void player_update_view_input(u32 input)
      }
      player_state.camera_rotation.vy =
          (player_state.camera_rotation.vy + motion.yaw_step) & KF_ANGLE_WRAP_MASK;
@@ -3824,7 +3933,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
          motion.pitch_step += PLAYER_PITCH_ACCEL;
          motion.pitch_step = std::min<s32>(motion.pitch_step, PLAYER_PITCH_STEP_LIMIT);
      } else if (input & kf::Button::LookUp) {
-@@ -455,11 +475,11 @@ static void player_update_view_input(u32 input)
+@@ -455,11 +477,11 @@ static void player_update_view_input(u32 input)
      if (motion.pitch_step > 0) {
          player_state.camera_rotation.vx += motion.pitch_step;
          player_state.camera_rotation.vx =
@@ -3838,7 +3947,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
      }
  }
  
-@@ -642,6 +662,52 @@ static void player_restore_loaded_game()
+@@ -642,6 +664,52 @@ static void player_restore_loaded_game()
      player_select_magic(player_state.selected_magic_id);
  }
  
@@ -3891,7 +4000,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -649,6 +715,27 @@ void player_update(void)
+@@ -649,6 +717,27 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -3919,7 +4028,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
          player_death_update();
          return;
-@@ -662,7 +749,7 @@ void player_update(void)
+@@ -662,7 +751,7 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,
@@ -3928,6 +4037,19 @@ index a30de1fda381916646ae0970dd325eae46425ce7..6d494e6ff25debcdb3934d8f585ec8fc
      if (input & kf::Button::Select) {
          display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
      }
+@@ -688,7 +777,11 @@ void player_update(void)
+         }
+         player_previous_input = input;
+     } else {
+-        if (kf::button_pressed(input, player_previous_input, kf::Button::Confirm)) {
++        // PC extension (messages on the ground): a press for a message opens or rates it, and the
++        // world does nothing else with it.
++        const kf::AutomapSnapshot &at = kf::automap_snapshot();
++        if (kf::button_pressed(input, player_previous_input, kf::Button::Confirm)
++            && !kf::messages_action(at.floor, at.player_x, at.player_z, at.player_yaw)) {
+             map_interaction_dispatch(&player_state.camera_position, &player_state.camera_rotation);
+         }
+         player_update_movement_input(input);
 diff --git a/src/game/player_use_item.cpp b/src/game/player_use_item.cpp
 index b4dc15cd178b02cc492d80830474a514ddb80702..f82cb62f351a81ee7fd84eb808154a3187e9466f 100644
 --- a/src/game/player_use_item.cpp
@@ -4491,7 +4613,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
  }
  
 diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
-index 73c6900e478aa3769791136fbf65a88230b2c272..e73fd293668a66ba9a7ec4e6b292b350ea71e636 100644
+index 73c6900e478aa3769791136fbf65a88230b2c272..92f5dfb566d0243bb03a06a012298c42b662decb 100644
 --- a/src/game/render_frame.cpp
 +++ b/src/game/render_frame.cpp
 @@ -1,6 +1,7 @@
@@ -4547,16 +4669,18 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..e73fd293668a66ba9a7ec4e6b292b350
      animation_cache_mark_stale();
      render_map_cells();
      poison_icon = &hud_sprites[KF_HUD_POISON_ICON];
-@@ -140,6 +162,8 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -140,6 +162,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      game_graphics_runtime.active_render_color.g = game_graphics_runtime.hud_brightness;
      game_graphics_runtime.active_render_color.r = game_graphics_runtime.hud_brightness;
      render_hud_sprites(compass_sprite - KF_HUD_COMPASS);
 +    // PC extension (coop): who in the party found, bought, sold or used what.
 +    menu_draw_pickup_feed();
++    // PC extension (messages on the ground): the message being read.
++    menu_draw_message_reading();
  
      notify_effect_update();
  
-@@ -153,24 +177,35 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -153,24 +179,35 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      kf::matrix_set_rotation_xyz(spin, model);
  
      game_graphics_runtime.active_render_material = game_graphics_runtime.notification_text_material;
@@ -4740,18 +4864,19 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..40b0d688b7352411e0673654370ec8ef72f8eb97 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8a195d2ae353e68607453294e8bd8699ab6ef09e 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
-@@ -3,6 +3,7 @@
+@@ -3,6 +3,8 @@
  #include <kf/game/render.h>
  #include <kf/game/state.h>
  #include <kf/lib/map_data.h>
 +#include <kf/game/player.h>
++#include <kf/platform/messages.h>
  
  enum {
      ACTOR_CULL_SQUARE_HALF_WIDTH = 12,
-@@ -14,6 +15,22 @@ struct RenderCellOrigin {
+@@ -14,6 +16,22 @@ struct RenderCellOrigin {
      u16 z;
  };
  
@@ -4774,7 +4899,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..40b0d688b7352411e0673654370ec8ef
  static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin origin)
  {
      // Narrow before checking bounds, including cells before the window origin.
-@@ -23,7 +40,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
+@@ -23,7 +41,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
          return false;
      }
      const u16 col = cell_x - origin.x;
@@ -4783,7 +4908,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..40b0d688b7352411e0673654370ec8ef
  }
  
  static bool render_actor_is_visible(const KfActor &actor, RenderCellOrigin origin)
-@@ -51,19 +68,30 @@ void render_entities(void)
+@@ -51,19 +69,30 @@ void render_entities(void)
  
      tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
  
@@ -4816,7 +4941,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..40b0d688b7352411e0673654370ec8ef
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +105,71 @@ void render_entities(void)
+@@ -77,23 +106,76 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -4831,27 +4956,27 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..40b0d688b7352411e0673654370ec8ef
 -    for (auto &effect : effect_state.records) {
 +    for (std::size_t i = 0; i < std::size(effect_state.records); ++i) {
 +        auto &effect = effect_state.records[i];
-+        if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
-+            continue;
-+        }
-+        if (render_cell_is_visible(
-+                effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
-+            tag(KF_RENDER_TAG_EFFECTS, i, u32(kf_enum_encode<u8>(effect.kind)) << 8 | kf_enum_encode<u8>(effect.type));
-+            render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
-+        }
-+    }
-+    // PC extension (coop): the effects of a floor another machine runs, as it sends them.
-+    for (std::size_t i = 0; i < std::size(effect_shown_records); ++i) {
-+        auto &effect = effect_shown_records[i];
          if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
              continue;
          }
          if (render_cell_is_visible(
                  effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
-+            tag(KF_RENDER_TAG_EFFECTS + int(KF_EFFECT_CAPACITY), i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
++            tag(KF_RENDER_TAG_EFFECTS, i, u32(kf_enum_encode<u8>(effect.kind)) << 8 | kf_enum_encode<u8>(effect.type));
              render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
          }
      }
++    // PC extension (coop): the effects of a floor another machine runs, as it sends them.
++    for (std::size_t i = 0; i < std::size(effect_shown_records); ++i) {
++        auto &effect = effect_shown_records[i];
++        if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
++            continue;
++        }
++        if (render_cell_is_visible(
++                effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
++            tag(KF_RENDER_TAG_EFFECTS + int(KF_EFFECT_CAPACITY), i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
++            render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
++        }
++    }
 +    // PC extension (coop): the other players' spells, as their poses carry them.
 +    static_assert(int(KF_RENDER_TAG_EFFECTS) + (2 + KF_EFFECT_SHOWN_PLAYERS) * int(KF_EFFECT_CAPACITY) <= int(KF_RENDER_TAG_MAP_EVENTS));
 +    for (std::size_t player = 0; player < std::size(effect_player_shown_records); ++player) {
@@ -4887,6 +5012,11 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..40b0d688b7352411e0673654370ec8ef
 +            tag(KF_RENDER_TAG_ONLINE_PLAYERS, i, player.id);
 +            render_online_player(player);
 +        }
++    }
++    // PC extension (messages on the ground): the marks on this floor, on the cells in view.
++    for (const kf::GroundMark &mark : kf::messages_marks(kf_enum_encode<s32>(player_state.progress_state.current_floor))) {
++        if (render_cell_is_visible(mark.cell_x, mark.cell_z, origin))
++            render_message_mark(mark, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
 +    }
 +    kf::render_entity_tag = 0;
  }

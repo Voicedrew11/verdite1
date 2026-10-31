@@ -211,6 +211,8 @@ void settings_load() {
     current.discord_location = read_bool(discord, "location", current.discord_location);
     current.discord_vitals = read_bool(discord, "vitals", current.discord_vitals);
     current.discord_exp = read_bool(discord, "exp", current.discord_exp);
+    const cJSON *online = cJSON_GetObjectItemCaseSensitive(document, "online");
+    current.online_messages = read_bool(online, "messages", current.online_messages);
 }
 
 void settings_mark_dirty() {
@@ -305,6 +307,8 @@ void settings_save() {
     write_value(discord, "location", cJSON_CreateBool(current.discord_location));
     write_value(discord, "vitals", cJSON_CreateBool(current.discord_vitals));
     write_value(discord, "exp", cJSON_CreateBool(current.discord_exp));
+    cJSON *online = object_entry(document, "online");
+    write_value(online, "messages", cJSON_CreateBool(current.online_messages));
     char *text = cJSON_Print(document);
     if (!text)
         return;

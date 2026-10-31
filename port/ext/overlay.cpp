@@ -20,7 +20,7 @@ SDL_Window *main_window;
 bool running;
 bool imgui;   // false when headless
 bool open;
-bool show_settings, show_mods = true, show_console, show_about, show_online;
+bool show_settings, show_mods = true, show_console, show_about, show_online, show_messages;
 bool console_autoscroll = true;
 char console_filter[128];
 std::vector<ConsoleLine> console_lines;
@@ -290,6 +290,13 @@ void draw_online_window() {
     ImGui::End();
 }
 
+void draw_messages_window() {
+    ImGui::SetNextWindowSize(ImVec2(460, 420), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Leave a message", &show_messages))
+        messages_draw_panel();
+    ImGui::End();
+}
+
 void draw_about_window() {
     if (!ImGui::Begin("About", &show_about, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
@@ -310,6 +317,8 @@ void draw_menu_bar() {
     ImGui::MenuItem("Settings", nullptr, &show_settings);
     ImGui::MenuItem("Mods", nullptr, &show_mods);
     ImGui::MenuItem("Online", nullptr, &show_online);
+    if (messages_available())
+        ImGui::MenuItem("Leave a message", nullptr, &show_messages);
     ImGui::MenuItem("Console", nullptr, &show_console);
     ImGui::MenuItem("About", nullptr, &show_about);
     // F1 on a keyboard; on a touch screen this is the way out.
@@ -493,6 +502,7 @@ void poll() {
     options_poll();
     settings_panel_poll();
     online_poll();
+    messages_poll();
     if (imgui) {
         discord_poll();
         touch_commands_poll();
@@ -575,6 +585,8 @@ ImDrawData *build_overlay(int width, int height) {
             draw_mods_window();
         if (show_online)
             draw_online_window();
+        if (show_messages && messages_available())
+            draw_messages_window();
         if (show_console)
             draw_console_window();
         if (show_about)
