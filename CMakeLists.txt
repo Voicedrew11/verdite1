@@ -276,7 +276,8 @@ endif()
 add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp libverdite/src/crash_helper.cpp
   libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/fuzz.cpp libverdite/src/memory_card.cpp
   libverdite/src/menu_pointer.cpp libverdite/src/menu_settings.cpp libverdite/src/places.cpp libverdite/src/state_trace.cpp libverdite/src/stick.cpp
-  libverdite/src/options.cpp libverdite/src/pickup_feed.cpp libverdite/src/setup.cpp libverdite/src/title_menu.cpp libverdite/src/touch.cpp)
+  libverdite/src/options.cpp libverdite/src/pickup_feed.cpp libverdite/src/setup.cpp libverdite/src/title_menu.cpp libverdite/src/touch.cpp
+  libverdite/src/message_sample.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
 target_link_libraries(verdite PUBLIC Threads::Threads PRIVATE cpptrace::cpptrace chdr-static)
 if(WIN32)
@@ -291,7 +292,8 @@ if(doctest_FOUND)
   add_executable(verdite_tests libverdite/tests/main.cpp libverdite/tests/agent.cpp libverdite/tests/crash.cpp
     libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp libverdite/tests/fuzz.cpp libverdite/tests/memory_card.cpp
     libverdite/tests/menu_pointer.cpp libverdite/tests/menu_settings.cpp libverdite/tests/places.cpp libverdite/tests/state_trace.cpp libverdite/tests/stick.cpp
-    libverdite/tests/options.cpp libverdite/tests/pickup_feed.cpp libverdite/tests/setup.cpp libverdite/tests/title_menu.cpp libverdite/tests/touch.cpp)
+    libverdite/tests/options.cpp libverdite/tests/pickup_feed.cpp libverdite/tests/setup.cpp libverdite/tests/title_menu.cpp libverdite/tests/touch.cpp
+    libverdite/tests/message_sample.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_DATA="${CMAKE_SOURCE_DIR}/libverdite/tests/data")
   target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
