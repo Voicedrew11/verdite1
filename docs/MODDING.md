@@ -264,8 +264,10 @@ interface scale.
 
 `mods/stathud` (HUD drawing + settings), `mods/quickheal` (hotkey + writing
 player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
-`mods/killcount` (`on_kill` and the `save` table) in this repository. Copy them
-into the mods folder to try them.
+`mods/killcount` (`on_kill` and the `save` table) in this repository. The
+build puts them beside the executable, and the game copies each one, disabled,
+into the mods folder the first time it sees it; `mods/.examples` lists those
+already offered, so an example you delete stays deleted.
 
 ## The plan: API 1.0
 

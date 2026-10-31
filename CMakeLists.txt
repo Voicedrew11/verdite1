@@ -393,6 +393,12 @@ else()
 endif()
 target_link_libraries(verdite1 PRIVATE kf_host)
 target_compile_options(verdite1 PRIVATE -Wall -Wextra)
+if(NOT ANDROID)
+  # The example mods beside the executable, where the game offers them to the user's mods folder.
+  add_custom_command(TARGET verdite1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/mods $<TARGET_FILE_DIR:verdite1>/mods
+    VERBATIM)
+endif()
 if(ANDROID)
   # The libraries the APK carries, where android/app/build.gradle picks them up: jni/<abi>/.
   set(KF_JNI_DIR ${CMAKE_BINARY_DIR}/jni/${ANDROID_ABI})

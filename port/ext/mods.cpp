@@ -9,6 +9,9 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <limits>
 #include <cstdio>
 #include <memory>
@@ -714,22 +717,54 @@ void write_stored(std::string_view id, const verdite::ModStored &stored) {
     settings_mark_dirty();
 }
 
-// First launch: the example mods shipped beside the executable, copied disabled.
+// The example mods already offered, one folder name a line, in mods/.examples: an example is
+// copied once, so one the user deletes stays deleted, and a new one reaches an existing folder.
+std::set<std::string> offered_examples(const std::filesystem::path &list) {
+    std::set<std::string> names;
+    std::ifstream in(list);
+    for (std::string line; std::getline(in, line);)
+        if (!line.empty())
+            names.insert(line);
+    return names;
+}
+
+void write_offered_examples(const std::filesystem::path &list, const std::set<std::string> &names) {
+    std::ofstream out(list, std::ios::trunc);
+    for (const std::string &name : names)
+        out << name << '\n';
+    if (!out)
+        std::printf("[mods] cannot write %s\n", list.string().c_str());
+}
+
+// The example mods shipped beside the executable, each copied disabled the first time it is seen.
 void copy_example_mods() {
-    std::error_code error;
-    if (std::filesystem::exists(mods_dir(), error))
-        return;
     const char *base = SDL_GetBasePath();
     if (!base)
         return;
     const auto bundled = std::filesystem::path(reinterpret_cast<const char8_t *>(base)) / "mods";
+    std::error_code error;
     if (!std::filesystem::is_directory(bundled, error))
         return;
-    std::filesystem::copy(bundled, mods_dir(), std::filesystem::copy_options::recursive, error);
-    if (error)
-        std::printf("[mods] cannot copy the example mods: %s\n", error.message().c_str());
-    else
-        std::printf("[mods] copied the example mods to %s (all disabled)\n", mods_dir().string().c_str());
+    std::filesystem::create_directories(mods_dir(), error);
+    const auto list = mods_dir() / ".examples";
+    auto offered = offered_examples(list);
+    const auto before = offered.size();
+    for (const auto &entry : std::filesystem::directory_iterator(bundled, error)) {
+        const std::string name = entry.path().filename().string();
+        if (!entry.is_directory(error) || offered.contains(name))
+            continue;
+        offered.insert(name);
+        const auto target = mods_dir() / name;
+        if (std::filesystem::exists(target, error))
+            continue;
+        std::filesystem::copy(entry.path(), target, std::filesystem::copy_options::recursive, error);
+        if (error)
+            std::printf("[mods] cannot copy the example mod %s: %s\n", name.c_str(), error.message().c_str());
+        else
+            std::printf("[mods] copied the example mod %s to %s (disabled)\n", name.c_str(), target.string().c_str());
+    }
+    if (offered.size() != before)
+        write_offered_examples(list, offered);
 }
 
 void draw_mod_row(const verdite::ModInfo &mod) {
@@ -751,11 +786,15 @@ void draw_mod_row(const verdite::ModInfo &mod) {
         ImGui::SameLine();
         ImGui::TextDisabled("by %s", mod.author.c_str());
     }
-    ImGui::SameLine();
-    if (mod.state == verdite::ModState::Failed)
+    // A disabled mod has no state label; a SameLine with nothing after it would put the
+    // description on the name's line.
+    if (mod.state == verdite::ModState::Failed) {
+        ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "error");
-    else if (mod.state == verdite::ModState::Running)
+    } else if (mod.state == verdite::ModState::Running) {
+        ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "running");
+    }
     ImGui::Indent();
     if (!mod.description.empty())
         ImGui::TextWrapped("%s", mod.description.c_str());
