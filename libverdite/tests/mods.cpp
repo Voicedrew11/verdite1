@@ -42,6 +42,7 @@ struct Mods {
     std::map<std::string, ModStored, std::less<>> stored;
     std::unique_ptr<ModHost> host;
     int writes = 0;
+    std::vector<std::string> unloaded_ids;   // each discard of a mod's Lua state, in order
 
     explicit Mods(std::size_t memory_cap_bytes = 64u << 20, std::uint64_t instructions = 1'000'000) {
         static int count;
@@ -71,6 +72,7 @@ struct Mods {
             stored[std::string(id)] = now;
             ++writes;
         };
+        config.unloaded = [this](std::string_view id) { unloaded_ids.emplace_back(id); };
         host = std::make_unique<ModHost>(std::move(config));
     }
     ~Mods() {
@@ -325,4 +327,41 @@ TEST_CASE("print writes the mod's id, and a mod that never loads reports its err
     mods.run("syntax", "this is not lua");
     CHECK(mods.info("syntax").state == ModState::Failed);
     CHECK_FALSE(mods.info("syntax").error.empty());
+}
+
+TEST_CASE("disabling a mod reports its state discarded once") {
+    Mods mods;
+    mods.run("a", "");
+    CHECK(mods.unloaded_ids.empty());
+    mods.host->disable("a");
+    CHECK(mods.unloaded_ids == std::vector<std::string>{"a"});
+}
+
+TEST_CASE("a live reload reports the discarded state once, not once per load") {
+    Mods mods;
+    mods.run("a", "");
+    mods.write("a/main.lua", "t.note('second')");
+    mods.host->scan();
+    CHECK(noted("second"));
+    CHECK(mods.unloaded_ids == std::vector<std::string>{"a"});
+}
+
+TEST_CASE("a mod that errs reports its state discarded once, and disabling it later reports nothing") {
+    Mods mods;
+    mods.run("bad", "function on_update() error('broken') end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(mods.info("bad").state == ModState::Failed);
+    CHECK(mods.unloaded_ids == std::vector<std::string>{"bad"});
+    mods.host->disable("bad");
+    CHECK(mods.unloaded_ids == std::vector<std::string>{"bad"});
+}
+
+TEST_CASE("destroying the host reports each running mod's state discarded") {
+    Mods mods;
+    mods.run("a", "");
+    mods.run("b", "");
+    mods.host.reset();
+    CHECK(std::count(mods.unloaded_ids.begin(), mods.unloaded_ids.end(), std::string("a")) == 1);
+    CHECK(std::count(mods.unloaded_ids.begin(), mods.unloaded_ids.end(), std::string("b")) == 1);
+    CHECK(mods.unloaded_ids.size() == 2);
 }

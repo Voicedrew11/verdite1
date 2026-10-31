@@ -80,6 +80,10 @@ struct ModHostConfig {
     std::uint64_t instructions_per_call = 100'000'000;   // per callback, and for the script's first run
     std::function<std::optional<ModStored>(std::string_view id)> read_stored;
     std::function<void(std::string_view id, const ModStored &stored)> write_stored;
+    // Called with a mod's id each time its Lua state is discarded: before a reload, when it is
+    // disabled or removed, when it fails, and when the host is destroyed. The game drops what it
+    // keeps for the mod.
+    std::function<void(std::string_view id)> unloaded;
 };
 
 enum class ModState : std::uint8_t { Disabled, Running, Failed };

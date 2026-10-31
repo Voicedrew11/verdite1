@@ -800,6 +800,8 @@ struct ModHost::State {
         lua_sethook(mod.lua.get(), count_instructions, LUA_MASKCOUNT, hook_every_instructions);
         mod.lua.reset();
         mod.has_settings = false;
+        if (config.unloaded)
+            config.unloaded(mod.id);
     }
 
     void fail(Mod &mod, const std::string &message) {
