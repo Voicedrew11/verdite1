@@ -568,4 +568,47 @@ SaveFileResult save_side_write(SaveSlot slot, const char *suffix, const u8 *data
     return SaveFileResult::Unavailable;
 #endif
 }
+
+#ifndef __EMSCRIPTEN__
+static std::string mods_name(SaveSlot slot) {
+    switch (slot) {
+    case SaveSlot::First:
+    case SaveSlot::Second:
+    case SaveSlot::Third:
+        return "slot" + std::to_string(static_cast<unsigned>(slot)) + ".mods.json";
+    case SaveSlot::Quick:
+        return "quick.mods.json";
+    case SaveSlot::Aside:
+        return "aside.mods.json";
+    }
+    return {};
+}
+#endif
+
+SaveFileResult save_mods_read(SaveSlot slot, std::string &json) {
+    json.clear();
+    if (!valid_slot(slot))
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    std::vector<u8> data(save_mods_capacity);
+    std::size_t size = 0;
+    const auto result = read_named(mods_name(slot).c_str(), data.data(), data.size(), &size);
+    if (result == SaveFileResult::Ok)
+        json.assign(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(size));
+    return result;
+#endif
+}
+
+SaveFileResult save_mods_write(SaveSlot slot, std::string_view json) {
+    if (!valid_slot(slot) || json.empty() || json.size() > save_mods_capacity)
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    return write_named(mods_name(slot).c_str(), reinterpret_cast<const u8 *>(json.data()), json.size(),
+                       Previous::Discard);
+#endif
+}
 }

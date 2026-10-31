@@ -43,6 +43,12 @@ std::vector<std::string> coop_world_rooms();
 inline constexpr std::size_t earlier_save_capacity = 16384;
 SaveFileResult save_earlier_read(SaveSlot slot, std::vector<u8> &data);
 
+// The mods' save data kept beside a slot (slot1.mods.json ..., quick.mods.json, aside.mods.json),
+// as JSON text (docs/MODDING.md, "save"). Every platform with a save directory.
+inline constexpr std::size_t save_mods_capacity = 1 << 20;
+SaveFileResult save_mods_read(SaveSlot slot, std::string &json);
+SaveFileResult save_mods_write(SaveSlot slot, std::string_view json);
+
 // PC extension data kept beside a slot (e.g. "slot1.kfs.map"). Desktop Windows only.
 SaveFileResult save_side_read(SaveSlot slot, const char *suffix, u8 *data, std::size_t capacity, std::size_t *size);
 SaveFileResult save_side_write(SaveSlot slot, const char *suffix, const u8 *data, std::size_t size);

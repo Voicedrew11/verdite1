@@ -1,0 +1,41 @@
+#ifndef KF_PLATFORM_MOD_EVENTS_H
+#define KF_PLATFORM_MOD_EVENTS_H
+// The events the game raises for the mods (docs/MODDING.md, "Events"). Each runs inline, where the
+// thing happens, on the game's thread. The functions that return a value return what the mods left,
+// or their input when no mod handles the event (or no mod host runs, as in headless tests).
+#include <kf/lib/types.h>
+#include <kf/platform/saves.h>
+
+namespace kf {
+
+s32 mods_player_damaged(s32 loss_hp);
+
+// A blow on an actor. by_player: the player made it (not a hazard or another actor).
+struct ActorHit {
+    u16 actor_index;
+    u16 definition_id;
+    s32 damage_hp;
+    bool by_player;
+};
+s32 mods_actor_damaged(const ActorHit &hit);
+// experience is the reward the kill gives the player; the result replaces it when the player made
+// the kill, and is ignored otherwise.
+s16 mods_actor_killed(const ActorHit &hit, s16 experience);
+
+void mods_level_up(u8 level);
+void mods_item_picked_up(u16 item);
+void mods_floor_loaded(u8 floor, u8 map_variant);
+void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page);
+void mods_shop_opened(u8 bank);
+// A revival keeps the game and its save data; a restart is a new game (mods_new_game).
+void mods_player_died();
+// A new game starts with empty save data (no event).
+void mods_new_game();
+// Stores the mods' save data beside the slot, then raises on_save.
+void mods_game_saved(SaveSlot slot);
+// Reads the mods' save data beside the slot (none or unreadable: empty), then raises on_load_game.
+void mods_game_loaded(SaveSlot slot);
+
+} // namespace kf
+
+#endif // KF_PLATFORM_MOD_EVENTS_H

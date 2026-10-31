@@ -23,22 +23,27 @@
 #include <kf/lib/math.h>
 #include <kf/platform/fuzz.h>
 #include <kf/platform/host.h>
+#include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
 #include "mod_play.h"
 #include <lauxlib.h>
 #include <lua.h>
+#include <cstdint>
 #include <map>
 #include <set>
+#include <span>
+#include <variant>
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.3";
+constexpr const char *api_version = "0.4";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
 std::map<std::string, ModPlay, std::less<>> mod_plays;
 ModPlayCombined combined_play;
 bool in_imgui_frame;             // ui.* is only valid while drawing
+u8 last_floor;                   // the floor last loaded (0 before any), for on_floor_change
 Uint64 last_scan;
 std::uint64_t frame_counter;
 int input_context;
@@ -616,6 +621,70 @@ std::vector<verdite::ModTable> api_tables() {
     };
 }
 
+// ---------- the events the game raises (kf/platform/mod_events.h) ----------
+verdite::ModEventField integer_field(std::string_view name, std::string_view doc) {
+    return {.name = name, .type = "integer", .doc = doc};
+}
+verdite::ModEventField writable_field(std::string_view name, std::string_view doc, std::int64_t min, std::int64_t max) {
+    return {.name = name, .type = "integer", .doc = doc, .writable = true, .min = min, .max = max};
+}
+verdite::ModEventField boolean_field(std::string_view name, std::string_view doc) {
+    return {.name = name, .type = "boolean", .doc = doc};
+}
+verdite::ModEventField string_field(std::string_view name, std::string_view doc) {
+    return {.name = name, .type = "string", .doc = doc};
+}
+
+std::vector<verdite::ModEvent> event_table() {
+    return {
+        {.name = "on_damage",
+         .doc = "A blow hit the player or an actor. Not hazards or poison.",
+         .fields = {string_field("target", "\"player\" or \"actor\"."),
+                    integer_field("actor", "The actor's slot; -1 for the player."),
+                    integer_field("kind", "The actor's definition id; -1 for the player."),
+                    writable_field("amount", "HP lost; 0 for none.", 0, 65535),
+                    boolean_field("by_player", "The player made the blow; false for the player's own damage.")}},
+        {.name = "on_kill",
+         .doc = "A blow killed an actor.",
+         .fields = {integer_field("actor", "The actor's slot."),
+                    integer_field("kind", "The actor's definition id."),
+                    writable_field("experience", "EXP the player gets; 0 unless the player made the kill.", 0, 32767),
+                    boolean_field("by_player", "The player made the killing blow.")}},
+        {.name = "on_level_up",
+         .doc = "The player reached a new level.",
+         .fields = {integer_field("level", "The new level.")}},
+        {.name = "on_item_pickup",
+         .doc = "The player took an item from the ground.",
+         .fields = {integer_field("item", "The item id.")}},
+        {.name = "on_map_load",
+         .doc = "A floor's map was loaded.",
+         .fields = {integer_field("floor", "1 to 5."),
+                    integer_field("map_variant", "0 the default, 1 floor 5's entry.")}},
+        {.name = "on_floor_change",
+         .doc = "The floor differs from the one last loaded.",
+         .fields = {integer_field("from", "The floor last loaded; 0 before any."),
+                    integer_field("to", "The floor now loaded.")}},
+        {.name = "on_dialogue",
+         .doc = "A dialogue page is shown.",
+         .fields = {integer_field("floor", "1 to 5."),
+                    integer_field("character", "The character's id."),
+                    integer_field("stage", "The dialogue's stage."),
+                    integer_field("page", "The page within the stage.")}},
+        {.name = "on_shop",
+         .doc = "A shop opens.",
+         .fields = {integer_field("bank", "The shop's stock bank.")}},
+        {.name = "on_death",
+         .doc = "The player dies, before the revival or restart.",
+         .fields = {}},
+        {.name = "on_save",
+         .doc = "The game is saved, after its save data is written.",
+         .fields = {integer_field("slot", "1 to 3 the game's slots, 4 the quick save, 5 the game set aside in coop.")}},
+        {.name = "on_load_game",
+         .doc = "A save is loaded, after its save data is read.",
+         .fields = {integer_field("slot", "1 to 3 the game's slots, 4 the quick save, 5 the game set aside in coop.")}},
+    };
+}
+
 // ---------- the mods' settings, in settings.json ----------
 void replace_item(cJSON *object, const char *key, cJSON *value) {
     if (cJSON_GetObjectItemCaseSensitive(object, key))
@@ -708,6 +777,7 @@ void mods_start() {
     config.mods_dir = mods_dir();
     config.api_version = api_version;
     config.api = api_tables();
+    config.events = event_table();
     config.definitions_name = "kf.d.lua";
     config.read_stored = read_stored;
     config.write_stored = write_stored;
@@ -720,6 +790,7 @@ void mods_start() {
 void mods_shutdown() {
     host.reset();
     mod_plays.clear();
+    last_floor = 0;
     refresh_mod_play();
 }
 
@@ -806,5 +877,129 @@ void mods_draw_panel() {
 namespace kf {
 const PlayOverrides &host_play_overrides() {
     return ext::combined_play.overrides;
+}
+
+namespace {
+// The host checks a writable field when it reads it back, so a value outside the field's range
+// would fail the mod even if the mod changed nothing. Such an event is not raised.
+bool holds(std::int64_t value, std::int64_t min, std::int64_t max) {
+    return value >= min && value <= max;
+}
+
+// Runs the handlers, then takes the kf.play and kf.game values they set.
+void raise_event(std::string_view event, std::span<verdite::ModEventValue> values) {
+    ext::host->raise(event, values);
+    ext::refresh_mod_play();
+}
+}
+
+s32 mods_player_damaged(s32 loss_hp) {
+    if (!ext::host || !holds(loss_hp, 0, 65535))
+        return loss_hp;
+    std::array<verdite::ModEventValue, 5> values{std::string_view{"player"}, std::int64_t{-1}, std::int64_t{-1},
+                                                 std::int64_t{loss_hp}, false};
+    raise_event("on_damage", values);
+    return static_cast<s32>(std::get<std::int64_t>(values[3]));
+}
+
+s32 mods_actor_damaged(const ActorHit &hit) {
+    if (!ext::host || !holds(hit.damage_hp, 0, 65535))
+        return hit.damage_hp;
+    std::array<verdite::ModEventValue, 5> values{std::string_view{"actor"}, std::int64_t{hit.actor_index},
+                                                 std::int64_t{hit.definition_id}, std::int64_t{hit.damage_hp},
+                                                 hit.by_player};
+    raise_event("on_damage", values);
+    return static_cast<s32>(std::get<std::int64_t>(values[3]));
+}
+
+s16 mods_actor_killed(const ActorHit &hit, s16 experience) {
+    // Only the player's kill gives experience, so only then is it offered to the mods.
+    const std::int64_t offered = hit.by_player ? experience : 0;
+    if (!ext::host || !holds(offered, 0, 32767))
+        return experience;
+    std::array<verdite::ModEventValue, 4> values{std::int64_t{hit.actor_index}, std::int64_t{hit.definition_id},
+                                                 offered, hit.by_player};
+    raise_event("on_kill", values);
+    if (!hit.by_player)
+        return experience;
+    return static_cast<s16>(std::get<std::int64_t>(values[2]));
+}
+
+void mods_level_up(u8 level) {
+    if (!ext::host)
+        return;
+    std::array<verdite::ModEventValue, 1> values{std::int64_t{level}};
+    raise_event("on_level_up", values);
+}
+
+void mods_item_picked_up(u16 item) {
+    if (!ext::host)
+        return;
+    std::array<verdite::ModEventValue, 1> values{std::int64_t{item}};
+    raise_event("on_item_pickup", values);
+}
+
+void mods_floor_loaded(u8 floor, u8 map_variant) {
+    const u8 from = ext::last_floor;
+    ext::last_floor = floor;
+    if (!ext::host)
+        return;
+    std::array<verdite::ModEventValue, 2> loaded{std::int64_t{floor}, std::int64_t{map_variant}};
+    raise_event("on_map_load", loaded);
+    if (floor == from)
+        return;
+    std::array<verdite::ModEventValue, 2> changed{std::int64_t{from}, std::int64_t{floor}};
+    raise_event("on_floor_change", changed);
+}
+
+void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page) {
+    if (!ext::host)
+        return;
+    std::array<verdite::ModEventValue, 4> values{std::int64_t{floor}, std::int64_t{character},
+                                                 std::int64_t{stage}, std::int64_t{page}};
+    raise_event("on_dialogue", values);
+}
+
+void mods_shop_opened(u8 bank) {
+    if (!ext::host)
+        return;
+    std::array<verdite::ModEventValue, 1> values{std::int64_t{bank}};
+    raise_event("on_shop", values);
+}
+
+void mods_player_died() {
+    if (!ext::host)
+        return;
+    raise_event("on_death", {});
+}
+
+void mods_new_game() {
+    if (ext::host)
+        ext::host->load_save_tables("{}");
+}
+
+void mods_game_saved(SaveSlot slot) {
+    if (!ext::host)
+        return;
+    const auto result = save_mods_write(slot, ext::host->save_tables());
+    if (result != SaveFileResult::Ok && result != SaveFileResult::Unavailable)
+        std::printf("[mods] cannot save the mods' save data (%d)\n", static_cast<int>(result));
+    std::array<verdite::ModEventValue, 1> values{kf_enum_encode<std::int64_t>(slot)};
+    raise_event("on_save", values);
+}
+
+void mods_game_loaded(SaveSlot slot) {
+    if (!ext::host)
+        return;
+    std::string json;
+    const auto result = save_mods_read(slot, json);
+    if (result != SaveFileResult::Ok) {
+        json = "{}";
+        if (result != SaveFileResult::Missing && result != SaveFileResult::Unavailable)
+            std::printf("[mods] cannot read the mods' save data (%d); starting empty\n", static_cast<int>(result));
+    }
+    ext::host->load_save_tables(json);
+    std::array<verdite::ModEventValue, 1> values{kf_enum_encode<std::int64_t>(slot)};
+    raise_event("on_load_game", values);
 }
 } // namespace kf

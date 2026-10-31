@@ -4,10 +4,10 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.3, what ships today. Where it is going, API 1.0, is
+This page documents API 0.4, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
-sandbox, budgets, `config`, `mod.*`) is libverdite's `verdite/mods.h`; KF1's
-tables are rows in `port/ext/mods.cpp`.
+sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
+`verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
 
 ## Where mods live
 
@@ -55,7 +55,8 @@ extension, Neovim and others then complete names and flag mistakes.
 * An error stops only that mod, as does going over its budget (below). The message and stack trace go to the Console
   (F1 → Console) and appear under the mod in the Mods panel. Fix the file and
   save; it reloads on its own.
-* The enabled flag and `config` are stored in `settings.json` next to the mods folder.
+* The enabled flag and `config` are stored in `settings.json` next to the mods folder;
+  `save` is stored with each save slot (below).
 
 ## Callbacks
 
@@ -71,6 +72,29 @@ Define any of these as globals:
 
 The game is paused while the F1 overlay is open (Settings → Interface), so
 `on_update` does not run then; `on_draw` still does.
+
+### Events
+
+The game raises these. A global function of the same name gets one table of
+the event's fields. Handlers run inline, at the point in the game where the
+thing happens, on the game's thread, so they see the state the game is about to
+use. A writable integer may be changed within its range; a value outside it is
+an error that stops the mod, as a `kf.player` write is. Nothing is cancellable
+yet. The events are listed in `kf.d.lua` too.
+
+| event | fields | when |
+|---|---|---|
+| `on_damage` | `target` string, `"player"` or `"actor"`; `actor` integer, the actor's slot (-1 for the player); `kind` integer, the actor's definition id (-1 for the player); `amount` integer, writable 0 to 65535, the HP lost (0 for none); `by_player` boolean, the player made the blow (false for the player's own damage) | a blow hits the player or an actor. Hazards, poison and falls are not blows: no event. `amount` is the blow's loss before `kf.play.invincible` ignores it. On coop, the machine running the floor raises it, once |
+| `on_kill` | `actor`, `kind`, `experience` integer, writable 0 to 32767 (the EXP the player gets; 0 unless the player made the kill, and writes are then ignored), `by_player` boolean | a blow kills an actor |
+| `on_level_up` | `level` integer, the new level | the player reaches a level |
+| `on_item_pickup` | `item` integer, the item id | the player takes an item from the ground |
+| `on_map_load` | `floor` integer (1 to 5), `map_variant` integer | a floor's map loads, including a reload of the same floor |
+| `on_floor_change` | `from` integer, `to` integer | the floor loaded differs from the last one loaded (`from` is 0 before any) |
+| `on_dialogue` | `floor`, `character`, `stage`, `page` integers | a dialogue page is shown |
+| `on_shop` | `bank` integer, the shop's stock bank | a shop opens |
+| `on_death` | none | the player dies, before the revival or restart |
+| `on_save` | `slot` integer: 1 to 3 the game's slots, 4 the quick save, 5 the game set aside in coop | the game is saved, after its save data is written: a change to `save` in this handler goes into the next save |
+| `on_load_game` | `slot` integer, as `on_save` | a save is loaded, after its save data is read |
 
 ## The sandbox and the budget
 
@@ -121,6 +145,30 @@ function on_settings()
 end
 ```
 
+## `save`
+
+A table kept with each save slot, in the game's save folder: `slot1.mods.json`,
+`slot2.mods.json` and `slot3.mods.json` beside the slots, `quick.mods.json`
+beside the quick save, and `aside.mods.json` beside the game set aside in coop.
+Its values are those of `config`, and each mod has its own part, by id.
+
+It is written when the game saves, and read when a save loads, before
+`on_load_game`. It is cleared when a new game starts, including the restart
+after a death without the Dragon King grass fruit; a revival keeps it. A mod that
+is disabled keeps its part in the save, and gets it back when enabled.
+
+A load replaces the table, so read `save.x` each time rather than keeping the
+table in a local:
+
+```lua
+function on_kill(kill)
+  if kill.by_player then
+    save.kills = save.kills or {}
+    save.kills[tostring(kill.kind)] = (save.kills[tostring(kill.kind)] or 0) + 1
+  end
+end
+```
+
 ## `kf`
 
 | call | returns |
@@ -136,7 +184,7 @@ end
 | `kf.player_fields()` | list of field names |
 | `kf.warp(floor [, cell_x, cell_z [, yaw]])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.3"` |
+| `kf.api_version` | `"0.4"` |
 
 `kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
@@ -215,8 +263,9 @@ interface scale.
 ## Examples
 
 `mods/stathud` (HUD drawing + settings), `mods/quickheal` (hotkey + writing
-player state) and `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) in
-this repository. Copy them into the mods folder to try them.
+player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
+`mods/killcount` (`on_kill` and the `save` table) in this repository. Copy them
+into the mods folder to try them.
 
 ## The plan: API 1.0
 
@@ -320,7 +369,9 @@ gameplay mods, compared by a hash; visual and HUD mods are free.
    Done in 0.3 (2026-10-31): position, `kf.warp`, `kf.world`'s story flags,
    `kf.game`, `kf.play` and `mods/debug`. Not yet: equipment, inventory, magic,
    doors, chests and the automap, which the decomp keeps no reveal state for.
-3. Events and the per-save `save` table.
+3. ~~Events and the per-save `save` table.~~ Done in 0.4 (2026-10-31): the
+   events above and `save`. Not yet: nothing is cancellable, and HP lost outside
+   blows (hazards, poison, falls) raises no event.
 4. Entities and rules.
 5. The generated raw layer.
 6. Asset overrides, audio, 3D drawing.
