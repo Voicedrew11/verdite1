@@ -1,18 +1,19 @@
 // Messages on the ground on this machine (docs/MESSAGES_PLAN.md): the board of the floor the player
 // is on, the marks the game draws, the action button and the message open for reading, and the
-// "Leave a message" window. Everything here runs on the game thread, as the board does.
+// Message Stone's menu (extra_items.cpp's row), which leaves a message on the player's cell. Everything
+// here runs on the game thread, as the board does.
 #include "internal.hpp"
+#include "item_menu.h"
 #include "message_reading.h"
+#include "message_writer.h"
 #include "messages.h"
 
-#include <imgui.h>
 #include <kf/platform/automap.h>
 #include <kf/platform/messages.h>
 #include <kf/platform/title.h>
 #include <verdite/message_sample.h>
 
 #include <algorithm>
-#include <array>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -35,14 +36,6 @@ constexpr const char *game_name = "kf1";
 constexpr std::size_t floor_records_most = 512;   // the most the board is copied to the game each change
 constexpr std::size_t mine_most = VO_RECORDS_PER_AUTHOR;
 
-// The writer's kinds of word, in the order its list shows them.
-constexpr std::array<MessageWordKind, 7> writer_kinds = {
-    MessageWordKind::Direction, MessageWordKind::Feature, MessageWordKind::Action, MessageWordKind::Enemy,
-    MessageWordKind::Person, MessageWordKind::Condition, MessageWordKind::Item};
-constexpr std::array<const char *, 7> writer_kind_names = {
-    "Direction", "Feature", "Action", "Enemy", "Person", "Condition", "Item"};
-static_assert(writer_kinds.size() == writer_kind_names.size());
-
 struct BoardClose {
     void operator()(vo_board *board) const { vo_board_close(board); }
 };
@@ -56,19 +49,6 @@ struct Held {
     bool mine = false;
 };
 
-// One of the player's own records, out on any floor.
-struct MineLine {
-    Message message;
-    std::uint32_t good = 0;
-};
-
-// What the writer has chosen so far.
-struct Draft {
-    std::optional<std::size_t> template_index;
-    Message message;                     // its words are message_no_word until chosen
-    std::array<std::size_t, 2> kind{};   // each blank's kind: an index into writer_kinds
-};
-
 struct Board {
     std::unique_ptr<vo_board, BoardClose> handle;
     bool open_failed = false;
@@ -76,27 +56,12 @@ struct Board {
     verdite::MessageSample sample{0};           // seeded when the board opens
     std::vector<Held> held;                      // the floor's records that decode and are on the map
     std::vector<Held> shown;                     // those the sample shows, in its order
-    std::vector<MineLine> mine;
+    std::vector<MessageOut> mine;                // the player's own, out on any floor
     OpenMessage reading;
     std::set<std::uint64_t> rated;               // rated by this player this session
     bool records_stale = false;                  // the floor was just entered: copy its records
-    Draft draft;
-    std::string status;                          // the writer's last line
 };
 Board board;
-
-// The English line a message reads as, in the writer and the player's list.
-std::string english_line(const Message &message) {
-    std::string line;
-    for (const MessagePiece &piece : message_pieces(message, Language::English))
-        line += piece.item == message_no_item ? piece.text : automap_item_name(piece.item);
-    return line;
-}
-
-std::string english_word(std::uint16_t word) {
-    const MessagePiece piece = message_word_piece(word, Language::English);
-    return piece.item == message_no_item ? piece.text : automap_item_name(piece.item);
-}
 
 // The line under the reading: what the action button does now.
 std::string prompt_for(Language language, bool can_rate) {
@@ -203,7 +168,6 @@ void leave_floor() {
     board.held.clear();
     board.shown.clear();
     board.reading.close();
-    board.draft = Draft{};
     board.sample.clear();
 }
 
@@ -277,116 +241,42 @@ std::optional<kf::MessageReading> reading_now(Language language, int floor, floa
     return reading;
 }
 
-// --- the writer ---
-
-void choose_template(std::size_t index) {
-    board.draft = Draft{};
-    board.draft.template_index = index;
-    board.draft.message.template_id = static_cast<std::uint8_t>(index);
-}
-
-void draw_template_choice() {
-    const auto templates = message_templates();
-    const std::optional<std::size_t> chosen = board.draft.template_index;
-    const std::string preview = chosen ? std::string(templates[*chosen].english) : "(choose)";
-    if (!ImGui::BeginCombo("Template", preview.c_str()))
-        return;
-    for (std::size_t index = 0; index < templates.size(); ++index) {
-        const std::string label(templates[index].english);
-        if (ImGui::Selectable(label.c_str(), chosen == index))
-            choose_template(index);
-    }
-    ImGui::EndCombo();
-}
-
-void draw_kind(std::size_t blank) {
-    std::size_t &kind = board.draft.kind[blank];
-    if (!ImGui::BeginCombo("Kind", writer_kind_names[kind]))
-        return;
-    for (std::size_t index = 0; index < writer_kind_names.size(); ++index) {
-        if (ImGui::Selectable(writer_kind_names[index], kind == index) && kind != index) {
-            kind = index;
-            board.draft.message.words[blank] = message_no_word;
-        }
-    }
-    ImGui::EndCombo();
-}
-
-void draw_word(std::size_t blank) {
-    std::uint16_t &chosen = board.draft.message.words[blank];
-    const std::string preview = chosen == message_no_word ? "(choose)" : english_word(chosen);
-    if (!ImGui::BeginCombo("Word", preview.c_str()))
-        return;
-    for (const MessageWord &word : message_words(writer_kinds[board.draft.kind[blank]])) {
-        const std::string label = english_word(word.id);
-        if (ImGui::Selectable(label.c_str(), chosen == word.id))
-            chosen = word.id;
-    }
-    ImGui::EndCombo();
-}
-
-void draw_blank(std::size_t blank) {
-    ImGui::PushID(static_cast<int>(blank));
-    draw_kind(blank);
-    draw_word(blank);
-    ImGui::PopID();
-}
-
-// Whether the draft has a template and a word for each of its blanks.
-bool draft_complete() {
-    const Draft &draft = board.draft;
-    if (!draft.template_index)
-        return false;
-    const std::size_t blanks = message_templates()[*draft.template_index].blanks;
-    return std::ranges::none_of(std::span(draft.message.words).first(blanks),
-        [](std::uint16_t word) { return word == message_no_word; });
-}
-
-// Posts the draft on the player's cell, facing where they look.
-void leave_here() {
+// Posts a message on the player's cell, facing where they look. False, and a line on the console,
+// when it cannot be left here.
+bool post_here(const Message &message) {
     const AutomapSnapshot &map = automap_snapshot();
     const auto place = message_place_encode(message_cell_at(map.player_x, map.player_z), map.player_yaw);
     if (!place) {
-        board.status = "Nothing was left: you are off the map.";
-        return;
+        std::printf("[messages] not left: the player is off the map\n");
+        return false;
     }
-    const auto payload = message_encode(board.draft.message);
+    const auto payload = message_encode(message);
     if (vo_board_post(board.handle.get(), *place, payload.data(), payload.size()) == 0) {
-        board.status = "Nothing was left: no floor is entered.";
-        return;
+        std::printf("[messages] not left: no floor is entered\n");
+        return false;
     }
-    board.status = "Left here.";
-    board.draft = Draft{};
+    return true;
 }
 
-void draw_writer(int floor) {
-    ImGui::TextDisabled("Floor %d. Left on the cell you stand on, facing where you look.", floor);
-    draw_template_choice();
-    if (board.draft.template_index) {
-        const std::size_t blanks = message_templates()[*board.draft.template_index].blanks;
-        for (std::size_t blank = 0; blank < blanks; ++blank)
-            draw_blank(blank);
-    }
-    if (draft_complete())
-        ImGui::TextWrapped("Preview: %s", english_line(board.draft.message).c_str());
-    ImGui::BeginDisabled(!draft_complete());
-    if (ImGui::Button("Leave it here"))
-        leave_here();
-    ImGui::EndDisabled();
-    if (!board.status.empty())
-        ImGui::TextWrapped("%s", board.status.c_str());
-}
+// The Message Stone's menu: the writer's pages, and a message it finishes is left here.
+class StoneMenu final : public ItemMenu {
+public:
+    StoneMenu() : writer_(item_menu_visible_rows) {}
 
-void draw_mine() {
-    ImGui::Separator();
-    ImGui::TextUnformatted("Your messages");
-    if (board.mine.empty()) {
-        ImGui::TextDisabled("None out.");
-        return;
+    ItemMenuState press(ItemMenuKey key) override {
+        const MessageWriter::Pressed pressed = writer_.press(key, board.mine);
+        if (pressed.state != ItemMenuState::Done || !pressed.left)
+            return pressed.state;
+        return post_here(*pressed.left) ? ItemMenuState::Done : ItemMenuState::Closed;
     }
-    for (const MineLine &line : board.mine)
-        ImGui::BulletText("%s  good %u", english_line(line.message).c_str(), line.good);
-}
+
+    ItemMenuPage page(Language language) const override {
+        return writer_.page(language, board.mine);
+    }
+
+private:
+    MessageWriter writer_;
+};
 
 #endif
 
@@ -410,27 +300,26 @@ void messages_poll() {
     board.reading.follow(map.player_x, map.player_z);   // a message closes once the player walks off
 }
 
-bool messages_available() {
+bool messages_stone_offered() {
     return board.floor.has_value();
 }
 
-void messages_draw_panel() {
+std::unique_ptr<ItemMenu> messages_stone_open() {
     if (!board.floor)
-        return;
-    draw_writer(*board.floor);
-    draw_mine();
+        return nullptr;
+    return std::make_unique<StoneMenu>();
 }
 
 #else
 
 void messages_poll() {}
 
-bool messages_available() {
+bool messages_stone_offered() {
     return false;
 }
 
-void messages_draw_panel() {
-    ImGui::TextWrapped("This build has no online play: messages on the ground need it.");
+std::unique_ptr<ItemMenu> messages_stone_open() {
+    return nullptr;
 }
 
 #endif

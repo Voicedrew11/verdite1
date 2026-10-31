@@ -73,10 +73,18 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..a8863e1adf19527767e95fc5b78781dc
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d300f304dc 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..7edb5385779a18dbbb62d2c12d8ad6d57c934e8e 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
-@@ -30,7 +30,9 @@ enum class KfMenuRootChoice : s32 {
+@@ -8,6 +8,7 @@
+ #include <kf/lib/menu_types.h>
+ #include <kf/lib/render_types.h>
+ #include <kf/lib/resource_file.h>
++#include <kf/platform/extra_items.h>
+ #include <kf/renderer/renderer.h>
+ 
+ #include <array>
+@@ -30,7 +31,9 @@ enum class KfMenuRootChoice : s32 {
      KF_ROOT_CHOICE_STATUS = 3,
      KF_ROOT_CHOICE_DROP_ITEM = 4,
      KF_ROOT_CHOICE_SYSTEM = 5,
@@ -87,7 +95,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d3
  }; using enum KfMenuRootChoice;
  
  enum class KfEquipmentMenuCategory : s32 {
-@@ -46,7 +48,7 @@ enum class KfEquipmentMenuCategory : s32 {
+@@ -46,7 +49,7 @@ enum class KfEquipmentMenuCategory : s32 {
  }; using enum KfEquipmentMenuCategory;
  
  enum {
@@ -96,7 +104,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d3
      KF_MENU_ROOT_ROW_COUNT = KF_MENU_ROOT_RETURN_ROW + 1,
      KF_MENU_EQUIPMENT_RETURN_ROW = kf_enum_encode<s32>(KF_EQUIP_MENU_ACCESSORY) + 1,
      KF_MENU_EQUIPMENT_ROW_COUNT = KF_MENU_EQUIPMENT_RETURN_ROW + 1,
-@@ -55,6 +57,7 @@ enum {
+@@ -55,6 +58,7 @@ enum {
      KF_MENU_CONFIG_GAUGES_ROW = 2,
      KF_MENU_CONFIG_COMPASS_ROW = 3,
      KF_MENU_CONFIG_SETTING_COUNT = KF_MENU_CONFIG_COMPASS_ROW + 1,
@@ -104,7 +112,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d3
      KF_MENU_CONFIG_LANGUAGE_ROW = KF_MENU_CONFIG_SETTING_COUNT,
      KF_MENU_CONFIG_RETURN_ROW = KF_MENU_CONFIG_LANGUAGE_ROW + 1,
      KF_MENU_CONFIG_ROW_COUNT = KF_MENU_CONFIG_RETURN_ROW + 1
-@@ -182,6 +185,9 @@ enum {
+@@ -182,6 +186,9 @@ enum {
  };
  
  enum {
@@ -114,7 +122,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d3
      MENU_OVERLAY_OT_DEPTH = 500,
      MENU_CONTENT_OT_DEPTH = 1000,
      MENU_WIDGET_OT_DEPTH = 2000,
-@@ -271,6 +277,12 @@ struct KfMenuResources {
+@@ -271,6 +278,12 @@ struct KfMenuResources {
  
  const KfMenuResources &menu_resources();
  bool menu_prepare_language(kf::Language language);
@@ -127,7 +135,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d3
  
  typedef struct KfMenuList {
      MenuPoint title_position;
-@@ -329,7 +341,12 @@ extern void menu_blit_sprite(
+@@ -329,7 +342,12 @@ extern void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position);
  extern void menu_blit_sprite_translucent(
      const MenuSpriteDef *sprite, const MenuPoint *position);
@@ -140,7 +148,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d3
  extern void menu_resources_reload(void);
  extern void menu_draw_save_slots(
      std::span<const KfSaveSlotSummary> summaries, KfSaveSlotOverlay slot_overlay);
-@@ -340,7 +357,20 @@ extern void menu_draw_number(
+@@ -340,7 +358,23 @@ extern void menu_draw_number(
      const MenuSpriteDef *font, const MenuGlyphString *string);
  extern void menu_draw_string(
      const MenuSpriteDef *font, const MenuGlyphString *string);
@@ -158,10 +166,13 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..c6dd8a2eb209b11dd28d3ba496d857d3
 +// menu_title_draw draws this frame's page, true when it is the top page.
 +extern bool menu_title_prepare(void);
 +extern bool menu_title_draw(void);
++// PC extension: the menu an extra item opens (kf/platform/extra_items.h), driven until a press
++// returns something other than Open. Its page is drawn from kf::item_menu_page.
++extern kf::ItemMenuState menu_item_menu(void);
  extern void menu_draw_status_summary(void);
  extern void menu_draw_status_details(void);
  struct MenuChoiceLabel;
-@@ -358,6 +388,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+@@ -358,6 +392,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
  extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
  extern void menu_frame_begin(void);
  extern void menu_item_model_preview(KfObjectId item_id);

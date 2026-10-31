@@ -3,6 +3,7 @@
 // own rules (player_use_item, menu_use_item_panel, the COM.DAT equipment
 // records, which tick at 20 per second) and the Sword of Moonlight wiki.
 #include "internal.hpp"
+#include "item_menu.h"
 #include <imgui.h>
 #include <kf/platform/host.h>
 #include <algorithm>
@@ -90,6 +91,8 @@ static_assert(sizeof descriptions / sizeof descriptions[0] == 80, "one entry per
 }
 
 std::string item_description(std::uint8_t id) {
+    if (const ExtraItem *extra = extra_item(id))
+        return std::string(extra->description);
     // Weapon magic: the requirements are the game's checks in player_update_weapon_magic.
     switch (id) {
     case 3:

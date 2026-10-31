@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <span>
 #include <string_view>
 #include <string>
@@ -163,10 +164,10 @@ bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
 
 // ---- messages on the ground (messages_board.cpp, docs/MESSAGES_PLAN.md) ----
 void messages_poll();            // on every host poll: the floor's board, entered and left
-bool messages_available();       // a floor is entered: the writer is offered
-void messages_draw_panel();      // the Leave a message window: the writer and the player's own
-// The item's name as the automap spells it (automap.cpp), for the writer's English lines.
-std::string automap_item_name(u8 id);
+// The message stone (extra_items.cpp's row): offered while a floor is entered, and its menu, which
+// leaves a message on the player's cell and lists their own.
+bool messages_stone_offered();
+std::unique_ptr<class ItemMenu> messages_stone_open();
 // The Verdite service the online play uses (online.cpp), for the messages' board.
 std::string online_service_url();
 

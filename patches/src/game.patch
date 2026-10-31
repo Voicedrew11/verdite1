@@ -1551,19 +1551,21 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f7
  
              default:
 diff --git a/src/game/menu.cpp b/src/game/menu.cpp
-index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..27eb223583788e40059af1fde051b44ff8d9b6c6 100644
+index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..9c60ad56a292d716b6ebee8a497f2a8764b41ab9 100644
 --- a/src/game/menu.cpp
 +++ b/src/game/menu.cpp
-@@ -3,6 +3,8 @@
+@@ -2,7 +2,10 @@
+ #include <kf/game/game.h>
  #include <kf/game/menu.h>
  #include <kf/lib/null.h>
++#include <kf/platform/extra_items.h>
  #include <kf/platform/input.h>
 +#include <kf/platform/menu_pointer.h>
 +#include <kf/platform/screen.h>
  
  #include <array>
  #include <optional>
-@@ -15,6 +17,8 @@ static std::optional<KfObjectId> menu_use_item_panel(void);
+@@ -15,6 +18,8 @@ static std::optional<KfObjectId> menu_use_item_panel(void);
  void menu_save_confirm(void)
  {
      const auto input_context = kf::host_set_input_context(kf::InputContext::Menu);
@@ -1572,7 +1574,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..27eb223583788e40059af1fde051b44f
      s32 i;
  
      i = 0;
-@@ -28,6 +32,7 @@ void menu_save_confirm(void)
+@@ -28,6 +33,7 @@ void menu_save_confirm(void)
      menu_play_input_sound(MENU_SOUND_CURSOR);
      kf::host_wait_buttons_released();
      menu_save_panel();
@@ -1580,7 +1582,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..27eb223583788e40059af1fde051b44f
      kf::host_set_input_context(input_context);
  }
  
-@@ -89,6 +94,10 @@ KfMenuOutcome menu_root(void)
+@@ -89,6 +95,10 @@ KfMenuOutcome menu_root(void)
          case KF_ROOT_CHOICE_CONFIG:
              menu_config_panel();
              break;
@@ -1591,7 +1593,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..27eb223583788e40059af1fde051b44f
          }
          if (result) {
              selection = KF_ROOT_CHOICE_NONE;
-@@ -121,6 +130,10 @@ KfMenuOutcome menu_root(void)
+@@ -121,6 +131,10 @@ KfMenuOutcome menu_root(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KfMenuOutcome{KfMenuAction::Close};
@@ -1602,6 +1604,57 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..27eb223583788e40059af1fde051b44f
          }
          menu_frame_begin();
          menu_draw_status_summary();
+@@ -137,6 +151,17 @@ enum {
+     DRAGON_KING_GRASS_FRUIT_HP_RECOVERY = 300
+ };
+ 
++// PC extension: uses an extra item from the Use list. Done when the item was used up; its menu
++// having closed (Closed) leaves the list as it was.
++static kf::ItemMenuState menu_use_extra_item(KfObjectId item_id)
++{
++    menu_release_item_model();
++    kf::ItemMenuState state = kf::extra_item_use(kf_enum_encode<u8>(item_id));
++    if (state == kf::ItemMenuState::Open)
++        state = menu_item_menu();
++    return state;
++}
++
+ static std::optional<KfObjectId> menu_use_item_panel(void)
+ {
+     KfMenuList ctx;
+@@ -179,6 +204,14 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
+             found++;
+         }
+     }
++    // PC extension: the port's extra items, one each (kf/platform/extra_items.h).
++    for (const u8 extra : kf::extra_items_offered()) {
++        if (found >= static_cast<s32>(MENU_INVENTORY_ENTRY_CAPACITY))
++            break;
++        quantities[found] = 1;
++        item_ids[found] = kf_enum_decode<KfObjectId>(extra);
++        found++;
++    }
+     ctx.entry_count = found;
+     ctx.entries = std::span<const KfObjectId>(item_ids).first(found);
+     ctx.quantities = quantities;
+@@ -221,7 +254,16 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
+                 return std::nullopt;
+         } else if (kf::button_pressed(input, prev, kf::Button::Confirm)) {
+             menu_play_input_sound(MENU_SOUND_CONFIRM);
+-            if (item_ids[ctx.selected_index] == KF_ITEM_WATCHMAN_MAP || item_ids[ctx.selected_index] == KF_ITEM_SORCERER_MAP) {
++            // PC extension: an extra item's menu, then back to the list unless it was used up.
++            if (kf::extra_item_is(kf_enum_encode<u8>(item_ids[ctx.selected_index]))) {
++                if (menu_use_extra_item(item_ids[ctx.selected_index]) == kf::ItemMenuState::Done) {
++                    selection = item_ids[ctx.selected_index];
++                    result = KF_MENU_RESULT_ACCEPTED;
++                    continue;
++                }
++                if (menu_load_item_model(item_ids[ctx.selected_index]) != KF_RESOURCE_LOADED)
++                    return std::nullopt;
++            } else if (item_ids[ctx.selected_index] == KF_ITEM_WATCHMAN_MAP || item_ids[ctx.selected_index] == KF_ITEM_SORCERER_MAP) {
+                 menu_release_item_model();
+                 menu_map_viewer(item_ids[ctx.selected_index]);
+                 menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
 diff --git a/src/game/menu_enter_mode.cpp b/src/game/menu_enter_mode.cpp
 index 28e999d5981c92f4abd18339b757abc90913a319..8dafb49fe21ff6410a8f57186d1a36a9907df98d 100644
 --- a/src/game/menu_enter_mode.cpp
@@ -1684,15 +1737,16 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee1a299965 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3bb4ba4971 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
-@@ -7,8 +7,15 @@
+@@ -7,8 +7,16 @@
  #include <kf/game/resources.h>
  #include <kf/lib/null.h>
  #include <kf/lib/render_face.h>
 +#include <kf/platform/host.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/extra_items.h>
  #include <kf/platform/input.h>
 +#include <kf/platform/menu_pointer.h>
 +#include <kf/platform/automap.h>
@@ -1703,7 +1757,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
  #include <array>
  #include <cstdio>
  #include <cstdlib>
-@@ -94,12 +101,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
+@@ -94,12 +102,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
      kf::host_enqueue_face(face);
  }
  
@@ -1744,7 +1798,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
  }
  
  static void menu_draw_backdrop_tile(s32 x, s32 y, bool flip_x, bool flip_y)
-@@ -176,6 +211,8 @@ void menu_drop_item_panel(void)
+@@ -176,6 +212,8 @@ void menu_drop_item_panel(void)
              quantities[found] = player_stock[item_id];
              if (player_item_is_equipped(kf_enum_decode<KfObjectId>(item_id)))
                  quantities[found]--;
@@ -1753,7 +1807,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
              if (quantities[found] != 0) {
                  item_ids[found] = kf_enum_decode<KfObjectId>(item_id);
                  found++;
-@@ -266,6 +303,9 @@ KfMenuAction menu_system_panel(void)
+@@ -266,6 +304,9 @@ KfMenuAction menu_system_panel(void)
          case KF_MENU_SYSTEM_ACTION_QUIT:
              result = menu_two_option_prompt(
                  KF_MENU_WINDOW_SYSTEM, KF_MENU_SYSTEM_ROW_COUNT, cursor, {});
@@ -1763,7 +1817,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
              if (result == KF_MENU_RESULT_ACCEPTED) {
                  menu_load_texture(MENU_TEXTURE_POWER_OFF);
                  audio_stop_sequence_fade();
-@@ -313,6 +353,10 @@ KfMenuAction menu_system_panel(void)
+@@ -313,6 +354,10 @@ KfMenuAction menu_system_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1774,7 +1828,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
          }
  
          menu_frame_begin();
-@@ -415,6 +459,10 @@ KfMenuResult menu_save_panel(void)
+@@ -415,6 +460,10 @@ KfMenuResult menu_save_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1785,7 +1839,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
          }
  
          menu_frame_begin();
-@@ -518,6 +566,10 @@ KfMenuResult menu_load_panel(void)
+@@ -518,6 +567,10 @@ KfMenuResult menu_load_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1796,7 +1850,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
          }
  
          menu_frame_begin();
-@@ -630,11 +682,21 @@ void menu_config_panel(void)
+@@ -630,11 +683,21 @@ void menu_config_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1819,7 +1873,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
              menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1173,6 +1235,212 @@ enum {
+@@ -1173,6 +1236,226 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -2029,10 +2083,24 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
 +    menu_stats_compare = category;
 +}
 +
++// PC extension: an extra item's name, spelled in the menu font where the disc's glyph row is empty.
++// False for a disc item, whose name the caller draws from its glyph row.
++static bool menu_draw_extra_item_name(KfObjectId item_id, MenuPoint at)
++{
++    if (item_id == KF_OBJECT_NONE)
++        return false;
++    const auto language = game_text_language();
++    const std::string name = kf::extra_item_name(kf_enum_encode<u8>(item_id), language);
++    if (name.empty())
++        return false;
++    menu_draw_text(menu_spell(name, language), at, 1.0f);
++    return true;
++}
++
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1180,10 +1448,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1463,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -2051,7 +2119,29 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1241,9 +1514,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1196,7 +1484,8 @@ void menu_item_model_preview(KfObjectId item_id)
+         text.position.x = MENU_ITEM_NAME_X;
+         text.position.y = MENU_ITEM_PREVIEW_NAME_Y;
+         text.glyphs = menu_resources().items[kf_enum_encode<s32>(item_id)];
+-        menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
++        if (!menu_draw_extra_item_name(item_id, text.position))
++            menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
+ 
+         text.position.x = MENU_INVENTORY_QUANTITY_LABEL_X;
+         text.glyphs.codes[0] = menu_glyphs::quantity[0];
+@@ -1206,7 +1495,10 @@ void menu_item_model_preview(KfObjectId item_id)
+         menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
+ 
+         text.position.x = MENU_INVENTORY_QUANTITY_VALUE_X;
+-        menu_format_number(item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<s32>(item_id)], MENU_ITEM_PREVIEW_QUANTITY_DIGITS, KF_FORMAT_PAD_SPACES, text.glyphs.codes);
++        // PC extension: an extra item is not in the stock; the player holds one.
++        const u8 held = kf::extra_item_is(kf_enum_encode<u8>(item_id)) ? 1
++            : item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<s32>(item_id)];
++        menu_format_number(held, MENU_ITEM_PREVIEW_QUANTITY_DIGITS, KF_FORMAT_PAD_SPACES, text.glyphs.codes);
+         menu_draw_number(&menu_resources().assets.number_atlas, &text);
+     }
+ }
+@@ -1241,9 +1533,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -2068,7 +2158,17 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1480,6 +1757,10 @@ static KfMenuResult menu_list_confirm_impl(
+@@ -1256,7 +1552,8 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+     text.position.x = MENU_ITEM_NAME_X;
+     text.position.y = MENU_ITEM_PREVIEW_NAME_Y;
+     text.glyphs = menu_resources().items[kf_enum_encode<s32>(item_id)];
+-    menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
++    if (!menu_draw_extra_item_name(item_id, text.position))
++        menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
+ 
+     text.position.x = MENU_ITEM_DETAIL_PRICE_X;
+     text.position.y += MENU_ITEM_PREVIEW_LINE_HEIGHT;
+@@ -1480,6 +1777,10 @@ static KfMenuResult menu_list_confirm_impl(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2079,7 +2179,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
          }
          draw_preview();
          menu_list_render(list);
-@@ -1546,6 +1827,10 @@ KfMenuResult menu_two_option_prompt(
+@@ -1546,6 +1847,10 @@ KfMenuResult menu_two_option_prompt(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2090,7 +2190,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
          }
  
          menu_frame_begin();
-@@ -1556,12 +1841,22 @@ KfMenuResult menu_two_option_prompt(
+@@ -1556,12 +1861,22 @@ KfMenuResult menu_two_option_prompt(
      }
  }
  
@@ -2113,7 +2213,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
      if (layout->title.position.x != 0) {
          menu_blit_sprite_translucent(
              &menu_resources().assets.row_background, &layout->title.position);
-@@ -1570,7 +1865,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1570,7 +1885,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
      if (row_count > 0) {
          row = 0;
          do {
@@ -2124,7 +2224,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
                  menu_blit_sprite_translucent(&menu_resources().assets.row_confirmed_background,
                      &layout->rows[row].position);
              } else {
-@@ -1587,6 +1884,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1587,6 +1904,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
                  text.position.x = CONFIG_OPTION_ON_X;
                  text.glyphs = menu_label(MenuLabel::LanguageName);
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
@@ -2137,7 +2237,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
              } else {
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &layout->rows[row]);
              }
-@@ -1622,6 +1925,7 @@ void menu_list_render(const KfMenuList *list)
+@@ -1622,6 +1945,7 @@ void menu_list_render(const KfMenuList *list)
      u32 tens;
      u32 ones;
  
@@ -2145,7 +2245,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
      const MenuGlyphString title{list->title_position,
          menu_resources().windows[kf_enum_encode<s32>(list->title_window)].rows[list->title_row].glyphs};
      if (list->title_position.x != 0) {
-@@ -1637,6 +1941,10 @@ void menu_list_render(const KfMenuList *list)
+@@ -1637,6 +1961,10 @@ void menu_list_render(const KfMenuList *list)
              text.position.x = list->list_x + MENU_LIST_TEXT_INSET;
              text.position.y = list->list_y + MENU_LIST_TEXT_INSET;
              text.position.y += row * MENU_LIST_ROW_HEIGHT;
@@ -2156,7 +2256,21 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
              const auto index = list->scroll_offset + row;
              text.glyphs = std::visit([index](auto entries) {
                  const auto id = entries[index];
-@@ -1701,6 +2009,12 @@ enum {
+@@ -1647,8 +1975,11 @@ void menu_list_render(const KfMenuList *list)
+                     return id == KF_MAGIC_NONE ? menu_label(MenuLabel::Unequip)
+                         : menu_resources().magic[kf_enum_encode<u8>(id)];
+             }, list->entries);
+-            menu_draw_string(
+-                &menu_resources().assets.glyph_atlas, &text);
++            // PC extension: an extra item's name is spelled, not drawn from its empty glyph row.
++            const auto *item_ids = std::get_if<std::span<const KfObjectId>>(&list->entries);
++            if (!item_ids || !menu_draw_extra_item_name((*item_ids)[index], text.position))
++                menu_draw_string(
++                    &menu_resources().assets.glyph_atlas, &text);
+             if (!list->quantities.empty()) {
+                 tens = list->quantities[index] / 10u;
+                 ones = list->quantities[index] % 10u;
+@@ -1701,6 +2032,12 @@ enum {
      MENU_PICKUP_BACKDROP_RIGHT_X = MENU_PICKUP_BACKDROP_LEFT_X + MENU_BACKDROP_COLUMN_STEP
  };
  
@@ -2169,7 +2283,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
  enum {
      MENU_FONT_COLUMNS = 16,
      MENU_FONT_CELL_WIDTH = 14,
-@@ -1716,6 +2030,16 @@ void menu_draw_two_option(
+@@ -1716,6 +2053,16 @@ void menu_draw_two_option(
      const MenuChoiceLabel *accept_label, const MenuChoiceLabel *decline_label,
      KfMenuConfirmChoice selected_choice, KfMenuConfirmState confirmation)
  {
@@ -2186,7 +2300,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
      if (selected_choice == KF_MENU_CHOICE_ACCEPT) {
          menu_blit_sprite(&menu_resources().assets.selection_cursor, &accept_label->position);
      } else {
-@@ -1791,6 +2115,26 @@ void menu_blit_sprite_translucent(
+@@ -1791,6 +2138,26 @@ void menu_blit_sprite_translucent(
      menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
  }
  
@@ -2213,7 +2327,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2198,119 @@ void menu_draw_number(
+@@ -1854,10 +2221,254 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -2288,6 +2402,141 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0cf7a95b9dc7f75147df6e90ec11c7ee
 +    }
 +    menu_draw_centred_line(line, message_y);
 +    menu_draw_centred_line(menu_spell(reading->prompt, language), static_cast<s16>(message_y + prompt_row_step));
++}
++
++// PC extension: the menu an extra item opens (kf/platform/extra_items.h), drawn with the title and
++// settings pages' boxes, cursor and font. Its lines are pieces: text, item names and blanks.
++enum {
++    ITEM_MENU_TITLE_X = 12,
++    ITEM_MENU_TITLE_Y = 19,
++    ITEM_MENU_ROW_X = 26,
++    ITEM_MENU_FIRST_ROW_Y = 41,
++    ITEM_MENU_ROW_STEP = 22,
++    ITEM_MENU_FOOTER_Y = 206,
++    ITEM_MENU_FOOTER_STEP = 14,
++    ITEM_MENU_TEXT_INSET = 6,
++    // A translucent box sprite sits this far up and left of its text's place.
++    ITEM_MENU_BOX_X_OFFSET = 4,
++    ITEM_MENU_BLANK_ADVANCE = 24,
++    // The Japanese label font's long vowel, drawn as the dash of a blank.
++    ITEM_MENU_LONG_VOWEL_GLYPH = 0x2d
++};
++
++// A blank is a dash in Japanese and a gap in English, where the label font has no dash.
++static void menu_item_menu_blank(std::vector<MenuTextGlyph> &line, kf::Language language)
++{
++    if (language == kf::Language::Japanese) {
++        line.push_back({MenuTextFont::Label, ITEM_MENU_LONG_VOWEL_GLYPH, 0, ITEM_MENU_BLANK_ADVANCE});
++    } else if (!line.empty()) {
++        line.back().advance += ITEM_MENU_BLANK_ADVANCE;
++    }
++}
++
++static void menu_item_menu_append_item(std::vector<MenuTextGlyph> &line, u8 item, kf::Language language)
++{
++    const std::string name = kf::extra_item_name(item, language);
++    if (!name.empty())
++        menu_spell_onto(line, name, language);
++    else if (item < KF_ITEM_COUNT)
++        menu_append_item_name(line, item);
++}
++
++static std::vector<MenuTextGlyph> menu_item_menu_spell(const kf::ItemMenuLine &pieces, kf::Language language)
++{
++    std::vector<MenuTextGlyph> line;
++    for (const kf::MessageTextPiece &piece : pieces) {
++        if (piece.text == kf::item_menu_blank)
++            menu_item_menu_blank(line, language);
++        else
++            menu_spell_onto(line, piece.text, language);
++        if (piece.item != kf::message_text_only)
++            menu_item_menu_append_item(line, piece.item, language);
++    }
++    return line;
++}
++
++static void menu_item_menu_draw_title(const kf::ItemMenuLine &pieces, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    const MenuPoint heading_at{ITEM_MENU_TITLE_X, ITEM_MENU_TITLE_Y};
++    menu_blit_sprite_translucent(&assets.row_background, &heading_at);
++    menu_draw_text(menu_item_menu_spell(pieces, language),
++        MenuPoint{ITEM_MENU_TITLE_X + ITEM_MENU_TEXT_INSET - ITEM_MENU_BOX_X_OFFSET, ITEM_MENU_TITLE_Y}, 1.0f);
++}
++
++// A row in a box as wide as its text needs, the cursor on the selected one.
++static void menu_item_menu_draw_row(const kf::ItemMenuLine &pieces, s32 row, bool selected, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    const auto label = menu_item_menu_spell(pieces, language);
++    const s32 box_width = std::max<s32>(assets.row_background.width, menu_text_width(label) + 2 * ITEM_MENU_TEXT_INSET);
++    MenuPoint at{ITEM_MENU_ROW_X, static_cast<s16>(ITEM_MENU_FIRST_ROW_Y + row * ITEM_MENU_ROW_STEP)};
++    menu_blit_box_translucent(assets.row_background, at, box_width);
++    if (selected)
++        menu_blit_sprite(&assets.selection_cursor, &at);
++    menu_draw_text(label, MenuPoint{static_cast<s16>(at.x + ITEM_MENU_TEXT_INSET - ITEM_MENU_BOX_X_OFFSET), at.y}, 1.0f);
++}
++
++static void menu_item_menu_draw_footer(const std::vector<kf::ItemMenuLine> &footer, kf::Language language)
++{
++    for (std::size_t i = 0; i < footer.size(); i++) {
++        const MenuPoint at{ITEM_MENU_ROW_X, static_cast<s16>(ITEM_MENU_FOOTER_Y + i * ITEM_MENU_FOOTER_STEP)};
++        menu_draw_text(menu_item_menu_spell(footer[i], language), at, 1.0f);
++    }
++}
++
++static void menu_item_menu_draw_page(void)
++{
++    const kf::Language language = game_text_language();
++    const kf::ItemMenuPage page = kf::item_menu_page(language);
++    menu_item_menu_draw_title(page.title, language);
++    for (std::size_t i = 0; i < page.rows.size(); i++)
++        menu_item_menu_draw_row(page.rows[i], static_cast<s32>(i), i == page.cursor, language);
++    menu_item_menu_draw_footer(page.footer, language);
++    menu_enqueue_background();
++}
++
++struct ItemMenuBinding {
++    kf::Button button;
++    kf::ItemMenuKey key;
++    KfMenuSoundCue cue;
++};
++constexpr std::array<ItemMenuBinding, 4> item_menu_bindings = {{
++    {kf::Button::Up, kf::ItemMenuKey::Up, MENU_SOUND_CURSOR},
++    {kf::Button::Down, kf::ItemMenuKey::Down, MENU_SOUND_CURSOR},
++    {kf::Button::Confirm, kf::ItemMenuKey::Confirm, MENU_SOUND_CONFIRM},
++    {kf::Button::Back, kf::ItemMenuKey::Back, MENU_SOUND_CANCEL_OR_ERROR},
++}};
++
++// One pad read: the first press with a binding goes to the page, with its cue.
++static kf::ItemMenuState menu_item_menu_input(u32 input, u32 prev)
++{
++    for (const ItemMenuBinding &binding : item_menu_bindings) {
++        if (!kf::button_pressed(input, prev, binding.button))
++            continue;
++        menu_play_input_sound(binding.cue);
++        return kf::item_menu_press(binding.key);
++    }
++    return kf::ItemMenuState::Open;
++}
++
++kf::ItemMenuState menu_item_menu(void)
++{
++    kf::ItemMenuState state = kf::ItemMenuState::Open;
++    u32 input = 0;
++    u32 prev;
++
++    kf::host_wait_buttons_released();
++    while (state == kf::ItemMenuState::Open) {
++        menu_frame_begin();
++        prev = input;
++        input = kf::host_read_buttons();
++        state = menu_item_menu_input(input, prev);
++        menu_item_menu_draw_page();
++        menu_present_frame();
++    }
++    kf::host_wait_buttons_released();
++    return state;
 +}
 +
 +void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade, s32 depth)
@@ -4054,16 +4303,31 @@ index a30de1fda381916646ae0970dd325eae46425ce7..8e5954c496931d747bee3dca634519e1
          }
          player_update_movement_input(input);
 diff --git a/src/game/player_use_item.cpp b/src/game/player_use_item.cpp
-index b4dc15cd178b02cc492d80830474a514ddb80702..f82cb62f351a81ee7fd84eb808154a3187e9466f 100644
+index b4dc15cd178b02cc492d80830474a514ddb80702..0ced05e7677ccfcb745256433c8de6f22dd5b8c6 100644
 --- a/src/game/player_use_item.cpp
 +++ b/src/game/player_use_item.cpp
-@@ -1,4 +1,5 @@
+@@ -1,8 +1,10 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/online_players.h>
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/player.h>
-@@ -102,8 +103,10 @@ void player_use_item(KfObjectId item_id)
+ #include <kf/lib/null.h>
++#include <kf/platform/extra_items.h>
+ 
+ #include <array>
+ 
+@@ -52,6 +54,9 @@ void map_event_show_person_image(const KfMapEvent *event)
+ 
+ void player_use_item(KfObjectId item_id)
+ {
++    // PC extension: an extra item's menu opens from the Use list, so it is never "nothing happens".
++    if (kf::extra_item_is(kf_enum_encode<u8>(item_id)))
++        return;
+     KfMapObject *object;
+     KfActor *actor;
+     KfMapEvent *event;
+@@ -102,8 +107,10 @@ void player_use_item(KfObjectId item_id)
                      if (object->link.link_id == kf_enum_encode<u8>(item_id)) {
                          object->link.link_id = KF_MAP_LINK_NONE;
                          sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_KEY_UNLOCK], PLAYER_KEY_UNLOCK_VOLUME);
@@ -4074,7 +4338,7 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..f82cb62f351a81ee7fd84eb808154a31
                          }
                      } else {
                          notify_enqueue(KF_NOTIFICATION_KEY_DOES_NOT_FIT);
-@@ -113,6 +116,8 @@ void player_use_item(KfObjectId item_id)
+@@ -113,6 +120,8 @@ void player_use_item(KfObjectId item_id)
              }
              index++;
          }
@@ -4083,7 +4347,7 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..f82cb62f351a81ee7fd84eb808154a31
          break;
  
      case KF_ITEM_DRAGON_CHALICE:
-@@ -165,6 +170,7 @@ void player_use_item(KfObjectId item_id)
+@@ -165,6 +174,7 @@ void player_use_item(KfObjectId item_id)
              break;
          }
          sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_HARP], KF_AUDIO_MAX_VOLUME);
@@ -5035,6 +5299,31 @@ index 55e9edcbc4495d8cc7075c10334d57e8863d727d..f02ffdf13e557f83b720bb2c9acc01d6
 +    render_carry_screen_face(face);
      render_face_submit(&face, {&game_graphics_runtime.active_render_color, 1},
          kf::FaceShading::Flat, HUD_SPRITE_OT_DEPTH);
+ }
+diff --git a/src/game/resource_file.cpp b/src/game/resource_file.cpp
+index a89ed01864d01ed77774c0159d4d4234cf179f4e..80fd4319e6c80be8a3273ce72395b4712e14f208 100644
+--- a/src/game/resource_file.cpp
++++ b/src/game/resource_file.cpp
+@@ -1,6 +1,7 @@
+ #include <kf/platform/prelude.h>
+ #include <kf/game/resource_file.h>
+ #include <kf/game/resources.h>
++#include <kf/platform/extra_items.h>
+ 
+ #include <array>
+ 
+@@ -28,7 +29,11 @@ KfResourceLoadResult resource_file_load_item_model(u8 **destination, s32 index,
+ {
+     *destination = NULL;
+     *loaded_size = 0;
+-    if (index < 0 || index >= KF_ITEM_COUNT || !item_model_files[index].size)
++    if (index < 0 || index >= KF_ITEM_COUNT)
++        return KF_RESOURCE_LOAD_FAILED;
++    // PC extension: an extra item shows the model of the disc item it stands for (kf/platform/extra_items.h).
++    index = kf::extra_item_model(static_cast<u8>(index));
++    if (!item_model_files[index].size)
+         return KF_RESOURCE_LOAD_FAILED;
+     return resource_file_try_load_allocated(memory_arena, destination, item_model_files[index].path.data(), loaded_size);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
 index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466029f4951 100644
