@@ -6,7 +6,7 @@ function on_load()
   kf.log("press " .. keys[config.key] .. " to heal")
 end
 
-function on_frame()
+function on_update()
   if kf.context() ~= "gameplay" then return end
   if kf.key_pressed(keys[config.key]) then
     local p = kf.player

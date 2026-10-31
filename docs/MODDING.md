@@ -4,8 +4,10 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.1, what ships today. Where it is going, API 1.0, is
-planned under [The plan](#the-plan-api-10).
+This page documents API 0.2, what ships today. Where it is going, API 1.0, is
+planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
+sandbox, budgets, `config`, `mod.*`) is libverdite's `verdite/mods.h`; KF1's
+tables are rows in `port/ext/mods.cpp`.
 
 ## Where mods live
 
@@ -32,7 +34,17 @@ mods/stathud/main.lua
 ```
 
 Only `main.lua` is required; `id` defaults to the folder name and `entry` to
-`main.lua`. `require("other")` loads `other.lua` from the same folder.
+`main.lua`. `require("other")` loads `other.lua` from the same folder
+(`require("lib.util")` loads `lib/util.lua` or `lib/util/init.lua`). Two
+folders with the same `id`: the second is listed with an error and never runs.
+
+## Editor support
+
+At start the game writes `mods/kf.d.lua`, a Lua Language Server `---@meta`
+file listing every callback, table, function and field with its type, made
+from the same tables as the bindings. The example mods carry a `.luarc.json`
+pointing at it (`"workspace.library": ["../kf.d.lua"]`); VS Code's Lua
+extension, Neovim and others then complete names and flag mistakes.
 
 ## Live reload
 
@@ -40,7 +52,7 @@ Only `main.lua` is required; `id` defaults to the folder name and `entry` to
   Mods panel immediately; mods start **disabled**, like Verdite2.
 * Saving any `.lua` file or `mod.json` in an enabled mod reloads it: `on_unload`
   runs, the Lua state is discarded, and the mod starts fresh.
-* An error stops only that mod. The message and stack trace go to the Console
+* An error stops only that mod, as does going over its budget (below). The message and stack trace go to the Console
   (F1 → Console) and appear under the mod in the Mods panel. Fix the file and
   save; it reloads on its own.
 * The enabled flag and `config` are stored in `settings.json` next to the mods folder.
@@ -52,19 +64,55 @@ Define any of these as globals:
 | function | when |
 |---|---|
 | `on_load()` | after the script runs, on every (re)load |
-| `on_frame()` | once per game update, when the game hands over its picture (gameplay, menus, cutscenes); not per displayed frame, which smoothing makes more frequent |
+| `on_update()` | once per game update, when the game hands over its picture (gameplay, menus, cutscenes); not per displayed frame, which smoothing makes more frequent. Read and change game state here. `on_frame()`, its 0.1 name, still works |
 | `on_draw()` | every presented frame, for drawing over the game with `ui.draw_*` or a `ui.begin_window` |
 | `on_settings()` | while the mod's **Settings** node is open in the Mods panel |
 | `on_unload()` | before a reload or when the mod is disabled |
 
 The game is paused while the F1 overlay is open (Settings → Interface), so
-`on_frame` does not run then; `on_draw` still does.
+`on_update` does not run then; `on_draw` still does.
+
+## The sandbox and the budget
+
+A mod gets Lua's `base`, `coroutine`, `table`, `string`, `math` and `utf8`
+libraries, without:
+
+- `io` and `os`: files go through `mod.fs`, time through `mod.time()`;
+- `package`, C modules and `package.loadlib`: `require` is the host's own;
+- `string.dump` and bytecode: `load` reads text only, as do `loadfile` and
+  `dofile`, which reach only the mod's folder;
+- `debug`, except `debug.traceback`.
+
+`print` writes to the console as `mod.log` does.
+
+Each callback, and the script's first run, may execute 100 million Lua
+instructions; each mod may hold 64 MiB. Going over either stops the mod with
+an error, even when the mod catches it with `pcall`, so a loop that never ends
+or a table that never stops growing cannot hang or exhaust the game.
+
+## `mod`
+
+Given by the host to every mod, in every game.
+
+| call | returns |
+|---|---|
+| `mod.id`, `mod.api_version` | the mod's id; the API version |
+| `mod.log(...)` | prints `[id] ...` to the console |
+| `mod.time()` | seconds since the game started |
+| `mod.save_config()` | saves `config` when the callback returns |
+| `mod.fs.read(path)` | the file's bytes, or `nil, reason` |
+| `mod.fs.write(path, text)` | `true`, or `nil, reason`; makes the folders; not `.lua` files or `mod.json`, which would reload the mod |
+| `mod.fs.exists(path)` | boolean |
+| `mod.fs.list([folder])` | the names in a folder, sorted, folders ending in `/` |
+
+Paths are relative to the mod's folder; `..`, an absolute path or a link that
+leads outside it is refused.
 
 ## `config`
 
 A table that persists per mod. Values may be numbers, booleans, strings or
-nested tables with string keys. It is saved when a `ui.*` widget changes inside
-`on_settings`, when the mod unloads, or when you call `kf.save_config()`.
+nested tables with string keys. It is saved when a `ui.*` widget changes, when the mod unloads, or when a
+callback that called `mod.save_config()` (or `kf.save_config()`) returns.
 
 ```lua
 config.speed = config.speed or 1.5          -- default on first run
@@ -86,17 +134,20 @@ end
 | `kf.view_original()` | `x, y, w, h` of the original 320×240 area, centred in the picture |
 | `kf.player.<field>` | read/write player state (below) |
 | `kf.player_fields()` | list of field names |
-| `kf.save_config()` | writes `config` now |
-| `kf.api_version` | `"0.1"` |
+| `kf.save_config()` | as `mod.save_config()` |
+| `kf.api_version` | `"0.2"` |
 
-`kf.player` fields: `hp max_hp mp max_mp gold experience next_level_experience
+`kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
 physical_power_training magic_training magic_charge status_flags
 cutting_attack striking_attack piercing_attack holy_attack fire_attack
 cutting_defense striking_defense piercing_defense poison_resistance
 magic_defense fire_defense curse_timer darkness_timer poison_timer
 slowed_timer`, plus read-only `floor`. Writes go straight into the game's
-`player_state`; the game may recompute derived stats later.
+`player_state`; the game may recompute derived stats later. A value outside
+the field's range (a negative `gold`, an `hp` over 65535) is an error, not
+truncated. `status_flags` is bits: 1 curse, 2 darkness, 4 poison, 8 slowed,
+16 fire defense boost.
 
 ## `ui` (Dear ImGui)
 
@@ -171,13 +222,12 @@ matters because mods travel as zip files from strangers:
   mod a memory cap (its own allocator). Going over stops that mod with an
   error, as a Lua error does today, instead of hanging or exhausting the game.
 
-Today every mod gets `luaL_openlibs`, the full standard library; closing that
-is the first step.
+The sandbox and the budgets ship in 0.2; `mod.fs` and `mod.time()` are there.
 
 ### Timing
 
 - `on_update()` runs once per game update, where `on_frame` runs now
-  (`on_frame` stays as its alias). Game state is read and written here.
+  (`on_frame` stays as its alias). Game state is read and written here. (0.2)
 - `on_draw()` runs once per displayed frame, which smoothing makes more
   frequent than updates; it draws, it does not change game state.
 - Events run inline, at the point in the game code where the thing happens,
@@ -218,8 +268,9 @@ gameplay mods, compared by a hash; visual and HUD mods are free.
 
 ### Order
 
-1. Move the host into libverdite. Add the sandbox, budgets, `on_update`, and
-   generation of the definitions file.
+1. ~~Move the host into libverdite. Add the sandbox, budgets, `on_update`, and
+   generation of the definitions file.~~ Done in 0.2 (2026-10-31). `ui` stays
+   in `port/`, bound as a table like the rest, since ImGui is the platform's.
 2. Player position, world and game flow, then a debug mod (noclip, god mode,
    infinite MP, peaceful, speed, warp) in place of Verdite's debug menu.
 3. Events and the per-save `save` table.
