@@ -193,3 +193,34 @@ index 7ba7cc8ce794b7df46aa636e29166a753ac0c7ac..7b323c277ce5c42b781ac105e0186874
 +    // PC extension (frame smoothing): orthographic HUD models carry on screen.
 +    tmd_carry_projected({context.projected_vertices.data(), std::size_t(drawn)}, tmd_vertices(context, drawn), *model);
  }
+diff --git a/src/lib/vector_math.cpp b/src/lib/vector_math.cpp
+index 9f57af2fbddbfe86d5ab479577e29498dbcddfa2..2d3ca7b56b579359e1b1491f31124fac1b4d694d 100644
+--- a/src/lib/vector_math.cpp
++++ b/src/lib/vector_math.cpp
+@@ -53,13 +53,24 @@ bool angle_mod_delta_le_half_turn(int lhs, int rhs)
+     return ((lhs - rhs) & KF_ANGLE_WRAP_MASK) <= KF_ANGLE_HALF_TURN;
+ }
+ 
++// PC fix: the PS1's shift wraps, and its divide of the lowest value by -1 gives that value
++// where C++'s overflows (a fault on x86); a coop peer's positions can be anything.
++static s32 vector_ratio_q12(s32 x, s32 z)
++{
++    const s32 numerator = static_cast<s32>(static_cast<u32>(x) << KF_FIXED12_BITS);
++    if (z == -1) {
++        return static_cast<s32>(0u - static_cast<u32>(numerator));
++    }
++    return numerator / z;
++}
++
+ s32 vector_xz_to_angle(s32 x, s32 z)
+ {
+     if (z > 0) {
+-        return kf::fixed_arctangent((x << KF_FIXED12_BITS) / z) + KF_ANGLE_HALF_TURN;
++        return kf::fixed_arctangent(vector_ratio_q12(x, z)) + KF_ANGLE_HALF_TURN;
+     }
+     if (z < 0) {
+-        return kf::fixed_arctangent((x << KF_FIXED12_BITS) / z) & KF_ANGLE_WRAP_MASK;
++        return kf::fixed_arctangent(vector_ratio_q12(x, z)) & KF_ANGLE_WRAP_MASK;
+     }
+     if (x > 0) {
+         return KF_ANGLE_THREE_QUARTER_TURN;

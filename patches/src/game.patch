@@ -1,5 +1,5 @@
 diff --git a/src/game/actor.cpp b/src/game/actor.cpp
-index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1bcbc68bf1 100644
+index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..8364a24b41554c5322c56671e3cdfde245d79c30 100644
 --- a/src/game/actor.cpp
 +++ b/src/game/actor.cpp
 @@ -6,6 +6,8 @@
@@ -11,7 +11,34 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1b
  
  #include <algorithm>
  #include <array>
-@@ -308,6 +310,9 @@ void actor_apply_damage(
+@@ -164,6 +166,14 @@ static inline void actor_initialize_at_home(KfActor *actor)
+ 
+     position.vx = map_placement_axis_position(actor->tile_x, actor->local_x);
+     position.vz = map_placement_axis_position(actor->tile_z, actor->local_z);
++    // PC fix: a spawned actor has no placement (its tile is the invalid cell, its offset the
++    // slot's last occupant's), so one that went dormant and woke read the floor past the grid on
++    // the PS1; a coop peer's snapshot can name any home. Off the map, it wakes where it stands.
++    if (position.vx < 0 || position.vx >= KF_MAP_COLUMNS * KF_MAP_TILE_SIZE
++        || position.vz < 0 || position.vz >= KF_MAP_ROWS * KF_MAP_TILE_SIZE) {
++        position.vx = actor->position.vx;
++        position.vz = actor->position.vz;
++    }
+     position.vy = map_floor_height_at_position(&position);
+     actor_set_position(actor, &position);
+     actor_set_rotation(actor, 0, 0, 0);
+@@ -205,6 +215,11 @@ void actor_pool_spawn(
+     const VECTOR *position,
+     const SVECTOR *rotation)
+ {
++    // PC extension (coop): a spawner travels by its direction, which a peer's snapshot may make
++    // carry it off the map; an actor there would read the grids past their end.
++    if (position->vx < 0 || position->vx >= KF_MAP_COLUMNS * KF_MAP_TILE_SIZE
++        || position->vz < 0 || position->vz >= KF_MAP_ROWS * KF_MAP_TILE_SIZE)
++        return;
+     KfActor *actor = actor_pool_find_free();
+     if (actor == NULL)
+         return;
+@@ -308,6 +323,9 @@ void actor_apply_damage(
      if (damage == 0) {
          return;
      }
@@ -21,7 +48,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1b
      if (actor->health != 0 && hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
          if (cutting_damage == 0 && striking_damage == 0 && piercing_damage == 0) {
              player_increment_magic_training();
-@@ -315,6 +320,14 @@ void actor_apply_damage(
+@@ -315,6 +333,14 @@ void actor_apply_damage(
              player_increment_physical_power_training();
          }
      }
@@ -36,7 +63,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1b
      if (actor->action == KF_ACTOR_ACTION_DRIFT) {
          actor->vertical_state = KF_ACTOR_VERTICAL_FALL;
          actor->vertical_velocity = 0;
-@@ -325,6 +338,7 @@ void actor_apply_damage(
+@@ -325,6 +351,7 @@ void actor_apply_damage(
          remaining = 0;
          if (health != 0 && hit_flags == KF_ACTOR_DAMAGE_CREDIT_PLAYER) {
              player_add_experience(definition->experience_reward);
@@ -44,7 +71,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1b
          }
          if (definition->action_animations[KF_ACTOR_ANIM_SLOT_DEATH] != KF_ANIMATION_CLIP_NONE) {
              actor_set_action(actor, KF_ACTOR_ACTION_DYING);
-@@ -395,17 +409,18 @@ void actor_pool_apply_radial_damage(
+@@ -395,17 +422,18 @@ void actor_pool_apply_radial_damage(
      }
  }
  
@@ -67,7 +94,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1b
  
      distance = actor_distance_to_point(
          actor,
-@@ -416,13 +431,30 @@ void actor_try_attack_player(
+@@ -416,13 +444,30 @@ void actor_try_attack_player(
          definition->collision_height,
          KF_COLLISION_PLAYER_HEIGHT);
      if (distance == -1) {
@@ -101,7 +128,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4df248c0b333ba0824617319e94a8c1b
          return;
      }
      status_effect = KF_PLAYER_STATUS_NONE;
-@@ -430,6 +462,13 @@ void actor_try_attack_player(
+@@ -430,6 +475,13 @@ void actor_try_attack_player(
          && (kf::random_next() >> ACTOR_STATUS_CHANCE_RANDOM_SHIFT) < definition->status_effect_chance) {
          status_effect = definition->status_effect;
      }
@@ -750,7 +777,7 @@ index c5e2bb779e0d28c9090fe7a91fc90c919ec3a1f2..30cacb8f1e3081641dbd1d34aba3d7bf
      if ((query_flags & KF_COLLISION_SKIP_ACTORS) == 0) {
          hit = actor_pool_find_overlap(point_x, point_y, point_z, radius, height);
 diff --git a/src/game/effect_dispatch.cpp b/src/game/effect_dispatch.cpp
-index 3578ae5d19d582f500ed0cf75d496ebd7a99196e..a528282a0563efd64dac40afb60fb10b158b27a2 100644
+index 3578ae5d19d582f500ed0cf75d496ebd7a99196e..378f8f745cca7c3bb43b1aa16c1a18ca68341c57 100644
 --- a/src/game/effect_dispatch.cpp
 +++ b/src/game/effect_dispatch.cpp
 @@ -5,6 +5,7 @@
@@ -761,7 +788,18 @@ index 3578ae5d19d582f500ed0cf75d496ebd7a99196e..a528282a0563efd64dac40afb60fb10b
  
  #include <array>
  #include <cstdio>
-@@ -123,6 +124,21 @@ static void effect_begin_lightning_impact(KfEffectRecord *effect, const KfMagicR
+@@ -111,9 +112,7 @@ static void effect_begin_lightning_impact(KfEffectRecord *effect, const KfMagicR
+     effect->phase = KF_EFFECT_PROJECTILE_DISSIPATE_FIRST;
+     impact_position.vx = effect->position.vx;
+     impact_position.vz = effect->position.vz;
+-    impact_position.vy =
+-        -(map_floor_height_grid.cells[effect->position.vz / KF_MAP_TILE_SIZE]
+-                               [effect->position.vx / KF_MAP_TILE_SIZE] * KF_MAP_HEIGHT_STEP);
++    impact_position.vy = effect_floor_y(effect->position);
+     if (effect->base_render_id.billboard() == KF_EFFECT_BILLBOARD_LIGHTNING_BOLT) {
+         effect_spawn_lightning_impact(effect->id, effect->type, impact_position, effect->rotation,
+             KfEffectVariant::Normal);
+@@ -123,6 +122,21 @@ static void effect_begin_lightning_impact(KfEffectRecord *effect, const KfMagicR
      }
  }
  
@@ -783,7 +821,7 @@ index 3578ae5d19d582f500ed0cf75d496ebd7a99196e..a528282a0563efd64dac40afb60fb10b
  // False leaves the projectile traveling, including Wind Cutter's piercing hits.
  static bool effect_handle_projectile_collision(KfEffectRecord *effect, KfMagicRecord *magic,
      KfEffectKind kind, u32 radius)
-@@ -164,23 +180,25 @@ static bool effect_handle_projectile_collision(KfEffectRecord *effect, KfMagicRe
+@@ -164,23 +178,25 @@ static bool effect_handle_projectile_collision(KfEffectRecord *effect, KfMagicRe
              if (kind == KF_MAGIC_WIND_CUTTER) {
                  return false;
              }
@@ -815,7 +853,7 @@ index 3578ae5d19d582f500ed0cf75d496ebd7a99196e..a528282a0563efd64dac40afb60fb10b
                      0, 0, 0, KF_PLAYER_STATUS_NONE,
                      impact_magic->damage_components[0],
                      impact_magic->damage_components[1],
-@@ -229,17 +247,19 @@ static void effect_update_homing_direction(KfEffectRecord *effect, u8 phase)
+@@ -229,17 +245,19 @@ static void effect_update_homing_direction(KfEffectRecord *effect, u8 phase)
              }
          } else if (effect->target_mode == KF_EFFECT_HOMING_PLAYER) {
              s32 aim_height;
@@ -840,8 +878,31 @@ index 3578ae5d19d582f500ed0cf75d496ebd7a99196e..a528282a0563efd64dac40afb60fb10b
                  -target_distance);
              effect->direction.vx = -desired_pitch & KF_ANGLE_WRAP_MASK;
          } else {
+@@ -399,10 +417,7 @@ void effect_update_dispatch(void)
+         } else if (phase == KF_EFFECT_PROJECTILE_FALL) {
+             effect->direction.vy += EMERGING_FALL_ACCELERATION;
+             effect->position.vy += effect->direction.vy;
+-            if (effect->position.vy
+-                > -(map_floor_height_grid.cells[effect->position.vz / KF_MAP_TILE_SIZE]
+-                                        [effect->position.vx / KF_MAP_TILE_SIZE] * KF_MAP_HEIGHT_STEP)
+-                    + EMERGING_RETIRE_DEPTH) {
++            if (effect->position.vy > effect_floor_y(effect->position) + EMERGING_RETIRE_DEPTH) {
+                 effect->type = KF_EFFECT_SLOT_FREE;
+             }
+             return;
+@@ -480,9 +495,7 @@ void effect_update_dispatch(void)
+             }
+         }
+         effect->position += effect->direction;
+-        effect->position.vy =
+-            -(map_floor_height_grid.cells[effect->position.vz / KF_MAP_TILE_SIZE]
+-                                   [effect->position.vx / KF_MAP_TILE_SIZE] * KF_MAP_HEIGHT_STEP);
++        effect->position.vy = effect_floor_y(effect->position);
+         switch (phase) {
+         default:
+             // Other phase values have no ground-trail transition.
 diff --git a/src/game/effect_map_collision.cpp b/src/game/effect_map_collision.cpp
-index 6379fd779cabcf6588bdddcec2e59e0e990b7262..d05909b793186ce3c156284a4c3e0f6258eafc66 100644
+index 6379fd779cabcf6588bdddcec2e59e0e990b7262..cdc5ac0cd6f6f69e3e503ebd0ed9e687bcec581e 100644
 --- a/src/game/effect_map_collision.cpp
 +++ b/src/game/effect_map_collision.cpp
 @@ -59,6 +59,16 @@ static bool effect_within_height_rectangle(const KfCellHeightRecord *record,
@@ -879,6 +940,26 @@ index 6379fd779cabcf6588bdddcec2e59e0e990b7262..d05909b793186ce3c156284a4c3e0f62
                  return {KfCollisionKind::Terrain};
              }
              if (KF_MAP_TILE_CENTER < position->vx % KF_MAP_TILE_SIZE) {
+@@ -144,6 +154,19 @@ static KfCollisionResult effect_collision_in_cell(
+     return effect_query_collision_targets(position, radius, effect);
+ }
+ 
++// PC extension (coop): an effect moves by its own direction, which a peer's snapshot may make
++// carry it off the map; the PS1 read past the grid there. Off the map the floor is at height 0.
++s32 effect_floor_y(const VECTOR &position)
++{
++    s32 x = position.vx / KF_MAP_TILE_SIZE;
++    s32 z = position.vz / KF_MAP_TILE_SIZE;
++
++    if (x < 0 || x >= KF_MAP_COLUMNS || z < 0 || z >= KF_MAP_ROWS) {
++        return 0;
++    }
++    return -(map_floor_height_grid.cells[z][x] * KF_MAP_HEIGHT_STEP);
++}
++
+ KfCollisionResult effect_map_collision(VECTOR *position, s32 radius)
+ {
+     KfEffectRecord *effect;
 diff --git a/src/game/effect_pool.cpp b/src/game/effect_pool.cpp
 index a7a8dab1efbefa85c3083f1f9fa7fa73154a2476..b5dff92e211158f11d41cc23da877f6d47d0bad1 100644
 --- a/src/game/effect_pool.cpp
@@ -917,10 +998,19 @@ index a7a8dab1efbefa85c3083f1f9fa7fa73154a2476..b5dff92e211158f11d41cc23da877f6d
 +    kf::restore_initial_value<effect_player_shown_records>();
  }
 diff --git a/src/game/effect_update.cpp b/src/game/effect_update.cpp
-index b0d8a7376e2d4a10cf30719994b0a16271c57cca..9ad4a869ba594b39fe114291289538333ee1a94d 100644
+index b0d8a7376e2d4a10cf30719994b0a16271c57cca..41f66c056bfcfdfc00d5d40ba83550e75ac957dc 100644
 --- a/src/game/effect_update.cpp
 +++ b/src/game/effect_update.cpp
-@@ -161,6 +161,11 @@ void effect_update_orbiting_projectile(s32 orbit_radius, u8 phase_limit)
+@@ -23,7 +23,7 @@ enum {
+     EFFECT_HAZARD_SOUND_ATTENUATION_DISTANCE = 14000,
+     EFFECT_ORBIT_UPDATES_PER_TURN = 64,
+     FLOOR_DEFORM_SOUND_PROGRESS = 3900,
+-    FLOOR_DEFORM_SEGMENT_COUNT = 5,
++    FLOOR_DEFORM_SEGMENT_COUNT = KF_FLOOR_DEFORM_SEGMENT_COUNT,
+     TRAIL_UNIT_SCALE_DISTANCE = 800,
+     GROUND_BRANCH_CHILD_SPACING = 1500
+ };
+@@ -161,8 +161,18 @@ void effect_update_orbiting_projectile(s32 orbit_radius, u8 phase_limit)
      }
  }
  
@@ -931,7 +1021,43 @@ index b0d8a7376e2d4a10cf30719994b0a16271c57cca..9ad4a869ba594b39fe11429128953833
 +
  void effect_floor_deform_line(s32 segment_index, s32 progress_start, s32 progress_step)
  {
++    // PC extension (coop): the index and the cells it walks are checked, since a floor
++    // deformation can come from another machine's snapshot; off the table or the grid, nothing moves.
++    if (segment_index < 0 || segment_index >= FLOOR_DEFORM_SEGMENT_COUNT) {
++        return;
++    }
      KfFloorDeformSegment *segment = &floor_deform_segments[segment_index];
+     int range = progress_step;
+     VECTOR sound_position;
+@@ -192,8 +202,10 @@ void effect_floor_deform_line(s32 segment_index, s32 progress_start, s32 progres
+             audio_play_spatial_default_range(&gameplay_sound_refs[KF_GAMEPLAY_SOUND_FLOOR_DEFORM],
+                 &sound_position, KF_AUDIO_MAX_VOLUME);
+         }
+-        map_floor_height_grid.cells[row][col] =
+-            ((height_delta * progress) >> KF_FIXED12_BITS) + segment->start_height;
++        if (row < KF_MAP_ROWS && col < KF_MAP_COLUMNS) {
++            map_floor_height_grid.cells[row][col] =
++                ((height_delta * progress) >> KF_FIXED12_BITS) + segment->start_height;
++        }
+         col += segment->column_step;
+         row += segment->row_step;
+     }
+@@ -256,14 +268,10 @@ void effect_spawn_ground_branch(u8 id, KfEffectRecord *parent_effect, s16 angle_
+ {
+     VECTOR position;
+     s32 angle = -(s16)(parent_effect->direction.vy + angle_offset);
+-    s32 cell_x;
+-    s32 cell_z;
+ 
+     position.vx = parent_effect->position.vx + (GROUND_BRANCH_CHILD_SPACING * kf::angle_sine(angle) >> KF_FIXED12_BITS);
+     position.vz = parent_effect->position.vz + (GROUND_BRANCH_CHILD_SPACING * kf::angle_cosine(angle) >> KF_FIXED12_BITS);
+-    cell_z = position.vz / KF_MAP_TILE_SIZE;
+-    cell_x = position.vx / KF_MAP_TILE_SIZE;
+-    position.vy = -(map_floor_height_grid.cells[cell_z][cell_x] * KF_MAP_HEIGHT_STEP);
++    position.vy = effect_floor_y(position);
+     effect_spawn_fire_wall(id, parent_effect->type, position, parent_effect->direction, branch_role);
+ }
+ 
 diff --git a/src/game/entity_render.cpp b/src/game/entity_render.cpp
 index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9eb7a1d3a 100644
 --- a/src/game/entity_render.cpp
@@ -1426,10 +1552,22 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..c8bb86d7c2964cf6f099872c6fe05338
          }
          break;
 diff --git a/src/game/map_object.cpp b/src/game/map_object.cpp
-index c4fee7aad3fff0d855e5f329a125281e6bba88a7..0b36c3f78a11d94f37474ee89c0334395e91dbcb 100644
+index c4fee7aad3fff0d855e5f329a125281e6bba88a7..f3e3a9f15359429ff891d1144cb5b681547b1309 100644
 --- a/src/game/map_object.cpp
 +++ b/src/game/map_object.cpp
-@@ -216,6 +216,11 @@ void map_object_pool_trigger_link(u8 link_id)
+@@ -138,6 +138,11 @@ KfMapObject *map_object_effect_pool_acquire(u16 first_index, u16 count, u16 sequ
+         }
+         object++;
+     } while (--count != 0);
++    // PC extension (coop): slots of one age (a snapshot from another machine can hold them) leave
++    // no oldest; the first is reused rather than returning NULL to a caller that writes through it.
++    if (oldest == NULL) {
++        oldest = &map_object_state.objects[first_index];
++    }
+     return oldest;
+ }
+ 
+@@ -216,6 +221,11 @@ void map_object_pool_trigger_link(u8 link_id)
              }
              break;
          default:
@@ -1441,7 +1579,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..0b36c3f78a11d94f37474ee89c033439
              if (map_object_state.definitions.entries[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_TRIGGER_END
                  && !(object.link.link_id < KF_MAP_LINK_REUSABLE_FIRST) && object.link.link_id == link_id) {
                  map_object_start_action_if_idle(
-@@ -231,6 +236,10 @@ void map_object_pool_clear_link(u8 link_id)
+@@ -231,6 +241,10 @@ void map_object_pool_clear_link(u8 link_id)
      KfMapObjectDefinition *definitions = map_object_state.definitions.entries;
  
      for (auto &object : map_object_state.objects) {
@@ -1452,6 +1590,97 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..0b36c3f78a11d94f37474ee89c033439
          if ((definitions[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_CLEAR_LAST
               || definitions[kf_enum_encode<u8>(object.object_id)].behavior_type == KF_MAP_OBJECT_OP_LINK_CLEAR_LAST)
              && object.link.link_id == link_id) {
+diff --git a/src/game/map_object_pool.cpp b/src/game/map_object_pool.cpp
+index 29c748155b7804433f0616f9c71401d7c797e736..0d6ce28730948d9f1f570ebb93b15978753a821e 100644
+--- a/src/game/map_object_pool.cpp
++++ b/src/game/map_object_pool.cpp
+@@ -62,10 +62,20 @@ void map_apply_copy_region(KfMapCopyRegionId region_id)
+     }
+ }
+ 
++// PC fix: a door marks the cells beside its own, which on the map's edge (as a coop peer's
++// snapshot may place it) are past the grid; the PS1 wrote there.
++static void map_collision_mark_cell(s32 cell_x, s32 cell_z, KfMapCellKind cell_kind)
++{
++    if (cell_x < 0 || cell_x >= KF_MAP_COLUMNS || cell_z < 0 || cell_z >= KF_MAP_ROWS) {
++        return;
++    }
++    map_collision_grid.cells[cell_z][cell_x] = cell_kind;
++}
++
+ void map_object_mark_collision_edge(const KfMapObject *object, KfMapCellKind cell_kind, u16 yaw)
+ {
+-    u8 cell_x = object->cell_x;
+-    u8 cell_z;
++    s32 cell_x = object->cell_x;
++    s32 cell_z;
+     const KfMapObjectDefinition *definition;
+ 
+     definition = &map_object_state.definitions.entries[kf_enum_encode<u8>(object->object_id)];
+@@ -77,7 +87,7 @@ void map_object_mark_collision_edge(const KfMapObject *object, KfMapCellKind cel
+         break;
+     case KF_MAP_OBJECT_OP_LIFT_DOOR:
+     case KF_MAP_OBJECT_OP_03:
+-        map_collision_grid.cells[cell_z][cell_x] = cell_kind;
++        map_collision_mark_cell(cell_x, cell_z, cell_kind);
+         switch (yaw) {
+         case 0:
+             cell_z++;
+@@ -92,25 +102,25 @@ void map_object_mark_collision_edge(const KfMapObject *object, KfMapCellKind cel
+             cell_x--;
+             break;
+         }
+-        map_collision_grid.cells[cell_z][cell_x] = cell_kind;
++        map_collision_mark_cell(cell_x, cell_z, cell_kind);
+         break;
+     case KF_MAP_OBJECT_OP_HINGED_DOOR:
+         switch (yaw) {
+         case 0:
+-            map_collision_grid.cells[cell_z][cell_x + 1] =
+-                map_collision_grid.cells[cell_z - 1][cell_x + 1] = cell_kind;
++            map_collision_mark_cell(cell_x + 1, cell_z, cell_kind);
++            map_collision_mark_cell(cell_x + 1, cell_z - 1, cell_kind);
+             break;
+         case KF_ANGLE_QUARTER_TURN:
+-            map_collision_grid.cells[cell_z + 1][cell_x] = cell_kind;
+-            map_collision_grid.cells[cell_z + 1][cell_x + 1] = cell_kind;
++            map_collision_mark_cell(cell_x, cell_z + 1, cell_kind);
++            map_collision_mark_cell(cell_x + 1, cell_z + 1, cell_kind);
+             break;
+         case KF_ANGLE_HALF_TURN:
+-            map_collision_grid.cells[cell_z][cell_x - 1] =
+-                map_collision_grid.cells[cell_z + 1][cell_x - 1] = cell_kind;
++            map_collision_mark_cell(cell_x - 1, cell_z, cell_kind);
++            map_collision_mark_cell(cell_x - 1, cell_z + 1, cell_kind);
+             break;
+         case KF_ANGLE_THREE_QUARTER_TURN:
+-            map_collision_grid.cells[cell_z - 1][cell_x] = cell_kind;
+-            map_collision_grid.cells[cell_z - 1][cell_x - 1] = cell_kind;
++            map_collision_mark_cell(cell_x, cell_z - 1, cell_kind);
++            map_collision_mark_cell(cell_x - 1, cell_z - 1, cell_kind);
+             break;
+         }
+         break;
+@@ -124,15 +134,17 @@ KfCollisionResult map_object_probe_door_closing(const KfMapObject *object, u16 y
+     s32 point_z = object->position.vz;
+ 
+     yaw &= KF_ANGLE_WRAP_MASK;
++    // PC extension (coop): a peer's snapshot may hold any door, so a door action on an object that
++    // is not a door is probed as a lift door, and a hinged door at an angle off the four at its
++    // own point, rather than ending the game.
+     switch (definition->behavior_type) {
+     default:
+-        kf::host_fail("Door clearance requested for a non-door operation");
+     case KF_MAP_OBJECT_OP_LIFT_DOOR:
+         break;
+     case KF_MAP_OBJECT_OP_HINGED_DOOR:
+         switch (yaw) {
+         default:
+-            kf::host_fail("Door clearance requires a cardinal hinge angle");
++            break;
+         case 0:
+             point_x += KF_MAP_TILE_SIZE;
+             break;
 diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
 index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f75a17c7ee 100644
 --- a/src/game/map_scripts.cpp
@@ -5543,7 +5772,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466
  {
      return displayed_language.value_or(kf::game_language());
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index d3474864ec0f4578414b005ecaa89eae266de167..3704f839cd528f47da8c55a28d4ac2ae5d564a30 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..269d1d5354b920c14b4bd9259cb84849f3a438a8 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
 @@ -1,4 +1,5 @@
@@ -5774,7 +6003,19 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3704f839cd528f47da8c55a28d4ac2ae
  static bool save_state_valid(const SavedGameState &state) {
      const auto &p = state.player;
      const auto floor = kf_enum_encode<u8>(p.progress_state.current_floor);
-@@ -368,41 +461,145 @@ static void save_state_apply(const SavedGameState &state) {
+@@ -326,6 +419,11 @@ static bool save_state_valid(const SavedGameState &state) {
+             || p.motion_state.map_cell.x >= KF_MAP_COLUMNS
+             || p.motion_state.map_cell.z >= KF_MAP_ROWS)
+         return false;
++    // PC extension (coop): a coop host sends the character, so its variant is checked: only floor 5
++    // has variants (CHR1-3.MIM); any other names a file the disc does not have, and the load fails.
++    if (p.map_variant != KF_MAP_VARIANT_DEFAULT
++            && (floor != kf_enum_encode<u8>(KF_FLOOR_5) || p.map_variant > KF_FLOOR5_ALTERNATE_MUSIC_VARIANT))
++        return false;
+     const std::array<KfObjectId, 5> armor = {p.equipped_head_armor_id, p.equipped_body_armor_id,
+         p.equipped_shield_id, p.equipped_arm_armor_id, p.equipped_leg_armor_id};
+     for (const auto id : armor) {
+@@ -368,41 +466,145 @@ static void save_state_apply(const SavedGameState &state) {
      // The existing load-return path reloads the floor, weapon and selected magic.
  }
  
@@ -5946,7 +6187,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3704f839cd528f47da8c55a28d4ac2ae
  }
  
  static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
-@@ -418,76 +615,249 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
+@@ -418,76 +620,249 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
  
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries) {
      summaries = {};
@@ -6232,7 +6473,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3704f839cd528f47da8c55a28d4ac2ae
  void menu_play_input_sound(KfMenuSoundCue cue)
  {
      SoundRef sound;
-@@ -542,7 +912,7 @@ void screen_show_image_until_input(const char *path)
+@@ -542,7 +917,7 @@ void screen_show_image_until_input(const char *path)
      const auto alternate = comparison_image_read(path, game_graphics_runtime.display_state.asset_load_capacity);
      // Transparent glyph pixels need the original backdrop when replacing a page.
      kf::Image backdrop{};
@@ -6241,7 +6482,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3704f839cd528f47da8c55a28d4ac2ae
          kf::host_fail("Cannot capture the dialogue background.");
      bool showing_alternate = false;
      bool reported_unavailable = false;
-@@ -552,7 +922,7 @@ void screen_show_image_until_input(const char *path)
+@@ -552,7 +927,7 @@ void screen_show_image_until_input(const char *path)
          const bool compare = kf::host_action_held(kf::Action::compare_language);
          const bool show_alternate = compare && !alternate.empty();
          if (show_alternate != showing_alternate) {
@@ -6250,7 +6491,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3704f839cd528f47da8c55a28d4ac2ae
                  kf::host_fail("Cannot restore the dialogue background.");
              if (show_alternate)
                  tim_upload_images(alternate.data(), alternate.size());
-@@ -603,5 +973,6 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
+@@ -603,5 +978,6 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
  void save_system_reset_module_state(void)
  {
      kf::restore_initial_value<talk_image_path_template>();

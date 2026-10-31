@@ -38,10 +38,19 @@ index d95430b514ce0cfa7db0c346e990d660a46d302e..e4cb83894aacf4b9cb77f3883ee35474
  
  struct KfCollisionResult {
 diff --git a/include/kf/game/effect.h b/include/kf/game/effect.h
-index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..a8863e1adf19527767e95fc5b78781dc732f1e4e 100644
+index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..986ebd381692837ed6b2d0e45dda483f950b2fc3 100644
 --- a/include/kf/game/effect.h
 +++ b/include/kf/game/effect.h
-@@ -271,6 +271,21 @@ typedef struct KfEffectState {
+@@ -197,6 +197,8 @@ typedef struct KfFloorDeformSegment {
+     u8 start_height;
+     u8 end_height;
+ } KfFloorDeformSegment;
++// PC extension (coop): the segments' count, so a floor deformation from another machine is checked.
++enum { KF_FLOOR_DEFORM_SEGMENT_COUNT = 5 };
+ 
+ // One byte selects what an effect draws: a billboard sprite while its
+ // animation clip is KF_ANIMATION_CLIP_NONE, otherwise a model.
+@@ -271,6 +273,21 @@ typedef struct KfEffectState {
  extern std::array<SVECTOR, KF_EFFECT_SWING_PROBE_COUNT> effect_swing_probe_offsets;
  extern KfEffectState effect_state;
  
@@ -63,7 +72,15 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..a8863e1adf19527767e95fc5b78781dc
  enum class KfEffectSoundRequest : s32 {
      KF_EFFECT_SOUND_SILENT = 0,
      KF_EFFECT_SOUND_PLAY = 1
-@@ -343,6 +358,8 @@ extern int effect_magic_power(KfEffectRecord *effect);
+@@ -284,6 +301,7 @@ constexpr KfEffectSoundRequest effect_sound_request(bool requested)
+ enum class KfEffectVariant { Normal, Alternate };
+ 
+ extern KfEffectRecord *effect_pool_find_free(void);
++extern s32 effect_floor_y(const VECTOR &position);
+ KfEffectRecord *effect_spawn_fire_ball(u8 id, KfEffectType type, const VECTOR &position,
+     const SVECTOR &direction);
+ KfEffectRecord *effect_spawn_wind_cutter(u8 id, KfEffectType type, const VECTOR &position,
+@@ -343,6 +361,8 @@ extern int effect_magic_power(KfEffectRecord *effect);
  extern void effect_update_swinging_hazard(SVECTOR *probe_offset, u8 phase_limit);
  extern void effect_update_orbiting_projectile(s32 orbit_radius, u8 phase_limit);
  extern void effect_floor_deform_line(s32 segment_index, s32 progress_start, s32 progress_step);
