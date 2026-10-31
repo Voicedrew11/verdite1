@@ -16,9 +16,9 @@
       { "name": "FLOORS", "class_name": "Floor" }
     ]
   },
-  // the records (migrations/); the id is a placeholder, so a deploy needs the real database first
+  // the records (migrations/), applied with wrangler d1 migrations apply verdite-online --remote
   "d1_databases": [
-    { "binding": "DB", "database_name": "verdite-online", "database_id": "local-only-placeholder", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "verdite-online", "database_id": "7dbb05ca-a5a5-4d74-bcde-6440cbe9c78b", "migrations_dir": "migrations" }
   ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Room"] },

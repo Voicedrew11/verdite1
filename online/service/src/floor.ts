@@ -75,17 +75,23 @@ function addLink(ws: WebSocket, member: MeshMember, peer: string): void {
 }
 
 export class Floor extends DurableObject<Env> {
-  private readonly game: string;
-  private readonly area: number;
+  private game = "";
+  private area = 0;
   private frames = new FrameRate();
   private held?: Promise<Map<string, d1.Held>>; // by id as hex; loaded on first use
   private answering = new Map<WebSocket, Promise<void>>(); // each records socket's frame in hand
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    const [game = "", area = ""] = (ctx.id.name ?? "").split("/");
-    this.game = game;
-    this.area = Number(area);
+    // The name ("game/area") comes with a request by name; kept in storage too, so an object woken by a
+    // hibernated socket's message, which may not carry it, still knows its floor.
+    void ctx.blockConcurrencyWhile(async () => {
+      const name = ctx.id.name ?? (await ctx.storage.get<string>("name")) ?? "";
+      if (ctx.id.name) await ctx.storage.put("name", ctx.id.name);
+      const [game = "", area = ""] = name.split("/");
+      this.game = game;
+      this.area = Number(area);
+    });
   }
 
   async fetch(request: Request): Promise<Response> {

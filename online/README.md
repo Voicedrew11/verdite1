@@ -26,14 +26,18 @@ npx wrangler d1 migrations apply verdite-online --local   # the records' tables,
 npm test                        # the signaling test, against a running npm run dev
 npm run test:records            # records: posts, refusals, ratings, samples, mine, retirement (about a minute)
 npm run test:mesh               # the floor mesh: links, signals, a relink after a leave
+npx wrangler d1 migrations apply verdite-online --remote  # a new migration, before the deploy that needs it
 npx wrangler deploy             # to verdite-online.<account>.workers.dev
 SERVICE=https://... npm test    # the signaling test against the deployed Worker
 SERVICE=https://... npm run test:turn   # TURN servers come with credentials (never printed)
 ```
 
 The records (`/v1/floors/...`, a Durable Object per floor) keep their rows in D1 (`migrations/`).
-Locally, `wrangler dev` needs the migration above first. The `database_id` in `wrangler.jsonc` is a
-placeholder: a deploy needs the account's real database (and its migration) before it.
+Locally, `wrangler dev` needs the migration above first (the local copy is kept under the
+`database_id`, so a new id starts it empty). The deployed database, `verdite-online`, was created
+2026-10-31 and its id is in `wrangler.jsonc`. On the deployed service the per-address limits are
+approximate (counted per Cloudflare location), so `test:records` checks the eleventh post's refusal
+only against a local service; `vo_board_trio --service https://...` runs the trio through real TURN.
 
 Without a TURN key, rooms hand out no ICE servers, which is enough for two instances on one
 machine; local development never needs the key.

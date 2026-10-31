@@ -4,7 +4,8 @@
 //
 // Each board opens with its own key in a fresh folder and enters area 7 of game "test". After a
 // settle, A posts {1, 2, 3}. B and C must hold it within 10 s: the service does not push posts, so
-// they get it by gossip. A's mine list must show it within 10 s; B rates it, and A's mine list must
+// they get it by gossip. A's mine list must show it within 10 s; B rates it (again every 2 s while
+// the service refuses it, which it does while A's post has not reached it), and A's mine list must
 // show one good within 10 s. After A posts ten more, its first post must be gone from its records.
 // Exits 0 when all of that holds, else says what failed.
 
@@ -176,8 +177,17 @@ int main(int argc, char **argv) {
     check(wait_for(raw, step_time, [&] { return listed_with_good(raw[0], first, 0); }),
           "A's mine lists the post within 10 s");
 
-    vo_board_rate(raw[1], first);
-    check(wait_for(raw, step_time, [&] { return listed_with_good(raw[0], first, 1); }),
+    // A's own list shows the post before the service has it, and gossip can bring it to B sooner
+    // still, so a rating can arrive first and be refused: B rates again every 2 s until it counts.
+    auto rated_at = Clock::time_point{};
+    check(wait_for(raw, step_time,
+                   [&] {
+                       if (Clock::now() - rated_at >= std::chrono::seconds(2)) {
+                           vo_board_rate(raw[1], first);
+                           rated_at = Clock::now();
+                       }
+                       return listed_with_good(raw[0], first, 1);
+                   }),
           "A's mine shows the post good 1 within 10 s, after B rated it");
 
     bool posted_more = true;

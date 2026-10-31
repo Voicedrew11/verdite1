@@ -567,6 +567,12 @@ void vo_board::on_mine(const std::vector<vo::CountedRecord> &records) {
 void vo_board::on_error(const std::string &code, const std::string &message) {
     const std::optional<Request> refused = answered();
     std::fprintf(stderr, "[ONLINE] the floor's records: %s: %s\n", code.c_str(), message.c_str());
+    if (refused && refused->kind == Request::Kind::Rate) {
+        // Refused, most likely because the author's post had not reached the service yet when
+        // gossip brought it here: it may be rated again.
+        rated.erase(refused->id);
+        return;
+    }
     if (!refused || refused->kind != Request::Kind::Post)
         return;
     const auto before = own_posts.size();
