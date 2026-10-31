@@ -30,6 +30,17 @@ add_executable(vo_board_trio tests/board_trio.cpp)
 target_link_libraries(vo_board_trio PRIVATE verdite_online)
 target_compile_options(vo_board_trio PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+# libFuzzer: the service's frames and the mesh's packets (KF_LIBFUZZER, the fuzz preset)
+if(KF_LIBFUZZER)
+  add_executable(fuzz_online_frames tests/fuzz_frames.cpp src/floor_frames.cpp src/record.cpp src/signaling.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)
+  target_include_directories(fuzz_online_frames PRIVATE src ${CMAKE_SOURCE_DIR}/third_party/cjson)
+  target_link_libraries(fuzz_online_frames PRIVATE OpenSSL::Crypto)
+  target_link_options(fuzz_online_frames PRIVATE -fsanitize=fuzzer)
+  # beside the game's targets, where scripts/fuzz.py --targets looks
+  set_target_properties(fuzz_online_frames PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
 if(doctest_FOUND)
   add_executable(verdite_online_tests tests/main.cpp tests/floor_frames.cpp tests/handover.cpp tests/record.cpp
     tests/signaling.cpp

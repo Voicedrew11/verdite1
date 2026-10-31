@@ -135,6 +135,22 @@ bounds-checked where they enter:
   holds PS1 addresses for magic, weapons and armour; a crafted save must not become a pointer),
   the PPF patcher, `DiscImage` (CHD and plain), `settings.json`, the translation tables;
 - later, the Lua mod API, once 1.0 sandboxes it.
+- online play: what a room's players and the floor mesh's strangers send. `coop_message` (coop
+  messages, poses, floor frames, message payloads and places, the coop world file),
+  `online_frames` (the service's frames, base64, records, gossip) and `coop_floor`, which puts
+  the game state a room's players send into the game: snapshots, writes, frames, spells, records
+  and a host's character and world. Its snapshots and records are made by the game and then
+  changed by the input, so the fuzzer reaches their fields, and a snapshot the game takes runs
+  for eight world updates: a field that passed the checks must not reach past an array there
+  either (a floor deformation's segments did, 2026-10-31). The target then found a free actor
+  slot's definition, a door's partner, an emptied slot's door, a ground trail that walked off the
+  map, a woken actor's home off the map (the PS1's too, for a spawned actor, whose home is the
+  invalid cell), an actor spawner carried off the map spawning there, and a door on the map's
+  edge marking the cells past it, all past their tables,
+  and a door the clearance probe could not place, which ended the game through `host_fail`
+  (exit 77), and an angle's ratio that divided the lowest value by -1 (a fault on x86; the PS1
+  wraps); all are fixed. Drawing is not run, so a clip a model lacks (the animation cache's
+  `host_fail`) was found by reading, not by the target; running the draw's checks there is open.
 
 Each finding's input goes into a corpus next to its target, and recordings that found a game
 bug go into `tests/fuzz/recordings/` as regressions (inputs only, no disc data).
@@ -303,7 +319,7 @@ becomes sanitizer and assertion reports), signatures from the crash report's nam
    outcome, by its message) and codec errors as findings (done); ~~the pointer invariants~~
    (done: `equipment`, `actors`, `effects`). Still to do: the generated enum table.
 3. ~~**libFuzzer targets** (§6)~~: `memory_card`, `save_card`, `disc_image` and the decomp's
-   `codecs` (done). The PPF patcher is not one: it checks the Japanese files' hashes before
+   `codecs` (done); online play's `coop_message`, `coop_floor` and `online_frames` (done). The PPF patcher is not one: it checks the Japanese files' hashes before
    it parses, so it needs the disc. Settings and translations are still to do.
 4. **Differential**: ~~visual settings~~ (`--compare-setting`, done), ~~`--minimise`~~ (done);
    still to do: Classic against the unpatched decomp, the zero/pattern initialisation pair,

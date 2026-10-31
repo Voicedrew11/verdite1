@@ -430,7 +430,16 @@ if(KF_LIBFUZZER)
   target_link_libraries(fuzz_codecs PRIVATE kf_support verdite SDL3::SDL3)
   add_executable(fuzz_save_card port/tests/fuzz/save_card.cpp ${KF_GAME_SOURCES})
   target_link_libraries(fuzz_save_card PRIVATE kf_host)
-  foreach(target fuzz_memory_card fuzz_disc_image fuzz_codecs fuzz_save_card)
+  # What other players and the mesh send (docs/FUZZING_PLAN.md): the decoders alone, and the game
+  # state a room's players send put into the game and run.
+  add_executable(fuzz_coop_message port/tests/fuzz/coop_message.cpp port/ext/coop_message.cpp
+    port/ext/coop_party.cpp port/ext/coop_profile.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor_frames.cpp
+    port/ext/online_pose.cpp port/ext/messages.cpp port/ext/message_reading.cpp port/ext/online_player_colours.cpp
+    port/ext/online_player_model.cpp)
+  target_link_libraries(fuzz_coop_message PRIVATE kf_frontend)
+  add_executable(fuzz_coop_floor port/tests/fuzz/coop_floor.cpp ${KF_GAME_SOURCES})
+  target_link_libraries(fuzz_coop_floor PRIVATE kf_host)
+  foreach(target fuzz_memory_card fuzz_disc_image fuzz_codecs fuzz_save_card fuzz_coop_message fuzz_coop_floor)
     target_link_options(${target} PRIVATE -fsanitize=fuzzer)
   endforeach()
 endif()

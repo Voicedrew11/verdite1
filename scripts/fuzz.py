@@ -600,6 +600,11 @@ TARGETS = {
     "disc_image": ("a disc image, plain or CHD", ["libverdite/tests/data/disc/*.bin", "libverdite/tests/data/disc/*.chd",
                                                    "libverdite/tests/data/disc/*.iso"]),
     "codecs": ("the decomp's codecs: TIM, assets, placements, audio banks, music", ["data/en/**/*.TIM"]),
+    "coop_message": ("a room's packets and the mesh's message payloads: coop messages, poses, floor frames, "
+                     "message payloads and places, the coop world file", []),
+    "coop_floor": ("the game state a room's players send, put into the game: snapshots (then run), writes, frames, "
+                   "spells, records, a host's character and world", []),
+    "online_frames": ("the service's frames, base64, records and the mesh's gossip", []),
 }
 FINDING_PREFIXES = ("crash-", "leak-", "timeout-", "oom-", "slow-unit-")
 
