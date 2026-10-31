@@ -4,9 +4,10 @@
 (`online/client`) both follow this page; a change here is a change to both, in one commit. A
 change that an older client cannot follow raises the version.
 
-Only the realtime tier's signaling is defined yet: a room, its peers, the relay of WebRTC
-offers, answers and candidates between them, and the list of public rooms. Records (messages, bloodstains), identity and
-signing come later (`docs/NETWORKING_PLAN.md`).
+Defined: the realtime tier's signaling (a room, its peers, the relay of WebRTC offers, answers
+and candidates between them, and the list of public rooms) and records (messages on the ground:
+their bytes, a floor's records, and the floor mesh that gossips them; `docs/MESSAGES_PLAN.md`).
+Bloodstains come later (`docs/NETWORKING_PLAN.md`).
 
 ## Names
 
@@ -149,3 +150,98 @@ fails after a side has sent `moved` loses the peer. Text messages on `control` a
 markers: the game's packets are binary.
 - **The budget.** The service stops issuing credentials once the month's TURN traffic passes its
   budget (`TURN_BUDGET_GB`, 500 by default), checked every 10 minutes.
+
+## Records
+
+A record is something a player leaves in a game's world, such as a message on the ground. The
+service and the client know no game: a record is an **area** (a floor), a **place** in it and a
+**payload** of at most 8 bytes, each the game's.
+
+### Bytes
+
+Little-endian. The signed body is 54 bytes:
+
+| offset | bytes | field |
+|---|---|---|
+| 0 | 1 | version, 1 |
+| 1 | 4 | area |
+| 5 | 4 | place |
+| 9 | 1 | payload size, 0 to 8 |
+| 10 | 8 | payload, zero past its size |
+| 18 | 32 | author: an Ed25519 public key, one per install |
+| 50 | 4 | serial: the author's count of records signed, from 1 |
+
+The record is the body followed by a 64-byte Ed25519 signature over the UTF-8 domain
+`verdite-record/{game}`, one zero byte, and the body: 118 bytes. Its **id** is the first 8 bytes
+of the SHA-256 of the body, read little-endian, with 0 made 1; in JSON, 16 lowercase hex digits
+of that number.
+
+**Retirement**: an author has at most 10 records out. A record of serial s retires that author's
+records of serial s - 10 or less, wherever they are; a retired record is never taken again.
+
+A **rating** says a record is good: the record's id (8 bytes, little-endian), the rater's key
+(32), and a signature (64) over `verdite-rating/{game}`, a zero byte and those 40 bytes: 104
+bytes. One per rater and record counts; a rating of one's own record does not.
+
+In JSON frames, records and ratings are standard base64 with padding.
+
+### A floor's records
+
+```
+GET /v1/floors/{game}/{area}/records?protocol=1&seed={0..4294967295}
+Upgrade: websocket
+```
+
+`area` is a whole number 0 to 4294967295. Refused before the upgrade as a join is. The service
+sends `records` at once; then the client may send:
+
+| client sends | fields | service answers |
+|---|---|---|
+| `post` | `record` | `posted` with `id` and `good` 0, or `error` `refused` (bad bytes or signature, another area than the socket's, a serial not above the author's newest, or rate-limited: 10 posts a minute per address) |
+| `rate` | `rating` | `rated` with `id` and `good`; `error` `refused` for a bad signature, an unknown record or one's own |
+| `mine` | `author` (base64 key) | `mine` with `records`: that author's records out, in any area, newest first |
+
+| service sends | fields | meaning |
+|---|---|---|
+| `records` | `records` | the floor's sample (below): each `{record, good}`, at most 24 |
+| `posted`, `rated` | `id`, `good` | |
+| `mine` | `records` | each `{record, good}` |
+| `error` | `code`, `message` | as for rooms, plus `refused`; none closes the socket |
+
+The service answers a socket's requests in the order they came, one answer each (`posted`,
+`rated`, `mine` or `error`), so a client matches an `error` to its oldest unanswered request.
+
+**The sample** is drawn as the client shows records (`docs/MESSAGES_PLAN.md`, "The fraction a
+player sees"): the area's records in blocks of 8 by 8 cells (the place's low byte is the cell x,
+its second byte the cell z), at most 2 a block and 24 in all, without replacement, weighted by
+1 + good, from `seed`.
+
+### The floor mesh
+
+```
+GET /v1/floors/{game}/{area}/mesh?protocol=1&build={build}
+Upgrade: websocket
+```
+
+The room protocol above (welcome, join, leave, signal, turn, the generations of a connection and
+the moves to a new credential), with these differences:
+
+- **No limit on players and no build check**: the record format is the same in every build.
+- **`welcome.peers` is at most 3 random players already there with fewer than 4 links**, and only
+  those get `join`. The newcomer offers to them, as in a room.
+- **`leave` goes only to the leaver's links.** A player left with fewer than 2 links is given new
+  ones: the service picks a player with fewer than 4 links not already linked to it and sends the
+  newer of the two `link` with the other's `peer` (offer to it, as to a peer in `welcome`) and the
+  older `join` with the newer's `peer`.
+- **`signal` only to a linked peer**, else `unknown_peer`.
+- `describe` is ignored.
+
+On a mesh connection's `control` channel the clients gossip records, each packet binary:
+
+| byte 0 | byte 1 | then |
+|---|---|---|
+| 1 (version) | 1: **shown** | a count (1 byte), then that many records (118 bytes each): what the sender shows, sent once when the connection opens |
+| 1 | 2: **new** | hops left (1 byte, at most 3), then one record: a new post; a receiver that did not hold it forwards it to its other links with one hop fewer, while hops are left |
+
+A receiver checks every record (bytes, signature, retirement) before keeping or forwarding it,
+and ignores everything more from a peer that sent a malformed or forged one.

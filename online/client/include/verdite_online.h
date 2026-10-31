@@ -135,6 +135,64 @@ vo_lobby_state vo_lobby_state_of(const vo_lobby *lobby);
  * changed is set nonzero when the list differs from the one the last call copied. */
 size_t vo_lobby_rooms(vo_lobby *lobby, vo_listed_room *rooms, size_t most, int *changed);
 
+/* Records: small signed payloads placed in a game's world, such as messages on the ground
+ * (docs/MESSAGES_PLAN.md). The library knows no game: a record is an area (a floor), a place in
+ * it and a payload of the game's at most VO_RECORD_PAYLOAD_BYTES. Each install has one key, and
+ * an author has at most VO_RECORDS_PER_AUTHOR out: posting one more retires their oldest.
+ *
+ * A board is one game's records on the area the player is in. Entering an area fetches the
+ * service's sample of it and, where the platform has WebRTC, joins the area's mesh,
+ * whose players gossip records to each other. Both over WebSockets to the service. */
+enum {
+    VO_RECORD_PAYLOAD_BYTES = 8,
+    VO_RECORDS_PER_AUTHOR = 10,
+    VO_KEY_BYTES = 32
+};
+
+typedef uint64_t vo_record_id; /* from the record's signed bytes; 0 is none */
+
+typedef struct vo_record {
+    vo_record_id id;
+    uint32_t area;
+    uint32_t place;
+    uint8_t payload[VO_RECORD_PAYLOAD_BYTES];
+    uint8_t payload_size;
+    int mine;       /* nonzero when this install posted it */
+    uint32_t good;  /* its good ratings, as last heard from the service */
+} vo_record;
+
+typedef struct vo_board vo_board;
+
+/* Opens one game's board, signing as the install whose key is in key_path (made there, owner-only,
+ * when missing). NULL when a name is malformed or the key cannot be read or made. service_url and
+ * game as in vo_config. Nothing is fetched until vo_board_enter. */
+vo_board *vo_board_open(const char *service_url, const char *game, const char *key_path);
+/* NULL is ignored. Leaves the mesh without waiting. */
+void vo_board_close(vo_board *board);
+
+/* The player is now in area: forgets the last area's records, fetches this one's sample and
+ * joins its mesh. Entering the area already entered does nothing. */
+void vo_board_enter(vo_board *board, uint32_t area);
+/* Leaves the area and its mesh: offline, at the title, or online play turned off. */
+void vo_board_leave(vo_board *board);
+
+/* Signs and posts a record in the entered area, and gossips it; 0 when no area is entered or
+ * size is over VO_RECORD_PAYLOAD_BYTES. The record is the board's at once; whether the service
+ * took it comes later, as a change to vo_board_mine. */
+vo_record_id vo_board_post(vo_board *board, uint32_t place, const uint8_t *payload, size_t size);
+/* Rates a record good, once; a rating of one's own record, or a second, does nothing. */
+void vo_board_rate(vo_board *board, vo_record_id id);
+
+/* Copies up to most of the entered area's records the board holds (the service's sample and what
+ * gossip brought), oldest held first, and returns how many. changed is set nonzero when they
+ * differ from the last call's. Retired records and ones that failed their check are never here.
+ * vo_board_records does the board's work (it reads the records socket and the floor mesh), so
+ * call it each frame. */
+size_t vo_board_records(vo_board *board, vo_record *records, size_t most, int *changed);
+/* Copies up to most of this install's records out, in any area, with their counts, newest first,
+ * and returns how many; as the service last said, or as posted while it has not answered. */
+size_t vo_board_mine(vo_board *board, vo_record *records, size_t most, int *changed);
+
 #ifdef __cplusplus
 }
 #endif

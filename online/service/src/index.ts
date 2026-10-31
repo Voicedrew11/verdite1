@@ -1,18 +1,22 @@
 // The Verdite online service: routes a room's WebSocket to its Durable Object
 // (online/protocol/PROTOCOL.md) and checks the month's TURN budget on a schedule.
 import { Budget, checkBudget } from "./budget";
+import { Floor } from "./floor";
 import { Lobby } from "./lobby";
 import { Room } from "./room";
-import { HOST_NAME, PROTOCOL, PUBLIC_ROOM, lobbyName, refusal } from "./wire";
+import { FLOOR_AREA_MOST, HOST_NAME, PROTOCOL, PUBLIC_ROOM, lobbyName, refusal } from "./wire";
 
-export { Budget, Lobby, Room };
+export { Budget, Floor, Lobby, Room };
 
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
   LOBBIES: DurableObjectNamespace<Lobby>; // one per (game, build)
   BUDGET: DurableObjectNamespace<Budget>;
+  FLOORS: DurableObjectNamespace<Floor>; // one per (game, area): records and the floor mesh
+  DB: D1Database; // the records (migrations/)
   JOIN_LIMIT: RateLimit; // joins per address
   TURN_LIMIT: RateLimit; // TURN credentials per address
+  POST_LIMIT: RateLimit; // record posts per address
   TURN_BUDGET_GB?: string;
   TURN_CREDENTIAL_SECONDS?: string; // 3600 when unset; shorter only to test renewal
   // secrets (online/README.md, "Secrets")
@@ -25,11 +29,14 @@ export interface Env {
 const GAME = /^[a-z0-9]{1,16}$/;
 const ROOM = /^[A-Za-z0-9_-]{1,64}$/;
 const BUILD = /^[A-Za-z0-9._+-]{1,64}$/;
+const WHOLE = /^(0|[1-9][0-9]{0,9})$/; // a decimal number up to 4294967295, checked below
 
-// The checks a join and the list share; null when the request may go on.
-async function refusedUpgrade(request: Request, env: Env, game: string, build: string): Promise<Response | null> {
+// The checks a join and the list share; null when the request may go on. A build is checked when
+// given (records do not carry one).
+async function refusedUpgrade(request: Request, env: Env, game: string, build?: string): Promise<Response | null> {
   const url = new URL(request.url);
-  if (!GAME.test(game) || !BUILD.test(build)) return refusal(400, "bad_request", "game or build is malformed");
+  if (!GAME.test(game) || (build !== undefined && !BUILD.test(build)))
+    return refusal(400, "bad_request", "game or build is malformed");
   if (url.searchParams.get("protocol") !== String(PROTOCOL))
     return refusal(400, "protocol", `this service speaks protocol ${PROTOCOL}`);
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
@@ -50,6 +57,17 @@ export default {
       const refused = await refusedUpgrade(request, env, game, build);
       if (refused) return refused;
       return env.LOBBIES.get(env.LOBBIES.idFromName(lobbyName(game, build))).fetch(request);
+    }
+    const floor = url.pathname.match(/^\/v1\/floors\/([^/]+)\/([^/]+)\/(records|mesh)$/);
+    if (floor) {
+      const [, game = "", area = "", kind = ""] = floor;
+      if (!WHOLE.test(area) || Number(area) > FLOOR_AREA_MOST) return refusal(400, "bad_request", "the area is malformed");
+      const seed = url.searchParams.get("seed") ?? "";
+      if (kind === "records" && (!WHOLE.test(seed) || Number(seed) > FLOOR_AREA_MOST))
+        return refusal(400, "bad_request", "the seed is a whole number 0 to 4294967295");
+      const refused = await refusedUpgrade(request, env, game, kind === "mesh" ? build : undefined);
+      if (refused) return refused;
+      return env.FLOORS.get(env.FLOORS.idFromName(`${game}/${area}`)).fetch(request);
     }
     const path = url.pathname.match(/^\/v1\/rooms\/([^/]+)\/([^/]+)$/);
     if (!path) return refusal(404, "not_found", "no such path");

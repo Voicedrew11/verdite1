@@ -181,3 +181,22 @@ TEST_CASE("a signal written is a signal read back") {
     CHECK(back.signal.mid == sent.mid);
     CHECK(back.signal.generation == 2);
 }
+
+TEST_CASE("a floor's records and mesh addresses carry the area, the seed and the build") {
+    CHECK(floor_records_url("https://online.example.net/", "kf1", 7, 123) ==
+          "wss://online.example.net/v1/floors/kf1/7/records?protocol=1&seed=123");
+    CHECK(floor_mesh_url("http://127.0.0.1:8787", "kf1", 4294967295u, "kf1-0.1+a") ==
+          "ws://127.0.0.1:8787/v1/floors/kf1/4294967295/mesh?protocol=1&build=kf1-0.1%2Ba");
+    CHECK_FALSE(floor_records_url("ftp://x", "kf1", 7, 1));
+    CHECK_FALSE(floor_records_url("https://x", "KF1", 7, 1));
+    CHECK_FALSE(floor_mesh_url("https://x", "kf1", 7, ""));
+    CHECK_FALSE(floor_mesh_url("https://x", "kf1", 7, "b&protocol=2"));
+}
+
+TEST_CASE("a link names a floor mesh peer to offer to, as welcome names one") {
+    const ServiceFrame link = parsed(R"({"type":"link","peer":"000000000000000d"})");
+    CHECK(link.kind == ServiceFrame::Kind::Link);
+    CHECK(link.peer == 0xd);
+    CHECK_FALSE(parse_service_frame(R"({"type":"link"})"));
+    CHECK_FALSE(parse_service_frame(R"({"type":"link","peer":"0000000000000000"})"));
+}

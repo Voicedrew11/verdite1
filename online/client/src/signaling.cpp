@@ -1,6 +1,6 @@
 #include "signaling.h"
 
-#include <cJSON.h>
+#include "json.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,10 +9,10 @@
 namespace vo {
 namespace {
 
-struct JsonDelete {
-    void operator()(cJSON *json) const { cJSON_Delete(json); }
-};
-using Json = std::unique_ptr<cJSON, JsonDelete>;
+using json::int_field;
+using json::Object;
+using json::string_field;
+using Json = Object;
 
 bool is_lower_digit(char c) {
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
@@ -50,28 +50,9 @@ bool valid_build(std::string_view build) {
     });
 }
 
-// The field as a string, or nothing when it is missing or not a string.
-std::optional<std::string> string_field(const cJSON *object, const char *name) {
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
-    if (!cJSON_IsString(item) || item->valuestring == nullptr)
-        return std::nullopt;
-    return std::string(item->valuestring);
-}
-
 std::optional<PeerId> peer_field(const cJSON *object, const char *name) {
     const auto hex = string_field(object, name);
     return hex ? parse_peer(*hex) : std::nullopt;
-}
-
-// A whole number in [low, high], or nothing.
-std::optional<int> int_field(const cJSON *object, const char *name, int low, int high) {
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
-    if (!cJSON_IsNumber(item))
-        return std::nullopt;
-    const double value = item->valuedouble;
-    if (value < low || value > high || std::floor(value) != value)
-        return std::nullopt;
-    return static_cast<int>(value);
 }
 
 std::optional<Signal> parse_signal(const cJSON *data) {
@@ -221,6 +202,14 @@ std::string query_value(std::string_view value) {
     return out;
 }
 
+ServiceFrame::Kind peer_frame_kind(std::string_view type) {
+    if (type == "join")
+        return ServiceFrame::Kind::Join;
+    if (type == "leave")
+        return ServiceFrame::Kind::Leave;
+    return ServiceFrame::Kind::Link;
+}
+
 std::optional<ServiceFrame> parse_frame(const cJSON *json) {
     const auto type = string_field(json, "type");
     if (!type)
@@ -231,12 +220,12 @@ std::optional<ServiceFrame> parse_frame(const cJSON *json) {
         return parse_turn(json);
     if (*type == "rooms")
         return parse_rooms(json);
-    if (*type == "join" || *type == "leave") {
+    if (*type == "join" || *type == "leave" || *type == "link") {
         const auto peer = peer_field(json, "peer");
         if (!peer)
             return std::nullopt;
         ServiceFrame frame;
-        frame.kind = *type == "join" ? ServiceFrame::Kind::Join : ServiceFrame::Kind::Leave;
+        frame.kind = peer_frame_kind(*type);
         frame.peer = *peer;
         return frame;
     }
@@ -323,6 +312,30 @@ std::optional<std::string> lobby_url(std::string_view service_url, std::string_v
         return std::nullopt;
     *url += "/v1/lobby/" + std::string(game) + "?protocol=" + std::to_string(protocol_version) +
             "&build=" + query_value(build);
+    return url;
+}
+
+std::optional<std::string> floor_records_url(std::string_view service_url, std::string_view game,
+                                             std::uint32_t area, std::uint32_t seed) {
+    if (!valid_game(game))
+        return std::nullopt;
+    auto url = socket_base(service_url);
+    if (!url)
+        return std::nullopt;
+    *url += "/v1/floors/" + std::string(game) + "/" + std::to_string(area) + "/records?protocol=" +
+            std::to_string(protocol_version) + "&seed=" + std::to_string(seed);
+    return url;
+}
+
+std::optional<std::string> floor_mesh_url(std::string_view service_url, std::string_view game,
+                                          std::uint32_t area, std::string_view build) {
+    if (!valid_game(game) || !valid_build(build))
+        return std::nullopt;
+    auto url = socket_base(service_url);
+    if (!url)
+        return std::nullopt;
+    *url += "/v1/floors/" + std::string(game) + "/" + std::to_string(area) + "/mesh?protocol=" +
+            std::to_string(protocol_version) + "&build=" + query_value(build);
     return url;
 }
 

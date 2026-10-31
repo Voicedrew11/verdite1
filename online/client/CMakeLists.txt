@@ -11,11 +11,13 @@ add_subdirectory($ENV{KF_LIBDATACHANNEL_SOURCE} libdatachannel EXCLUDE_FROM_ALL 
 # libdatachannel needs RTTI, which the rest of the build turns off
 target_compile_options(datachannel-static PRIVATE -frtti)
 
-add_library(verdite_online STATIC src/handover.cpp src/session.cpp src/signaling.cpp
-  ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)
+find_package(OpenSSL REQUIRED)
+
+add_library(verdite_online STATIC src/board.cpp src/floor_frames.cpp src/handover.cpp src/record.cpp
+  src/session.cpp src/signaling.cpp ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)
 target_include_directories(verdite_online PUBLIC include
   PRIVATE src ${CMAKE_SOURCE_DIR}/third_party/cjson)
-target_link_libraries(verdite_online PRIVATE LibDataChannel::LibDataChannelStatic)
+target_link_libraries(verdite_online PRIVATE LibDataChannel::LibDataChannelStatic OpenSSL::Crypto)
 target_compile_options(verdite_online PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -Werror>)
 
 # vo_pair: two sessions through a running service (online/README.md)
@@ -23,12 +25,18 @@ add_executable(vo_pair tests/pair.cpp)
 target_link_libraries(vo_pair PRIVATE verdite_online)
 target_compile_options(vo_pair PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+# vo_board_trio: three boards on one floor of a running service (online/README.md)
+add_executable(vo_board_trio tests/board_trio.cpp)
+target_link_libraries(vo_board_trio PRIVATE verdite_online)
+target_compile_options(vo_board_trio PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
 if(doctest_FOUND)
-  add_executable(verdite_online_tests tests/main.cpp tests/handover.cpp tests/signaling.cpp
-    src/handover.cpp src/signaling.cpp
+  add_executable(verdite_online_tests tests/main.cpp tests/floor_frames.cpp tests/handover.cpp tests/record.cpp
+    tests/signaling.cpp
+    src/floor_frames.cpp src/handover.cpp src/record.cpp src/signaling.cpp
     ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)
   target_include_directories(verdite_online_tests PRIVATE src ${CMAKE_SOURCE_DIR}/third_party/cjson)
-  target_link_libraries(verdite_online_tests PRIVATE doctest::doctest)
+  target_link_libraries(verdite_online_tests PRIVATE doctest::doctest OpenSSL::Crypto)
   target_compile_options(verdite_online_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -Werror>)
   add_test(NAME verdite_online COMMAND verdite_online_tests)
 endif()

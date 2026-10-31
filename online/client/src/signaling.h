@@ -27,6 +27,12 @@ std::optional<std::string> room_url(std::string_view service_url, std::string_vi
                                     std::string_view listed_as = {});
 // The WebSocket address of the list of public rooms, checked as room_url is.
 std::optional<std::string> lobby_url(std::string_view service_url, std::string_view game, std::string_view build);
+// The WebSocket addresses of a floor's records (its sample, drawn from seed) and of its mesh, which
+// takes a build's name but checks none (PROTOCOL.md, "A floor's records" and "The floor mesh").
+std::optional<std::string> floor_records_url(std::string_view service_url, std::string_view game,
+                                             std::uint32_t area, std::uint32_t seed);
+std::optional<std::string> floor_mesh_url(std::string_view service_url, std::string_view game,
+                                          std::uint32_t area, std::string_view build);
 
 constexpr std::size_t listed_rooms_most = 50;
 constexpr std::uint32_t floor_most = 99;
@@ -59,10 +65,11 @@ struct Signal {
 };
 
 struct ServiceFrame {
-    enum class Kind { Welcome, Join, Leave, Signal, Turn, Rooms, Error };
+    // Link: a floor mesh's newer peer is told to offer to peer, as to one named in welcome.
+    enum class Kind { Welcome, Join, Leave, Signal, Turn, Rooms, Error, Link };
     Kind kind = Kind::Error;
     int protocol = 0;                   // Welcome
-    PeerId peer = 0;                    // Welcome: you; Join, Leave: them; Signal: the sender
+    PeerId peer = 0;                    // Welcome: you; Join, Leave, Link: them; Signal: the sender
     std::vector<PeerId> peers;          // Welcome: already in the room
     Signal signal;                      // Signal
     std::vector<IceServer> ice_servers; // Turn: one per URL

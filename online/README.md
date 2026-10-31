@@ -22,11 +22,18 @@ cd online/service
 npm ci
 npm run check                   # type-check
 npm run dev                     # wrangler dev on http://127.0.0.1:8787, no TURN key: host candidates only
+npx wrangler d1 migrations apply verdite-online --local   # the records' tables, once per local state
 npm test                        # the signaling test, against a running npm run dev
+npm run test:records            # records: posts, refusals, ratings, samples, mine, retirement (about a minute)
+npm run test:mesh               # the floor mesh: links, signals, a relink after a leave
 npx wrangler deploy             # to verdite-online.<account>.workers.dev
 SERVICE=https://... npm test    # the signaling test against the deployed Worker
 SERVICE=https://... npm run test:turn   # TURN servers come with credentials (never printed)
 ```
+
+The records (`/v1/floors/...`, a Durable Object per floor) keep their rows in D1 (`migrations/`).
+Locally, `wrangler dev` needs the migration above first. The `database_id` in `wrangler.jsonc` is a
+placeholder: a deploy needs the account's real database (and its migration) before it.
 
 Without a TURN key, rooms hand out no ICE servers, which is enough for two instances on one
 machine; local development never needs the key.
@@ -50,11 +57,12 @@ CONTROL packet (`protocol/PROTOCOL.md`, "Moving to a new credential"; the orderi
 closed, so `vo_close` waits for that, at most 2 seconds.
 
 ```
-cmake --build --preset linux --target verdite_online vo_pair verdite_online_tests
+cmake --build --preset linux --target verdite_online vo_pair vo_board_trio verdite_online_tests
 build/linux/online/client/verdite_online_tests             # the frames, read and written
 build/linux/online/client/vo_pair --service http://127.0.0.1:8787 --seconds 10
 build/linux/online/client/vo_pair --service https://verdite-online.voicedrew11.workers.dev
 build/linux/online/client/vo_pair --service http://127.0.0.1:8787 --seconds 3 --listed 1
+build/linux/online/client/vo_board_trio --service http://127.0.0.1:8787
 ```
 
 With `--listed 1` the room has a public code, the first session lists it and says it is on floor
@@ -65,6 +73,11 @@ players.
 second, plus one 64 KiB CONTROL packet; it passes when every CONTROL packet arrived in order and
 neither side lost the other. The library logs each connection's route to stderr: `relayed`
 through TURN, or `direct` when the service has no TURN key.
+
+Records (`vo_board_*`, `protocol/PROTOCOL.md` "Records") use the floor's records socket and the
+floor mesh: a board's calls run on the game's thread, and the sockets' threads only post to a
+mailbox. `vo_board_trio` runs three boards on area 7 of game `test` and passes when a post reaches
+the other two by gossip, is rated, and retires the first of ten more.
 
 - libjuice speaks TURN over UDP only, so a network that blocks UDP cannot connect.
 - ThreadSanitizer reports races inside usrsctp (libdatachannel's SCTP) and a lock-order

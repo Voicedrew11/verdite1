@@ -12,18 +12,25 @@
     "bindings": [
       { "name": "ROOMS", "class_name": "Room" },
       { "name": "BUDGET", "class_name": "Budget" },
-      { "name": "LOBBIES", "class_name": "Lobby" }
+      { "name": "LOBBIES", "class_name": "Lobby" },
+      { "name": "FLOORS", "class_name": "Floor" }
     ]
   },
+  // the records (migrations/); the id is a placeholder, so a deploy needs the real database first
+  "d1_databases": [
+    { "binding": "DB", "database_name": "verdite-online", "database_id": "local-only-placeholder", "migrations_dir": "migrations" }
+  ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Room"] },
     { "tag": "v2", "new_sqlite_classes": ["Budget"] },
-    { "tag": "v3", "new_sqlite_classes": ["Lobby"] }
+    { "tag": "v3", "new_sqlite_classes": ["Lobby"] },
+    { "tag": "v4", "new_sqlite_classes": ["Floor"] }
   ],
   // per address, per Cloudflare location, approximate
   "ratelimits": [
     { "name": "JOIN_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } },
-    { "name": "TURN_LIMIT", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
+    { "name": "TURN_LIMIT", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
+    { "name": "POST_LIMIT", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
   ],
   // the month's TURN egress (what Cloudflare bills) above which no credentials are issued
   "vars": { "TURN_BUDGET_GB": "500" },

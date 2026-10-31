@@ -10,6 +10,7 @@
 #include "verdite_online.h"
 
 #include "handover.h"
+#include "mesh.h"
 #include "signaling.h"
 
 #include <rtc/rtc.hpp>
@@ -536,10 +537,14 @@ struct vo_session {
             ask_for_turn();
     }
 
-    void on_join(PeerId peer) {
+    void on_join(PeerId peer) { on_new_peer(peer, false); }
+
+    // A peer that is not in welcome: the room's later peers, and a floor mesh's linked ones
+    // (older: this side offers to it, as to a peer in welcome).
+    void on_new_peer(PeerId peer, bool older) {
         if (peer == self || links.contains(peer))
             return;
-        links[peer].older = false;
+        links[peer].older = older;
         if (credential_fresh())
             connect_waiting();
         else if (!retry_turn_at)
@@ -614,6 +619,9 @@ struct vo_session {
             break;
         case vo::ServiceFrame::Kind::Leave:
             drop_peer(frame->peer, std::nullopt);
+            break;
+        case vo::ServiceFrame::Kind::Link:
+            on_new_peer(frame->peer, true);
             break;
         case vo::ServiceFrame::Kind::Signal:
             on_signal(frame->peer, std::move(frame->signal));
@@ -871,6 +879,23 @@ struct vo_session {
     }
 };
 
+namespace {
+
+// A session that has started to open url; a failure to start is its first error, as with a room.
+std::unique_ptr<vo_session> start_session(std::string url, bool listed) {
+    auto session = std::make_unique<vo_session>();
+    session->url = std::move(url);
+    session->listed = listed;
+    try {
+        session->open();
+    } catch (const std::exception &error) {
+        session->fail(VO_ERROR_UNREACHABLE, error.what());
+    }
+    return session;
+}
+
+} // namespace
+
 extern "C" {
 
 vo_session *vo_open(const vo_config *config) {
@@ -881,15 +906,7 @@ vo_session *vo_open(const vo_config *config) {
     auto url = vo::room_url(config->service_url, config->game, config->room, config->build, listed_as);
     if (!url)
         return nullptr;
-    auto session = std::make_unique<vo_session>();
-    session->url = std::move(*url);
-    session->listed = !listed_as.empty();
-    try {
-        session->open();
-    } catch (const std::exception &error) {
-        session->fail(VO_ERROR_UNREACHABLE, error.what());
-    }
-    return session.release(); // owned by the caller until vo_close
+    return start_session(std::move(*url), !listed_as.empty()).release(); // owned by the caller until vo_close
 }
 
 void vo_close(vo_session *session) {
@@ -999,6 +1016,15 @@ void vo_describe(vo_session *session, uint32_t floor) {
 }
 
 } // extern "C"
+
+vo_session *vo_open_mesh(const char *service_url, const char *game, uint32_t area, const char *build) {
+    if (service_url == nullptr || game == nullptr || build == nullptr)
+        return nullptr;
+    auto url = vo::floor_mesh_url(service_url, game, area, build);
+    if (!url)
+        return nullptr;
+    return start_session(std::move(*url), false).release(); // owned by the caller until vo_close
+}
 
 namespace {
 
