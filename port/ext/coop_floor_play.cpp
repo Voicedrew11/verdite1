@@ -6,6 +6,7 @@
 
 #include <kf/game/player.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -30,9 +31,11 @@ enum class Part {
     Watching,   // another player owns it: draws that player's actors
 };
 
-struct Held {
+// A take or a show the host ordered: from whom this machine waits for a snapshot.
+struct Awaited {
+    int floor = 1;
     CoopPlayerId from = 0;
-    CoopFloorSnapshot snapshot;
+    CoopSnapshotFor purpose = CoopSnapshotFor::Show;
 };
 
 struct Floors {
@@ -44,11 +47,13 @@ struct Floors {
     std::map<CoopPlayerId, std::uint64_t> peers;       // by player
     std::vector<CoopRoster::Player> room;              // the roster, the host first
     std::array<CoopFloorOwnership, coop_floor_count> rows{};
+    std::array<CoopPlayerId, coop_floor_count> previous_owners{};   // a handover comes from this one
     int floor = 0;                                     // the floor this machine said it is on
     CoopPlayerId left_floor_with = 0;
     Part part = Part::Waiting;
     CoopPlayerId watching = 0;
-    std::optional<Held> held;                          // a snapshot not yet put in
+    std::map<CoopPlayerId, CoopFloorSnapshot> held;    // each player's last snapshot not yet put in
+    std::optional<Awaited> awaited;
     std::map<int, std::vector<std::uint8_t>> host_records;   // from the host, for a run from the record
     std::vector<std::pair<CoopPlayerId, CoopMessage>> inbox;
     CoopFramePlayback playback{frame_delay_updates};
@@ -166,6 +171,8 @@ void host_takes(CoopPlayerId from, const CoopMessage &message) {
 // ---- every machine's side ----
 
 void act_on(const CoopFloorOwnership &ownership) {
+    if (row(ownership.floor).owner != ownership.owner)
+        floors.previous_owners[static_cast<std::size_t>(ownership.floor - 1)] = row(ownership.floor).owner;
     row(ownership.floor) = ownership;
     if (ownership.floor != floors.floor)
         return;
@@ -176,15 +183,18 @@ void act_on(const CoopFloorOwnership &ownership) {
     }
     if (floors.part == Part::Watching && ownership.owner != 0 && ownership.owner != floors.watching)
         watch(ownership.owner);
-    if (floors.held && floors.held->snapshot.purpose == CoopSnapshotFor::Handover && ownership.owner != 0
-        && ownership.owner != floors.held->from)
-        floors.held.reset();   // the floor went to another
+    if (ownership.owner != 0)   // the floor went to another
+        std::erase_if(floors.held, [&](const auto &each) {
+            return each.second.purpose == CoopSnapshotFor::Handover && each.second.floor == ownership.floor
+                && each.first != ownership.owner;
+        });
 }
 
 void act_on(const CoopRunFromRecord &order) {
     if (order.to != floors.self || order.floor != floors.floor)
         return;
-    floors.held.reset();
+    floors.held.clear();
+    floors.awaited.reset();
     if (!is_host()) {
         const auto record = floors.host_records.find(order.floor);
         const auto bytes = record != floors.host_records.end() ? record->second : coop_floor_record(order.floor);
@@ -203,32 +213,46 @@ void act_on(const CoopTakeFloor &order) {
         std::printf("[coop] gave floor %d to a more senior player\n", order.floor);
     } else if (order.to == floors.self) {
         wait();
+        floors.awaited = Awaited{order.floor, order.from, CoopSnapshotFor::Take};
     }
 }
 
 void act_on(const CoopShowFloor &order) {
     if (order.floor != floors.floor)
         return;
-    if (order.owner == floors.self && floors.part == Part::Running)
+    if (order.owner == floors.self && floors.part == Part::Running) {
         send_to(order.to, snapshot_for(CoopSnapshotFor::Show));
-    else if (order.to == floors.self)
+    } else if (order.to == floors.self) {
         wait();
+        floors.awaited = Awaited{order.floor, order.owner, CoopSnapshotFor::Show};
+    }
 }
 
-// A snapshot held until this machine is on its floor and, for a handover, named its owner.
+// Whether the host's orders let `from` send this machine `snapshot` of its floor now: a take or a
+// show it ordered, or a handover from the floor's last owner once it named this machine the owner.
+// Until then a snapshot is held: the order and the snapshot come by different players.
+bool snapshot_allowed(CoopPlayerId from, const CoopFloorSnapshot &snapshot) {
+    if (snapshot.purpose == CoopSnapshotFor::Handover)
+        return row(snapshot.floor).owner == floors.self
+            && floors.previous_owners[static_cast<std::size_t>(snapshot.floor - 1)] == from;
+    const auto &awaited = floors.awaited;
+    return awaited && awaited->floor == snapshot.floor && awaited->from == from && awaited->purpose == snapshot.purpose;
+}
+
+// A snapshot held until this machine is on its floor and the host's orders let it in.
 void put_in_held() {
-    if (!floors.held || floors.held->snapshot.floor != floors.floor)
+    const auto allowed = std::ranges::find_if(floors.held, [](const auto &each) {
+        return each.second.floor == floors.floor && snapshot_allowed(each.first, each.second);
+    });
+    if (allowed == floors.held.end())
         return;
-    Held held = std::move(*floors.held);
-    floors.held.reset();
-    const CoopFloorSnapshot &snapshot = held.snapshot;
+    const CoopPlayerId from = allowed->first;
+    const CoopFloorSnapshot snapshot = std::move(allowed->second);
+    floors.held.erase(allowed);
+    if (snapshot.purpose != CoopSnapshotFor::Handover)
+        floors.awaited.reset();
     switch (snapshot.purpose) {
     case CoopSnapshotFor::Handover:
-        if (row(snapshot.floor).owner != floors.self) {
-            floors.held = std::move(held);   // the host has not named this machine yet
-            return;
-        }
-        [[fallthrough]];
     case CoopSnapshotFor::Take:
         if (reload(snapshot.record, snapshot.live)) {
             run();
@@ -238,7 +262,7 @@ void put_in_held() {
         return;
     case CoopSnapshotFor::Show:
         if (reload(snapshot.record, snapshot.live))
-            watch(held.from);
+            watch(from);
         return;
     }
 }
@@ -258,7 +282,8 @@ void act_on_message(CoopPlayerId from, const CoopMessage &message) {
         if (from == floors.host)
             floors.host_records[record->floor] = record->record;
     } else if (const auto *snapshot = std::get_if<CoopFloorSnapshot>(&message)) {
-        floors.held = Held{from, *snapshot};
+        if (from != floors.self)
+            floors.held[from] = *snapshot;
     } else if (const auto *writes = std::get_if<CoopFloorWrites>(&message)) {
         if (from == floors.self || writes->floor != floors.floor)
             return;
@@ -274,7 +299,8 @@ void arrive() {
     if (floor == floors.floor)
         return;
     floors.floor = floor;
-    floors.held.reset();
+    floors.held.clear();
+    floors.awaited.reset();
     wait();
     tell_everyone(CoopFloorAt{floor, floors.left_floor_with});
     floors.left_floor_with = 0;

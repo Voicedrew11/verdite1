@@ -77,35 +77,104 @@ std::array<std::array<u8, KF_MAP_COLUMNS>, KF_MAP_ROWS> occupants_but_this_playe
     return occupants;
 }
 
-// Animation clips are not checked here: the animation cache checks each against its model's clips.
 bool cell_valid(u32 x, u32 z) {
     return x < KF_MAP_COLUMNS && z < KF_MAP_ROWS;
 }
 
-bool actor_valid(const KfActor &actor) {
-    if (actor.slot_state == KF_ACTOR_SLOT_FREE)
+// Whether this machine can draw an effect's render id: a billboard it has, or a model clip it has.
+bool drawable(KfEffectRenderId render_id, KfAnimationClip clip) {
+    if (clip == KF_ANIMATION_CLIP_NONE)
+        return render_id.billboard() == KF_EFFECT_BILLBOARD_NONE || render_id.value < KF_EFFECT_BILLBOARD_SPRITE_COUNT;
+    if (render_id.model() == KF_EFFECT_MODEL_NONE)
         return true;
-    return actor.definition_id < KF_ACTOR_DEFINITION_COUNT && cell_valid(actor.cell_x, actor.cell_z)
-        && cell_valid(actor.tile_x, actor.tile_z);
+    const std::size_t asset = std::size_t{render_id.value} + KF_ASSET_EFFECT_FIRST;
+    if (asset >= KF_ASSET_REGISTRY_KNOWN_ENTRIES || !game_graphics_runtime.asset_registry_tmds[asset].data)
+        return false;
+    const auto &clips = game_graphics_runtime.asset_animations[asset].clips;
+    return clips.empty() || kf_enum_encode<std::size_t>(clip) < clips.size();
 }
 
+bool drawable(const KfEffectRecord &effect) {
+    return drawable(effect.render_id, effect.animation_clip);
+}
+
+// A clip this machine's model has, for an actor or an event, which the animation cache refuses
+// (ending the game) otherwise: past the model's clips (none is past them all), the last. A machine
+// in another of floor 5's variants holds other models for the same actors.
+KfAnimationClip fit_clip(std::size_t asset, KfAnimationClip clip) {
+    const auto &clips = game_graphics_runtime.asset_animations[asset].clips;
+    if (clips.empty() || kf_enum_encode<std::size_t>(clip) < clips.size())
+        return clip;
+    return kf_enum_decode<KfAnimationClip>(static_cast<u8>(clips.size() - 1));
+}
+
+std::size_t actor_model(u8 definition_id) {
+    return actor_state.definitions.entries[definition_id].model_and_texture & 0xf;
+}
+
+std::size_t event_model(const KfMapEvent &event) {
+    return std::size_t{event.model_index} + KF_ASSET_MAP_EVENT_FIRST;
+}
+
+bool position_valid(const VECTOR &position) {
+    return position.vx >= 0 && position.vx < KF_MAP_COLUMNS * KF_MAP_TILE_SIZE && position.vz >= 0
+        && position.vz < KF_MAP_ROWS * KF_MAP_TILE_SIZE;
+}
+
+// A spawned actor's placement tile is the invalid cell (actor.cpp), not one on the map.
+bool tile_valid(const KfActor &actor) {
+    return cell_valid(actor.tile_x, actor.tile_z)
+        || (actor.tile_x == KF_MAP_CELL_COORD_INVALID && actor.tile_z == KF_MAP_CELL_COORD_INVALID);
+}
+
+// The actor's cell is worked out from its position as it moves, and read from the grids unchecked.
+// Every slot's definition, free or not: actor_bind_current points at it for each.
+bool actor_valid(const KfActor &actor) {
+    if (actor.definition_id >= KF_ACTOR_DEFINITION_COUNT)
+        return false;
+    if (actor.slot_state == KF_ACTOR_SLOT_FREE)   // drawn and hit while active, though not updated
+        return actor.lifecycle != KF_ACTOR_LIFECYCLE_ACTIVE;
+    return cell_valid(actor.cell_x, actor.cell_z) && tile_valid(actor) && position_valid(actor.position);
+}
+
+// A floor deformation walks the lines effect_floor_deform_line keeps, from first_segment on.
+bool floor_deformation_valid(const KfEffectRecord &effect) {
+    if (effect.kind != KF_EFFECT_KIND_FLOOR_DEFORMATION)
+        return true;
+    const auto &floor = effect.floor_deformation;
+    return floor.first_segment >= 0 && floor.segment_count >= 0
+        && floor.first_segment + floor.segment_count <= KF_FLOOR_DEFORM_SEGMENT_COUNT;
+}
+
+// Its render id now and the one its frames count from: the sprite table and the models index by them.
 bool effect_valid(const KfEffectRecord &effect) {
     if (effect.type == KF_EFFECT_SLOT_FREE)
         return true;
-    return effect.parent_effect_index < KF_EFFECT_CAPACITY;
+    const bool shown = (!effect_has_visual(effect) || drawable(effect))
+        && drawable(effect.base_render_id, effect.animation_clip);
+    return effect.parent_effect_index < KF_EFFECT_CAPACITY && shown && floor_deformation_valid(effect);
 }
 
+// As save_world_valid checks a saved event: a stage of 0 would read the page limits before their first.
 bool event_valid(const KfMapEvent &event) {
     if (event.state == KF_MAP_EVENT_FREE)
         return true;
-    return event.dialogue.stage <= KF_DIALOGUE_STAGE_COUNT && cell_valid(event.cell_x, event.cell_z);
+    return event.dialogue.stage_limit <= KF_DIALOGUE_STAGE_COUNT && event.dialogue.stage <= KF_DIALOGUE_STAGE_COUNT
+        && event.dialogue.stage != 0 && cell_valid(event.cell_x, event.cell_z);
 }
 
+// map_object_pool_update runs every slot by its action, whatever its id: an emptied slot keeps its
+// action (a taken pickup, floor 5's copy regions), and a falling drop reads the grid at its cell. A
+// door's link names its partner's slot, which the door's swing writes, and a door's collision edge
+// reads its object's definition, which an empty slot has not.
 bool object_valid(const KfMapObject &object) {
+    if (!map_saved_link_valid(object.action, object.link))
+        return false;
+    const bool door = object.action == KF_MAP_OBJECT_OP_HINGED_DOOR || object.action == KF_MAP_OBJECT_OP_LIFT_DOOR;
     if (object.object_id == KF_OBJECT_NONE)
-        return true;
+        return object.action == KF_MAP_OBJECT_OP_NONE || (!door && cell_valid(object.cell_x, object.cell_z));
     return kf_enum_encode<u8>(object.object_id) < KF_MAP_OBJECT_DEFINITION_COUNT
-        && cell_valid(object.cell_x, object.cell_z) && map_saved_link_valid(object.action, object.link);
+        && cell_valid(object.cell_x, object.cell_z);
 }
 
 bool occupants_valid(const Floor &floor) {
@@ -114,9 +183,23 @@ bool occupants_valid(const Floor &floor) {
     });
 }
 
+// A placed object's link also as the action its definition starts when it is used reads it (as
+// save_world_valid checks a saved one); drops have no such action.
+bool links_fit_definitions(const KfMapObjectState &objects) {
+    for (std::size_t i = 0; i < KF_MAP_OBJECT_EFFECT_FIRST; ++i) {
+        const KfMapObject &object = objects.objects[i];
+        if (object.object_id != KF_OBJECT_NONE
+            && !map_saved_link_valid(objects.definitions.entries[kf_enum_encode<u8>(object.object_id)].behavior_type,
+                object.link))
+            return false;
+    }
+    return true;
+}
+
 bool floor_valid(const Floor &floor) {
     return std::ranges::all_of(floor.actors, actor_valid) && std::ranges::all_of(floor.effects, effect_valid)
         && std::ranges::all_of(floor.events, event_valid) && std::ranges::all_of(floor.objects.objects, object_valid)
+        && links_fit_definitions(floor.objects)
         && occupants_valid(floor) && std::ranges::all_of(floor.effect_sources, [](KfEffectSource source) {
                return source == KfEffectSource::Other || source == KfEffectSource::Actor
                    || source == KfEffectSource::Player;
@@ -143,6 +226,43 @@ void put_occupants(const Floor &floor) {
     collision_adjust_cell_occupancy(cell.x, cell.z, 1);
 }
 
+// What the disc gave this machine for the same floor, which play never changes, in place of the
+// sender's: the definition tables (but the floor 5 boss's animations, which follow the story flag
+// the record carries), each actor's placement drop and each event's placement. A shop's character
+// is its stock bank, and an event's model an asset. False when an event slot is free on one machine
+// and not the other: only loading the floor frees or fills one.
+bool keep_own_placements(Floor &floor) {
+    floor.definitions = actor_state.definitions;
+    floor.objects.definitions = map_object_state.definitions;
+    for (std::size_t i = 0; i < KF_ACTOR_CAPACITY; ++i)
+        floor.actors[i].death_drop_object_id = actor_state.actors[i].death_drop_object_id;
+    for (std::size_t i = 0; i < KF_MAP_EVENT_CAPACITY; ++i) {
+        const KfMapEvent &own = map_runtime_state.events[i];
+        KfMapEvent &sent = floor.events[i];
+        if ((own.state == KF_MAP_EVENT_FREE) != (sent.state == KF_MAP_EVENT_FREE))
+            return false;
+        sent.character_id = own.character_id;
+        sent.model_index = own.model_index;
+        sent.behavior = own.behavior;
+        sent.home_x = own.home_x;
+        sent.home_z = own.home_z;
+        sent.radius = own.radius;
+        sent.unknown_0c = own.unknown_0c;
+        sent.unknown_0d = own.unknown_0d;
+    }
+    return true;
+}
+
+// Each actor's and event's clip, which is drawn while it is active, one its model here has.
+void fit_clips(Floor &floor) {
+    for (KfActor &actor : floor.actors)
+        if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE)
+            actor.animation_clip = fit_clip(actor_model(actor.definition_id), actor.animation_clip);
+    for (KfMapEvent &event : floor.events)
+        if (event.state == KF_MAP_EVENT_ACTIVE)
+            event.animation_clip = fit_clip(event_model(event), event.animation_clip);
+}
+
 // The live floor in a snapshot of the loaded floor, checked; nothing for bytes that are not one.
 std::optional<Floor> snapshot_floor(std::span<const std::uint8_t> bytes) {
     if (bytes.size() != sizeof(Header) + sizeof(Floor))
@@ -154,8 +274,9 @@ std::optional<Floor> snapshot_floor(std::span<const std::uint8_t> bytes) {
     Floor floor{};
     std::memcpy(&floor, bytes.data() + sizeof header, sizeof floor);
     drop_caches(floor);
-    if (!floor_valid(floor))
+    if (!keep_own_placements(floor) || !floor_valid(floor))
         return std::nullopt;
+    fit_clips(floor);
     return floor;
 }
 
@@ -395,10 +516,11 @@ void take_baseline() {
 
 bool event_write_valid(std::span<const std::uint8_t> write) {
     const auto state = kf_enum_decode<KfMapEventState>(write[1]);
+    // Only loading the floor frees or fills an event slot, so a write does neither.
     const bool state_known = state == KF_MAP_EVENT_INACTIVE || state == KF_MAP_EVENT_ACTIVE
-        || state == KF_MAP_EVENT_DISABLED || state == KF_MAP_EVENT_FREE;
-    return write[0] < KF_MAP_EVENT_CAPACITY && state_known && write[2] <= KF_DIALOGUE_STAGE_COUNT
-        && write[3] <= KF_DIALOGUE_STAGE_COUNT;
+        || state == KF_MAP_EVENT_DISABLED;
+    return write[0] < KF_MAP_EVENT_CAPACITY && map_runtime_state.events[write[0]].state != KF_MAP_EVENT_FREE
+        && state_known && write[2] <= KF_DIALOGUE_STAGE_COUNT && write[3] <= KF_DIALOGUE_STAGE_COUNT;
 }
 
 bool drop_id_valid(std::size_t index, KfObjectId id) {
@@ -442,6 +564,7 @@ void apply_object(std::size_t index, const KfMapObject &sent) {
 void apply_event(std::span<const std::uint8_t> write) {
     KfMapEvent &event = map_runtime_state.events[write[0]];
     event.state = kf_enum_decode<KfMapEventState>(write[1]);
+    event.animation_clip = fit_clip(event_model(event), event.animation_clip);
     event.dialogue.stage_limit = write[2];
     // A stage is never set lower in coop (map_event_refresh_dialogue_stage).
     if (write[3] > event.dialogue.stage) {
@@ -665,16 +788,6 @@ std::optional<Puppet> read_puppet(CoopByteReader &in) {
     return puppet;
 }
 
-// A clip this machine's model of the actor has: a machine in another of floor 5's variants holds
-// other models for the same actors.
-KfAnimationClip clip_drawable(u8 definition_id, KfAnimationClip clip) {
-    const u16 asset = actor_state.definitions.entries[definition_id].model_and_texture & 0xf;
-    const auto &clips = game_graphics_runtime.asset_animations[asset].clips;
-    if (clip == KF_ANIMATION_CLIP_NONE || clips.empty() || kf_enum_encode<u8>(clip) < clips.size())
-        return clip;
-    return kf_enum_decode<KfAnimationClip>(static_cast<u8>(clips.size() - 1));
-}
-
 bool awake(const KfActor &actor) {
     return actor.slot_state != KF_ACTOR_SLOT_FREE && actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE;
 }
@@ -746,20 +859,6 @@ void write_effect(CoopByteWriter &out, std::size_t index, const KfEffectRecord &
     out.u16(effect.scale_z);
 }
 
-// Whether this machine can draw what the owner sent: a billboard it has, or a model clip it has.
-bool drawable(const KfEffectRecord &effect) {
-    if (effect.animation_clip == KF_ANIMATION_CLIP_NONE)
-        return effect.render_id.billboard() == KF_EFFECT_BILLBOARD_NONE
-            || effect.render_id.value < KF_EFFECT_BILLBOARD_SPRITE_COUNT;
-    if (effect.render_id.model() == KF_EFFECT_MODEL_NONE)
-        return true;
-    const std::size_t asset = std::size_t{effect.render_id.value} + KF_ASSET_EFFECT_FIRST;
-    if (asset >= KF_ASSET_REGISTRY_KNOWN_ENTRIES)
-        return false;
-    const auto &clips = game_graphics_runtime.asset_animations[asset].clips;
-    return clips.empty() || kf_enum_encode<std::size_t>(effect.animation_clip) < clips.size();
-}
-
 // Into the slot it is drawn from, keeping the slot's animation cache.
 bool read_effect(CoopByteReader &in, std::array<KfEffectRecord, KF_EFFECT_CAPACITY> &shown) {
     const std::uint8_t index = in.u8();
@@ -825,7 +924,7 @@ void show_actors(const std::array<std::optional<Puppet>, KF_ACTOR_CAPACITY> &sho
             actor.slot_state = KF_ACTOR_SLOT_DYNAMIC;
         actor.lifecycle = KF_ACTOR_LIFECYCLE_ACTIVE;
         actor.definition_id = puppet->definition_id;
-        actor.animation_clip = clip_drawable(puppet->definition_id, puppet->animation_clip);
+        actor.animation_clip = fit_clip(actor_model(puppet->definition_id), puppet->animation_clip);
         actor.action = puppet->action;
         actor.animation_phase = puppet->animation_phase;
         actor.health = puppet->health;

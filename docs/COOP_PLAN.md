@@ -438,7 +438,8 @@ room's coop world. `port/ext/coop.cpp` is the session; the party's rules and the
 - **Who hosts:** the client says on JOINED whether anyone was in the room first. The first in
   hosts the world kept under the room code (`coop-<room>.kfcoop` beside the saves, with a `.bak`
   of the one before), or starts a new one: a new game at the start, its pack the host's kit. A
-  guest says hello to every peer older than it, and the host answers with a welcome: the
+  guest says hello to the room's first peer, the host (the service's welcome lists the peers
+  oldest first), and takes a welcome from no one else; the host answers with a welcome: the
   guest's character (empty for one new to the world, who starts a new game's), the pack and
   purse, what they wear, the world's highest floor, the world's bytes and the host's cell.
 - **Setting the game aside:** joining writes the game in play to a third card file
@@ -586,6 +587,28 @@ Order's fifth step, done 2026-10-27: the two foundations, then the session's par
   world's or the player's. A restore is refused, with nothing changed, for another floor, another
   build's layout (the structs are copied whole), or a slot whose definition, cell or tile is out
   of range, or an object whose link the game's own restore would refuse.
+  Since 2026-10-31 (the online security review) the sender's bytes are trusted for less: what the
+  disc gave the taker for the same floor, which play never changes, is the taker's own (both
+  definition tables, each actor's placement drop, each event's character, model, behaviour,
+  home and radius; a shop's character is its stock bank), and an event slot free on one machine
+  and not the other refuses the snapshot. An actor's position must be on the map (its cell is
+  worked out from it), an event's dialogue stage as a saved event's, an effect's render ids ones
+  this machine can draw, and a floor deformation's segments inside the table that
+  `effect_floor_deform_line` walks (a forged one wrote past the height grid). Every actor slot's
+  definition is checked, free or not (`actor_bind_current` points at it for each). Every object
+  slot runs its action each update whatever its id, so every slot's link is checked against its
+  action (a door's link names its partner's slot, which its swing writes), and a placed object's
+  also against its definition's. An emptied slot may keep an action (a taken pickup, floor 5's
+  copy regions) but not a door's, which reads its definition, and its cell must be on the map; an
+  effect that moves off the map finds its floor at height 0 (`effect_floor_y`; the PS1 read past
+  the grid), an actor woken at a home off the map wakes where it stands, a spawner carried off
+  the map spawns nothing, a door on the map's edge marks only its cells on the grid, and an
+  angle's ratio wraps as on the PS1 (dividing the lowest value by -1 faulted). A free actor slot may not be active (it is drawn and
+  hit, though not updated), and an active actor's or event's clip, here and in a frame or a
+  write, is fitted to this machine's model (the animation cache ends the game on a clip its model
+  has not; "none" was let through before). A door the clearance probe cannot place, which ended
+  the game, is probed at its own point. A spawned actor's placement tile is the invalid cell,
+  which was refused before.
 - **The round trip** (`scripts/floor_handover.py`): two seeded headless runs play the same
   (`KF_FUZZ`, no macros, godmode); in the second, at update 1500, the floor is captured, unloaded
   (which writes its record), loaded from that record and the snapshot put back, keeping that
@@ -619,7 +642,10 @@ Order's fifth step, done 2026-10-27: the two foundations, then the session's par
   A run from the record loads again whenever actors on the floor were drawn from another's. An
   owner walking off sends its record to the host and its snapshot to the heir from
   `map_unload_floor`, before the floor goes (`coop_floor_unloading`); the heir holds it until the
-  host's row names it the owner. A guest owner sends its record to the host at most once a second
+  host's row names it the owner. A snapshot is put in only when the host's orders allow its
+  sender: a take or a show the host ordered that player to send, or a handover from the floor's
+  last owner once the row names this machine. Until then it is held, one per sender, since the
+  order and the snapshot come by different players. A guest owner sends its record to the host at most once a second
   while the floor changes. The host keeps a record only from the owner its table names, and the
   welcome's world carries what it kept.
 - **A non-owner's floor:** the owner sends its awake actors every update on the STATE channel (28
