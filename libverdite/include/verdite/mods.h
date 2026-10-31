@@ -11,6 +11,10 @@
 //   mod.fs.read(path), mod.fs.write(path, text), mod.fs.exists(path), mod.fs.list([dir]),
 //   paths relative to the mod's folder and never outside it;
 //   config, a table kept per mod (numbers, booleans, strings, tables with string keys);
+//   save, a table kept per mod with each save slot (the same kinds of value), given back by
+//   load_save_tables and read by save_tables;
+//   the events the game raises: a global handler of the event's name gets a table of its fields,
+//   and may change the writable integers (ModHost::raise);
 //   the standard library without io, os, package.loadlib, C modules, string.dump or bytecode, and
 //   with debug.traceback only; require, dofile and loadfile reach only the mod's folder.
 #include <cstddef>
@@ -22,6 +26,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 struct lua_State;
@@ -65,6 +70,26 @@ enum class ModCallback : std::uint8_t {
     Unload,     // on_unload: before a reload, or when disabled
 };
 
+// A field of an event's table, as the definitions file lists it. A handler may change a
+// writable integer field within [min, max]; a value outside it is an error that stops that mod,
+// as kf.player writes are. Only integer fields are read back; writable on another type is ignored.
+struct ModEventField {
+    std::string_view name;
+    std::string_view type;        // "integer", "boolean", "string"
+    std::string_view doc;
+    bool writable = false;
+    std::int64_t min = 0, max = 0;
+};
+
+// An event the game raises: its handler is a global function of this name taking one table.
+struct ModEvent {
+    std::string_view name;        // "on_damage"
+    std::string_view doc;
+    std::vector<ModEventField> fields;
+};
+
+using ModEventValue = std::variant<std::int64_t, bool, std::string_view>;
+
 // What the game stores for a mod between runs.
 struct ModStored {
     bool enabled = false;
@@ -75,7 +100,8 @@ struct ModHostConfig {
     std::filesystem::path mods_dir;
     std::string api_version;                  // a mod's kf.api_version, say; also in the definitions
     std::vector<ModTable> api;
-    std::string definitions_name = "api.d.lua";   // written into mods_dir from api
+    std::vector<ModEvent> events;             // the events the game raises (ModHost::raise)
+    std::string definitions_name = "api.d.lua";   // written into mods_dir from api and events
     std::size_t memory_cap_bytes = 64u << 20;     // per mod
     std::uint64_t instructions_per_call = 100'000'000;   // per callback, and for the script's first run
     std::function<std::optional<ModStored>(std::string_view id)> read_stored;
@@ -117,6 +143,19 @@ public:
     void enable(std::string_view id);
     void disable(std::string_view id);
     void reload_all();   // every enabled mod, as if its files changed
+
+    // Calls the event's handler in every running mod that defines it, in the listed order, under
+    // a callback's budget. values follow the event's fields; each mod sees what the one before it
+    // left, and the final values are written back. A raise during another raise is ignored.
+    void raise(std::string_view event, std::span<ModEventValue> values);
+
+    // The current game's save tables (each mod's `save` global, stored with a save slot), as a
+    // JSON object keyed by mod id. A mod not running keeps the entry it had, so disabling a mod
+    // does not lose its part of the save.
+    [[nodiscard]] std::string save_tables() const;
+    // Replaces them; each running mod's `save` becomes a fresh table. "{}" for a new game. A mod
+    // that (re)loads gets its table from here.
+    void load_save_tables(std::string_view json);
 
     [[nodiscard]] std::vector<ModInfo> mods() const;   // sorted by name
     [[nodiscard]] std::size_t running_count() const;

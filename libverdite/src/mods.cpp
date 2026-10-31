@@ -13,11 +13,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <utility>
 
@@ -41,6 +43,15 @@ struct JsonTextFree {
 };
 using Json = std::unique_ptr<cJSON, JsonDelete>;
 
+// Each mod's save table as JSON text, by mod id: the host's copy, kept beside the mods.
+using SaveTables = std::map<std::string, std::string, std::less<>>;
+
+// The event being raised on a mod: its values in, and read back out by run_event.
+struct RaisedEvent {
+    const ModEvent *event = nullptr;
+    std::vector<ModEventValue> values;
+};
+
 struct Mod {
     fs::path dir;
     std::string id, name, version, author, description, entry = "main.lua";
@@ -52,6 +63,8 @@ struct Mod {
     bool config_dirty = false;
     bool has_settings = false;
     const ModHostConfig *host = nullptr;
+    SaveTables *saves = nullptr;
+    RaisedEvent raised;
     Clock::time_point host_started;
     // The budget, spent by allocate and count_instructions during a call.
     std::size_t memory_bytes = 0;
@@ -547,8 +560,9 @@ void json_to_lua(lua_State *L, const cJSON *item, int depth) {
     }
 }
 
-void push_config(lua_State *L, const std::string &config_json) {
-    const Json parsed(cJSON_ParseWithLength(config_json.data(), config_json.size()));
+// Pushes the JSON object as a table, or an empty table if it is not an object.
+void push_table_json(lua_State *L, std::string_view json) {
+    const Json parsed(cJSON_ParseWithLength(json.data(), json.size()));
     if (cJSON_IsObject(parsed.get()))
         json_to_lua(L, parsed.get(), 0);
     else
@@ -568,6 +582,34 @@ int encode_config(lua_State *L) {
     const std::unique_ptr<char, JsonTextFree> text(cJSON_PrintUnformatted(json.get()));
     if (text)
         mod.config_json = text.get();
+    return 0;
+}
+
+// Protected: the global save, as JSON, into the host's copy for the mod. An error, and the old
+// copy kept, if save is not a table of values that serialize.
+int encode_save(lua_State *L) {
+    Mod &mod = mod_of_state(L);
+    lua_pushglobaltable(L);
+    lua_pushliteral(L, "save");
+    lua_rawget(L, -2);
+    if (lua_type(L, -1) != LUA_TTABLE)
+        return luaL_error(L, "save is not a table");
+    const Json json = lua_to_json(L, -1, 0);
+    if (!json)
+        return luaL_error(L, "save holds a value that cannot be saved");
+    const std::unique_ptr<char, JsonTextFree> text(cJSON_PrintUnformatted(json.get()));
+    if (!text)
+        return luaL_error(L, "save cannot be printed");
+    (*mod.saves)[mod.id] = text.get();
+    return 0;
+}
+
+// Sets the global save from the mod's entry in the host's copy, or an empty table if it has none.
+int apply_save(lua_State *L) {
+    const Mod &mod = mod_of_state(L);
+    const auto found = mod.saves->find(mod.id);
+    push_table_json(L, found == mod.saves->end() ? std::string_view("{}") : std::string_view(found->second));
+    lua_setglobal(L, "save");
     return 0;
 }
 
@@ -613,8 +655,9 @@ int open_mod(lua_State *L) {
         bind_table(L, table);
     for (const ModTable &table : mod.host->api)
         bind_table(L, table);
-    push_config(L, mod.config_json);
+    push_table_json(L, mod.config_json);
     lua_setglobal(L, "config");
+    apply_save(L);
     if (auto error = load_mod_file(L, mod.entry))
         return luaL_error(L, "%s", error->c_str());
     lua_call(L, 0, 0);
@@ -666,6 +709,101 @@ int run_callback(lua_State *L) {
     return 0;
 }
 
+// ---- events ----
+
+const ModEvent *find_event(const std::vector<ModEvent> &events, std::string_view name) {
+    const auto found = std::find_if(events.begin(), events.end(), [&](const ModEvent &event) { return event.name == name; });
+    return found == events.end() ? nullptr : &*found;
+}
+
+bool is_writable(const ModEventField &field) {
+    return field.writable && field.type == "integer";
+}
+
+bool value_has_type(const ModEventField &field, const ModEventValue &value) {
+    if (field.type == "integer")
+        return std::holds_alternative<std::int64_t>(value);
+    if (field.type == "boolean")
+        return std::holds_alternative<bool>(value);
+    if (field.type == "string")
+        return std::holds_alternative<std::string_view>(value);
+    return false;
+}
+
+bool values_fit(const ModEvent &event, std::span<const ModEventValue> values) {
+    if (values.size() != event.fields.size())
+        return false;
+    for (std::size_t i = 0; i < values.size(); ++i)
+        if (!value_has_type(event.fields[i], values[i]))
+            return false;
+    return true;
+}
+
+void push_value(lua_State *L, const ModEventValue &value) {
+    if (const auto *integer = std::get_if<std::int64_t>(&value)) {
+        lua_pushinteger(L, *integer);
+    } else if (const auto *flag = std::get_if<bool>(&value)) {
+        lua_pushboolean(L, *flag);
+    } else {
+        const std::string_view text = std::get<std::string_view>(value);
+        lua_pushlstring(L, text.data(), text.size());
+    }
+}
+
+// The event's table at index table: each field, by name, from values.
+void push_event_fields(lua_State *L, int table, const ModEvent &event, const std::vector<ModEventValue> &values) {
+    for (std::size_t i = 0; i < event.fields.size(); ++i) {
+        const ModEventField &field = event.fields[i];
+        lua_pushlstring(L, field.name.data(), field.name.size());
+        push_value(L, values[i]);
+        lua_rawset(L, table);
+    }
+}
+
+// Raises an error unless the handler left a whole number within the field's range; returns it.
+std::int64_t integer_from_handler(lua_State *L, const ModEventField &field) {
+    int whole = 0;
+    const lua_Integer number = lua_tointegerx(L, -1, &whole);
+    const bool in_range = number >= field.min && number <= field.max;
+    if (lua_type(L, -1) != LUA_TNUMBER || !whole || !in_range) {
+        const std::string message = "field '" + std::string(field.name) + "' must be an integer from " +
+                                    std::to_string(field.min) + " to " + std::to_string(field.max);
+        luaL_error(L, "%s", message.c_str());
+    }
+    return static_cast<std::int64_t>(number);
+}
+
+// Reads the writable integer fields of the table at index table back into values.
+void read_back(lua_State *L, int table, const ModEvent &event, std::vector<ModEventValue> &values) {
+    for (std::size_t i = 0; i < event.fields.size(); ++i) {
+        const ModEventField &field = event.fields[i];
+        if (!is_writable(field))
+            continue;
+        lua_pushlstring(L, field.name.data(), field.name.size());
+        lua_rawget(L, table);
+        values[i] = integer_from_handler(L, field);
+        lua_pop(L, 1);
+    }
+}
+
+// Protected: calls the raised event's handler in the mod, if it defines one, with the table of its
+// fields; the writable integers are read back into the mod's copy of the values.
+int run_event(lua_State *L) {
+    RaisedEvent &raised = mod_of_state(L).raised;
+    const ModEvent &event = *raised.event;
+    if (!push_global_function(L, event.name))
+        return 0;
+    const int handler = lua_gettop(L);
+    lua_createtable(L, 0, static_cast<int>(event.fields.size()));
+    const int table = lua_gettop(L);
+    push_event_fields(L, table, event, raised.values);
+    lua_pushvalue(L, handler);
+    lua_pushvalue(L, table);
+    lua_call(L, 1, 0);
+    read_back(L, table, event, raised.values);
+    return 0;
+}
+
 // ---- the definitions file ----
 
 void write_doc(std::string &out, std::string_view doc) {
@@ -689,17 +827,39 @@ void write_table_definition(std::string &out, const ModTable &table) {
     out.append(table.path).append(" = {}\n");
 }
 
+// The event's table class is event.<name>, and its handler takes one of them.
+void write_event_definition(std::string &out, const ModEvent &event) {
+    const std::string table_class = "event." + std::string(event.name);
+    out += "\n";
+    write_doc(out, event.doc);
+    out.append("---@class ").append(table_class).append("\n");
+    for (const ModEventField &field : event.fields) {
+        out.append("---@field ").append(field.name).append(" ").append(field.type).append(" ");
+        if (is_writable(field))
+            out.append("(writable ").append(std::to_string(field.min)).append(" to ")
+                .append(std::to_string(field.max)).append(") ");
+        else
+            out += "(read-only) ";
+        out.append(field.doc).append("\n");
+    }
+    out.append("---@type fun(e: ").append(table_class).append(")?\n").append(event.name).append(" = nil\n");
+}
+
 std::string make_definitions(const ModHostConfig &config) {
     std::string out = "---@meta\n-- The API a mod is given, version " + config.api_version +
                       ".\n-- Written by the game from its binding tables at start, for the Lua Language Server.\n"
                       "-- Do not edit; it is written again when it changes.\n";
     out += "\n---A table kept per mod between runs: numbers, booleans, strings, tables with string keys.\n"
            "---@type table<string, any>\nconfig = {}\n";
+    out += "\n---A table kept per mod with each save slot: the same kinds of value as config.\n"
+           "---@type table<string, any>\nsave = {}\n";
     for (const CallbackName &name : callback_names) {
         out += "\n";
         write_doc(out, name.doc);
         out.append("---@type fun()?\n").append(name.global).append(" = nil\n");
     }
+    for (const ModEvent &event : config.events)
+        write_event_definition(out, event);
     for (const ModTable &table : host_tables())
         write_table_definition(out, table);
     for (const ModTable &table : config.api)
@@ -760,6 +920,18 @@ Fingerprint fingerprint(const fs::path &dir) {
     return print;
 }
 
+// Holds a raise's flag for the raise, so a throw cannot leave it set.
+class RaiseScope {
+public:
+    explicit RaiseScope(bool &raising) : raising_(raising) { raising_ = true; }
+    ~RaiseScope() { raising_ = false; }
+    RaiseScope(const RaiseScope &) = delete;
+    RaiseScope &operator=(const RaiseScope &) = delete;
+
+private:
+    bool &raising_;
+};
+
 bool is_mod_folder(const fs::directory_entry &entry) {
     std::error_code error;
     return entry.is_directory(error) &&
@@ -772,6 +944,8 @@ struct ModHost::State {
     ModHostConfig config;
     Clock::time_point started = Clock::now();
     std::vector<std::unique_ptr<Mod>> mods;
+    SaveTables saves;
+    bool raising = false;   // set while a raise runs: a raise inside it is ignored
 
     Mod *find(std::string_view id) {
         const auto found = std::find_if(mods.begin(), mods.end(), [&](const auto &mod) { return mod->id == id; });
@@ -824,9 +998,40 @@ struct ModHost::State {
         return true;
     }
 
+    // Copies a running mod's save table into saves, so a reload or disable keeps it.
+    void keep_save(Mod &mod) {
+        if (!mod.lua)
+            return;
+        if (auto error = run_protected(mod, encode_save))
+            print_line(mod.id, "cannot keep its save table: " + *error);
+    }
+
+    // A running mod's save table is set from saves; one that cannot take it fails.
+    void reset_save(Mod &mod) {
+        if (!mod.lua)
+            return;
+        if (auto error = run_protected(mod, apply_save))
+            fail(mod, "cannot set its save table: " + *error);
+    }
+
+    // Calls the event in one running mod, with values as the mods before it left them. A mod that
+    // errs is stopped and leaves values as they were.
+    void raise_in(Mod &mod, const ModEvent &event, std::vector<ModEventValue> &values) {
+        if (!mod.lua)
+            return;
+        mod.raised = RaisedEvent{&event, values};
+        if (auto error = run_protected(mod, run_event)) {
+            fail(mod, std::string(event.name) + ": " + *error);
+            return;
+        }
+        if (mod.config_dirty)
+            save_config(mod);
+        values = std::move(mod.raised.values);
+    }
+
     void stop(Mod &mod) {
-        if (mod.lua)
-            call(mod, ModCallback::Unload);
+        if (mod.lua && call(mod, ModCallback::Unload))
+            keep_save(mod);
         unload(mod);
     }
 
@@ -866,6 +1071,7 @@ struct ModHost::State {
         auto mod = std::make_unique<Mod>();
         mod->dir = dir;
         mod->host = &config;
+        mod->saves = &saves;
         mod->host_started = started;
         mod->stamp = print.stamp;
         mod->file_count = print.count;
@@ -988,6 +1194,58 @@ void ModHost::reload_all() {
     for (auto &mod : state_->mods)
         if (mod->enabled)
             state_->load(*mod);
+}
+
+void ModHost::raise(std::string_view event_name, std::span<ModEventValue> values) {
+    State &state = *state_;
+    if (state.raising)
+        return;
+    const ModEvent *event = find_event(state.config.events, event_name);
+    if (!event)
+        return;
+    if (!values_fit(*event, values)) {
+        assert(false && "raise: values do not match the event's fields");
+        return;
+    }
+    std::vector<ModEventValue> current(values.begin(), values.end());
+    {
+        const RaiseScope scope(state.raising);
+        for (auto &mod : state.mods)
+            state.raise_in(*mod, *event, current);
+    }
+    std::ranges::copy(current, values.begin());
+}
+
+std::string ModHost::save_tables() const {
+    for (auto &mod : state_->mods)
+        state_->keep_save(*mod);
+    const Json all(cJSON_CreateObject());
+    for (const auto &[id, text] : state_->saves) {
+        Json table(cJSON_ParseWithLength(text.data(), text.size()));
+        if (cJSON_IsObject(table.get()))
+            cJSON_AddItemToObject(all.get(), id.c_str(), table.release());
+    }
+    const std::unique_ptr<char, JsonTextFree> printed(cJSON_PrintUnformatted(all.get()));
+    return printed ? std::string(printed.get()) : std::string("{}");
+}
+
+void ModHost::load_save_tables(std::string_view json) {
+    State &state = *state_;
+    state.saves.clear();
+    const Json parsed(cJSON_ParseWithLength(json.data(), json.size()));
+    if (!cJSON_IsObject(parsed.get())) {
+        std::printf("[mods] save tables are not a JSON object; starting empty\n");
+    } else {
+        for (const cJSON *child = parsed->child; child; child = child->next) {
+            if (!cJSON_IsObject(child))
+                continue;
+            const std::unique_ptr<char, JsonTextFree> text(cJSON_PrintUnformatted(child));
+            if (text)
+                state.saves[child->string] = text.get();
+        }
+    }
+    for (auto &mod : state.mods)
+        state.reset_save(*mod);
 }
 
 std::vector<ModInfo> ModHost::mods() const {

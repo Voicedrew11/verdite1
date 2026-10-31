@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -36,6 +37,14 @@ void get_value(lua_State *L) { lua_pushinteger(L, value); }
 void set_value(lua_State *L, int index) { value = luaL_checkinteger(L, index); }
 void get_fixed(lua_State *L) { lua_pushinteger(L, 7); }
 
+// The host the nested-raise test raises through, from inside a handler.
+ModHost *nested_host = nullptr;
+int again(lua_State *) {
+    std::array<ModEventValue, 4> values{std::int64_t{1}, std::int64_t{2}, false, std::string_view("n")};
+    nested_host->raise("on_test", values);
+    return 0;
+}
+
 // A mods folder of its own, and a host over it whose stored settings are a map.
 struct Mods {
     fs::path dir;
@@ -59,9 +68,16 @@ struct Mods {
         config.api = {{.path = "t",
                        .doc = "The test's table.",
                        .functions = {{"note", "fun(text: string)", "Notes text.", note},
-                                     {"changed", "fun()", "Marks config changed.", changed}},
+                                     {"changed", "fun()", "Marks config changed.", changed},
+                                     {"again", "fun()", "Raises on_test from inside a handler.", again}},
                        .fields = {{"value", "integer", "A number.", get_value, set_value},
                                   {"fixed", "integer", "Seven.", get_fixed, nullptr}}}};
+        config.events = {{.name = "on_test",
+                          .doc = "A test event.",
+                          .fields = {{"amount", "integer", "Changeable from 0 to 100.", true, 0, 100},
+                                     {"fixed", "integer", "Seven, not changeable.", false, 0, 0},
+                                     {"flag", "boolean", "A flag."},
+                                     {"label", "string", "A label."}}}};
         config.read_stored = [this](std::string_view id) -> std::optional<ModStored> {
             const auto found = stored.find(id);
             if (found == stored.end())
@@ -109,6 +125,11 @@ struct Mods {
 
 bool noted(std::string_view text) {
     return std::find(notes.begin(), notes.end(), text) != notes.end();
+}
+
+// The test event's values as the game raises it: amount 50, fixed 7, flag true, label "hi".
+std::array<ModEventValue, 4> event_values() {
+    return {std::int64_t{50}, std::int64_t{7}, true, std::string_view("hi")};
 }
 
 } // namespace
@@ -364,4 +385,162 @@ TEST_CASE("destroying the host reports each running mod's state discarded") {
     CHECK(std::count(mods.unloaded_ids.begin(), mods.unloaded_ids.end(), std::string("a")) == 1);
     CHECK(std::count(mods.unloaded_ids.begin(), mods.unloaded_ids.end(), std::string("b")) == 1);
     CHECK(mods.unloaded_ids.size() == 2);
+}
+
+TEST_CASE("an event reaches the handler with its fields, and an unknown event does nothing") {
+    Mods mods;
+    mods.run("a", "function on_test(e) t.note(e.amount .. ',' .. e.fixed .. ',' .. tostring(e.flag) .. ',' .. e.label) end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(notes == std::vector<std::string>{"50,7,true,hi"});
+    mods.host->raise("on_missing", values);
+    CHECK(notes.size() == 1);
+}
+
+TEST_CASE("a writable field changed by one mod is seen by the next and written back") {
+    Mods mods;
+    mods.run("a", "function on_test(e) e.amount = e.amount - 10 end");
+    mods.run("b", "function on_test(e) t.note(tostring(e.amount)) e.amount = e.amount * 2 end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(notes == std::vector<std::string>{"40"});
+    CHECK(std::get<std::int64_t>(values[0]) == 80);
+}
+
+TEST_CASE("a writable value out of range or of the wrong type fails that mod, and the next sees the value before") {
+    Mods mods;
+    mods.run("a", "function on_test(e) e.amount = 101 end");
+    mods.run("b", "function on_test(e) e.amount = 'text' end");
+    mods.run("c", "function on_test(e) t.note(tostring(e.amount)) e.amount = e.amount + 1 end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("on_test") != std::string::npos);
+    CHECK(mods.info("a").error.find("'amount'") != std::string::npos);
+    CHECK(mods.info("b").state == ModState::Failed);
+    CHECK(mods.info("b").error.find("'amount'") != std::string::npos);
+    CHECK(notes == std::vector<std::string>{"50"});
+    CHECK(std::get<std::int64_t>(values[0]) == 51);
+}
+
+TEST_CASE("a field that is not writable, or not an integer, is not read back") {
+    Mods mods;
+    mods.run("a", "function on_test(e) e.fixed = 99 e.flag = false e.label = 'changed' end");
+    mods.run("b", "function on_test(e) t.note(tostring(e.fixed) .. tostring(e.flag) .. e.label) end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(notes == std::vector<std::string>{"7truehi"});
+    CHECK(std::get<std::int64_t>(values[1]) == 7);
+    CHECK(std::get<bool>(values[2]));
+    CHECK(std::get<std::string_view>(values[3]) == "hi");
+}
+
+TEST_CASE("a mod without the handler is skipped") {
+    Mods mods;
+    mods.run("a", "t.note('loaded')");
+    mods.run("b", "function on_test(e) t.note('b') end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(notes == std::vector<std::string>{"loaded", "b"});
+}
+
+TEST_CASE("a handler error fails only that mod") {
+    Mods mods;
+    mods.run("bad", "function on_test(e) error('boom') end");
+    mods.run("good", "function on_test(e) t.note('good') end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(mods.info("bad").state == ModState::Failed);
+    CHECK(mods.info("bad").error.find("boom") != std::string::npos);
+    CHECK(mods.info("bad").error.find("on_test") != std::string::npos);
+    CHECK(noted("good"));
+    CHECK(mods.info("good").state == ModState::Running);
+}
+
+TEST_CASE("an endless handler hits the budget and fails only that mod") {
+    Mods mods;
+    mods.run("loop", "function on_test(e) while true do end end");
+    mods.run("good", "function on_test(e) t.note('good') end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(mods.info("loop").state == ModState::Failed);
+    CHECK(mods.info("loop").error.find("instruction budget") != std::string::npos);
+    CHECK(noted("good"));
+}
+
+TEST_CASE("a raise inside a handler is ignored, and a later raise runs again") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_test(e) t.note('outer') t.again() end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(notes == std::vector<std::string>{"outer"});
+    CHECK(mods.info("a").state == ModState::Running);
+    mods.host->raise("on_test", values);
+    CHECK(notes == std::vector<std::string>{"outer", "outer"});
+    nested_host = nullptr;
+}
+
+TEST_CASE("save survives a reload of the mod") {
+    Mods mods;
+    mods.run("a", "t.note('start:' .. tostring(save.n or 0)) function on_update() save.n = (save.n or 0) + 1 end");
+    mods.host->call_each(ModCallback::Update);
+    mods.host->call_each(ModCallback::Update);
+    mods.write("a/main.lua", "t.note('again:' .. tostring(save.n or 0))");
+    mods.host->scan();
+    CHECK(noted("start:0"));
+    CHECK(noted("again:2"));
+    CHECK(mods.host->save_tables() == R"({"a":{"n":2}})");
+}
+
+TEST_CASE("save_tables keeps a disabled mod's entry") {
+    Mods mods;
+    mods.run("a", "function on_update() save.k = 'v' end");
+    mods.host->call_each(ModCallback::Update);
+    mods.host->disable("a");
+    CHECK(mods.host->save_tables() == R"({"a":{"k":"v"}})");
+}
+
+TEST_CASE("a save that is not a table keeps the mod's last saved table") {
+    Mods mods;
+    mods.run("a", "function on_update() save.k = 'kept' end");
+    mods.host->call_each(ModCallback::Update);
+    mods.write("a/main.lua", "function on_update() save = 5 end");
+    mods.host->scan();
+    mods.host->call_each(ModCallback::Update);
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(mods.host->save_tables() == R"({"a":{"k":"kept"}})");
+}
+
+TEST_CASE("load_save_tables replaces the running mods' save, and keeps entries of mods not running") {
+    Mods mods;
+    mods.run("a", "function on_update() t.note('k=' .. tostring(save.k)) end");
+    mods.host->load_save_tables(R"({"a":{"k":"loaded"},"gone":{"x":1},"bad":5})");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(noted("k=loaded"));
+    CHECK(mods.host->save_tables() == R"({"a":{"k":"loaded"},"gone":{"x":1}})");
+}
+
+TEST_CASE("invalid save JSON gives empty save tables") {
+    Mods mods;
+    mods.run("a", "function on_update() t.note(tostring(next(save))) end");
+    mods.host->load_save_tables("not json");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(noted("nil"));
+    CHECK(mods.host->save_tables() == R"({"a":{}})");
+    Mods fresh;
+    fresh.host->load_save_tables("not json");
+    CHECK(fresh.host->save_tables() == "{}");
+}
+
+TEST_CASE("the definitions file declares each event's table and handler, and save") {
+    Mods mods;
+    const std::string text = mods.host->definitions();
+    CHECK(text.find("---@class event.on_test") != std::string::npos);
+    CHECK(text.find("---@field amount integer (writable 0 to 100) Changeable from 0 to 100.") != std::string::npos);
+    CHECK(text.find("---@field fixed integer (read-only) Seven, not changeable.") != std::string::npos);
+    CHECK(text.find("---@type fun(e: event.on_test)?\non_test = nil") != std::string::npos);
+    CHECK(text.find("---@type table<string, any>\nsave = {}") != std::string::npos);
 }
