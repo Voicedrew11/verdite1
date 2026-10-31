@@ -409,6 +409,8 @@ void enter_as_guest(const CoopWelcome &welcome) {
 
 void leave_world() {
     stop_playing();
+    // Out of the world before the aside game is read, so the mods take back its save tables.
+    coop.in_play = false;
     std::printf("[coop] left the world of room %s\n", coop.room.c_str());
     if (coop.from_title) {
         reset_session();

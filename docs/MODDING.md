@@ -58,6 +58,15 @@ extension, Neovim and others then complete names and flag mistakes.
 * The enabled flag and `config` are stored in `settings.json` next to the mods folder;
   `save` is stored with each save slot (below).
 
+## Coop
+
+Mods do not run in coop. While the coop world is in play every mod is paused:
+no callbacks, no events, and `kf.play` and `kf.game` values are not applied, so
+the game plays as if no mod were set. The Mods panel says so and disables its
+switches and Reload all. The count in the overlay's status line reads 0. Leaving
+the room resumes the mods where they were; their enabled flags are untouched. A
+mod's `save` table belongs to the single-player game and comes back with it.
+
 ## Callbacks
 
 Define any of these as globals:
@@ -84,7 +93,7 @@ yet. The events are listed in `kf.d.lua` too.
 
 | event | fields | when |
 |---|---|---|
-| `on_damage` | `target` string, `"player"` or `"actor"`; `actor` integer, the actor's slot (-1 for the player); `kind` integer, the actor's definition id (-1 for the player); `amount` integer, writable 0 to 65535, the HP lost (0 for none); `by_player` boolean, the player made the blow (false for the player's own damage) | a blow hits the player or an actor. Hazards, poison and falls are not blows: no event. `amount` is the blow's loss before `kf.play.invincible` ignores it. On coop, the machine running the floor raises it, once |
+| `on_damage` | `target` string, `"player"` or `"actor"`; `actor` integer, the actor's slot (-1 for the player); `kind` integer, the actor's definition id (-1 for the player); `amount` integer, writable 0 to 65535, the HP lost (0 for none); `by_player` boolean, the player made the blow (false for the player's own damage) | a blow hits the player or an actor. Hazards, poison and falls are not blows: no event. `amount` is the blow's loss before `kf.play.invincible` ignores it. |
 | `on_kill` | `actor`, `kind`, `experience` integer, writable 0 to 32767 (the EXP the player gets; 0 unless the player made the kill, and writes are then ignored), `by_player` boolean | a blow kills an actor |
 | `on_level_up` | `level` integer, the new level | the player reaches a level |
 | `on_item_pickup` | `item` integer, the item id | the player takes an item from the ground |
@@ -359,7 +368,8 @@ it was written for. The curated layer keeps its names within a major version;
 
 A mod that changes play (state writes, rules, events it cancels) marks itself
 `"gameplay": true` in `mod.json`. Coop requires both players to run the same
-gameplay mods, compared by a hash; visual and HUD mods are free.
+gameplay mods, compared by a hash; visual and HUD mods are free. Until then
+mods are off in coop (decided 2026-10-31).
 
 ### Order
 

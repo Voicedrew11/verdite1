@@ -24,6 +24,7 @@
 #include <kf/lib/map.h>
 #include <kf/lib/map_data.h>
 #include <kf/lib/math.h>
+#include <kf/platform/coop.h>
 #include <kf/platform/fuzz.h>
 #include <kf/platform/host.h>
 #include <kf/platform/mod_events.h>
@@ -52,6 +53,10 @@ std::uint64_t frame_counter;
 int input_context;
 std::array<bool, SDL_SCANCODE_COUNT> keys_now{}, keys_before{};
 constexpr std::array<const char *, 4> context_names{"opening", "gameplay", "menu", "scripted"};
+
+// Mods are off in coop: their Lua states stay loaded, and no mod code runs until the game is back.
+bool mods_paused() { return coop_world_in_play(); }
+bool mods_active() { return host && !mods_paused(); }
 
 // ---------- kf.player ----------
 template <typename T> auto as_integer(T value) {
@@ -355,10 +360,13 @@ void refresh_mod_play() {
             if (mod.state == verdite::ModState::Running)
                 running.insert(mod.id);
     std::erase_if(mod_plays, [&running](const auto &entry) { return !running.contains(entry.first); });
+    // In coop no mod's values apply; they come back when the single-player game does.
     std::vector<ModPlay> values;
-    values.reserve(mod_plays.size());
-    for (const auto &entry : mod_plays)
-        values.push_back(entry.second);
+    if (!mods_paused()) {
+        values.reserve(mod_plays.size());
+        for (const auto &entry : mod_plays)
+            values.push_back(entry.second);
+    }
     combined_play = combine_mod_play(values);
     host_set_game_speed(combined_play.game_speed);
 }
@@ -769,13 +777,16 @@ void copy_example_mods() {
 
 void draw_mod_row(const verdite::ModInfo &mod) {
     ImGui::PushID(mod.id.c_str());
+    const bool paused = mods_paused();
     bool enabled = mod.enabled;
+    ImGui::BeginDisabled(paused);
     if (ImGui::Checkbox("##enabled", &enabled)) {
         if (enabled)
             host->enable(mod.id);
         else
             host->disable(mod.id);
     }
+    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::Text("%s", mod.name.c_str());
     if (!mod.version.empty()) {
@@ -800,10 +811,13 @@ void draw_mod_row(const verdite::ModInfo &mod) {
         ImGui::TextWrapped("%s", mod.description.c_str());
     if (!mod.error.empty())
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.45f, 1.0f), "%s", mod.error.c_str());
+    ImGui::BeginDisabled(paused);
     if (mod.state == verdite::ModState::Running && mod.has_settings && ImGui::TreeNode("Settings")) {
-        host->call(mod.id, verdite::ModCallback::Settings);
+        if (!paused)
+            host->call(mod.id, verdite::ModCallback::Settings);
         ImGui::TreePop();
     }
+    ImGui::EndDisabled();
     ImGui::Unindent();
     ImGui::Separator();
     ImGui::PopID();
@@ -838,15 +852,18 @@ void mods_between_updates() {
         return;
     const WarpRequest request = *warp_request;
     warp_request.reset();
-    apply_warp(request);
+    // A warp queued before coop began is dropped, not applied to the coop world.
+    if (!mods_paused())
+        apply_warp(request);
 }
 
 bool mods_pause_requested() {
-    return combined_play.paused;
+    return mods_active() && combined_play.paused;
 }
 
+// A file saved in coop reloads on the first scan after leaving it.
 void mods_poll() {
-    if (!host || SDL_GetTicks() - last_scan < 500)
+    if (!host || mods_paused() || SDL_GetTicks() - last_scan < 500)
         return;
     last_scan = SDL_GetTicks();
     host->scan();
@@ -863,12 +880,14 @@ void mods_frame(int context) {
         keys_now[static_cast<std::size_t>(i)] = i < count && state[i];
     if (!host)
         return;
-    host->call_each(verdite::ModCallback::Update);
+    if (!mods_paused())
+        host->call_each(verdite::ModCallback::Update);
+    // Also while paused, so the game sees the defaults from the first frame of coop.
     refresh_mod_play();
 }
 
 void mods_draw_hud() {
-    if (!host)
+    if (!mods_active())
         return;
     // Mod windows use the base font size whatever the interface scale is.
     ImGui::PushFont(nullptr, hud_font_size / ImGui::GetStyle().FontScaleMain);
@@ -886,19 +905,23 @@ void mods_draw_hud() {
 }
 
 int mods_loaded_count() {
-    return host ? static_cast<int>(host->running_count()) : 0;
+    return mods_active() ? static_cast<int>(host->running_count()) : 0;
 }
 
 void mods_draw_panel() {
     if (!host)
         return;
+    if (mods_paused())
+        ImGui::TextWrapped("Mods are off in coop. They come back when you leave the room.");
     const auto folder = mods_dir().string();
     ImGui::TextDisabled("Folder: %s", folder.c_str());
     if (ImGui::Button("Open mods folder"))
         SDL_OpenURL(("file:///" + mods_dir().generic_string()).c_str());
     ImGui::SameLine();
+    ImGui::BeginDisabled(mods_paused());
     if (ImGui::Button("Reload all"))
         host->reload_all();
+    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("(saving a mod's files reloads it automatically)");
     ImGui::Separator();
@@ -915,7 +938,8 @@ void mods_draw_panel() {
 
 namespace kf {
 const PlayOverrides &host_play_overrides() {
-    return ext::combined_play.overrides;
+    static const PlayOverrides defaults;
+    return ext::mods_paused() ? defaults : ext::combined_play.overrides;
 }
 
 namespace {
@@ -933,7 +957,7 @@ void raise_event(std::string_view event, std::span<verdite::ModEventValue> value
 }
 
 s32 mods_player_damaged(s32 loss_hp) {
-    if (!ext::host || !holds(loss_hp, 0, 65535))
+    if (!ext::mods_active() || !holds(loss_hp, 0, 65535))
         return loss_hp;
     std::array<verdite::ModEventValue, 5> values{std::string_view{"player"}, std::int64_t{-1}, std::int64_t{-1},
                                                  std::int64_t{loss_hp}, false};
@@ -942,7 +966,7 @@ s32 mods_player_damaged(s32 loss_hp) {
 }
 
 s32 mods_actor_damaged(const ActorHit &hit) {
-    if (!ext::host || !holds(hit.damage_hp, 0, 65535))
+    if (!ext::mods_active() || !holds(hit.damage_hp, 0, 65535))
         return hit.damage_hp;
     std::array<verdite::ModEventValue, 5> values{std::string_view{"actor"}, std::int64_t{hit.actor_index},
                                                  std::int64_t{hit.definition_id}, std::int64_t{hit.damage_hp},
@@ -954,7 +978,7 @@ s32 mods_actor_damaged(const ActorHit &hit) {
 s16 mods_actor_killed(const ActorHit &hit, s16 experience) {
     // Only the player's kill gives experience, so only then is it offered to the mods.
     const std::int64_t offered = hit.by_player ? experience : 0;
-    if (!ext::host || !holds(offered, 0, 32767))
+    if (!ext::mods_active() || !holds(offered, 0, 32767))
         return experience;
     std::array<verdite::ModEventValue, 4> values{std::int64_t{hit.actor_index}, std::int64_t{hit.definition_id},
                                                  offered, hit.by_player};
@@ -965,20 +989,24 @@ s16 mods_actor_killed(const ActorHit &hit, s16 experience) {
 }
 
 void mods_level_up(u8 level) {
-    if (!ext::host)
+    if (!ext::mods_active())
         return;
     std::array<verdite::ModEventValue, 1> values{std::int64_t{level}};
     raise_event("on_level_up", values);
 }
 
 void mods_item_picked_up(u16 item) {
-    if (!ext::host)
+    if (!ext::mods_active())
         return;
     std::array<verdite::ModEventValue, 1> values{std::int64_t{item}};
     raise_event("on_item_pickup", values);
 }
 
+// In coop last_floor keeps the single-player floor, so on_floor_change after leaving compares with
+// the floor the game was on before it, not a coop floor.
 void mods_floor_loaded(u8 floor, u8 map_variant) {
+    if (ext::mods_paused())
+        return;
     const u8 from = ext::last_floor;
     ext::last_floor = floor;
     if (!ext::host)
@@ -992,7 +1020,7 @@ void mods_floor_loaded(u8 floor, u8 map_variant) {
 }
 
 void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page) {
-    if (!ext::host)
+    if (!ext::mods_active())
         return;
     std::array<verdite::ModEventValue, 4> values{std::int64_t{floor}, std::int64_t{character},
                                                  std::int64_t{stage}, std::int64_t{page}};
@@ -1000,25 +1028,25 @@ void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page) {
 }
 
 void mods_shop_opened(u8 bank) {
-    if (!ext::host)
+    if (!ext::mods_active())
         return;
     std::array<verdite::ModEventValue, 1> values{std::int64_t{bank}};
     raise_event("on_shop", values);
 }
 
 void mods_player_died() {
-    if (!ext::host)
+    if (!ext::mods_active())
         return;
     raise_event("on_death", {});
 }
 
 void mods_new_game() {
-    if (ext::host)
+    if (ext::mods_active())
         ext::host->load_save_tables("{}");
 }
 
 void mods_game_saved(SaveSlot slot) {
-    if (!ext::host)
+    if (!ext::mods_active())
         return;
     const auto result = save_mods_write(slot, ext::host->save_tables());
     if (result != SaveFileResult::Ok && result != SaveFileResult::Unavailable)
@@ -1028,7 +1056,7 @@ void mods_game_saved(SaveSlot slot) {
 }
 
 void mods_game_loaded(SaveSlot slot) {
-    if (!ext::host)
+    if (!ext::mods_active())
         return;
     std::string json;
     const auto result = save_mods_read(slot, json);
