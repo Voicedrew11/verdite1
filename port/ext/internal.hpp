@@ -273,6 +273,8 @@ void mods_draw_hud();             // each enabled mod's on_draw, inside the ImGu
 void mods_draw_panel();           // the Mods window contents
 int mods_loaded_count();
 bool mods_pause_requested();      // kf.game.paused, combined over the running mods
+bool mods_pause_keeps_music();    // ...and every pausing mod keeps the music (kf.game.music_while_paused)
+bool mods_take_mouse();           // kf.game.mouse: the cursor shows and the game gets no mouse input
 
 // ---- overlay helpers shared with the mod API ----
 // Slider with a typed-value box beside it. `committed` (optional) is set when an

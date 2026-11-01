@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <limits>
 #include <cstdio>
@@ -40,6 +41,8 @@
 #include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
 #include "coop_party.h"
+#include "mod_automap.h"
+#include "mod_draw.h"
 #include "mod_play.h"
 #include "mod_rules.h"
 #include <lauxlib.h>
@@ -53,18 +56,28 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.6";
+constexpr const char *api_version = "0.7";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
 std::map<std::string, ModPlay, std::less<>> mod_plays;
 ModPlayCombined combined_play;
-bool in_imgui_frame;             // ui.* is only valid while drawing
 u8 last_floor;                   // the floor last loaded (0 before any), for on_floor_change
 Uint64 last_scan;
 std::uint64_t frame_counter;
 int input_context;
 std::array<bool, SDL_SCANCODE_COUNT> keys_now{}, keys_before{};
+// The actions held at the last two updates and the last two drawn frames: on_draw runs while the
+// game is paused, so its presses are edges between frames, not updates.
+struct ActionEdges {
+    u32 now = 0, before = 0;
+    void advance(u32 held) {
+        before = now;
+        now = held;
+    }
+};
+ActionEdges update_actions, draw_actions;
+const ActionEdges *callback_actions = &update_actions;   // the edges the running callback sees
 constexpr std::array<const char *, 4> context_names{"opening", "gameplay", "menu", "scripted"};
 
 // Mods are off in coop: their Lua states stay loaded, and no mod code runs until the game is back.
@@ -352,6 +365,8 @@ const std::vector<verdite::ModField> &play_fields() {
         switch_field<&ModPlay::peaceful>("peaceful", "Enemies never attack the player."),
         speed_field<&ModPlay::move_speed>("move_speed", "Walking distance, 0.25 to 8."),
         speed_field<&ModPlay::turn_speed>("turn_speed", "Turning speed, 0.25 to 8."),
+        speed_field<&ModPlay::top_speed>("top_speed",
+                                         "The walking speed limit, 0.25 to 8; not while slowed. A run is 1.6."),
     };
     return fields;
 }
@@ -360,6 +375,10 @@ const std::vector<verdite::ModField> &game_fields() {
     static const std::vector<verdite::ModField> fields = {
         speed_field<&ModPlay::game_speed>("speed", "Game time at this multiple of real time, 0.25 to 8."),
         switch_field<&ModPlay::paused>("paused", "The game stops; on_update does not run, so unpause from on_draw."),
+        switch_field<&ModPlay::music_while_paused>(
+            "music_while_paused", "While this mod pauses the game, the music plays on (unless another mod's pause stops it)."),
+        switch_field<&ModPlay::takes_mouse>(
+            "mouse", "The mod takes the mouse: the cursor shows and the game gets no mouse input."),
     };
     return fields;
 }
@@ -717,6 +736,16 @@ int kf_items_take(lua_State *L) {
     return 1;
 }
 
+int kf_items_description(lua_State *L) {
+    const lua_Integer item = luaL_checkinteger(L, 1);
+    const std::string text = item >= 0 && item < KF_ITEM_COUNT ? item_description(static_cast<u8>(item)) : std::string();
+    if (text.empty())
+        lua_pushnil(L);
+    else
+        lua_pushlstring(L, text.data(), text.size());
+    return 1;
+}
+
 int kf_items_name(lua_State *L) {
     const lua_Integer item = luaL_checkinteger(L, 1);
     const char *name = item >= 0 && item < KF_ITEM_COUNT ? item_english_name(static_cast<u8>(item)) : nullptr;
@@ -878,6 +907,31 @@ int kf_key_pressed(lua_State *L) {
     lua_pushboolean(L, !overlay_captures_input() && keys_now[code] && !keys_before[code]);
     return 1;
 }
+// Action as the mods name it, in its order.
+constexpr std::array<const char *, 21> input_action_names{
+    "forward", "backward", "strafe_left", "strafe_right", "turn_left", "turn_right", "look_up", "look_down",
+    "attack", "magic", "interact", "inventory", "pause", "pause_or_back", "confirm", "back", "run",
+    "quick_save", "quick_load", "compare_language", "full_map"};
+static_assert(input_action_names.size() == static_cast<std::size_t>(Action::count));
+
+u32 check_action(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    const auto found = std::ranges::find_if(input_action_names, [name](const char *each) { return std::strcmp(each, name) == 0; });
+    if (found == input_action_names.end())
+        luaL_error(L, "unknown action '%s' (\"run\", \"full_map\", \"attack\", ...)", name);
+    return action_bit(static_cast<Action>(found - input_action_names.begin()));
+}
+int kf_action_down(lua_State *L) {
+    const u32 bit = check_action(L);
+    lua_pushboolean(L, !overlay_captures_input() && (callback_actions->now & bit) != 0);
+    return 1;
+}
+int kf_action_pressed(lua_State *L) {
+    const u32 bit = check_action(L);
+    const ActionEdges &edges = *callback_actions;
+    lua_pushboolean(L, !overlay_captures_input() && (edges.now & bit) != 0 && (edges.before & bit) == 0);
+    return 1;
+}
 int kf_player_fields(lua_State *L) {
     const auto &fields = player_fields();
     lua_createtable(L, static_cast<int>(fields.size()), 0);
@@ -901,40 +955,28 @@ int kf_save_config(lua_State *L) {
 void push_api_version(lua_State *L) { lua_pushstring(L, api_version); }
 
 // ---------- ui.* (ImGui) ----------
-void require_frame(lua_State *L) {
-    if (!in_imgui_frame)
-        luaL_error(L, "ui.* functions only work inside on_draw or on_settings");
-}
-ImU32 check_color(lua_State *L, int first, ImU32 fallback) {
-    if (lua_isnoneornil(L, first))
-        return fallback;
-    const auto channel = [&](int i, double otherwise) {
-        return static_cast<float>(luaL_optnumber(L, first + i, otherwise));
-    };
-    return ImGui::GetColorU32(ImVec4(channel(0, 1), channel(1, 1), channel(2, 1), channel(3, 1)));
-}
 void mark_changed(lua_State *L, bool changed) {
     if (changed)
         verdite::mod_config_changed(L);
 }
-int ui_text(lua_State *L) { require_frame(L); ImGui::TextUnformatted(luaL_checkstring(L, 1)); return 0; }
+int ui_text(lua_State *L) { ui_require_frame(L); ImGui::TextUnformatted(luaL_checkstring(L, 1)); return 0; }
 int ui_text_colored(lua_State *L) {
-    require_frame(L);
+    ui_require_frame(L);
     const ImVec4 color(static_cast<float>(luaL_checknumber(L, 1)), static_cast<float>(luaL_checknumber(L, 2)),
                        static_cast<float>(luaL_checknumber(L, 3)), 1.0f);
     ImGui::TextColored(color, "%s", luaL_checkstring(L, 4));
     return 0;
 }
-int ui_button(lua_State *L) { require_frame(L); lua_pushboolean(L, ImGui::Button(luaL_checkstring(L, 1))); return 1; }
+int ui_button(lua_State *L) { ui_require_frame(L); lua_pushboolean(L, ImGui::Button(luaL_checkstring(L, 1))); return 1; }
 int ui_checkbox(lua_State *L) {
-    require_frame(L);
+    ui_require_frame(L);
     bool value = lua_toboolean(L, 2);
     mark_changed(L, ImGui::Checkbox(luaL_checkstring(L, 1), &value));
     lua_pushboolean(L, value);
     return 1;
 }
 int ui_slider_int(lua_State *L) {
-    require_frame(L);
+    ui_require_frame(L);
     int value = static_cast<int>(luaL_checkinteger(L, 2));
     mark_changed(L, slider_input(luaL_checkstring(L, 1), &value, static_cast<int>(luaL_checkinteger(L, 3)),
                                  static_cast<int>(luaL_checkinteger(L, 4))));
@@ -942,7 +984,7 @@ int ui_slider_int(lua_State *L) {
     return 1;
 }
 int ui_slider_float(lua_State *L) {
-    require_frame(L);
+    ui_require_frame(L);
     float value = static_cast<float>(luaL_checknumber(L, 2));
     mark_changed(L, slider_input(luaL_checkstring(L, 1), &value, static_cast<float>(luaL_checknumber(L, 3)),
                                  static_cast<float>(luaL_checknumber(L, 4)), luaL_optstring(L, 5, "%.2f")));
@@ -950,7 +992,7 @@ int ui_slider_float(lua_State *L) {
     return 1;
 }
 int ui_combo(lua_State *L) {
-    require_frame(L);
+    ui_require_frame(L);
     const char *label = luaL_checkstring(L, 1);
     int index = static_cast<int>(luaL_checkinteger(L, 2)) - 1;
     luaL_checktype(L, 3, LUA_TTABLE);
@@ -972,12 +1014,12 @@ int ui_combo(lua_State *L) {
     lua_pushinteger(L, index + 1);
     return 1;
 }
-int ui_separator(lua_State *L) { require_frame(L); ImGui::Separator(); return 0; }
-int ui_same_line(lua_State *L) { require_frame(L); ImGui::SameLine(); return 0; }
-int ui_spacing(lua_State *L) { require_frame(L); ImGui::Spacing(); return 0; }
-int ui_tooltip(lua_State *L) { require_frame(L); ImGui::SetItemTooltip("%s", luaL_checkstring(L, 1)); return 0; }
+int ui_separator(lua_State *L) { ui_require_frame(L); ImGui::Separator(); return 0; }
+int ui_same_line(lua_State *L) { ui_require_frame(L); ImGui::SameLine(); return 0; }
+int ui_spacing(lua_State *L) { ui_require_frame(L); ImGui::Spacing(); return 0; }
+int ui_tooltip(lua_State *L) { ui_require_frame(L); ImGui::SetItemTooltip("%s", luaL_checkstring(L, 1)); return 0; }
 int ui_begin_window(lua_State *L) {
-    require_frame(L);
+    ui_require_frame(L);
     const bool no_input = lua_toboolean(L, 2);
     ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing;
     if (no_input && !overlay_open())
@@ -985,40 +1027,33 @@ int ui_begin_window(lua_State *L) {
     lua_pushboolean(L, ImGui::Begin(luaL_checkstring(L, 1), nullptr, flags));
     return 1;
 }
-int ui_end_window(lua_State *L) { require_frame(L); ImGui::End(); return 0; }
-int ui_draw_text(lua_State *L) {
-    require_frame(L);
-    const ImVec2 at(static_cast<float>(luaL_checknumber(L, 1)), static_cast<float>(luaL_checknumber(L, 2)));
-    const char *text = luaL_checkstring(L, 3);
-    const ImU32 color = check_color(L, 4, IM_COL32_WHITE);
-    // An explicit pixel size keeps HUD text independent of the interface scale.
-    const float size = static_cast<float>(luaL_optnumber(L, 8, hud_font_size));
-    ImFont *font = ImGui::GetFont();
-    ImDrawList *list = ImGui::GetForegroundDrawList();
-    list->AddText(font, size, ImVec2(at.x + 1, at.y + 1), IM_COL32(0, 0, 0, 200), text);
-    list->AddText(font, size, at, color, text);
-    return 0;
-}
-int ui_draw_rect(lua_State *L) {
-    require_frame(L);
-    const float x = static_cast<float>(luaL_checknumber(L, 1)), y = static_cast<float>(luaL_checknumber(L, 2));
-    const float w = static_cast<float>(luaL_checknumber(L, 3)), h = static_cast<float>(luaL_checknumber(L, 4));
-    const ImU32 color = check_color(L, 5, IM_COL32_WHITE);
-    const bool filled = lua_isnoneornil(L, 9) || lua_toboolean(L, 9);
-    ImDrawList *list = ImGui::GetForegroundDrawList();
-    if (filled)
-        list->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), color);
-    else
-        list->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), color);
-    return 0;
-}
-// Maps the PS1's 320x240 picture coordinates onto the window (the original area
-// sits centred in a widescreen picture).
-int ui_game_to_screen(lua_State *L) {
-    const auto view = original_view();
-    lua_pushnumber(L, view.x + luaL_checknumber(L, 1) * view.w / 320.0);
-    lua_pushnumber(L, view.y + luaL_checknumber(L, 2) * view.h / 240.0);
-    return 2;
+int ui_end_window(lua_State *L) { ui_require_frame(L); ImGui::End(); return 0; }
+// ui: the widgets here, the drawing from mod_draw.
+verdite::ModTable ui_table() {
+    using verdite::ModFunction;
+    std::vector<ModFunction> functions = {
+        ModFunction{"text", "fun(text: string)", "", ui_text},
+        {"text_colored", "fun(r: number, g: number, b: number, text: string)", "", ui_text_colored},
+        {"button", "fun(label: string): boolean", "True when clicked.", ui_button},
+        {"checkbox", "fun(label: string, value: boolean): boolean", "", ui_checkbox},
+        {"slider_int", "fun(label: string, value: integer, min: integer, max: integer): integer", "",
+         ui_slider_int},
+        {"slider_float", "fun(label: string, value: number, min: number, max: number, format?: string): number",
+         "", ui_slider_float},
+        {"combo", "fun(label: string, index: integer, items: string[]): integer", "1-based.", ui_combo},
+        {"separator", "fun()", "", ui_separator},
+        {"same_line", "fun()", "", ui_same_line},
+        {"spacing", "fun()", "", ui_spacing},
+        {"tooltip", "fun(text: string)", "For the item before it.", ui_tooltip},
+        {"begin_window", "fun(title: string, click_through?: boolean): boolean",
+         "Always call end_window after it.", ui_begin_window},
+        {"end_window", "fun()", "", ui_end_window},
+    };
+    std::ranges::move(ui_draw_functions(), std::back_inserter(functions));
+    return {.path = "ui",
+            .doc = "Dear ImGui, inside on_draw and on_settings only. Colours are 0-1.",
+            .functions = std::move(functions),
+            .fields = {}};
 }
 
 std::vector<verdite::ModTable> api_tables() {
@@ -1036,6 +1071,13 @@ std::vector<verdite::ModTable> api_tables() {
               {"key_down", "fun(name: string): boolean", "An SDL key name held; false while the overlay is open.",
                kf_key_down},
               {"key_pressed", "fun(name: string): boolean", "As key_down, on the first frame only.", kf_key_pressed},
+              {"action_down", "fun(name: string): boolean",
+               "An action held, by any of its keys, buttons or touch controls: \"run\", \"full_map\", "
+               "\"attack\"...; false while the overlay is open.",
+               kf_action_down},
+              {"action_pressed", "fun(name: string): boolean",
+               "As action_down, on the first update (in on_update) or drawn frame (in on_draw) only.",
+               kf_action_pressed},
               {"player_fields", "fun(): string[]", "The names of kf.player's fields.", kf_player_fields},
               {"view", view_type, "x, y, w, h of the game picture in window pixels.", kf_view},
               {"view_original", view_type, "x, y, w, h of the original 320x240 area.", kf_view_original},
@@ -1103,7 +1145,10 @@ std::vector<verdite::ModTable> api_tables() {
               {"take", "fun(item: integer, n: integer): integer", "Takes n of a named item, down to 0; the new count.",
                kf_items_take},
               {"name", "fun(item: integer): string?", "The item's English name, or nil for an id with none.",
-               kf_items_name}},
+               kf_items_name},
+              {"description", "fun(item: integer): string?",
+               "What the item does, as the item menu says it in English, or nil when it says nothing.",
+               kf_items_description}},
          .fields = {}},
         {.path = "kf.magic",
          .doc = "The player's spells, ids 0 to 8 as KfEffectKind (the spell menu lists 4 to 8).",
@@ -1115,35 +1160,9 @@ std::vector<verdite::ModTable> api_tables() {
                kf_magic_set_learned}},
          .fields = {}},
         rules_table(),
-        {.path = "ui",
-         .doc = "Dear ImGui, inside on_draw and on_settings only. Colours are 0-1.",
-         .functions =
-             {ModFunction{"text", "fun(text: string)", "", ui_text},
-              {"text_colored", "fun(r: number, g: number, b: number, text: string)", "", ui_text_colored},
-              {"button", "fun(label: string): boolean", "True when clicked.", ui_button},
-              {"checkbox", "fun(label: string, value: boolean): boolean", "", ui_checkbox},
-              {"slider_int", "fun(label: string, value: integer, min: integer, max: integer): integer", "",
-               ui_slider_int},
-              {"slider_float", "fun(label: string, value: number, min: number, max: number, format?: string): number",
-               "", ui_slider_float},
-              {"combo", "fun(label: string, index: integer, items: string[]): integer", "1-based.", ui_combo},
-              {"separator", "fun()", "", ui_separator},
-              {"same_line", "fun()", "", ui_same_line},
-              {"spacing", "fun()", "", ui_spacing},
-              {"tooltip", "fun(text: string)", "For the item before it.", ui_tooltip},
-              {"begin_window", "fun(title: string, click_through?: boolean): boolean",
-               "Always call end_window after it.", ui_begin_window},
-              {"end_window", "fun()", "", ui_end_window},
-              {"draw_text",
-               "fun(x: number, y: number, text: string, r?: number, g?: number, b?: number, a?: number, size?: number)",
-               "Window pixels, over everything; size in pixels (18).", ui_draw_text},
-              {"draw_rect",
-               "fun(x: number, y: number, w: number, h: number, r?: number, g?: number, b?: number, a?: number, "
-               "filled?: boolean)",
-               "", ui_draw_rect},
-              {"game_to_screen", "fun(x: number, y: number): number, number",
-               "The PS1's 320x240 coordinates to window pixels.", ui_game_to_screen}},
-         .fields = {}},
+        automap_table(),
+        online_table(),
+        ui_table(),
     };
 }
 
@@ -1341,8 +1360,11 @@ void draw_mod_row(const verdite::ModInfo &mod) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.45f, 1.0f), "%s", mod.error.c_str());
     ImGui::BeginDisabled(paused);
     if (mod.state == verdite::ModState::Running && mod.has_settings && ImGui::TreeNode("Settings")) {
-        if (!paused)
+        if (!paused) {
+            ui_frame_open();
             host->call(mod.id, verdite::ModCallback::Settings);
+            ui_frame_close();
+        }
         ImGui::TreePop();
     }
     ImGui::EndDisabled();
@@ -1396,6 +1418,14 @@ bool mods_pause_requested() {
     return mods_active() && combined_play.paused;
 }
 
+bool mods_pause_keeps_music() {
+    return mods_pause_requested() && combined_play.music_while_paused;
+}
+
+bool mods_take_mouse() {
+    return mods_active() && combined_play.takes_mouse;
+}
+
 // A file saved in coop reloads on the first scan after leaving it.
 void mods_poll() {
     if (!host || mods_paused() || SDL_GetTicks() - last_scan < 500)
@@ -1413,6 +1443,7 @@ void mods_frame(int context) {
     keys_before = keys_now;
     for (int i = 0; i < SDL_SCANCODE_COUNT; ++i)
         keys_now[static_cast<std::size_t>(i)] = i < count && state[i];
+    update_actions.advance(host_actions_held());
     if (!host)
         return;
     if (!mods_paused())
@@ -1426,15 +1457,18 @@ void mods_draw_hud() {
         return;
     // Mod windows use the base font size whatever the interface scale is.
     ImGui::PushFont(nullptr, hud_font_size / ImGui::GetStyle().FontScaleMain);
-    in_imgui_frame = true;
+    draw_actions.advance(host_actions_held());
+    callback_actions = &draw_actions;
     for (const verdite::ModInfo &mod : host->mods()) {
         if (mod.state != verdite::ModState::Running)
             continue;
         ImGui::PushID(mod.id.c_str());
+        ui_frame_open();
         host->call(mod.id, verdite::ModCallback::Draw);
+        ui_frame_close();
         ImGui::PopID();
     }
-    in_imgui_frame = false;
+    callback_actions = &update_actions;
     ImGui::PopFont();
     refresh_mod_play();
 }
@@ -1463,10 +1497,8 @@ void mods_draw_panel() {
     const auto list = host->mods();
     if (list.empty())
         ImGui::TextWrapped("No mods yet. Create a folder in the mods folder with a mod.json and main.lua.");
-    in_imgui_frame = true;
     for (const verdite::ModInfo &mod : list)
         draw_mod_row(mod);
-    in_imgui_frame = false;
     refresh_mod_play();
 }
 }

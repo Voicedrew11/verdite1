@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.6, what ships today. Where it is going, API 1.0, is
+This page documents API 0.7, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -190,6 +190,7 @@ end
 | `kf.frame()` | presented-frame counter |
 | `kf.time()` | seconds since start |
 | `kf.key_down(name)` / `kf.key_pressed(name)` | SDL key names: `"F5"`, `"G"`, `"Left Shift"`; `pressed` is true on the first frame only. Both are false while the overlay is open. |
+| `kf.action_down(name)` / `kf.action_pressed(name)` | an action held by any of its keys, pad buttons or touch controls (below); `pressed` is true on the first update in `on_update`, the first drawn frame in `on_draw`. Both are false while the overlay is open. |
 | `kf.view()` | `x, y, w, h` of the whole game picture in window pixels (wider than 4:3 in widescreen) |
 | `kf.view_original()` | `x, y, w, h` of the original 320×240 area, centred in the picture |
 | `kf.player.<field>` | read/write player state (below) |
@@ -198,7 +199,16 @@ end
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.6"` |
+| `kf.api_version` | `"0.7"` |
+
+The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
+`turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
+`interact`, `inventory`, `pause`, `pause_or_back`, `confirm`, `back`, `run`
+(Shift, the left stick's click, the touch Run button), `quick_save`,
+`quick_load`, `compare_language` and `full_map` (M, the touch Map button).
+`run` and `full_map` mean nothing to the game: they are there for mods. An
+action's press in `on_draw` is seen while the game is paused, so a mod that
+pauses can unpause on one.
 
 `kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
@@ -274,6 +284,7 @@ The player's pack: each item id from 0 to 79 holds up to a stack of 99.
 | `kf.items.give(item, n)` | adds `n` of a named item, up to a stack; the new count |
 | `kf.items.take(item, n)` | takes `n`, down to 0; the new count |
 | `kf.items.name(item)` | the item's English name, or nil for an id with none |
+| `kf.items.description(item)` | what it does, as the item menu says in English (`"Heals 25 HP."`), or nil |
 
 `give` and `take` take a named item and `n` of at least 1; a larger `n` is held to a stack.
 
@@ -288,12 +299,48 @@ takes the arm and leg armour off, as the menu does. The slots, in the order coop
 `kf.magic.learned(spell)` and `kf.magic.set_learned(spell, learned)` take a spell from 0 to 8, in the
 game's order (the spell menu lists 4 to 8). Unlearning the selected spell deselects it, as the menu does.
 
+### `kf.automap`
+
+The floor as the automap sees it, published once per update, and what the
+player has seen of it. Cells are one unit: x grows east, z north, and cell
+(x, z) spans x to x+1. Read-only.
+
+| field or call | returns |
+|---|---|
+| `floor` | 1 to 5; 0 when no floor is loaded |
+| `owns_map` | boolean: the Keeper's or the Magician's map is in the pack |
+| `serial` | counts up on every publish |
+| `player_x`, `player_z` | numbers, in cells |
+| `player_yaw` | radians: 0 faces north, increasing turns west |
+| `cell(x, z)` | `"void"` (nothing built), `"wall"`, `"floor"`, a diagonal half (`"half_x_ge_z"`, `"half_sum_le"`, `"half_z_ge_x"`, `"half_sum_ge"`, named by where the walkable half is in the cell's own 0..1 x and z), `"door"`, `"door_open"`, `"chasm"` (walkable, but only by a fatal fall), `"harp_bridge"` (lowered), `"harp_bridge_raised"` |
+| `hazard(x, z)` | `"none"`, `"pit"`, `"poison"` or `"bottomless"` |
+| `seen(x, z)` | boolean: seen on this floor; kept with each save slot and the quick save, forgotten by a new game |
+| `markers()` | a list of `{kind, label, items, x, z}`, at points in cells |
+
+Off the map a cell is `"void"`, with no hazard, and not seen, so a drawing loop
+can look past the edge. A marker's `kind` is `"door"`, `"locked_door"`,
+`"warp"`, `"save_point"`, `"fountain"`, `"npc"`, `"item"`, `"chest"`, `"enemy"`
+or `"harp_bridge"` (the middle of one). `label` is the warp's destination (1–5
+a floor, 10 a teleport on the same floor, 11 the way out), 1 for a full
+fountain, the person's character id, or a lock's link for a locked door or
+chest (255 when open; below 128, the item id of the key it takes). `items` is
+an item's id, a chest's contents or an enemy's drop. Items, chests and enemies
+are listed whether or not they have been seen: a map that shows them is
+cheating.
+
+### `kf.online`
+
+`kf.online.players()` lists the other players in the online room as
+`{floor, x, z, yaw}`, in cells and radians as `kf.automap`. Empty offline.
+
 ### `kf.game`
 
 | field | notes |
 |---|---|
 | `speed` | number, 0.25–8: game time at that multiple of real time |
 | `paused` | boolean. `on_update` does not run while paused, so unpause from `on_draw` |
+| `music_while_paused` | boolean: while this mod pauses, the music plays on. Another mod's pause without it stops the music |
+| `mouse` | boolean: the mod takes the mouse. The cursor shows, and the game gets no mouse input (no look, no attack) |
 
 ### `kf.play`
 
@@ -303,6 +350,7 @@ game's order (the spell menu lists 4 to 8). Unlearning the selected spell desele
 | `invincible` | boolean: HP losses are ignored, so no death |
 | `peaceful` | boolean: enemies never attack the player |
 | `move_speed`, `turn_speed` | number, 0.25–8 |
+| `top_speed` | number, 0.25–8: the walking speed limit, as a run raises it (`mods/run` sets 1.6). Not while slowed |
 
 Each mod's `kf.play` and `kf.game` values are its own; the game combines them.
 A switch is on when any mod turns it on, speeds multiply, and the product is
@@ -408,8 +456,17 @@ interface scale.
 | `ui.combo(label, index, {items})` → index | 1-based |
 | `ui.separator()`, `ui.same_line()`, `ui.spacing()`, `ui.tooltip(s)` | |
 | `ui.begin_window(title [, click_through])` → visible; `ui.end_window()` | always call `end_window` |
-| `ui.draw_text(x, y, s [, r, g, b, a [, size]])` | window pixels, drawn over everything; `size` in pixels (default 18) |
+| `ui.draw_text(x, y, s [, r, g, b, a [, size]])` | window pixels, with a shadow; `size` in pixels (default 18) |
 | `ui.draw_rect(x, y, w, h [, r, g, b, a [, filled]])` | |
+| `ui.draw_line(x1, y1, x2, y2 [, r, g, b, a [, thickness]])` | thickness in pixels (default 1) |
+| `ui.draw_circle(x, y, radius [, r, g, b, a [, filled [, thickness]]])` | filled unless `filled` is false |
+| `ui.draw_polygon({x1, y1, x2, y2, ...} [, r, g, b, a [, filled [, thickness]]])` | 3 to 64 points; filled (the default) must be convex |
+| `ui.push_clip(x, y, w, h)`, `ui.pop_clip()` | clips the layer's drawing; the end of `on_draw` pops any left |
+| `ui.layer(name)` | `"foreground"` (the default each `on_draw`): over everything; `"background"`: over the picture, under the windows |
+| `ui.text_size(s [, size])` → w, h | pixels |
+| `ui.mouse()` → x, y | window pixels; far off screen when there is no mouse |
+| `ui.mouse_down(button)` → bool | 1 left, 2 right, 3 middle; false while the overlay is open |
+| `ui.mouse_wheel()` → steps | this frame, up positive; 0 while the overlay is open |
 | `ui.game_to_screen(x, y)` → x, y | converts PS1 320×240 coordinates (the original area, where the game's HUD and menus are) |
 
 ## Examples
@@ -523,8 +580,8 @@ mods are off in coop (decided 2026-10-31).
 2. ~~Player position, world and game flow, then a debug mod (noclip, god mode,
    infinite MP, peaceful, speed, warp) in place of Verdite's debug menu.~~
    Done in 0.3 (2026-10-31): position, `kf.warp`, `kf.world`'s story flags,
-   `kf.game`, `kf.play` and `mods/debug`. Not yet: doors, chests and the automap,
-   which the decomp keeps no reveal state for.
+   `kf.game`, `kf.play` and `mods/debug`. The automap's floor and seen cells
+   are read-only in 0.7 (`kf.automap`); doors and chests are not reachable yet.
 3. ~~Events and the per-save `save` table.~~ Done in 0.4 (2026-10-31): the
    events above and `save`. In 0.6 (2026-10-31): `on_damage` for poison and
    equipment drain, `on_drop`, and cancelling `on_item_pickup` and `on_shop`.
@@ -533,7 +590,10 @@ mods are off in coop (decided 2026-10-31).
    0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
 5. The generated raw layer.
 6. Asset overrides, audio, 3D drawing.
-7. Input actions: reading, pressing and blocking them.
+7. Input actions: reading, pressing and blocking them. Reading done in 0.7
+   (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,
+   `kf.play.top_speed` and `kf.game.mouse` and `music_while_paused`, which
+   the run and the map need to be mods.
 
 ### Open questions
 

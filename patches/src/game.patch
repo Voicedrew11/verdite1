@@ -4609,7 +4609,7 @@ index b90adbb1ec3e303bc920fd26705f1850209ad267..4e225c97c936afe0f29462ea8a8ae98d
          player_death_apply_visual_fade(&player_death_saved_color_matrix, blend);
      }
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a8220419414 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..94e8d202238b7125c39571581bdeb3bfe86483b1 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
 @@ -1,4 +1,6 @@
@@ -4653,12 +4653,16 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
  static void player_update_movement_input(u32 input)
  {
      auto &motion = player_state.motion_state;
-@@ -349,9 +365,17 @@ static void player_update_movement_input(u32 input)
+@@ -348,10 +364,20 @@ static void player_update_movement_input(u32 input)
+         player_movement_velocity_limit = PLAYER_SLOWED_MOVEMENT_LIMIT;
          player_turn_step_limit = PLAYER_SLOWED_TURN_LIMIT;
      } else {
-         player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
+-        player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
++        // PC extension (mods, run): kf.play.top_speed, then the run key, raise the walking limit.
++        player_movement_velocity_limit = player_scale_permille(PLAYER_NORMAL_MOVEMENT_LIMIT,
++            kf::host_play_overrides().top_speed_permille);
 +        if (kf::host_run_held()) {
-+            player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT * kf::player_run_speed / 100;
++            player_movement_velocity_limit = player_movement_velocity_limit * kf::player_run_speed / 100;
 +        }
          player_turn_step_limit = PLAYER_NORMAL_TURN_LIMIT;
      }
@@ -4672,7 +4676,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
          forward = motion.forward_velocity
              + (player_movement_velocity_limit >> PLAYER_FORWARD_ACCEL_SHIFT);
          motion.forward_velocity = std::min<s32>(forward, player_movement_velocity_limit);
-@@ -368,7 +392,10 @@ static void player_update_movement_input(u32 input)
+@@ -368,7 +394,10 @@ static void player_update_movement_input(u32 input)
              player_movement_velocity_limit >> PLAYER_FORWARD_DECEL_SHIFT;
          motion.forward_velocity = std::min<s32>(motion.forward_velocity, 0);
      }
@@ -4684,7 +4688,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
          strafe = motion.strafe_velocity
              + (player_movement_velocity_limit >> PLAYER_STRAFE_ACCEL_DECEL_SHIFT);
          motion.strafe_velocity = std::min<s32>(strafe, player_movement_velocity_limit);
-@@ -404,18 +431,23 @@ static void player_update_movement_input(u32 input)
+@@ -404,18 +433,23 @@ static void player_update_movement_input(u32 input)
          }
      }
      motion.movement_speed = kf::length_square_root(strafe * strafe + forward * forward);
@@ -4712,7 +4716,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
      }
      player_update_view_bob();
  }
-@@ -424,7 +456,11 @@ static void player_update_view_input(u32 input)
+@@ -424,7 +458,11 @@ static void player_update_view_input(u32 input)
  {
      auto &motion = player_state.motion_state;
  
@@ -4725,7 +4729,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
          motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
          motion.yaw_step = std::min<s32>(motion.yaw_step, player_turn_step_limit);
      } else if (input & kf::Button::Right) {
-@@ -437,9 +473,14 @@ static void player_update_view_input(u32 input)
+@@ -437,9 +475,14 @@ static void player_update_view_input(u32 input)
          motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
          motion.yaw_step = std::min<s32>(motion.yaw_step, 0);
      }
@@ -4743,7 +4747,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
          motion.pitch_step += PLAYER_PITCH_ACCEL;
          motion.pitch_step = std::min<s32>(motion.pitch_step, PLAYER_PITCH_STEP_LIMIT);
      } else if (input & kf::Button::LookUp) {
-@@ -455,11 +496,11 @@ static void player_update_view_input(u32 input)
+@@ -455,11 +498,11 @@ static void player_update_view_input(u32 input)
      if (motion.pitch_step > 0) {
          player_state.camera_rotation.vx += motion.pitch_step;
          player_state.camera_rotation.vx =
@@ -4757,7 +4761,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
      }
  }
  
-@@ -594,7 +635,11 @@ static void player_update_status_effects()
+@@ -594,7 +637,11 @@ static void player_update_status_effects()
              if (phase < POISON_FLASH_UPDATES) {
                  lighting_set_active_color_matrix(KF_GAME_COLOR_DAMAGE);
                  if (phase == 0) {
@@ -4770,7 +4774,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
                  }
              }
          }
-@@ -642,6 +687,52 @@ static void player_restore_loaded_game()
+@@ -642,6 +689,52 @@ static void player_restore_loaded_game()
      player_select_magic(player_state.selected_magic_id);
  }
  
@@ -4823,7 +4827,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -649,6 +740,27 @@ void player_update(void)
+@@ -649,6 +742,27 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -4851,7 +4855,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
          player_death_update();
          return;
-@@ -662,7 +774,7 @@ void player_update(void)
+@@ -662,7 +776,7 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,
@@ -4860,7 +4864,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a82
      if (input & kf::Button::Select) {
          display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
      }
-@@ -688,7 +800,11 @@ void player_update(void)
+@@ -688,7 +802,11 @@ void player_update(void)
          }
          player_previous_input = input;
      } else {

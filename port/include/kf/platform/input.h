@@ -35,6 +35,8 @@ struct LookDelta { s32 yaw, pitch; };
 
 u32 host_read_buttons();
 bool host_action_held(Action action);
+// The actions held now, as action_bit bits, without polling: for code inside a frame (the mods).
+u32 host_actions_held();
 void host_wait_buttons_released(u32 mask = ~u32(0));
 void host_wait_button_press();
 InputContext host_set_input_context(InputContext context);

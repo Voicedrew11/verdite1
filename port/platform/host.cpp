@@ -133,7 +133,7 @@ static void bind_gamepad_buttons(std::span<const GamepadBinding> buttons) {
 static void bind_inputs() {
     auto *input = &host.input;
     struct KeyBinding { SDL_Keycode code; Action action; };
-    constexpr std::array<KeyBinding, 24> keys = {
+    constexpr std::array<KeyBinding, 25> keys = {
         KeyBinding{SDLK_W, Action::forward}, KeyBinding{SDLK_UP, Action::forward},
         KeyBinding{SDLK_S, Action::backward}, KeyBinding{SDLK_DOWN, Action::backward},
         KeyBinding{SDLK_A, Action::strafe_left}, KeyBinding{SDLK_D, Action::strafe_right},
@@ -145,7 +145,8 @@ static void bind_inputs() {
         KeyBinding{SDLK_ESCAPE, Action::pause_or_back}, KeyBinding{SDLK_P, Action::pause},
         KeyBinding{SDLK_LSHIFT, Action::run}, KeyBinding{SDLK_RSHIFT, Action::run},
         KeyBinding{SDLK_F2, Action::quick_save}, KeyBinding{SDLK_F4, Action::quick_load},
-        KeyBinding{SDLK_R, Action::compare_language}, KeyBinding{SDLK_AC_BACK, Action::pause_or_back}
+        KeyBinding{SDLK_R, Action::compare_language}, KeyBinding{SDLK_AC_BACK, Action::pause_or_back},
+        KeyBinding{SDLK_M, Action::full_map}
     };
     for (const auto &key : keys)
         input_bind(input, {InputDevice::keyboard, static_cast<u32>(key.code)}, key.action);
@@ -719,7 +720,11 @@ static u32 test_input_actions() {
 
 bool host_action_held(Action action) {
     host_poll();
-    return ((host.input.pending.held | host_touch_held_actions()) & action_bit(action)) != 0;
+    return (host_actions_held() & action_bit(action)) != 0;
+}
+
+u32 host_actions_held() {
+    return host.input.pending.held | host_touch_held_actions();
 }
 
 u32 host_read_buttons() {

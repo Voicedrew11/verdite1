@@ -30,6 +30,7 @@ enum class Action : u8 {
     quick_save,
     quick_load,
     compare_language,
+    full_map,   // no game meaning: for mods (kf.action_down)
     count
 };
 enum class InputDevice : u8 { keyboard, mouse, gamepad };

@@ -12,6 +12,7 @@ struct PlayOverrides {
     bool enemies_attack = true;        // actor_try_attack_player
     s32 move_scale_permille = 1000;    // forward/strafe distance in player_update_movement_input
     s32 turn_scale_permille = 1000;    // turn velocity
+    s32 top_speed_permille = 1000;     // the walking speed limit, not the slowed one
 };
 
 // The running mods' values, combined; the defaults when no mod sets any.

@@ -369,13 +369,18 @@ bool pause_requested() {
         || (automap_full_open() && settings().map_pause) || mods_pause_requested();
 }
 bool pause_keeps_music() {
-    return !settings_panel_open() && !(open && settings().pause_when_open) && automap_full_open()
-        && settings().map_keep_music;
+    if (settings_panel_open() || (open && settings().pause_when_open))
+        return false;
+    const bool map_pauses = automap_full_open() && settings().map_pause;
+    if (map_pauses && !settings().map_keep_music)
+        return false;
+    // A mod's pause keeps the music only when every pause keeps it.
+    return mods_pause_requested() ? mods_pause_keeps_music() : map_pauses;
 }
 // Nothing of the game shows under Android's panel, so it is not redrawn.
 // A paused mod still gets on_draw, which is how it unpauses.
 bool redraw_while_paused() { return open || setup_open() || automap_full_open() || mods_pause_requested(); }
-bool wants_cursor() { return covered() || automap_full_open(); }
+bool wants_cursor() { return covered() || automap_full_open() || mods_take_mouse(); }
 
 ViewRect game_view() {
     int width = 0, height = 0;
@@ -482,7 +487,7 @@ bool process_event(const SDL_Event &event) {
     // The full map takes the mouse (zoom, drag, hover); the keyboard still reaches the game.
     const bool mouse_event = event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
         || event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL;
-    if (automap_full_open() && mouse_event)
+    if ((automap_full_open() || mods_take_mouse()) && mouse_event)
         return true;
     return covered() && is_input_event(event.type);
 }

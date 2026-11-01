@@ -88,3 +88,39 @@ TEST_CASE("paused when any mod pauses") {
     CHECK(combine_mod_play(mixed).paused);
     CHECK_FALSE(combine_mod_play(std::span{&quiet, 1}).paused);
 }
+
+TEST_CASE("top speeds multiply into the walking limit") {
+    std::array<ModPlay, 2> mods{};
+    mods[0].top_speed = 1.6f;
+    CHECK(combine_mod_play(std::span{mods.data(), 1}).overrides.top_speed_permille == 1600);
+    mods[1].top_speed = 2.0f;
+    CHECK(combine_mod_play(mods).overrides.top_speed_permille == 3200);
+    CHECK(combine_mod_play({}).overrides.top_speed_permille == 1000);
+}
+
+TEST_CASE("the music plays on only when every pausing mod keeps it") {
+    std::array<ModPlay, 2> mods{};
+    mods[0].paused = true;
+    mods[0].music_while_paused = true;
+    CHECK(combine_mod_play(std::span{mods.data(), 1}).music_while_paused);
+    mods[1].paused = true;
+    CHECK_FALSE(combine_mod_play(mods).music_while_paused);
+    mods[1].paused = false;
+    mods[1].music_while_paused = false;
+    CHECK(combine_mod_play(mods).music_while_paused);
+}
+
+TEST_CASE("keeping the music does nothing without a pause") {
+    ModPlay mod;
+    mod.music_while_paused = true;
+    const ModPlayCombined combined = combine_mod_play(std::span{&mod, 1});
+    CHECK_FALSE(combined.paused);
+    CHECK_FALSE(combined.music_while_paused);
+}
+
+TEST_CASE("the mouse is taken when any mod takes it") {
+    std::array<ModPlay, 2> mods{};
+    CHECK_FALSE(combine_mod_play(mods).takes_mouse);
+    mods[1].takes_mouse = true;
+    CHECK(combine_mod_play(mods).takes_mouse);
+}
