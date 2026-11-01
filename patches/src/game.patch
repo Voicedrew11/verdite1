@@ -425,16 +425,17 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..f8f441fc1b80e1af907e36c7a5ff7bdf
                  }
                  actor->action_progress = KF_ACTOR_PROGRESS_COMPLETE;
 diff --git a/src/game/actor_pool.cpp b/src/game/actor_pool.cpp
-index 7c6b4de806700422183551d2b4782dd3fa5eaf47..71ea017b13b208002f374c41e16bee4cd205e9a9 100644
+index 7c6b4de806700422183551d2b4782dd3fa5eaf47..953aaeaafb88aa38e46153023ca5f95c9fa66554 100644
 --- a/src/game/actor_pool.cpp
 +++ b/src/game/actor_pool.cpp
-@@ -4,20 +4,95 @@
+@@ -4,20 +4,96 @@
  #include <kf/lib/codec.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
 +#include <kf/game/collision.h>
 +#include <kf/game/player.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/mod_events.h>
 +#include <kf/platform/online_players.h>
  
  #include <array>
@@ -524,7 +525,7 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..71ea017b13b208002f374c41e16bee4c
              actor_update_awareness();
              if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE) {
                  actor_update_current_action();
-@@ -25,6 +100,7 @@ void actor_pool_update(void)
+@@ -25,6 +101,7 @@ void actor_pool_update(void)
          }
      }
      actor_bind_current(NULL);
@@ -532,6 +533,14 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..71ea017b13b208002f374c41e16bee4c
  }
  
  void actor_pool_load_placements(KfResourceChunk chunk) try
+@@ -77,6 +154,7 @@ void actor_definitions_load(KfResourceChunk chunk)
+     if (chunk.size < sizeof actor_state.definitions)
+         kf::host_fail("Truncated actor definitions.");
+     std::memcpy(&actor_state.definitions, chunk.data, sizeof actor_state.definitions);
++    kf::mods_rules_reapply(kf::RulesTable::ActorDefinitions);   // PC extension (mods): kf.rules
+ }
+ 
+ 
 diff --git a/src/game/audio.cpp b/src/game/audio.cpp
 index 31f832db7b441760cf013f561eaf55ce8ee9842c..80c2e53fe4ef7943fcf892407d9bd9849a79840d 100644
 --- a/src/game/audio.cpp
@@ -1201,6 +1210,32 @@ index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9
      relative_position = VECTOR{
          effect->position.vx - game_graphics_runtime.render_state.view_position.vx,
          effect->position.vy - game_graphics_runtime.render_state.view_position.vy,
+diff --git a/src/game/equipment.cpp b/src/game/equipment.cpp
+index cffe39b2fd706bb1c1525895fad732a7e9efbc6c..cb285ad1d3aec90c3677459cc36be4505bbf4fca 100644
+--- a/src/game/equipment.cpp
++++ b/src/game/equipment.cpp
+@@ -1,6 +1,7 @@
+ #include <kf/platform/prelude.h>
+ #include <kf/game/equipment.h>
+ #include <kf/lib/math.h>
++#include <kf/platform/mod_events.h>
+ 
+ KfWeaponTable weapon_records;
+ 
+@@ -12,11 +13,13 @@ void weapon_records_load_and_mirror_angles(const KfWeaponTable *source)
+     for (auto &record : weapon_records.entries) {
+         record.render_rotation.vy = -record.render_rotation.vy;
+     }
++    kf::mods_rules_reapply(kf::RulesTable::WeaponRecords);   // PC extension (mods): kf.rules
+ }
+ 
+ void armor_records_load(const KfArmorTable *source)
+ {
+     armor_records = *source;
++    kf::mods_rules_reapply(kf::RulesTable::ArmourRecords);   // PC extension (mods): kf.rules
+ }
+ 
+ s32 fixed6_ratio_step(s32 value, s32 span)
 diff --git a/src/game/game.cpp b/src/game/game.cpp
 index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..fb799f751b1c192ceb8d95df425d44aa336691c6 100644
 --- a/src/game/game.cpp
@@ -1457,7 +1492,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
  
  enum {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
-index 660386288c157b2819409141f669eb2ae4d10af9..82fd2b9666689575a0840abe238ef89797aa2fac 100644
+index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e0073890faf394 100644
 --- a/src/game/item.cpp
 +++ b/src/game/item.cpp
 @@ -10,9 +10,13 @@
@@ -1506,7 +1541,15 @@ index 660386288c157b2819409141f669eb2ae4d10af9..82fd2b9666689575a0840abe238ef897
  void menu_resources_reload(void)
  {
      if (!menu_prepare_language(kf::game_language()))
-@@ -297,6 +315,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
+@@ -218,6 +236,7 @@ void menu_resources_reload(void)
+     const auto &resources = menu_languages[static_cast<std::size_t>(kf::game_language())].value();
+     item_buy_prices = resources.buy_prices;
+     item_sell_prices = resources.sell_prices;
++    kf::mods_rules_reapply(kf::RulesTable::ShopPrices);   // PC extension (mods): kf.rules
+ }
+ 
+ void item_load_database(void)
+@@ -297,6 +316,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1517,7 +1560,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..82fd2b9666689575a0840abe238ef897
          }
          menu_draw_window(KF_MENU_WINDOW_SHOP, KF_SHOP_CHOICE_COUNT, cursor, confirm);
      }
-@@ -393,6 +415,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+@@ -393,6 +416,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1525,7 +1568,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..82fd2b9666689575a0840abe238ef897
          if (selection == kf_enum_encode<s32>(KF_ITEM_GOLD_CROSS))
              stock[kf_enum_encode<u8>(KF_ITEM_GOLD_CROSS)]--;
          player_state.gold -= item_buy_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
-@@ -422,6 +445,8 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+@@ -422,6 +446,8 @@ void shop_menu_sell(KfItemStockBank shop_bank)
              available[found] = stock[slot];
              if (player_item_is_equipped(kf_enum_decode<KfObjectId>(slot)))
                  available[found]--;
@@ -1534,7 +1577,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..82fd2b9666689575a0840abe238ef897
              if (available[found] != 0) {
                  item_ids[found] = kf_enum_decode<KfObjectId>(slot);
                  found++;
-@@ -483,6 +508,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+@@ -483,6 +509,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1542,7 +1585,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..82fd2b9666689575a0840abe238ef897
          stock[selection]--;
          player_state.gold += item_sell_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
      }
-@@ -561,13 +587,22 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
+@@ -561,13 +588,22 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
              } else {
                  result = KF_MENU_RESULT_STACK_FULL;
                  if (stock_count != KF_ITEM_STACK_CAPACITY) {
@@ -5854,7 +5897,7 @@ index a89ed01864d01ed77774c0159d4d4234cf179f4e..80fd4319e6c80be8a3273ce72395b471
      return resource_file_try_load_allocated(memory_arena, destination, item_model_files[index].path.data(), loaded_size);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466029f4951 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..e77c8bba3da9334287113504cf66b562c7a7b419 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
 @@ -2,6 +2,8 @@
@@ -5866,10 +5909,11 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466
  #include <kf/game/player.h>
  #include <kf/game/render.h>
  #include <kf/game/resources.h>
-@@ -9,11 +11,13 @@
+@@ -9,11 +11,14 @@
  #include <kf/lib/map.h>
  #include <kf/lib/null.h>
  #include <kf/lib/resources.h>
++#include <kf/platform/mod_events.h>
 +#include <kf/renderer/renderer.h>
  
  #include <array>
@@ -5880,7 +5924,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466
  
  enum {
      MAP_VARIANT_ASSET_BUFFER_BYTES = 0x5a000,
-@@ -40,6 +44,17 @@ KfMapCollisionGrid map_collision_grid;
+@@ -40,6 +45,17 @@ KfMapCollisionGrid map_collision_grid;
  KfMapAttributeGrid map_cell_attribute_grid;
  
  namespace {
@@ -5898,7 +5942,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466
  std::array<kf::ByteBuffer, 2> language_images;
  std::optional<kf::Language> displayed_language;
  
-@@ -61,7 +76,7 @@ bool show_text_language(kf::Language language)
+@@ -61,7 +77,7 @@ bool show_text_language(kf::Language language)
          return false;
      const auto &before = language_images[static_cast<std::size_t>(previous)];
      const auto &after = language_images[static_cast<std::size_t>(language)];
@@ -5907,7 +5951,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466
              before.data(), before.size(), after.data(), after.size()))
          kf::host_fail("Cannot replace language graphics.");
      displayed_language = language;
-@@ -69,6 +84,66 @@ bool show_text_language(kf::Language language)
+@@ -69,6 +85,66 @@ bool show_text_language(kf::Language language)
  }
  }
  
@@ -5974,6 +6018,14 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..8c969dadaf38b9ccb5d99f968c3a2466
  kf::Language game_text_language()
  {
      return displayed_language.value_or(kf::game_language());
+@@ -137,6 +213,7 @@ void common_resources_load(void)
+     if (level_growth.size < sizeof player_level_growth_table)
+         kf::host_fail("Truncated player level growth table");
+     memcpy(player_level_growth_table.data(), level_growth.data, sizeof player_level_growth_table);
++    kf::mods_rules_reapply(kf::RulesTable::LevelGrowth);   // PC extension (mods): kf.rules
+     memory_release_last(memory_arena);
+     memory_arena.allocation.cursor = block + KF_RESOURCE_REUSE_PREFIX_BYTES;
+ }
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
 index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0b79ff4a5 100644
 --- a/src/game/save_system.cpp

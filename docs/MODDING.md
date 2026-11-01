@@ -61,8 +61,8 @@ extension, Neovim and others then complete names and flag mistakes.
 ## Coop
 
 Mods do not run in coop. While the coop world is in play every mod is paused:
-no callbacks, no events, and `kf.play` and `kf.game` values are not applied, so
-the game plays as if no mod were set. The Mods panel says so and disables its
+no callbacks, no events, and `kf.play`, `kf.game` and `kf.rules` values are not
+applied, so the game plays as if no mod were set. The Mods panel says so and disables its
 switches and Reload all. The count in the overlay's status line reads 0. Leaving
 the room resumes the mods where they were; their enabled flags are untouched. A
 mod's `save` table belongs to the single-player game and comes back with it.
@@ -308,6 +308,90 @@ Each mod's `kf.play` and `kf.game` values are its own; the game combines them.
 A switch is on when any mod turns it on, speeds multiply, and the product is
 held to 0.25–8. A mod's values are dropped when it unloads, reloads or fails.
 
+### `kf.rules`
+
+KF1 keeps its rules as tables: each floor's monster definitions, the level
+growth table, the shops' prices, and the weapon and armour records (the only
+regeneration there is). So a rule is a value a mod sets, not a function the game
+calls. The game keeps its own numbers and lays each running mod's values over
+them; per field, the mod later in load order (the Mods panel's order, by name)
+wins. A mod's values are laid when the callback that set them returns, and again
+each time the game reloads a table (a floor's definitions at every map load, the
+prices when the language changes). They come off, and the game's numbers come
+back, when the mod is disabled, reloads, fails or calls `kf.rules.clear()`, and
+while the mods are paused in coop. Damage stays `on_damage`'s and drops
+`on_drop`'s; a rule changes the numbers those events start from.
+
+| call | |
+|---|---|
+| `kf.rules.set_monster(floor, kind, values)` | a monster kind's numbers on a floor (1 to 5; `kind` 0 to 11, as `kf.actors` names it) |
+| `kf.rules.set_level(level, values)` | what reaching a level gives, 1 to 40 |
+| `kf.rules.set_price(item, shop, values)` | an item's prices (0 to 79) in a shop: its stock bank as `on_shop` reports it, 1 or 2 |
+| `kf.rules.set_regen(item, values)` | a weapon's (0 to 12) or armour's (13 to 38) intervals; accessories have none |
+| `kf.rules.clear()` | drops the calling mod's values |
+| `kf.rules.original_monster(floor, kind)` | the game's own numbers, shaped like `set_monster`'s values; nil unless that floor is the one loaded |
+| `kf.rules.original_level(level)`, `original_price(item, shop)`, `original_regen(item)` | the same for the other tables; nil before the game has loaded the table |
+
+Every field of `values` is optional. A second call for the same record merges
+its fields over the mod's earlier ones. A field that does not exist, a value
+that is not an integer or one outside the field's range is an error at the
+call. `kf.actors.kinds()` shows the numbers in play, rules laid; scale from
+`original_*`, so a factor applied again never compounds.
+
+`set_monster`:
+
+| field | range | |
+|---|---|---|
+| `hp` | 1–65535 | the HP a monster wakes with; one already awake keeps its HP |
+| `experience` | 0–32767 | the EXP the player's kill gives, before `on_kill` |
+| `gold` | 0–65535 | the gold it drops is a random amount below this |
+| `drop_item` | -1, 0–79 | the item a respawning monster drops when its roll passes (a placed one drops its placement's); -1 none. 39, the gold coin, is refused: set `gold` |
+| `drop_chance` | 0–255 | the roll passes when a random 0–255 is at most this |
+| `attack = {cutting, striking, piercing}` | 0–999 | its blows' attack |
+| `defense = {cutting, striking, piercing, holy, fire}` | 0–999 | its defense against the player's blows and spells |
+
+`set_level`:
+
+| field | range | |
+|---|---|---|
+| `max_hp`, `max_mp` | 1–9999, 0–9999 | the maximums on reaching the level |
+| `power_step`, `magic_step` | 0–999 | added to the base physical power and magic on reaching it |
+| `experience` | 1–99999 | the total EXP at which the next level comes |
+
+Level 1 is a new game's start: its maximums, the starting powers and the EXP
+for level 2. Past level 40 each level adds the difference between levels 39
+and 40, so keep those rising. A level's values change later level-ups only: the
+maximums the player has, and the EXP for the next level, were fixed when the
+last level came, and are the player's (kept in saves).
+
+`set_price`: `buy` and `sell`, 0–65535, read when the player buys or sells and
+when the shop's menu shows them.
+
+`set_regen`: the updates between points, 0–65535, 0 for none. `hp_every`
+(weapons and armour) regains 1 HP, `mp_every` (weapons) 1 MP, `hp_drain_every`
+(armour) loses 1 HP, raising `on_damage` with cause `"equipment"`. A point comes
+when the game's count of updates is a multiple of the interval.
+
+The rule tables are never saved: a save holds the player and the world, so a
+save made with a mod's rules loads with the game's numbers when the mod is off.
+What the rules did stays, as a `kf.player` write does: the maximums and powers
+gained at a level-up, the gold spent, the items dropped. In coop the rules come
+off when the coop world comes into play, before its first update; a floor's
+snapshot sent to another player carries the definitions, and the receiver keeps
+its own.
+
+```lua
+-- Every floor's monsters at twice their HP: a floor's numbers are known while it is loaded.
+function on_map_load(map)
+  for kind = 0, 11 do
+    local original = kf.rules.original_monster(map.floor, kind)
+    if original and original.hp > 0 then
+      kf.rules.set_monster(map.floor, kind, {hp = math.min(65535, original.hp * 2)})
+    end
+  end
+end
+```
+
 ## `ui` (Dear ImGui)
 
 Only inside `on_draw` and `on_settings`. Colours are 0–1 floats. Sliders show a
@@ -332,8 +416,8 @@ interface scale.
 
 `mods/stathud` (HUD drawing + settings), `mods/quickheal` (hotkey + writing
 player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
-`mods/killcount` (`on_kill` and the `save` table) and `mods/bestiary`
-(`kf.actors`, `kf.items`) in this repository. The
+`mods/killcount` (`on_kill` and the `save` table), `mods/bestiary`
+(`kf.actors`, `kf.items`) and `mods/hardmode` (`kf.rules`) in this repository. The
 build puts them beside the executable, and the game copies each one, disabled,
 into the mods folder the first time it sees it; `mods/.examples` lists those
 already offered, so an example you delete stays deleted.
@@ -359,7 +443,7 @@ has, so no mod waits on the curated layer to grow.
 | world | the current map, its cells and walls, doors, chests, triggers, story flags, the automap | read/write |
 | game flow | pause, update rate (turbo, slow motion), warp, load a map, the screen shown (menu, shop, save point) | |
 | events | `on_damage`, `on_kill`, `on_item_pickup`, `on_floor_change`, `on_map_load`, `on_level_up`, `on_dialogue`, `on_shop`, `on_save`, `on_load_game`, `on_death` | a handler may cancel or change the event where the game allows |
-| rules | damage, hit and dodge, EXP to the next level, level-up gains, drops, shop prices, enemy stats at spawn, HP and MP regeneration | overridable functions: the game asks, each mod in load order may change the answer |
+| rules | EXP to the next level, level-up gains, drops, shop prices, enemy stats, HP and MP regeneration (KF1 has no hit or dodge roll); damage through `on_damage` | values over the game's tables (today): each mod in load order may change a field |
 | input | the pad, keys and mouse in the game's own terms (actions, not keycodes); press and block actions | |
 | assets | textures, models, sounds, music, text | drop files in the mod's `assets/` under the disc's paths, or swap them from Lua at run time |
 | drawing | 2D over the picture (today), plus 3D in the world: lines, markers, text at a point, lights | |
@@ -444,8 +528,9 @@ mods are off in coop (decided 2026-10-31).
 3. ~~Events and the per-save `save` table.~~ Done in 0.4 (2026-10-31): the
    events above and `save`. In 0.6 (2026-10-31): `on_damage` for poison and
    equipment drain, `on_drop`, and cancelling `on_item_pickup` and `on_shop`.
-4. Entities, items, equipment and magic done in 0.5 (2026-10-31): kf.actors, kf.items, kf.equip, kf.magic.
-   Rules: `kf.rules` comes next, in 0.6.
+4. ~~Entities, items, equipment and magic, then rules.~~ Done in 0.5
+   (2026-10-31): `kf.actors`, `kf.items`, `kf.equip`, `kf.magic`. Rules done in
+   0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
 5. The generated raw layer.
 6. Asset overrides, audio, 3D drawing.
 7. Input actions: reading, pressing and blocking them.
@@ -456,5 +541,7 @@ mods are off in coop (decided 2026-10-31).
   listed subset.
 - Asset formats: PNG for textures, and how replaced textures sit in the Vulkan
   backend's texture pages, including larger replacements.
-- Whether rules that run every update (regeneration) are worth an event per
-  call, or are better as values a mod sets.
+- ~~Whether rules that run every update (regeneration) are worth an event per
+  call, or are better as values a mod sets.~~ Decided 2026-10-31: values. KF1's
+  rules are tables (regeneration is an interval on the equipment records), so a
+  mod sets numbers and the game lays them over its own; damage stays an event.

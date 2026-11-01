@@ -51,6 +51,12 @@ void mods_game_saved(SaveSlot slot);
 // Reads the mods' save data beside the slot (none or unreadable: empty), then raises on_load_game.
 void mods_game_loaded(SaveSlot slot);
 
+// The tables kf.rules changes (docs/MODDING.md, "kf.rules").
+enum class RulesTable : u8 { ActorDefinitions, LevelGrowth, ShopPrices, WeaponRecords, ArmourRecords };
+// The game reloaded a table the rules change: its values are the originals, and the running mods'
+// rules are laid over them again.
+void mods_rules_reapply(RulesTable table);
+
 } // namespace kf
 
 #endif // KF_PLATFORM_MOD_EVENTS_H

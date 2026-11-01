@@ -41,6 +41,7 @@
 #include <kf/platform/play_overrides.h>
 #include "coop_party.h"
 #include "mod_play.h"
+#include "mod_rules.h"
 #include <lauxlib.h>
 #include <lua.h>
 #include <cstdint>
@@ -363,21 +364,31 @@ const std::vector<verdite::ModField> &game_fields() {
     return fields;
 }
 
-// Recomputes what the game sees from the running mods' values; a mod that is not running any more
-// (unloaded, failed) loses its own.
-void refresh_mod_play() {
-    std::set<std::string, std::less<>> running;
+// The running mods' ids, in load order (the host's listed order).
+std::vector<std::string> running_mods() {
+    std::vector<std::string> running;
     if (host)
         for (const verdite::ModInfo &mod : host->mods())
             if (mod.state == verdite::ModState::Running)
-                running.insert(mod.id);
-    std::erase_if(mod_plays, [&running](const auto &entry) { return !running.contains(entry.first); });
+                running.push_back(mod.id);
+    return running;
+}
+
+// Recomputes what the game sees from the running mods' values (kf.play, kf.game, kf.rules); a mod
+// that is not running any more (unloaded, failed) loses its own.
+void refresh_mod_play() {
+    const std::vector<std::string> running = running_mods();
+    std::erase_if(mod_plays,
+                  [&running](const auto &entry) { return std::ranges::find(running, entry.first) == running.end(); });
     // In coop no mod's values apply; they come back when the single-player game does.
     std::vector<ModPlay> values;
     if (!mods_paused()) {
         values.reserve(mod_plays.size());
         for (const auto &entry : mod_plays)
             values.push_back(entry.second);
+        rules_lay(running);
+    } else {
+        rules_lay_originals();
     }
     combined_play = combine_mod_play(values);
     host_set_game_speed(combined_play.game_speed);
@@ -388,6 +399,7 @@ void refresh_mod_play() {
 void forget_mod_play(std::string_view id) {
     if (const auto found = mod_plays.find(id); found != mod_plays.end())
         mod_plays.erase(found);
+    rules_forget(id);
     refresh_mod_play();
 }
 
@@ -1102,6 +1114,7 @@ std::vector<verdite::ModTable> api_tables() {
                "Learns or unlearns a spell; an unlearned spell that is selected is deselected.",
                kf_magic_set_learned}},
          .fields = {}},
+        rules_table(),
         {.path = "ui",
          .doc = "Dear ImGui, inside on_draw and on_settings only. Colours are 0-1.",
          .functions =
@@ -1363,6 +1376,8 @@ void mods_shutdown() {
 }
 
 void mods_between_updates() {
+    // Coop may have just put its world in: the rules come off before it updates.
+    refresh_mod_play();
     // Requests queued before coop began are dropped, not applied to the coop world.
     const bool apply = !mods_paused();
     if (warp_request) {
