@@ -6,6 +6,10 @@
 // game hands in its API as tables of functions and fields, from which the host also writes the
 // editors' definitions file, and stores each mod's enabled flag and config where it keeps settings.
 //
+// mod.json may also say "default_enabled": true, so a mod never stored before starts enabled (a mod
+// the game ships on), and "enhancement": true, for a mod the game holds while it plays as the
+// original did (hold_enhancements).
+//
 // The host gives every mod, beside the game's tables:
 //   mod.id, mod.log(...), mod.time() (seconds since the host started), mod.save_config(),
 //   mod.fs.read(path), mod.fs.write(path, text), mod.fs.exists(path), mod.fs.list([dir]),
@@ -91,6 +95,9 @@ struct ModEvent {
 
 using ModEventValue = std::variant<std::int64_t, bool, std::string_view>;
 
+// A value of a mod's config as the game's own settings set it (verdite/options.h's OptionValue).
+using ModConfigValue = std::variant<bool, double, std::string>;
+
 // What the game stores for a mod between runs.
 struct ModStored {
     bool enabled = false;
@@ -105,6 +112,7 @@ struct ModHostConfig {
     std::string definitions_name = "api.d.lua";   // written into mods_dir from api and events
     std::size_t memory_cap_bytes = 64u << 20;     // per mod
     std::uint64_t instructions_per_call = 100'000'000;   // per callback, and for the script's first run
+    // Nothing for a mod never stored: it starts as its mod.json's default_enabled says.
     std::function<std::optional<ModStored>(std::string_view id)> read_stored;
     std::function<void(std::string_view id, const ModStored &stored)> write_stored;
     // Called with a mod's id each time its Lua state is discarded: before a reload, when it is
@@ -122,6 +130,8 @@ struct ModInfo {
     ModState state = ModState::Disabled;
     std::string error;            // set when Failed: the message and stack
     bool has_settings = false;    // defines on_settings
+    bool enhancement = false;     // mod.json "enhancement"
+    bool held = false;            // Running, but held: an enhancement while hold_enhancements lasts
 };
 
 class ModHost {
@@ -145,6 +155,18 @@ public:
     void disable(std::string_view id);
     void reload_all();   // every enabled mod, as if its files changed
 
+    // Until release_enhancements, an enhancement stays loaded but gets no callback (on_load and
+    // on_unload still run, so a reload or a disable works) and no event: the game's classic mode.
+    void hold_enhancements();
+    void release_enhancements();
+
+    // Sets a mod's config value by key, as the mod's own `config.key = value` would, and stores
+    // it; a mod not running gets it when it next loads. False for an unknown mod, a number that is
+    // not finite, or a mod over its budget.
+    bool set_config_value(std::string_view id, std::string_view key, const ModConfigValue &value);
+    // Nothing for an unknown mod, or a key missing or not a boolean, number or string.
+    [[nodiscard]] std::optional<ModConfigValue> config_value(std::string_view id, std::string_view key) const;
+
     // Calls the event's handler in every running mod that defines it, in the listed order, under
     // a callback's budget. values follow the event's fields; each mod sees what the one before it
     // left, and the final values are written back. A raise during another raise is ignored.
@@ -159,7 +181,7 @@ public:
     void load_save_tables(std::string_view json);
 
     [[nodiscard]] std::vector<ModInfo> mods() const;   // sorted by name
-    [[nodiscard]] std::size_t running_count() const;
+    [[nodiscard]] std::size_t running_count() const;   // not counting held mods
     // The ---@meta definitions file for the API, as written into mods_dir.
     [[nodiscard]] std::string definitions() const;
 

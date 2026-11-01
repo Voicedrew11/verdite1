@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -570,4 +571,78 @@ TEST_CASE("the definitions file declares each event's table and handler, and sav
     CHECK(text.find("---@field cancel boolean (writable) Changeable.") != std::string::npos);
     CHECK(text.find("---@type fun(e: event.on_test)?\non_test = nil") != std::string::npos);
     CHECK(text.find("---@type table<string, any>\nsave = {}") != std::string::npos);
+}
+
+TEST_CASE("a mod with default_enabled starts enabled until it is stored otherwise") {
+    Mods mods;
+    mods.write("on/mod.json", R"({"default_enabled": true})");
+    mods.write("on/main.lua", "t.note('on')");
+    mods.write("off/mod.json", R"({"default_enabled": true})");
+    mods.write("off/main.lua", "t.note('off')");
+    mods.stored["off"] = {.enabled = false};
+    mods.host->scan();
+    CHECK(mods.info("on").state == ModState::Running);
+    CHECK(mods.info("off").state == ModState::Disabled);
+    CHECK(noted("on"));
+    CHECK_FALSE(noted("off"));
+}
+
+TEST_CASE("held enhancements get no callback or event until released, and other mods carry on") {
+    Mods mods;
+    mods.write("e/mod.json", R"({"enhancement": true})");
+    mods.run("e", "function on_update() t.note('e update') end function on_test() t.note('e event') end");
+    mods.run("plain", "function on_update() t.note('plain update') end");
+    mods.host->hold_enhancements();
+    mods.host->call_each(ModCallback::Update);
+    mods.host->call("e", ModCallback::Update);
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(notes == std::vector<std::string>{"plain update"});
+    CHECK(mods.info("e").held);
+    CHECK(mods.info("e").state == ModState::Running);
+    CHECK_FALSE(mods.info("plain").held);
+    CHECK(mods.host->running_count() == 1);
+
+    mods.host->release_enhancements();
+    notes.clear();
+    mods.host->call("e", ModCallback::Update);
+    mods.host->raise("on_test", values);
+    CHECK(notes == std::vector<std::string>{"e update", "e event"});
+    CHECK_FALSE(mods.info("e").held);
+    CHECK(mods.host->running_count() == 2);
+}
+
+TEST_CASE("set_config_value changes a running mod's config table and stores it") {
+    Mods mods;
+    mods.run("a", "config.size = 3 function on_update() t.note(tostring(config.minimap) .. config.size .. config.name) end");
+    CHECK(mods.host->set_config_value("a", "minimap", false));
+    CHECK(mods.host->set_config_value("a", "size", 28.0));
+    CHECK(mods.host->set_config_value("a", "name", std::string("n")));
+    mods.host->call_each(ModCallback::Update);
+    CHECK(noted("false28n"));
+    CHECK(mods.stored.at("a").config_json.find("\"minimap\":false") != std::string::npos);
+    CHECK(mods.host->config_value("a", "size") == ModConfigValue{28.0});
+    CHECK_FALSE(mods.host->set_config_value("missing", "x", true));
+    CHECK_FALSE(mods.host->set_config_value("a", "x", std::nan("")));
+}
+
+TEST_CASE("set_config_value on a mod not running is stored and seen when it loads") {
+    Mods mods;
+    mods.write("a/main.lua", "t.note(tostring(config.minimap))");
+    mods.host->scan();
+    CHECK(mods.host->set_config_value("a", "minimap", true));
+    CHECK(mods.host->config_value("a", "minimap") == ModConfigValue{true});
+    CHECK_FALSE(mods.info("a").enabled);
+    mods.host->enable("a");
+    CHECK(noted("true"));
+}
+
+TEST_CASE("config_value reads what the mod set itself, and nothing for a missing key or a table") {
+    Mods mods;
+    mods.run("a", "function on_update() config.zoom = 8 config.deep = {} end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(mods.host->config_value("a", "zoom") == ModConfigValue{8.0});
+    CHECK_FALSE(mods.host->config_value("a", "deep"));
+    CHECK_FALSE(mods.host->config_value("a", "none"));
+    CHECK_FALSE(mods.host->config_value("missing", "zoom"));
 }

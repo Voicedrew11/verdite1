@@ -15,13 +15,16 @@
 #include <array>
 #include <cassert>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <utility>
+#include <variant>
 
 namespace verdite {
 namespace {
@@ -55,6 +58,8 @@ struct RaisedEvent {
 struct Mod {
     fs::path dir;
     std::string id, name, version, author, description, entry = "main.lua";
+    bool default_enabled = false;   // mod.json: enabled when never stored
+    bool enhancement = false;       // mod.json: held with the enhancements
     bool enabled = false;
     std::string error;
     std::string config_json = "{}";
@@ -65,6 +70,7 @@ struct Mod {
     const ModHostConfig *host = nullptr;
     SaveTables *saves = nullptr;
     RaisedEvent raised;
+    std::optional<std::pair<std::string, ModConfigValue>> config_write;   // for write_config_value
     Clock::time_point host_started;
     // The budget, spent by allocate and count_instructions during a call.
     std::size_t memory_bytes = 0;
@@ -585,6 +591,61 @@ int encode_config(lua_State *L) {
     return 0;
 }
 
+Json json_of(const ModConfigValue &value) {
+    if (const bool *flag = std::get_if<bool>(&value))
+        return Json(cJSON_CreateBool(*flag));
+    if (const double *number = std::get_if<double>(&value))
+        return Json(cJSON_CreateNumber(*number));
+    return Json(cJSON_CreateString(std::get<std::string>(value).c_str()));
+}
+
+// Protected: the pending config_write into the global config, made a table if it is not one.
+int write_config_value(lua_State *L) {
+    const Mod &mod = mod_of_state(L);
+    if (!mod.config_write)
+        return luaL_error(L, "no config value to write");
+    const auto &[key, value] = *mod.config_write;
+    lua_pushglobaltable(L);
+    lua_pushliteral(L, "config");
+    if (lua_rawget(L, -2) != LUA_TTABLE) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushliteral(L, "config");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
+    }
+    const Json json = json_of(value);
+    lua_pushlstring(L, key.data(), key.size());
+    json_to_lua(L, json.get(), 0);
+    lua_rawset(L, -3);
+    return 0;
+}
+
+// A config JSON object with key set to value; an object of that one key if json is not an object.
+std::string with_config_value(std::string_view json, std::string_view key, const ModConfigValue &value) {
+    Json object(cJSON_ParseWithLength(json.data(), json.size()));
+    if (!cJSON_IsObject(object.get()))
+        object = Json(cJSON_CreateObject());
+    const std::string name(key);
+    cJSON_DeleteItemFromObjectCaseSensitive(object.get(), name.c_str());
+    cJSON_AddItemToObject(object.get(), name.c_str(), json_of(value).release());
+    const std::unique_ptr<char, JsonTextFree> text(cJSON_PrintUnformatted(object.get()));
+    return text ? std::string(text.get()) : std::string(json);
+}
+
+std::optional<ModConfigValue> config_value_in(std::string_view json, std::string_view key) {
+    const Json object(cJSON_ParseWithLength(json.data(), json.size()));
+    const cJSON *item = cJSON_IsObject(object.get()) ? cJSON_GetObjectItemCaseSensitive(object.get(), std::string(key).c_str())
+                                                     : nullptr;
+    if (cJSON_IsBool(item))
+        return ModConfigValue{cJSON_IsTrue(item) != 0};
+    if (cJSON_IsNumber(item))
+        return ModConfigValue{item->valuedouble};
+    if (cJSON_IsString(item))
+        return ModConfigValue{std::string(item->valuestring)};
+    return std::nullopt;
+}
+
 // Protected: the global save, as JSON, into the host's copy for the mod. An error, and the old
 // copy kept, if save is not a table of values that serialize.
 int encode_save(lua_State *L) {
@@ -915,6 +976,9 @@ void read_manifest(Mod &mod) {
     read("author", mod.author);
     read("description", mod.description);
     read("entry", mod.entry);
+    const auto flag = [&](const char *key) { return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json.get(), key)) != 0; };
+    mod.default_enabled = flag("default_enabled");
+    mod.enhancement = flag("enhancement");
 }
 
 struct Fingerprint {
@@ -963,6 +1027,9 @@ struct ModHost::State {
     std::vector<std::unique_ptr<Mod>> mods;
     SaveTables saves;
     bool raising = false;   // set while a raise runs: a raise inside it is ignored
+    bool enhancements_held = false;
+
+    bool held(const Mod &mod) const { return enhancements_held && mod.enhancement; }
 
     Mod *find(std::string_view id) {
         const auto found = std::find_if(mods.begin(), mods.end(), [&](const auto &mod) { return mod->id == id; });
@@ -1080,6 +1147,8 @@ struct ModHost::State {
         if (const auto stored = config.read_stored(mod.id)) {
             mod.enabled = stored->enabled;
             mod.config_json = stored->config_json;
+        } else {
+            mod.enabled = mod.default_enabled;
         }
     }
 
@@ -1179,11 +1248,12 @@ void ModHost::scan() {
 
 void ModHost::call_each(ModCallback callback) {
     for (auto &mod : state_->mods)
-        state_->call(*mod, callback);
+        if (!state_->held(*mod))
+            state_->call(*mod, callback);
 }
 
 void ModHost::call(std::string_view id, ModCallback callback) {
-    if (Mod *mod = state_->find(id))
+    if (Mod *mod = state_->find(id); mod && !state_->held(*mod))
         state_->call(*mod, callback);
 }
 
@@ -1213,6 +1283,42 @@ void ModHost::reload_all() {
             state_->load(*mod);
 }
 
+void ModHost::hold_enhancements() { state_->enhancements_held = true; }
+
+void ModHost::release_enhancements() { state_->enhancements_held = false; }
+
+bool ModHost::set_config_value(std::string_view id, std::string_view key, const ModConfigValue &value) {
+    Mod *mod = state_->find(id);
+    const double *number = std::get_if<double>(&value);
+    if (!mod || (number && !std::isfinite(*number)))
+        return false;
+    if (!mod->lua) {
+        mod->config_json = with_config_value(mod->config_json, key, value);
+        state_->store(*mod);
+        return true;
+    }
+    mod->config_write.emplace(std::string(key), value);
+    const auto error = run_protected(*mod, write_config_value);
+    mod->config_write.reset();
+    if (error) {
+        print_line(mod->id, "cannot set config." + std::string(key) + ": " + *error);
+        return false;
+    }
+    state_->save_config(*mod);
+    return true;
+}
+
+std::optional<ModConfigValue> ModHost::config_value(std::string_view id, std::string_view key) const {
+    Mod *mod = state_->find(id);
+    if (!mod)
+        return std::nullopt;
+    if (mod->lua) {
+        if (auto error = run_protected(*mod, encode_config))
+            print_line(mod->id, "cannot read config: " + *error);
+    }
+    return config_value_in(mod->config_json, key);
+}
+
 void ModHost::raise(std::string_view event_name, std::span<ModEventValue> values) {
     State &state = *state_;
     if (state.raising)
@@ -1228,7 +1334,8 @@ void ModHost::raise(std::string_view event_name, std::span<ModEventValue> values
     {
         const RaiseScope scope(state.raising);
         for (auto &mod : state.mods)
-            state.raise_in(*mod, *event, current);
+            if (!state.held(*mod))
+                state.raise_in(*mod, *event, current);
     }
     std::ranges::copy(current, values.begin());
 }
@@ -1273,14 +1380,16 @@ std::vector<ModInfo> ModHost::mods() const {
                                : mod->lua          ? ModState::Running
                                                    : ModState::Disabled;
         list.push_back({mod->id, mod->name, mod->version, mod->author, mod->description, mod->enabled, shown,
-                        mod->error, mod->has_settings});
+                        mod->error, mod->has_settings, mod->enhancement,
+                        shown == ModState::Running && state_->held(*mod)});
     }
     return list;
 }
 
 std::size_t ModHost::running_count() const {
     return static_cast<std::size_t>(
-        std::count_if(state_->mods.begin(), state_->mods.end(), [](const auto &mod) { return mod->lua != nullptr; }));
+        std::count_if(state_->mods.begin(), state_->mods.end(),
+                      [this](const auto &mod) { return mod->lua != nullptr && !state_->held(*mod); }));
 }
 
 std::string ModHost::definitions() const {
