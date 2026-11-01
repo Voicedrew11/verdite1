@@ -124,3 +124,20 @@ TEST_CASE("the mouse is taken when any mod takes it") {
     mods[1].takes_mouse = true;
     CHECK(combine_mod_play(mods).takes_mouse);
 }
+
+TEST_CASE("no mod holds or blocks an action by default") {
+    const ModPlayCombined combined = combine_mod_play(std::span<const ModPlay>{});
+    CHECK(combined.held_actions == 0);
+    CHECK(combined.blocked_actions == 0);
+}
+
+TEST_CASE("the actions every mod holds and blocks are ORed together") {
+    std::array<ModPlay, 2> mods{};
+    mods[0].held_actions = 0x1;
+    mods[0].blocked_actions = 0x4;
+    mods[1].held_actions = 0x2;
+    mods[1].blocked_actions = 0x4 | 0x8;
+    const ModPlayCombined combined = combine_mod_play(mods);
+    CHECK(combined.held_actions == 0x3);
+    CHECK(combined.blocked_actions == 0xC);
+}

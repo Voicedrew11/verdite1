@@ -56,7 +56,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.7";
+constexpr const char *api_version = "0.8";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -419,6 +419,7 @@ void refresh_mod_play() {
     }
     combined_play = combine_mod_play(values);
     host_set_game_speed(combined_play.game_speed);
+    host_set_action_overrides({combined_play.held_actions, combined_play.blocked_actions});
 }
 
 // The host discarded a mod's Lua state (reload, disable, failure, or the host's own destruction).
@@ -940,6 +941,21 @@ int kf_action_pressed(lua_State *L) {
     lua_pushboolean(L, !overlay_captures_input() && (edges.now & bit) != 0 && (edges.before & bit) == 0);
     return 1;
 }
+// Holds and blocks take effect when refresh_mod_play runs after the callback that set them.
+void write_action_bit(lua_State *L, u32 ModPlay::*bits) {
+    const u32 bit = check_action(L);
+    luaL_checktype(L, 2, LUA_TBOOLEAN);
+    u32 &mod_bits = play_for_write(L).*bits;
+    mod_bits = lua_toboolean(L, 2) ? mod_bits | bit : mod_bits & ~bit;
+}
+int kf_action_hold(lua_State *L) { write_action_bit(L, &ModPlay::held_actions); return 0; }
+int kf_action_block(lua_State *L) { write_action_bit(L, &ModPlay::blocked_actions); return 0; }
+int kf_action_press(lua_State *L) {
+    const u32 bit = check_action(L);
+    if (!mods_paused())
+        host_press_actions(bit);
+    return 0;
+}
 int kf_player_fields(lua_State *L) {
     const auto &fields = player_fields();
     lua_createtable(L, static_cast<int>(fields.size()), 0);
@@ -1086,6 +1102,14 @@ std::vector<verdite::ModTable> api_tables() {
               {"action_pressed", "fun(name: string): boolean",
                "As action_down, on the first update (in on_update) or drawn frame (in on_draw) only.",
                kf_action_pressed},
+              {"action_hold", "fun(name: string, on: boolean)",
+               "Holds or releases an action while on: the game sees it held, as if its key were down.",
+               kf_action_hold},
+              {"action_press", "fun(name: string)",
+               "The game's next button read sees the action held and the one after released: one press.",
+               kf_action_press},
+              {"action_block", "fun(name: string, on: boolean)",
+               "While on, the game ignores the player's keys, pad and touch for the action.", kf_action_block},
               {"player_fields", "fun(): string[]", "The names of kf.player's fields.", kf_player_fields},
               {"view", view_type, "x, y, w, h of the game picture in window pixels.", kf_view},
               {"view_original", view_type, "x, y, w, h of the original 320x240 area.", kf_view_original},

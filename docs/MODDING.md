@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.7, what ships today. Where it is going, API 1.0, is
+This page documents API 0.8, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -204,6 +204,9 @@ end
 | `kf.time()` | seconds since start |
 | `kf.key_down(name)` / `kf.key_pressed(name)` | SDL key names: `"F5"`, `"G"`, `"Left Shift"`; `pressed` is true on the first frame only. Both are false while the overlay is open. |
 | `kf.action_down(name)` / `kf.action_pressed(name)` | an action held by any of its keys, pad buttons or touch controls (below); `pressed` is true on the first update in `on_update`, the first drawn frame in `on_draw`. Both are false while the overlay is open. |
+| `kf.action_hold(name, on)` | while `on` is true, the game sees the action held, as if its key were down |
+| `kf.action_press(name)` | the game's next button read sees the action held, and the one after released: one press |
+| `kf.action_block(name, on)` | while `on` is true, the game does not see the action from the player's keys, pad or touch; a blocked movement or look direction also stops that direction of the stick and the mouse |
 | `kf.view()` | `x, y, w, h` of the whole game picture in window pixels (wider than 4:3 in widescreen) |
 | `kf.view_original()` | `x, y, w, h` of the original 320×240 area, centred in the picture |
 | `kf.player.<field>` | read/write player state (below) |
@@ -212,7 +215,7 @@ end
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.7"` |
+| `kf.api_version` | `"0.8"` |
 
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
@@ -222,6 +225,12 @@ The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `run` and `full_map` mean nothing to the game: they are there for mods. An
 action's press in `on_draw` is seen while the game is paused, so a mod that
 pauses can unpause on one.
+
+`kf.action_down` and `kf.action_pressed` read the player's own controls,
+without any mod's holds or blocks, so a mod can block `attack` and still read
+the attack key. The holds and blocks of all mods add up, a hold wins over a
+block, and a mod's go when it unloads or fails, and in coop. A blocked
+`quick_save` or `quick_load` does nothing; a pressed one acts as the key does.
 
 `kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
@@ -607,10 +616,11 @@ mods are off in coop (decided 2026-10-31).
    0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
 5. The generated raw layer.
 6. Asset overrides, audio, 3D drawing.
-7. Input actions: reading, pressing and blocking them. Reading done in 0.7
+7. ~~Input actions: reading, pressing and blocking them. Reading done in 0.7
    (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,
    `kf.play.top_speed` and `kf.game.mouse` and `music_while_paused`, which
-   the run and the map need to be mods.
+   the run and the map need to be mods.~~ Pressing and blocking done in 0.8
+   (2026-11-01): `kf.action_hold`, `kf.action_press`, `kf.action_block`.
 
 ### Open questions
 

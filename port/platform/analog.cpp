@@ -43,6 +43,26 @@ struct Deflection {
 
 float &at(Deflection &d, AnalogAxis axis) { return d.by_axis[static_cast<std::size_t>(axis)]; }
 
+// Each axis's positive and negative direction. Turn positive is Left, pitch positive looks down.
+struct AxisDirections { AnalogAxis axis; Action positive, negative; };
+constexpr std::array<AxisDirections, 4> axis_directions = {{
+    {AnalogAxis::Forward, Action::forward, Action::backward},
+    {AnalogAxis::Strafe, Action::strafe_right, Action::strafe_left},
+    {AnalogAxis::Turn, Action::turn_left, Action::turn_right},
+    {AnalogAxis::Pitch, Action::look_down, Action::look_up},
+}};
+
+// A direction a mod blocks reads as a centred stick.
+void block_directions(Deflection &d, u32 blocked) {
+    for (const auto &direction : axis_directions) {
+        float &amount = at(d, direction.axis);
+        if (amount > 0.0f && (blocked & action_bit(direction.positive)) != 0)
+            amount = 0.0f;
+        if (amount < 0.0f && (blocked & action_bit(direction.negative)) != 0)
+            amount = 0.0f;
+    }
+}
+
 Deflection deflection() {
     const AnalogOptions &o = analog.options;
     Deflection d;
@@ -71,6 +91,7 @@ Deflection deflection() {
         at(d, AnalogAxis::Turn) *= -1.0f;
     if (o.invert_pitch)
         at(d, AnalogAxis::Pitch) *= -1.0f;
+    block_directions(d, host_action_overrides_blocked());
     return d;
 }
 

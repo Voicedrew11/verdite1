@@ -37,6 +37,11 @@ u32 host_read_buttons();
 bool host_action_held(Action action);
 // The actions held now, as action_bit bits, without polling: for code inside a frame (the mods).
 u32 host_actions_held();
+// What the mods hold and block, laid over the player's actions at each read.
+struct ActionOverrides { u32 held = 0, blocked = 0; };
+void host_set_action_overrides(ActionOverrides overrides);
+// Actions the game's next host_read_buttons sees held, once.
+void host_press_actions(u32 actions);
 void host_wait_buttons_released(u32 mask = ~u32(0));
 void host_wait_button_press();
 InputContext host_set_input_context(InputContext context);

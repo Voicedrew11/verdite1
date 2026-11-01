@@ -23,6 +23,8 @@ struct ModPlay {
     bool paused = false;
     bool music_while_paused = false;   // the music plays on while this mod pauses the game
     bool takes_mouse = false;          // the cursor shows and the game gets no mouse input
+    u32 held_actions = 0;              // action_bit bits the mod holds
+    u32 blocked_actions = 0;           // action_bit bits the mod blocks from the player's controls
 };
 
 struct ModPlayCombined {
@@ -32,6 +34,8 @@ struct ModPlayCombined {
     // Paused only by mods that keep the music: one that pauses without it silences the game.
     bool music_while_paused = false;
     bool takes_mouse = false;
+    u32 held_actions = 0;     // action_bit bits held by any mod
+    u32 blocked_actions = 0;  // action_bit bits blocked by any mod
 };
 
 [[nodiscard]] ModPlayCombined combine_mod_play(std::span<const ModPlay> mods);

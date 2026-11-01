@@ -53,6 +53,8 @@ struct AnalogRates { s32 limit, accel; };
 std::optional<s32> host_analog_velocity(AnalogAxis axis, s32 velocity, AnalogRates rates);
 // True while the left stick drives the player, so it is not also the D-pad.
 bool host_analog_owns_left_stick();
+// The actions mods block (host.cpp), for the stick.
+u32 host_action_overrides_blocked();
 
 struct RawSticks { float left_x, left_y, right_x, right_y; };   // -1..1, right and down positive
 // The connected gamepad's sticks, centred with no pad, no focus or the overlay open.

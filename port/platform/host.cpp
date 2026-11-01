@@ -35,6 +35,7 @@
 #include <new>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -65,6 +66,9 @@ struct HostState {
     bool paused, overlay_was_open, cursor_released, recapture_mouse;
     u32 quick_pressed;
     u32 test_held;      // KF_TEST_INPUT's actions at the last read
+    ActionOverrides overrides;   // the mods' holds and blocks
+    u32 mod_pressed;             // the mods' presses, taken by the next read
+    u32 mod_held_read;           // the mods' holds at the last read, for their new holds
     bool opening_load_pressed;
     bool backing_out;   // a dead coop player's menu: Back pressed on every other read
     PadLayout pad_layout;
@@ -718,22 +722,36 @@ static u32 test_input_actions() {
     return held;
 }
 
-bool host_action_held(Action action) {
-    host_poll();
-    return (host_actions_held() & action_bit(action)) != 0;
-}
-
 u32 host_actions_held() {
     return host.input.pending.held | host_touch_held_actions() | host.test_held;
 }
+
+// The player's actions as the game sees them: the mods' blocks removed, their holds added.
+static u32 effective_actions() { return (host_actions_held() & ~host.overrides.blocked) | host.overrides.held; }
+
+bool host_action_held(Action action) {
+    host_poll();
+    return (effective_actions() & action_bit(action)) != 0;
+}
+
+void host_set_action_overrides(ActionOverrides overrides) { host.overrides = overrides; }
+
+void host_press_actions(u32 actions) { host.mod_pressed |= actions; }
+
+u32 host_action_overrides_blocked() { return host.overrides.blocked; }
 
 u32 host_read_buttons() {
     host_poll();
     // Original game code samples held buttons and derives its own edges.
     const TouchActions touch = host_touch_take_actions();
     host.test_held = test_input_actions();
-    const u32 actions = host.input.pending.held | touch.held | host.test_held;
-    const u32 pressed = host.input.pending.pressed | touch.pressed;
+    const u32 player = host.input.pending.held | touch.held | host.test_held;
+    const u32 player_pressed = host.input.pending.pressed | touch.pressed;
+    // A mod's press lasts this read; a mod's new hold is a press too.
+    const u32 mod_presses = std::exchange(host.mod_pressed, 0) | (host.overrides.held & ~host.mod_held_read);
+    host.mod_held_read = host.overrides.held;
+    const u32 actions = (player & ~host.overrides.blocked) | host.overrides.held | mod_presses;
+    const u32 pressed = (player_pressed & ~host.overrides.blocked) | mod_presses;
     // Quick save/load only act in gameplay; presses in menus or scenes are dropped.
     if (host.input_context == InputContext::Gameplay)
         host.quick_pressed |= pressed & (action_bit(Action::quick_save) | action_bit(Action::quick_load));
@@ -900,16 +918,27 @@ void host_set_pad_layout(PadLayout layout) {
     bind_gamepad_buttons(face_buttons(layout));
 }
 
-LookDelta host_take_look() {
+// The look not yet taken, in angle units. A direction a mod blocks is dropped here, before
+// the remainder, so it does not come back later. Positive x turns right (yaw is -dx) and
+// positive y looks down.
+static double look_units(double pixels, double remainder, Action positive, Action negative) {
     constexpr double angle_units_per_pixel = mouse_degrees_per_pixel * angle_units_per_turn / degrees_per_turn;
+    const double units = pixels * angle_units_per_pixel + remainder;
+    const u32 blocked = host.overrides.blocked;
+    const bool dropped = (units > 0 && (blocked & action_bit(positive)) != 0)
+        || (units < 0 && (blocked & action_bit(negative)) != 0);
+    return dropped ? 0 : units;
+}
+
+LookDelta host_take_look() {
     // KF_TEST_SPIN=<pixels per update>: steady mouse turn for automated tests.
     static const double test_spin = std::getenv("KF_TEST_SPIN") ? std::atof(std::getenv("KF_TEST_SPIN")) : 0.0;
     host.input.pending.look_x += test_spin;
     // KF_TEST_TILT=<pixels per update>: steady mouse tilt (positive looks down).
     static const double test_tilt = std::getenv("KF_TEST_TILT") ? std::atof(std::getenv("KF_TEST_TILT")) : 0.0;
     host.input.pending.look_y += test_tilt;
-    const double x = host.input.pending.look_x * angle_units_per_pixel + host.look_remainder_x;
-    const double y = host.input.pending.look_y * angle_units_per_pixel + host.look_remainder_y;
+    const double x = look_units(host.input.pending.look_x, host.look_remainder_x, Action::turn_right, Action::turn_left);
+    const double y = look_units(host.input.pending.look_y, host.look_remainder_y, Action::look_down, Action::look_up);
     const s32 dx = static_cast<s32>(std::trunc(x));
     const s32 dy = static_cast<s32>(std::trunc(y));
     host.look_remainder_x = x - dx;
@@ -1087,9 +1116,8 @@ void apply_frontend_options() {
 SVECTOR pending_look() {
     if (host.input_context != InputContext::Gameplay)
         return {0, 0, 0};
-    constexpr double angle_units_per_pixel = mouse_degrees_per_pixel * angle_units_per_turn / degrees_per_turn;
-    const double x = host.input.pending.look_x * angle_units_per_pixel + host.look_remainder_x;
-    const double y = host.input.pending.look_y * angle_units_per_pixel + host.look_remainder_y;
+    const double x = look_units(host.input.pending.look_x, host.look_remainder_x, Action::turn_right, Action::turn_left);
+    const double y = look_units(host.input.pending.look_y, host.look_remainder_y, Action::look_down, Action::look_up);
     s32 pitch = static_cast<s32>(std::trunc(y)) + host.look_consumed.pitch;
     const s32 yaw = -static_cast<s32>(std::trunc(x)) + host.look_consumed.yaw;
     if (frontend_output.last_camera) {
