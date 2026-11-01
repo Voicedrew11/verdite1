@@ -64,8 +64,8 @@ struct HostState {
     bool focused, mouse_captured, resume_mouse_capture;
     bool paused, overlay_was_open, cursor_released, recapture_mouse;
     u32 quick_pressed;
+    u32 test_held;      // KF_TEST_INPUT's actions at the last read
     bool opening_load_pressed;
-    bool run_toggled;
     bool backing_out;   // a dead coop player's menu: Back pressed on every other read
     PadLayout pad_layout;
     struct FrameLight {
@@ -686,7 +686,7 @@ void host_wait_update(UpdatePacer &pacer) {
 
 // KF_TEST_INPUT="poll:action:polls,...": holds an action from a given
 // host_read_buttons call for a number of calls, for automated menu tests.
-// Actions: up, down, left, right, confirm, back, inventory.
+// Actions: up, down, left, right, confirm, back, inventory, run, map (full_map).
 static u32 test_input_actions() {
     struct Step { int start, length; Action action; };
     static std::vector<Step> steps;
@@ -697,7 +697,7 @@ static u32 test_input_actions() {
         const struct { const char *name; Action action; } names[] = {
             {"up", Action::forward}, {"down", Action::backward}, {"left", Action::turn_left},
             {"right", Action::turn_right}, {"confirm", Action::confirm}, {"back", Action::back},
-            {"inventory", Action::inventory}};
+            {"inventory", Action::inventory}, {"run", Action::run}, {"map", Action::full_map}};
         while (script && *script) {
             int start = 0, length = 0;
             char name[16] = {};
@@ -724,23 +724,19 @@ bool host_action_held(Action action) {
 }
 
 u32 host_actions_held() {
-    return host.input.pending.held | host_touch_held_actions();
+    return host.input.pending.held | host_touch_held_actions() | host.test_held;
 }
 
 u32 host_read_buttons() {
     host_poll();
     // Original game code samples held buttons and derives its own edges.
     const TouchActions touch = host_touch_take_actions();
-    const u32 actions = host.input.pending.held | touch.held | test_input_actions();
+    host.test_held = test_input_actions();
+    const u32 actions = host.input.pending.held | touch.held | host.test_held;
     const u32 pressed = host.input.pending.pressed | touch.pressed;
     // Quick save/load only act in gameplay; presses in menus or scenes are dropped.
     if (host.input_context == InputContext::Gameplay)
         host.quick_pressed |= pressed & (action_bit(Action::quick_save) | action_bit(Action::quick_load));
-    if (host.input_context == InputContext::Gameplay && player_run_toggle
-            && (pressed & action_bit(Action::run))) {
-        host.run_toggled = !host.run_toggled;
-        host_show_message(host.run_toggled ? "Running" : "Walking");
-    }
     if (host.input_context == InputContext::Opening || title_is_open())
         host.opening_load_pressed |= (pressed & action_bit(Action::quick_load)) != 0;
     host.input.pending.pressed = host.input.pending.released = 0;
@@ -789,14 +785,6 @@ void host_between_updates() {
 }
 
 bool host_allows_power_off() { return fuzz_allows_power_off(); }
-
-bool host_run_held() {
-    // KF_TEST_RUN: hold run for automated tests.
-    static const bool test_run = std::getenv("KF_TEST_RUN") != nullptr;
-    if (player_run_toggle)
-        return test_run || host.run_toggled;
-    return test_run || ((host.input.pending.held | host_touch_held_actions()) & action_bit(Action::run)) != 0;
-}
 
 QuickRequest host_take_quick_request() {
     if (const auto request = fuzz_quick_request(); request != QuickRequest::None)

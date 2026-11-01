@@ -273,6 +273,11 @@ D-pad's rate), half right 8.5 (the curve predicts 8.45), full down pitches 10 an
 update (L2/R2's limit); the left stick forward walks about 181 an update, and
 centred sticks move nothing.
 
+`KF_TEST_INPUT=<poll>:<action>:<polls>,...` holds an action from that read of the buttons for that
+many reads: `up`, `down`, `left`, `right`, `confirm`, `back`, `inventory`, and `run` and `map`
+(`full_map`), which only mods read. `0:run:100000000` holds run throughout; with `mods/run`
+enabled, checked 2026-10-31, the player walks 1.58 times as far in 1.5 seconds from the start.
+
 `KF_TEST_NO_PAUSE=1` keeps the game running while its window is unfocused, which it otherwise
 pauses: for two windows on one machine in an online room, so each shows the other moving.
 

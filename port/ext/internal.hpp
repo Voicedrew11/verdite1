@@ -78,8 +78,6 @@ struct Settings {
     int glow_strength = 100;    // percent
     int frame_rate = 0;         // 20: original (no smoothing), 0: display refresh, -1: unlimited, else cap
     int tick_rate = 15;         // world updates a second: 12, 15, 20 (the gate's) or 30
-    int run_speed = 160;        // percent of walking speed while Shift is held
-    bool run_toggle = false;    // Shift toggles running instead of being held
     int look_limit = 70;        // degrees the camera may tilt up or down (original: 17)
     std::string pad_layout = "west";   // gamepad face buttons: "west" (the US game's) or "jp"
     bool menu_pointer = true;   // point at and click the game's menus with the mouse

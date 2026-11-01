@@ -1,0 +1,7 @@
+{
+  "id": "run",
+  "name": "Run",
+  "version": "1.0",
+  "author": "Verdite",
+  "description": "Shift, the left stick's click or the touch Run button runs: hold it, or press it to switch between running and walking."
+}

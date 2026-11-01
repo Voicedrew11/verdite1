@@ -474,7 +474,9 @@ interface scale.
 `mods/stathud` (HUD drawing + settings), `mods/quickheal` (hotkey + writing
 player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
 `mods/killcount` (`on_kill` and the `save` table), `mods/bestiary`
-(`kf.actors`, `kf.items`) and `mods/hardmode` (`kf.rules`) in this repository. The
+(`kf.actors`, `kf.items`), `mods/hardmode` (`kf.rules`) and `mods/run`
+(`kf.action_pressed`, `kf.play.top_speed`: the run key, which the game no longer has
+itself) in this repository. The
 build puts them beside the executable, and the game copies each one, disabled,
 into the mods folder the first time it sees it; `mods/.examples` lists those
 already offered, so an example you delete stays deleted.

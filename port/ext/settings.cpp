@@ -169,8 +169,6 @@ void settings_load() {
     const cJSON *audio = cJSON_GetObjectItemCaseSensitive(document, "audio");
     current.volume = static_cast<int>(read_number(audio, "volume", current.volume));
     const cJSON *controls = cJSON_GetObjectItemCaseSensitive(document, "controls");
-    current.run_speed = static_cast<int>(read_number(controls, "run_speed", current.run_speed));
-    current.run_toggle = read_bool(controls, "run_toggle", current.run_toggle);
     current.look_limit = static_cast<int>(read_number(controls, "look_limit", current.look_limit));
     current.pad_layout = read_string(controls, "pad_layout", current.pad_layout);
     current.menu_pointer = read_bool(controls, "menu_pointer", current.menu_pointer);
@@ -265,8 +263,6 @@ void settings_save() {
     cJSON *audio = object_entry(document, "audio");
     write_value(audio, "volume", cJSON_CreateNumber(current.volume));
     cJSON *controls = object_entry(document, "controls");
-    write_value(controls, "run_speed", cJSON_CreateNumber(current.run_speed));
-    write_value(controls, "run_toggle", cJSON_CreateBool(current.run_toggle));
     write_value(controls, "look_limit", cJSON_CreateNumber(current.look_limit));
     write_value(controls, "pad_layout", cJSON_CreateString(current.pad_layout.c_str()));
     write_value(controls, "menu_pointer", cJSON_CreateBool(current.menu_pointer));
@@ -355,7 +351,6 @@ const Settings &effective_settings() {
     classic.shadows = false;
     classic.frame_rate = 20;
     classic.tick_rate = 20;
-    classic.run_speed = 100;          // no run key
     classic.look_limit = 17;
     classic.auto_keys = false;
     classic.enemy_turn_auto = false;
@@ -455,8 +450,6 @@ void apply_render_settings() {
 void apply_control_settings() {
     const Settings &e = effective_settings();
     classic_mode = current.classic;
-    player_run_speed = std::clamp(e.run_speed, 100, 250);
-    player_run_toggle = e.run_toggle;
     // Degrees to 1/4096 turns; never tighter than the original limit, and short of straight up/down.
     const int degrees = std::clamp(e.look_limit, 17, 85);
     player_pitch_limit = std::max(191, degrees * 4096 / 360);

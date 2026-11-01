@@ -105,8 +105,6 @@ const std::vector<Page> &pages() {
              {0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0}},
         }});
         made.push_back({"controls", {"CONTROLS", "そうさ"}, {
-            {"controls.run_toggle", {"RUN KEY", "はしる"},
-             {{false, {"HOLD", "おしつづける"}}, {true, {"TOGGLE", "きりかえ"}}}, {}},
             {"controls.pad_layout", {"PAD BUTTONS", "ボタンはいち"},
              {{std::string("west"), {"WEST", "かいがい"}}, {std::string("jp"), {"JAPANESE", "にほん"}}}, {}},
             {"controls.menu_pointer", {"MOUSE IN MENUS", "マウスでえらぶ"}, {}, {}},

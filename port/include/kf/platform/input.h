@@ -45,8 +45,6 @@ LookDelta host_take_look();
 // Which gamepad face button does what. West, the US King's Field's, is the default.
 enum class PadLayout : u8 { West, Japanese };
 void host_set_pad_layout(PadLayout layout);
-// Run is a port addition with no PlayStation button, so it stays out of the button mask.
-bool host_run_held();
 // Quick save/load presses made during gameplay since the last call.
 enum class QuickRequest : u8 { None, Save, Load };
 QuickRequest host_take_quick_request();
@@ -54,10 +52,7 @@ QuickRequest host_take_quick_request();
 // is kept, so the game loads it on its first update after the opening skips out.
 bool host_opening_quick_load();
 
-// Port options (settings.json). Run speed is a percentage of the walking speed.
-inline int player_run_speed = 160;
-// Run key mode: false holds to run, true toggles running on each press.
-inline bool player_run_toggle = false;
+// Port options (settings.json).
 // The world updates once every this many 60 Hz vblanks; the console's frame gate
 // waits 3 (20 updates a second); the port's default is 4 (15).
 inline int world_update_vblanks = 4;

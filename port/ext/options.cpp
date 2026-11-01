@@ -344,13 +344,6 @@ OptionPage audio_page() {
 OptionSection controls_movement() {
     Settings &s = settings();
     OptionSection movement = classic_locked({"", {
-        choice<bool>("controls.run_toggle", "Run key",
-                     "Hold: run while the run key (Shift, or the left stick's click) is held. Toggle: each press "
-                     "switches between running and walking.",
-                     s.run_toggle, {{false, "Hold to run"}, {true, "Toggle run"}}, apply_control_settings),
-        number("controls.run_speed", "Run speed",
-               "How fast you move while running, as a percentage of walking speed. 100% turns running off.",
-               s.run_speed, {100, 250, 1, "%.0f%%"}, apply_control_settings),
         number("controls.look_limit", "Look up/down limit",
                "How far the camera can tilt up or down. The original game allows about 17 degrees.", s.look_limit,
                {17, 85, 1, "%.0f deg"}, apply_control_settings),
