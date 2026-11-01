@@ -40,7 +40,7 @@ void get_fixed(lua_State *L) { lua_pushinteger(L, 7); }
 // The host the nested-raise test raises through, from inside a handler.
 ModHost *nested_host = nullptr;
 int again(lua_State *) {
-    std::array<ModEventValue, 4> values{std::int64_t{1}, std::int64_t{2}, false, std::string_view("n")};
+    std::array<ModEventValue, 5> values{std::int64_t{1}, std::int64_t{2}, false, std::string_view("n"), false};
     nested_host->raise("on_test", values);
     return 0;
 }
@@ -77,7 +77,8 @@ struct Mods {
                           .fields = {{"amount", "integer", "Changeable from 0 to 100.", true, 0, 100},
                                      {"fixed", "integer", "Seven, not changeable.", false, 0, 0},
                                      {"flag", "boolean", "A flag."},
-                                     {"label", "string", "A label."}}}};
+                                     {"label", "string", "A label."},
+                                     {"cancel", "boolean", "Changeable.", true}}}};
         config.read_stored = [this](std::string_view id) -> std::optional<ModStored> {
             const auto found = stored.find(id);
             if (found == stored.end())
@@ -127,9 +128,10 @@ bool noted(std::string_view text) {
     return std::find(notes.begin(), notes.end(), text) != notes.end();
 }
 
-// The test event's values as the game raises it: amount 50, fixed 7, flag true, label "hi".
-std::array<ModEventValue, 4> event_values() {
-    return {std::int64_t{50}, std::int64_t{7}, true, std::string_view("hi")};
+// The test event's values as the game raises it: amount 50, fixed 7, flag true, label "hi",
+// cancel false.
+std::array<ModEventValue, 5> event_values() {
+    return {std::int64_t{50}, std::int64_t{7}, true, std::string_view("hi"), false};
 }
 
 } // namespace
@@ -423,7 +425,31 @@ TEST_CASE("a writable value out of range or of the wrong type fails that mod, an
     CHECK(std::get<std::int64_t>(values[0]) == 51);
 }
 
-TEST_CASE("a field that is not writable, or not an integer, is not read back") {
+TEST_CASE("a writable boolean changed by one mod is seen by the next and written back") {
+    Mods mods;
+    mods.run("a", "function on_test(e) e.cancel = true end");
+    mods.run("b", "function on_test(e) t.note(tostring(e.cancel)) end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(notes == std::vector<std::string>{"true"});
+    CHECK(std::get<bool>(values[4]));
+}
+
+TEST_CASE("a writable boolean left as another type fails that mod, and the next sees the value before") {
+    Mods mods;
+    mods.run("a", "function on_test(e) e.cancel = 1 end");
+    mods.run("b", "function on_test(e) e.cancel = nil end");
+    mods.run("c", "function on_test(e) t.note(tostring(e.cancel)) end");
+    auto values = event_values();
+    mods.host->raise("on_test", values);
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("'cancel' must be a boolean") != std::string::npos);
+    CHECK(mods.info("b").state == ModState::Failed);
+    CHECK(notes == std::vector<std::string>{"false"});
+    CHECK_FALSE(std::get<bool>(values[4]));
+}
+
+TEST_CASE("a field that is not writable is not read back") {
     Mods mods;
     mods.run("a", "function on_test(e) e.fixed = 99 e.flag = false e.label = 'changed' end");
     mods.run("b", "function on_test(e) t.note(tostring(e.fixed) .. tostring(e.flag) .. e.label) end");
@@ -541,6 +567,7 @@ TEST_CASE("the definitions file declares each event's table and handler, and sav
     CHECK(text.find("---@class event.on_test") != std::string::npos);
     CHECK(text.find("---@field amount integer (writable 0 to 100) Changeable from 0 to 100.") != std::string::npos);
     CHECK(text.find("---@field fixed integer (read-only) Seven, not changeable.") != std::string::npos);
+    CHECK(text.find("---@field cancel boolean (writable) Changeable.") != std::string::npos);
     CHECK(text.find("---@type fun(e: event.on_test)?\non_test = nil") != std::string::npos);
     CHECK(text.find("---@type table<string, any>\nsave = {}") != std::string::npos);
 }

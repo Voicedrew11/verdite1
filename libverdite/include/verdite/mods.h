@@ -14,7 +14,7 @@
 //   save, a table kept per mod with each save slot (the same kinds of value), given back by
 //   load_save_tables and read by save_tables;
 //   the events the game raises: a global handler of the event's name gets a table of its fields,
-//   and may change the writable integers (ModHost::raise);
+//   and may change the writable integers and booleans (ModHost::raise);
 //   the standard library without io, os, package.loadlib, C modules, string.dump or bytecode, and
 //   with debug.traceback only; require, dofile and loadfile reach only the mod's folder.
 #include <cstddef>
@@ -71,8 +71,9 @@ enum class ModCallback : std::uint8_t {
 };
 
 // A field of an event's table, as the definitions file lists it. A handler may change a
-// writable integer field within [min, max]; a value outside it is an error that stops that mod,
-// as kf.player writes are. Only integer fields are read back; writable on another type is ignored.
+// writable integer field within [min, max], and a writable boolean field to a boolean; any other
+// value is an error that stops that mod, as kf.player writes are. Only integer and boolean fields
+// are read back; writable on a string is ignored.
 struct ModEventField {
     std::string_view name;
     std::string_view type;        // "integer", "boolean", "string"

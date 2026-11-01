@@ -717,7 +717,7 @@ const ModEvent *find_event(const std::vector<ModEvent> &events, std::string_view
 }
 
 bool is_writable(const ModEventField &field) {
-    return field.writable && field.type == "integer";
+    return field.writable && (field.type == "integer" || field.type == "boolean");
 }
 
 bool value_has_type(const ModEventField &field, const ModEventValue &value) {
@@ -773,7 +773,22 @@ std::int64_t integer_from_handler(lua_State *L, const ModEventField &field) {
     return static_cast<std::int64_t>(number);
 }
 
-// Reads the writable integer fields of the table at index table back into values.
+// Raises an error unless the handler left a boolean; returns it.
+bool boolean_from_handler(lua_State *L, const ModEventField &field) {
+    if (!lua_isboolean(L, -1)) {
+        const std::string message = "field '" + std::string(field.name) + "' must be a boolean";
+        luaL_error(L, "%s", message.c_str());
+    }
+    return lua_toboolean(L, -1) != 0;
+}
+
+ModEventValue value_from_handler(lua_State *L, const ModEventField &field) {
+    if (field.type == "boolean")
+        return boolean_from_handler(L, field);
+    return integer_from_handler(L, field);
+}
+
+// Reads the writable fields of the table at index table back into values.
 void read_back(lua_State *L, int table, const ModEvent &event, std::vector<ModEventValue> &values) {
     for (std::size_t i = 0; i < event.fields.size(); ++i) {
         const ModEventField &field = event.fields[i];
@@ -781,13 +796,13 @@ void read_back(lua_State *L, int table, const ModEvent &event, std::vector<ModEv
             continue;
         lua_pushlstring(L, field.name.data(), field.name.size());
         lua_rawget(L, table);
-        values[i] = integer_from_handler(L, field);
+        values[i] = value_from_handler(L, field);
         lua_pop(L, 1);
     }
 }
 
 // Protected: calls the raised event's handler in the mod, if it defines one, with the table of its
-// fields; the writable integers are read back into the mod's copy of the values.
+// fields; the writable fields are read back into the mod's copy of the values.
 int run_event(lua_State *L) {
     RaisedEvent &raised = mod_of_state(L).raised;
     const ModEvent &event = *raised.event;
@@ -835,11 +850,13 @@ void write_event_definition(std::string &out, const ModEvent &event) {
     out.append("---@class ").append(table_class).append("\n");
     for (const ModEventField &field : event.fields) {
         out.append("---@field ").append(field.name).append(" ").append(field.type).append(" ");
-        if (is_writable(field))
+        if (!is_writable(field))
+            out += "(read-only) ";
+        else if (field.type == "integer")
             out.append("(writable ").append(std::to_string(field.min)).append(" to ")
                 .append(std::to_string(field.max)).append(") ");
         else
-            out += "(read-only) ";
+            out += "(writable) ";
         out.append(field.doc).append("\n");
     }
     out.append("---@type fun(e: ").append(table_class).append(")?\n").append(event.name).append(" = nil\n");
