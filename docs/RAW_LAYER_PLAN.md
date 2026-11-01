@@ -28,28 +28,19 @@ come after it and reuse its type descriptions and range checks.
 - **Unstable by promise.** The raw names are the decomp's and follow its
   renames; semver covers the curated layer only ([MODDING.md](MODDING.md#stability)).
 - **Off in coop**, as every mod is (decided 2026-10-31).
-
-## To decide before writing code
-
-Ask the user; these change the interface.
-
-1. **Where it hangs.** The plan says `kf.game.<global>`, but `kf.game` is now
-   the curated table of the calling mod's `speed`, `paused`,
-   `music_while_paused` and `mouse` (`game_fields()` in `port/ext/mods.cpp`).
-   A global named like one of those would collide. Options: `kf.raw.<global>`
-   (the plan's wording changes), or keep `kf.game` and reserve the four names.
-   Recommendation: `kf.raw`, so it is plain at the call site that the name is unstable.
-2. **How a value reads.** Proxies (`kf.raw.player_state.camera_position.vx`,
-   each step a userdata that re-resolves its path from the global on every
-   access, so it can never dangle) or copies (`kf.raw.get("player_state.camera_position")`
-   returns a Lua table; `kf.raw.set(path, value)` writes one field).
-   Recommendation: proxies for reading and writing single fields, plus
-   `kf.raw.copy(proxy)` for a whole struct as a table; a proxy holds a path,
-   never an address.
-3. **Raw writes and `kf.rules`.** Both write the monster definitions, level
-   growth, prices and equipment records; `kf.rules` lays its values again at
-   every map load, over a raw write. Decide which wins, or leave it as it falls
-   and document it.
+- **It hangs at `kf.raw.<global>`** (2026-11-01), not `kf.game`, which is the
+  curated table of the calling mod's `speed`, `paused`, `music_while_paused`
+  and `mouse` (`game_fields()` in `port/ext/mods.cpp`); a global named like one
+  of those would collide, and `kf.raw` says at the call site that the name is
+  unstable.
+- **Proxies** (2026-11-01): `kf.raw.player_state.camera_position.vx` reads and
+  writes one field. Each step is a userdata holding a path, which it resolves
+  again from the global on every access; it never holds an address, so it can
+  never dangle. `kf.raw.copy(proxy)` gives a whole struct or array as a Lua table.
+- **Raw writes and `kf.rules` are left as they fall** (2026-11-01). Both write
+  the monster definitions, level growth, prices and equipment records;
+  `kf.rules` lays its values again at the next map load, over a raw write.
+  The definitions file says so.
 
 ## What is held back, and why
 
@@ -128,7 +119,7 @@ Following [MODDING.md](MODDING.md#where-the-code-goes):
   generating their own tables. A type description (integer of a width and
   signedness with a range, enum, struct of fields, fixed array of a type,
   fixed string), a field's get and set through generated functions, the proxy
-  or copy machinery, the checks, and the raw part of the definitions file. Its
+  machinery and `kf.raw.copy`, the checks, and the raw part of the definitions file. Its
   own commits, with unit tests over a hand-written description (no game).
   Steps 8 and 9 check function arguments with the same descriptions.
   Today's `ModTable`/`ModField` (`libverdite/include/verdite/mods.h`) is flat,
@@ -150,7 +141,7 @@ Following [MODDING.md](MODDING.md#where-the-code-goes):
 
 ## Order
 
-1. Ask the three questions above.
+1. ~~Ask the three questions.~~ Answered 2026-11-01 (above).
 2. Write the libverdite header (the type description and the Lua surface) and
    get it agreed before the implementation; that is the global rule for a
    module bigger than a function or two. Any change found while implementing,

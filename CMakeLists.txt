@@ -232,14 +232,34 @@ set(KF_ONLINE OFF)
 if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE} AND NOT ANDROID)
   set(KF_ONLINE ON)
 endif()
+# The modding API's raw layer (docs/RAW_LAYER_PLAN.md): tables of every global and field, generated
+# from the patched headers and the listed file by clang's AST, so a pin move or a patch regenerates
+# them. The host's clang parses, whatever compiles the target. The source is rewritten only when it
+# changes (Ninja's restat on a byproduct), so most builds do not recompile it.
+file(GLOB_RECURSE KF_RAW_HEADERS CONFIGURE_DEPENDS ${KF_SRC}/include/kf/*.h)
+find_program(KF_HOST_CLANG NAMES clang++ REQUIRED)
+set(KF_RAW_OUT ${CMAKE_BINARY_DIR}/generated)
+add_custom_command(OUTPUT ${KF_RAW_OUT}/raw_layer.stamp
+  BYPRODUCTS ${KF_RAW_OUT}/raw_layer.cpp ${KF_RAW_OUT}/raw_layer_report.txt
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/raw_layer.py --clang ${KF_HOST_CLANG}
+    --compile-commands ${CMAKE_BINARY_DIR}/compile_commands.json --decomp-src ${KF_SRC}
+    --listed ${CMAKE_SOURCE_DIR}/port/ext/raw_layer.toml --out ${KF_RAW_OUT}
+  COMMAND ${CMAKE_COMMAND} -E touch ${KF_RAW_OUT}/raw_layer.stamp
+  DEPENDS ${CMAKE_SOURCE_DIR}/tools/raw_layer.py ${CMAKE_SOURCE_DIR}/port/ext/raw_layer.toml ${KF_RAW_HEADERS}
+  COMMENT "Generating the raw layer" VERBATIM)
+add_custom_target(kf_raw_layer DEPENDS ${KF_RAW_OUT}/raw_layer.stamp)
+
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_automap.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/extra_items.cpp)
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_automap.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/extra_items.cpp
+  ${KF_RAW_OUT}/raw_layer.cpp)
+add_dependencies(kf_ext kf_raw_layer)
+set_source_files_properties(${KF_RAW_OUT}/raw_layer.cpp PROPERTIES GENERATED TRUE)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI})
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
 target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite lua54 cjson)
 target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}")
-target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CMAKE_SOURCE_DIR}/port/ext)
 if(KF_ONLINE)
   target_link_libraries(kf_ext PRIVATE verdite_online)
 endif()

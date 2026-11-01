@@ -41,6 +41,7 @@
 #include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
 #include "coop_party.h"
+#include "raw_layer.h"
 #include "mod_automap.h"
 #include "mod_draw.h"
 #include "mod_play.h"
@@ -56,7 +57,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.8";
+constexpr const char *api_version = "0.9";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -1421,6 +1422,7 @@ void mods_start() {
     config.api_version = api_version;
     config.api = api_tables();
     config.events = event_table();
+    config.raw = kf_raw_layer();
     config.definitions_name = "kf.d.lua";
     config.read_stored = read_stored;
     config.write_stored = write_stored;

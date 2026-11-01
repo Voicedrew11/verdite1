@@ -1,0 +1,92 @@
+# The listed file of the raw layer (docs/RAW_LAYER_PLAN.md), read by tools/raw_layer.py.
+#
+# Every key names something in the decomp's headers: a field as "Struct.field", a global by its
+# name, an enum by its name, a union member as "Owner.member". A key that names nothing fails the
+# generator, so a rename in the decomp stops the build instead of leaving a stale range.
+#
+#   range     [min, max], or the name of a global array (0 to its length - 1). It must fit the
+#             field's storage, and it narrows every integer or enum the field reaches.
+#   why       the field's doc in the definitions file, and where the game uses it.
+#   alias     the name Lua sees, when the decomp's is not the one a mod should use.
+#   read_only why a field is not writable.
+#
+# Nothing here lists what is exposed: that is every named global and struct field the generator can
+# describe (see the report it writes). It lists what the game needs a range for, and what is held back.
+
+# --- Class template instances. An extern global of an instance does not complete it, so the
+# generator's umbrella instantiates each listed one explicitly; the floor grids need this.
+
+[templates]
+instances = [
+    "KfMapCells<unsigned char>",
+    "KfMapCells<KfMapAttribute>",
+    "KfMapCells<KfMapCellKind>",
+    "KfMapCells<KfMapOrientation>",
+]
+
+# --- Equipment ids: each is an index the game uses with no check, so a range is the game's own bound.
+# KF_OBJECT_NONE (0xff, nothing equipped) is outside every range below: a range is one interval, so
+# a raw write cannot unequip a slot. That is a gap in raw.h (RawRange holds one interval).
+
+[fields."KfPlayerState.equipped_weapon_id"]
+range = [0, 15]
+why = "A weapon id: weapon_records.entries[id] (16 entries, KF_WEAPON_RECORD_COUNT) with no check in player_compute_combat_stats (src/game/player_death.cpp) and menu_draw_equipment_names (src/game/menu_runtime.cpp); save_state_valid accepts only KF_OBJECT_NONE or a count below 16 (src/game/save_system.cpp)."
+
+[fields."KfPlayerState.equipped_head_armor_id"]
+range = [13, 54]
+why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries, KF_ARMOR_RECORD_COUNT) with no check in player_compute_combat_stats (src/game/player_death.cpp); save_state_valid rejects an id outside that window (src/game/save_system.cpp). menu_resources().items[id] reads it too (menu_draw_equipment_names)."
+
+[fields."KfPlayerState.equipped_body_armor_id"]
+range = [13, 54]
+why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
+
+[fields."KfPlayerState.equipped_shield_id"]
+range = [13, 54]
+why = "A shield id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
+
+[fields."KfPlayerState.equipped_arm_armor_id"]
+range = [13, 54]
+why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
+
+[fields."KfPlayerState.equipped_leg_armor_id"]
+range = [13, 54]
+why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
+
+[fields."KfPlayerState.equipped_accessory_id"]
+range = [0, 79]
+why = "An accessory id: menu_resources().items[id] (80 entries, KF_ITEM_COUNT) with no check in menu_draw_equipment_names (src/game/menu_runtime.cpp); save_state_valid rejects an id at or above 80 (src/game/save_system.cpp)."
+
+[fields."KfPlayerState.selected_magic_id"]
+range = [0, 8]
+why = "A magic id: effect_state.magic.entries[id] with no check in player_select_magic (src/game/player_death.cpp), and menu_resources().magic[id] (KF_MAGIC_PLAYER_COUNT = 9) in menu_draw_equipment_names (src/game/menu_runtime.cpp); save_state_valid rejects an id at or above 9 other than KF_MAGIC_NONE (src/game/save_system.cpp). KF_MAGIC_NONE (0xff) is outside the range, as for the equipment ids."
+
+# --- Actor definitions: an index with no check.
+
+[fields."KfActor.definition_id"]
+range = [0, 11]
+why = "An index into actor_state.definitions.entries (12 entries, KF_ACTOR_DEFINITION_COUNT) with no check in actor_initialize (src/game/actor.cpp), collision_query_world (src/game/collision.cpp) and render_actor (src/game/entity_model_render.cpp)."
+
+# --- The union the game reads both ways: both members are three s16 over the same six bytes.
+
+[unions]
+expose = ["KfActorDefinition.third_attachment", "KfActorDefinition.special_attack"]
+
+# --- Enums used as bits: the game combines them with | and & (and each defines those operators).
+
+[enums.KfPlayerStatusFlags]
+flags = true
+
+[enums.KfEffectType]
+flags = true
+
+[enums.KfActorEffectCode]
+flags = true
+
+# --- Held back. Reasons are the report's; these say why the layer may not reach them.
+
+[held_back]
+memory_arena = "an allocator: its fields are offsets and sizes into the game's own memory, and a write is a buffer overrun"
+cutscene_memory_arena = "an allocator: its fields are offsets and sizes into the game's own memory, and a write is a buffer overrun"
+menu_item_model_allocation = "whether a menu model is allocated: writing it makes the menu release or keep memory it does not own"
+KfMemoryArena = "the allocator's type: no field of it is reachable through any other path"
+DAT_80057d24 = "declared in kf/game/state.h but defined nowhere: the game never uses it, so there is nothing to link"

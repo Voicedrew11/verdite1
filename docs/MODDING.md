@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.8, what ships today. Where it is going, API 1.0, is
+This page documents API 0.9, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -215,7 +215,7 @@ end
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.8"` |
+| `kf.api_version` | `"0.9"` |
 
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
@@ -462,6 +462,59 @@ function on_map_load(map)
 end
 ```
 
+### `kf.raw`
+
+Every named global and struct field of the decomp, read and written by its
+decomp name: `kf.raw.player_state.vitals.current_hp`, `kf.raw.item_stock[0][5]`.
+It reaches what the curated tables above do not, at the price of stability:
+the names are the decomp's and change when it renames them, and nothing here
+is covered by the API's version. Prefer the curated tables where they reach.
+
+| access | does |
+|---|---|
+| `kf.raw.<global>` | a struct or an array as a proxy; any other value as itself |
+| `proxy.<field>`, `proxy[i]` | the same, one step down; arrays index from 0, as the game does |
+| `proxy.<field> = v`, `proxy[i] = v` | writes one value: an integer, boolean, number or string |
+| `#proxy` | an array's length |
+| `pairs(proxy)` | a struct's fields in order, or an array's indices from 0 |
+| `kf.raw.copy(proxy)` | the whole struct or array as a table, arrays keyed from 0 |
+| `kf.raw.path(proxy)`, `tostring(proxy)` | `"player_state.vitals"` |
+
+A proxy holds its path, not an address, and resolves it again from the global
+on every access, so a mod may keep one (`local vitals = kf.raw.player_state.vitals`)
+for as long as it likes. Every write is checked before it is stored: against
+the field's type (an integer's width and sign, an enum's declared values, a
+flags enum's bits, a string's length), its array's bounds, and the range the
+game survives, from `port/ext/raw_layer.toml` (an equipped armour id is 13 to
+54, the armour records the game indexes). A wrong name, index, kind or range,
+or a write to a read-only field, is an error that stops the mod, as a bad
+`kf.player` write does. Assigning to a whole struct or array is an error.
+
+Not reachable: raw pointers (reach what one points to through the global that
+owns it), the allocators, and fields whose types the decomp's headers do not
+describe; `api.d.lua` lists every global, field, range and enum, and the
+generator's report (`build/<preset>/generated/raw_layer_report.txt`) lists
+what is left out and why.
+
+What a write does is the mod's to manage. The game may overwrite it at its
+next update, or leave other state out of step with it. Raw writes and
+`kf.rules` reach the same tables (monster definitions, level growth, prices,
+equipment records); `kf.rules` lays its values again at the next map load,
+over a raw write. A slot cannot be emptied through `kf.raw` (the "none" id is
+outside the equipped ids' range); `kf.equip` does that.
+
+Cost, measured headless: about 0.3 µs to read through the whole path from
+`kf.raw` and 0.12 µs to read or write through a kept proxy, so 1,000 accesses
+an update take well under a millisecond.
+
+```lua
+-- Refill HP when it falls below 10: a kept proxy, read and written every update.
+local vitals = kf.raw.player_state.vitals
+function on_update()
+  if vitals.current_hp < 10 then vitals.current_hp = vitals.maximum_hp end
+end
+```
+
 ## `ui` (Dear ImGui)
 
 Only inside `on_draw` and `on_settings`. Colours are 0–1 floats. Sliders show a
@@ -539,7 +592,7 @@ from Lua reaches the game's memory unchecked, since mods come from strangers.
 | other mods | `mods.get(id)` returns another mod's exported table; mods can raise their own events | |
 | functions | call any game function the decomp's headers declare; run a mod's code before, after or in place of one | arguments checked as raw writes are |
 | content | new items, monster kinds, floors: the game's fixed-size tables grown so a mod's rows fit beside the disc's | |
-| raw | `kf.game.<global>.<field>`: every named global and struct field in the decomp, typed and bounds-checked | unstable: follows the decomp's renames |
+| raw | `kf.raw.<global>.<field>`: every named global and struct field in the decomp, typed and bounds-checked | unstable: follows the decomp's renames |
 
 ### What a mod cannot do
 
@@ -595,7 +648,7 @@ example mods ship a `.luarc.json` pointing at it.
 
 `kf.api_version` follows semver from 1.0, and `mod.json` names the API version
 it was written for. The curated layer keeps its names within a major version;
-`kf.game` promises nothing, as the decomp renames freely.
+`kf.raw` promises nothing, as the decomp renames freely.
 
 ### Online play
 
