@@ -2,6 +2,7 @@
 // and Android's settings panel draw. A row's id is its settings.json path where
 // it has one. Each set stores, applies and marks the settings for saving.
 #include "internal.hpp"
+#include <kf/platform/coop.h>
 #include <kf/platform/language.h>
 #include <kf/platform/language_runtime.h>
 #include <kf/renderer/frontend.h>
@@ -141,6 +142,26 @@ OptionRow enabled_if(OptionRow made, std::function<bool()> enabled) {
         state.enabled = state.enabled && enabled();
         return state;
     };
+    return made;
+}
+
+// A mod's row: shown while the mod is in the mods folder, fixed while mods are off in coop.
+OptionState mod_row_state(const std::string &mod) {
+    OptionState state;
+    state.shown = mods_has(mod);
+    if (coop_world_in_play()) {
+        state.enabled = false;
+        state.note = "Mods are off in coop.";
+    }
+    return state;
+}
+
+// A mod switched on and off here as in the Mods panel ("mods.<id>").
+OptionRow mod_switch(const std::string &mod, std::string label, std::string help) {
+    OptionRow made = row("mods." + mod, OptionKind::Toggle, std::move(label), std::move(help));
+    made.get = [mod] { return OptionValue(mods_enabled(mod)); };
+    made.set = [mod](const OptionValue &v) { mods_set_enabled(mod, std::get<bool>(v)); };
+    made.state = [mod] { return mod_row_state(mod); };
     return made;
 }
 
@@ -344,6 +365,9 @@ OptionPage audio_page() {
 OptionSection controls_movement() {
     Settings &s = settings();
     OptionSection movement = classic_locked({"", {
+        mod_switch("run", "Run key",
+                   "Shift, the left stick's click or the touch Run button runs (mods/run; its speed and "
+                   "whether a press switches running on and off are in the Mods panel)."),
         number("controls.look_limit", "Look up/down limit",
                "How far the camera can tilt up or down. The original game allows about 17 degrees.", s.look_limit,
                {17, 85, 1, "%.0f deg"}, apply_control_settings),

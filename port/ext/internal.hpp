@@ -3,6 +3,7 @@
 #include <kf/platform/analog.h>
 #include "coop_profile.h"
 #include "online_pose.h"
+#include <verdite/mods.h>
 #include <verdite/options.h>
 #include <verdite/pickup_feed.h>
 #include <verdite/title_menu.h>
@@ -10,6 +11,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <string>
@@ -273,6 +275,13 @@ int mods_loaded_count();
 bool mods_pause_requested();      // kf.game.paused, combined over the running mods
 bool mods_pause_keeps_music();    // ...and every pausing mod keeps the music (kf.game.music_while_paused)
 bool mods_take_mouse();           // kf.game.mouse: the cursor shows and the game gets no mouse input
+// A mod by id, as the settings switch it (options.cpp's mod rows): in the mods folder, enabled,
+// and its config. Nothing changes while mods are off in coop.
+bool mods_has(std::string_view id);
+bool mods_enabled(std::string_view id);
+void mods_set_enabled(std::string_view id, bool enabled);
+std::optional<verdite::ModConfigValue> mods_config_value(std::string_view id, std::string_view key);
+void mods_set_config_value(std::string_view id, std::string_view key, const verdite::ModConfigValue &value);
 
 // ---- overlay helpers shared with the mod API ----
 // Slider with a typed-value box beside it. `committed` (optional) is set when an

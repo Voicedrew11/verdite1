@@ -134,12 +134,17 @@ SetupPage picture_page() {
 }
 
 SetupPage controls_page() {
+    const SetupGroup running{"running", "Running", "", {
+        choice("No run key", "Walk at the original's one speed.", {"original"}, {{"mods.run", false}}),
+        choice("Run key", "Shift, or the left stick's click, runs at 1.6 times walking speed.", {"balanced", "modern"},
+               {{"mods.run", true}}),
+    }};
     const SetupGroup looking{"looking", "Looking up and down", "", {
         choice("The original's 17 degrees", "", {"original"}, {{"controls.look_limit", 17.0}}),
         choice("Up to 70 degrees", "Look at the ceiling and the floor at your feet.", {"balanced", "modern"},
                {{"controls.look_limit", 70.0}}),
     }};
-    return {"controls", "Controls", "", {looking}, SetupPageTiers::Offered};
+    return {"controls", "Controls", "", {running, looking}, SetupPageTiers::Offered};
 }
 
 SetupPage turning_page() {

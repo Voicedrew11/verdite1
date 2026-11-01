@@ -34,7 +34,12 @@ mods/stathud/main.lua
 ```
 
 Only `main.lua` is required; `id` defaults to the folder name and `entry` to
-`main.lua`. `require("other")` loads `other.lua` from the same folder
+`main.lua`. `"default_enabled": true` starts a mod enabled the first time the
+game sees it (the run and the map ship this way); after that its switch is
+stored like any other. `"enhancement": true` marks a mod that changes the game
+from the original: Classic mode holds it, loaded but with no callback or event
+until Classic mode is off, and the Mods panel says "off in Classic mode". A held
+mod's `kf.play` and `kf.game` values do not apply. `require("other")` loads `other.lua` from the same folder
 (`require("lib.util")` loads `lib/util.lua` or `lib/util/init.lua`). Two
 folders with the same `id`: the second is listed with an error and never runs.
 
@@ -57,6 +62,12 @@ extension, Neovim and others then complete names and flag mistakes.
   save; it reloads on its own.
 * The enabled flag and `config` are stored in `settings.json` next to the mods folder;
   `save` is stored with each save slot (below).
+
+## Mods in the settings
+
+A mod the game ships can have a row in the settings, so Setup and the game's
+own menu switch it: `mods.<id>` is its enabled switch (`mods.run`, the Run key
+on the Controls page). The row shows while the mod is in the mods folder.
 
 ## Coop
 
@@ -477,8 +488,9 @@ player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
 (`kf.actors`, `kf.items`), `mods/hardmode` (`kf.rules`) and `mods/run`
 (`kf.action_pressed`, `kf.play.top_speed`: the run key, which the game no longer has
 itself) in this repository. The
-build puts them beside the executable, and the game copies each one, disabled,
-into the mods folder the first time it sees it; `mods/.examples` lists those
+build puts them beside the executable, and the game copies each one into the
+mods folder the first time it sees it, disabled unless it says
+`default_enabled`; `mods/.examples` lists those
 already offered, so an example you delete stays deleted.
 
 ## The plan: API 1.0

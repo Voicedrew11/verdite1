@@ -383,14 +383,22 @@ const std::vector<verdite::ModField> &game_fields() {
     return fields;
 }
 
-// The running mods' ids, in load order (the host's listed order).
+// The running mods' ids, in load order (the host's listed order); a held one's values do not apply.
 std::vector<std::string> running_mods() {
     std::vector<std::string> running;
     if (host)
         for (const verdite::ModInfo &mod : host->mods())
-            if (mod.state == verdite::ModState::Running)
+            if (mod.state == verdite::ModState::Running && !mod.held)
                 running.push_back(mod.id);
     return running;
+}
+
+// Classic mode plays as the original did, so the enhancement mods are held while it is on.
+void hold_enhancements_in_classic() {
+    if (settings().classic)
+        host->hold_enhancements();
+    else
+        host->release_enhancements();
 }
 
 // Recomputes what the game sees from the running mods' values (kf.play, kf.game, kf.rules); a mod
@@ -1251,10 +1259,14 @@ void replace_item(cJSON *object, const char *key, cJSON *value) {
         cJSON_AddItemToObject(object, key, value);
 }
 
+// Nothing for a mod never stored, which starts as its mod.json says.
 std::optional<verdite::ModStored> read_stored(std::string_view id) {
     const cJSON *entry = settings_mod_entry(std::string(id));
+    const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(entry, "enabled");
+    if (!cJSON_IsBool(enabled))
+        return std::nullopt;
     verdite::ModStored stored;
-    stored.enabled = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(entry, "enabled"));
+    stored.enabled = cJSON_IsTrue(enabled);
     const cJSON *config = cJSON_GetObjectItemCaseSensitive(entry, "config");
     if (cJSON_IsObject(config)) {
         const std::unique_ptr<char, void (*)(void *)> text(cJSON_PrintUnformatted(config), cJSON_free);
@@ -1291,7 +1303,8 @@ void write_offered_examples(const std::filesystem::path &list, const std::set<st
         std::printf("[mods] cannot write %s\n", list.string().c_str());
 }
 
-// The example mods shipped beside the executable, each copied disabled the first time it is seen.
+// The example mods shipped beside the executable, each copied the first time it is seen; it starts
+// disabled unless its mod.json says default_enabled.
 void copy_example_mods() {
     const char *base = SDL_GetBasePath();
     if (!base)
@@ -1316,7 +1329,7 @@ void copy_example_mods() {
         if (error)
             std::printf("[mods] cannot copy the example mod %s: %s\n", name.c_str(), error.message().c_str());
         else
-            std::printf("[mods] copied the example mod %s to %s (disabled)\n", name.c_str(), target.string().c_str());
+            std::printf("[mods] copied the example mod %s to %s\n", name.c_str(), target.string().c_str());
     }
     if (offered.size() != before)
         write_offered_examples(list, offered);
@@ -1349,6 +1362,9 @@ void draw_mod_row(const verdite::ModInfo &mod) {
     if (mod.state == verdite::ModState::Failed) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "error");
+    } else if (mod.held) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("off in Classic mode");
     } else if (mod.state == verdite::ModState::Running) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "running");
@@ -1359,7 +1375,7 @@ void draw_mod_row(const verdite::ModInfo &mod) {
     if (!mod.error.empty())
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.45f, 1.0f), "%s", mod.error.c_str());
     ImGui::BeginDisabled(paused);
-    if (mod.state == verdite::ModState::Running && mod.has_settings && ImGui::TreeNode("Settings")) {
+    if (mod.state == verdite::ModState::Running && !mod.held && mod.has_settings && ImGui::TreeNode("Settings")) {
         if (!paused) {
             ui_frame_open();
             host->call(mod.id, verdite::ModCallback::Settings);
@@ -1385,7 +1401,8 @@ void mods_start() {
     config.read_stored = read_stored;
     config.write_stored = write_stored;
     config.unloaded = forget_mod_play;
-    host =std::make_unique<verdite::ModHost>(std::move(config));
+    host = std::make_unique<verdite::ModHost>(std::move(config));
+    hold_enhancements_in_classic();
     host->scan();
     last_scan = SDL_GetTicks();
 }
@@ -1426,6 +1443,39 @@ bool mods_take_mouse() {
     return mods_active() && combined_play.takes_mouse;
 }
 
+bool mods_has(std::string_view id) {
+    if (!host)
+        return false;
+    const auto list = host->mods();
+    return std::ranges::any_of(list, [id](const verdite::ModInfo &mod) { return mod.id == id; });
+}
+
+bool mods_enabled(std::string_view id) {
+    if (!host)
+        return false;
+    const auto list = host->mods();
+    return std::ranges::any_of(list, [id](const verdite::ModInfo &mod) { return mod.id == id && mod.enabled; });
+}
+
+void mods_set_enabled(std::string_view id, bool enabled) {
+    if (!host || mods_paused())
+        return;
+    if (enabled)
+        host->enable(id);
+    else
+        host->disable(id);
+    refresh_mod_play();
+}
+
+std::optional<verdite::ModConfigValue> mods_config_value(std::string_view id, std::string_view key) {
+    return host ? host->config_value(id, key) : std::nullopt;
+}
+
+void mods_set_config_value(std::string_view id, std::string_view key, const verdite::ModConfigValue &value) {
+    if (host)
+        host->set_config_value(id, key, value);
+}
+
 // A file saved in coop reloads on the first scan after leaving it.
 void mods_poll() {
     if (!host || mods_paused() || SDL_GetTicks() - last_scan < 500)
@@ -1446,6 +1496,7 @@ void mods_frame(int context) {
     update_actions.advance(host_actions_held());
     if (!host)
         return;
+    hold_enhancements_in_classic();
     if (!mods_paused())
         host->call_each(verdite::ModCallback::Update);
     // Also while paused, so the game sees the defaults from the first frame of coop.
