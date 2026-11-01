@@ -11,12 +11,6 @@
 #include <string>
 
 namespace kf::ext {
-namespace {
-bool full_map_open;
-// Full map view: zoom 1 fits the explored floor; panning moves the centre (cells).
-float map_zoom = 1.0f;
-float map_centre_x, map_centre_z;
-bool map_centre_set;
 
 // Item names as the English translation patch shows them in the menus (read
 // from the game's own name rows), with apostrophes the patch leaves out.
@@ -37,9 +31,22 @@ const char *const item_names[] = {
     "Magician's Key", "Magic Hand", "Sword Fan Dragon", nullptr, nullptr, nullptr};
 static_assert(sizeof item_names / sizeof item_names[0] == 80, "one name per item id");
 
-std::string item_name(u8 id) {
-    if (id < sizeof item_names / sizeof item_names[0] && item_names[id])
+const char *item_english_name(std::uint8_t id) {
+    if (id < sizeof item_names / sizeof item_names[0])
         return item_names[id];
+    return nullptr;
+}
+
+namespace {
+bool full_map_open;
+// Full map view: zoom 1 fits the explored floor; panning moves the centre (cells).
+float map_zoom = 1.0f;
+float map_centre_x, map_centre_z;
+bool map_centre_set;
+
+std::string item_name(u8 id) {
+    if (const char *name = item_english_name(id))
+        return name;
     return "Item " + std::to_string(id);
 }
 

@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.4, what ships today. Where it is going, API 1.0, is
+This page documents API 0.5, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -192,8 +192,10 @@ end
 | `kf.player.<field>` | read/write player state (below) |
 | `kf.player_fields()` | list of field names |
 | `kf.warp(floor [, cell_x, cell_z [, yaw]])` | queued, see below |
+| `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
+| `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.4"` |
+| `kf.api_version` | `"0.5"` |
 
 `kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
@@ -228,6 +230,60 @@ floor that turns out blocked once it loads falls back to the first open cell.
 | `cell_blocked(x, z)` | boolean |
 | `floor1_passage_opened`, `floor1_revival_enabled`, `floor5_character_arrived`, `floor5_weapon_transformed`, `floor5_boss_encounter_started`, `floor5_boss_defeated` | story flags, booleans, read/write |
 | `floor3_revealed_pieces` | story flag, integer 0–4, read/write |
+
+### `kf.actors`
+
+The monsters on the floor. A slot is *listed* when it holds an actor that is not disabled. Every call
+on an unlisted slot is an error, except `get`, which returns nil. The calls work in gameplay or a
+menu with a floor loaded, and are an error anywhere else.
+
+| call | returns |
+|---|---|
+| `kf.actors.list()` | the listed actors, in slot order: `{slot, kind, hp, x, y, z, yaw, cell_x, cell_z, action}` |
+| `kf.actors.get(slot)` | that table, or nil |
+| `kf.actors.kinds()` | the kinds placed on this floor: `{kind, hp, experience, gold, drop_item}`, `drop_item` -1 for none |
+| `kf.actors.set_hp(slot, hp)` | HP 1 to 65535; not on an actor that is dying (kill takes one down) |
+| `kf.actors.move(slot, x, z [, yaw])` | to a world position in an open cell, at the floor's height |
+| `kf.actors.kill(slot)` | dies as the game kills: its death animation and drops play; no experience, no `on_kill` |
+| `kf.actors.remove(slot)` | vanishes with no death and no drop; its slot and cell are free again |
+| `kf.actors.spawn(kind, x, z [, yaw])` | the new slot, or nil when the pool is full; a kind not placed on this floor is an error |
+
+`kind` is the monster's definition id; it means a different monster on each floor. `action` is
+`"idle"`, `"wander"`, `"pursue"`, `"retreat"`, `"attack"`, `"hurt"`, `"dying"` or `"other"`. Positions
+are world units, 2000 to a cell; `yaw` is 0 to 4095.
+
+A killed monster stays listed, as `"dying"`, after its death animation: the game keeps it on the floor
+until the player is out of range, and `remove` takes it out. A monster that has not woken reads hp 0,
+and wakes at its definition's full HP, which overrides `set_hp`.
+
+```lua
+local kinds = kf.actors.kinds()
+if #kinds > 0 then kf.actors.spawn(kinds[1].kind, kf.player.x, kf.player.z + 4000) end
+```
+
+### `kf.items`
+
+The player's pack: each item id from 0 to 79 holds up to a stack of 99.
+
+| call | returns |
+|---|---|
+| `kf.items.count(item)` | how many the pack holds |
+| `kf.items.give(item, n)` | adds `n` of a named item, up to a stack; the new count |
+| `kf.items.take(item, n)` | takes `n`, down to 0; the new count |
+| `kf.items.name(item)` | the item's English name, or nil for an id with none |
+
+`give` and `take` take a named item and `n` of at least 1; a larger `n` is held to a stack.
+
+### Equipment and magic
+
+`kf.equip(slot [, item])` wears a carried item that fits the slot (a helm in `"head"`, a shield in
+`"shield"`), or takes it off when `item` is nil. It is queued like `kf.warp`: `kf.equipped` shows the
+change from the next update. The pack keeps the item's count, as the equipment menu does. Full Plate
+takes the arm and leg armour off, as the menu does. The slots, in the order coop keeps them, are
+`"weapon"`, `"head"`, `"body"`, `"shield"`, `"arm"`, `"leg"` and `"accessory"`.
+
+`kf.magic.learned(spell)` and `kf.magic.set_learned(spell, learned)` take a spell from 0 to 8, in the
+game's order (the spell menu lists 4 to 8). Unlearning the selected spell deselects it, as the menu does.
 
 ### `kf.game`
 
@@ -273,7 +329,8 @@ interface scale.
 
 `mods/stathud` (HUD drawing + settings), `mods/quickheal` (hotkey + writing
 player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
-`mods/killcount` (`on_kill` and the `save` table) in this repository. The
+`mods/killcount` (`on_kill` and the `save` table) and `mods/bestiary`
+(`kf.actors`, `kf.items`) in this repository. The
 build puts them beside the executable, and the game copies each one, disabled,
 into the mods folder the first time it sees it; `mods/.examples` lists those
 already offered, so an example you delete stays deleted.
@@ -379,12 +436,12 @@ mods are off in coop (decided 2026-10-31).
 2. ~~Player position, world and game flow, then a debug mod (noclip, god mode,
    infinite MP, peaceful, speed, warp) in place of Verdite's debug menu.~~
    Done in 0.3 (2026-10-31): position, `kf.warp`, `kf.world`'s story flags,
-   `kf.game`, `kf.play` and `mods/debug`. Not yet: equipment, inventory, magic,
-   doors, chests and the automap, which the decomp keeps no reveal state for.
+   `kf.game`, `kf.play` and `mods/debug`. Not yet: doors, chests and the automap,
+   which the decomp keeps no reveal state for.
 3. ~~Events and the per-save `save` table.~~ Done in 0.4 (2026-10-31): the
    events above and `save`. Not yet: nothing is cancellable, and HP lost outside
    blows (hazards, poison, falls) raises no event.
-4. Entities and rules.
+4. Entities, items, equipment and magic done in 0.5 (2026-10-31): kf.actors, kf.items, kf.equip, kf.magic. Rules: next.
 5. The generated raw layer.
 6. Asset overrides, audio, 3D drawing.
 7. Input actions: reading, pressing and blocking them.

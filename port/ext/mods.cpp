@@ -15,20 +15,31 @@
 #include <limits>
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <kf/platform/prelude.h>
+#include <kf/game/actor.h>
+#include <kf/game/animation_cache.h>
+#include <kf/game/collision.h>
+#include <kf/game/effect.h>
+#include <kf/game/magic.h>
 #include <kf/game/player.h>
 #include <kf/game/player_motion.h>
+#include <kf/lib/equipment_types.h>
 #include <kf/lib/floor.h>
+#include <kf/lib/item.h>
+#include <kf/lib/item_types.h>
 #include <kf/lib/map.h>
 #include <kf/lib/map_data.h>
 #include <kf/lib/math.h>
 #include <kf/platform/coop.h>
 #include <kf/platform/fuzz.h>
 #include <kf/platform/host.h>
+#include <kf/platform/input.h>
 #include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
+#include "coop_party.h"
 #include "mod_play.h"
 #include <lauxlib.h>
 #include <lua.h>
@@ -37,10 +48,11 @@
 #include <set>
 #include <span>
 #include <variant>
+#include <vector>
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.4";
+constexpr const char *api_version = "0.5";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -379,6 +391,445 @@ void forget_mod_play(std::string_view id) {
     refresh_mod_play();
 }
 
+// ---------- kf.actors: the monsters on the floor ----------
+// The kinds placed on the floor as it loaded: the models the floor's map loaded are the ones its
+// placements name, so these are the kinds kf.actors.spawn may make.
+std::array<bool, KF_ACTOR_DEFINITION_COUNT> kinds_on_floor{};
+
+void record_kinds_on_floor() {
+    kinds_on_floor.fill(false);
+    for (const KfActor &actor : actor_state.actors)
+        if (actor.slot_state != KF_ACTOR_SLOT_FREE && actor.definition_id < kinds_on_floor.size())
+            kinds_on_floor[actor.definition_id] = true;
+}
+
+// A floor is loaded and the game shows it, so the actors are the floor's to read and change.
+bool floor_in_play() {
+    return last_floor != 0
+        && (input_context == static_cast<int>(InputContext::Gameplay) || input_context == static_cast<int>(InputContext::Menu));
+}
+
+void check_floor_in_play(lua_State *L) {
+    if (!floor_in_play())
+        luaL_error(L, "kf.actors works in gameplay or a menu, with a floor loaded");
+}
+
+// Listed: in use and not disabled, as the game's own update and drawing see it.
+bool actor_listed(const KfActor &actor) {
+    return actor.slot_state != KF_ACTOR_SLOT_FREE && actor.lifecycle != KF_ACTOR_LIFECYCLE_DISABLED;
+}
+
+bool slot_listed(lua_Integer slot) {
+    return slot >= 0 && slot < static_cast<lua_Integer>(actor_state.actors.size())
+        && actor_listed(actor_state.actors[static_cast<std::size_t>(slot)]);
+}
+
+std::size_t check_listed_slot(lua_State *L, int index) {
+    const lua_Integer slot = luaL_checkinteger(L, index);
+    if (!slot_listed(slot))
+        luaL_error(L, "actor slot %I is not listed", slot);
+    return static_cast<std::size_t>(slot);
+}
+
+bool actor_dying(const KfActor &actor) {
+    return actor.action == KF_ACTOR_ACTION_DYING || actor.action == KF_ACTOR_ACTION_POST_DEATH;
+}
+
+// The action as the mods name it: the attacks share one name, and the rest are "other".
+struct ActionName {
+    KfActorAction action;
+    const char *name;
+};
+constexpr std::array<ActionName, 11> action_names = {{
+    {KF_ACTOR_ACTION_IDLE, "idle"},
+    {KF_ACTOR_ACTION_WANDER, "wander"},
+    {KF_ACTOR_ACTION_PURSUE, "pursue"},
+    {KF_ACTOR_ACTION_RETREAT, "retreat"},
+    {KF_ACTOR_ACTION_MELEE_ATTACK, "attack"},
+    {KF_ACTOR_ACTION_JUMP_ATTACK, "attack"},
+    {KF_ACTOR_ACTION_SPECIAL_ATTACK, "attack"},
+    {KF_ACTOR_ACTION_MULTI_HIT_ATTACK, "attack"},
+    {KF_ACTOR_ACTION_HIT_REACTION, "hurt"},
+    {KF_ACTOR_ACTION_DYING, "dying"},
+    {KF_ACTOR_ACTION_POST_DEATH, "dying"},
+}};
+
+const char *action_name(KfActorAction action) {
+    for (const ActionName &entry : action_names)
+        if (entry.action == action)
+            return entry.name;
+    return "other";
+}
+
+void set_integer(lua_State *L, const char *key, lua_Integer value) {
+    lua_pushinteger(L, value);
+    lua_setfield(L, -2, key);
+}
+
+void push_actor(lua_State *L, std::size_t slot) {
+    const KfActor &actor = actor_state.actors[slot];
+    lua_createtable(L, 0, 10);
+    set_integer(L, "slot", static_cast<lua_Integer>(slot));
+    set_integer(L, "kind", actor.definition_id);
+    set_integer(L, "hp", actor.health);
+    set_integer(L, "x", actor.position.vx);
+    set_integer(L, "y", actor.position.vy);
+    set_integer(L, "z", actor.position.vz);
+    set_integer(L, "yaw", actor.rotation.vy & KF_ANGLE_WRAP_MASK);
+    set_integer(L, "cell_x", actor.cell_x);
+    set_integer(L, "cell_z", actor.cell_z);
+    lua_pushstring(L, action_name(actor.action));
+    lua_setfield(L, -2, "action");
+}
+
+// The definition's numbers as the game reads them; drop_item is -1 when the kind drops nothing.
+void push_kind(lua_State *L, std::size_t kind) {
+    const KfActorDefinition &definition = actor_state.definitions.entries[kind];
+    const KfObjectId drop = definition.action_parameters.drop_object;
+    const bool drops = drop != KF_OBJECT_NONE && drop != KF_MAP_OBJECT_DROP_DISABLED;
+    lua_createtable(L, 0, 5);
+    set_integer(L, "kind", static_cast<lua_Integer>(kind));
+    set_integer(L, "hp", definition.initial_health);
+    set_integer(L, "experience", definition.experience_reward);
+    set_integer(L, "gold", definition.gold_drop_limit);
+    set_integer(L, "drop_item", drops ? kf_enum_encode<lua_Integer>(drop) : -1);
+}
+
+// A world position in units, on the map and in a cell that is not blocked, at the floor's height.
+VECTOR check_open_position(lua_State *L, int index) {
+    const lua_Integer x = luaL_checkinteger(L, index);
+    const lua_Integer z = luaL_checkinteger(L, index + 1);
+    const lua_Integer width = static_cast<lua_Integer>(KF_MAP_COLUMNS) * KF_MAP_TILE_SIZE;
+    const lua_Integer depth = static_cast<lua_Integer>(KF_MAP_ROWS) * KF_MAP_TILE_SIZE;
+    if (x < 0 || x >= width || z < 0 || z >= depth)
+        luaL_error(L, "position %I, %I is off the map", x, z);
+    if (cell_is_blocked(static_cast<int>(x / KF_MAP_TILE_SIZE), static_cast<int>(z / KF_MAP_TILE_SIZE)))
+        luaL_error(L, "position %I, %I is in a blocked cell", x, z);
+    VECTOR position = {static_cast<s32>(x), 0, static_cast<s32>(z)};
+    position.vy = map_floor_height_at_position(&position);
+    return position;
+}
+
+// An optional yaw, wrapped to a turn; nothing when the argument is absent.
+std::optional<s16> optional_yaw(lua_State *L, int index) {
+    if (lua_isnoneornil(L, index))
+        return std::nullopt;
+    return static_cast<s16>(luaL_checkinteger(L, index) & KF_ANGLE_WRAP_MASK);
+}
+
+// An active actor holds occupancy on its cell (the update takes it off and puts it back around
+// each action); a dormant, waiting or disabled one holds none.
+void release_occupancy(KfActor &actor) {
+    if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE)
+        collision_adjust_cell_occupancy(actor.cell_x, actor.cell_z, -1);
+}
+
+// Moves an actor the way the game moves one: its occupancy follows it from the old cell to the new.
+void place_actor(KfActor &actor, const VECTOR &position) {
+    const bool active = actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE;
+    release_occupancy(actor);
+    // As actor_set_position (not declared in a header): the position and its cell.
+    actor.position = position;
+    actor.cell_x = static_cast<u16>(position.vx / KF_MAP_TILE_SIZE);
+    actor.cell_z = static_cast<u16>(position.vz / KF_MAP_TILE_SIZE);
+    if (active)
+        collision_adjust_cell_occupancy(actor.cell_x, actor.cell_z, 1);
+}
+
+// As the end of a death animation does: the actor leaves the game's update and its occupancy with it.
+void disable_actor(KfActor &actor) {
+    release_occupancy(actor);
+    actor.lifecycle = KF_ACTOR_LIFECYCLE_DISABLED;
+}
+
+int kf_actors_list(lua_State *L) {
+    check_floor_in_play(L);
+    lua_createtable(L, 0, 0);
+    lua_Integer count = 0;
+    for (std::size_t slot = 0; slot < actor_state.actors.size(); ++slot) {
+        if (!actor_listed(actor_state.actors[slot]))
+            continue;
+        push_actor(L, slot);
+        lua_rawseti(L, -2, ++count);
+    }
+    return 1;
+}
+
+int kf_actors_get(lua_State *L) {
+    check_floor_in_play(L);
+    const lua_Integer slot = luaL_checkinteger(L, 1);
+    if (!slot_listed(slot)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_actor(L, static_cast<std::size_t>(slot));
+    return 1;
+}
+
+int kf_actors_kinds(lua_State *L) {
+    check_floor_in_play(L);
+    lua_createtable(L, 0, 0);
+    lua_Integer count = 0;
+    for (std::size_t kind = 0; kind < kinds_on_floor.size(); ++kind) {
+        if (!kinds_on_floor[kind])
+            continue;
+        push_kind(L, kind);
+        lua_rawseti(L, -2, ++count);
+    }
+    return 1;
+}
+
+int kf_actors_set_hp(lua_State *L) {
+    check_floor_in_play(L);
+    const std::size_t slot = check_listed_slot(L, 1);
+    KfActor &actor = actor_state.actors[slot];
+    const lua_Integer hp = luaL_checkinteger(L, 2);
+    if (hp < 1 || hp > 65535)
+        luaL_error(L, "hp %I is out of range (1 to 65535; kill takes an actor down)", hp);
+    if (actor_dying(actor))
+        luaL_error(L, "actor slot %I is dying", static_cast<lua_Integer>(slot));
+    actor.health = static_cast<u16>(hp);
+    return 0;
+}
+
+int kf_actors_move(lua_State *L) {
+    check_floor_in_play(L);
+    KfActor &actor = actor_state.actors[check_listed_slot(L, 1)];
+    place_actor(actor, check_open_position(L, 2));
+    if (const auto yaw = optional_yaw(L, 4))
+        actor.rotation.vy = *yaw;
+    return 0;
+}
+
+// The game's own kill: the death animation plays and the drops fall as usual, and no experience.
+// An actor already dying is left to finish.
+int kf_actors_kill(lua_State *L) {
+    check_floor_in_play(L);
+    KfActor &actor = actor_state.actors[check_listed_slot(L, 1)];
+    if (actor_dying(actor))
+        return 0;
+    actor.health = 0;
+    const KfActorDefinition &definition = actor_state.definitions.entries[actor.definition_id];
+    if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
+        && definition.action_animations[KF_ACTOR_ANIM_SLOT_DEATH] != KF_ANIMATION_CLIP_NONE) {
+        actor_set_action(&actor, KF_ACTOR_ACTION_DYING);
+        return 0;
+    }
+    disable_actor(actor);
+    return 0;
+}
+
+// Takes an actor out of the floor without a death: its slot is free again, and so is its cell.
+int kf_actors_remove(lua_State *L) {
+    check_floor_in_play(L);
+    KfActor &actor = actor_state.actors[check_listed_slot(L, 1)];
+    release_occupancy(actor);
+    // The cached vertices belong to the actor; releasing the record also clears its pointer.
+    if (actor.animation_cache)
+        animation_cache_release(actor.animation_cache);
+    actor.slot_state = KF_ACTOR_SLOT_FREE;
+    actor.lifecycle = KF_ACTOR_LIFECYCLE_DORMANT;
+    return 0;
+}
+
+// Spawns a kind in use on this floor, as the game's spawners do: the first free slot, pursuing.
+int kf_actors_spawn(lua_State *L) {
+    check_floor_in_play(L);
+    const lua_Integer kind = luaL_checkinteger(L, 1);
+    if (kind < 0 || kind >= KF_ACTOR_DEFINITION_COUNT || !kinds_on_floor[static_cast<std::size_t>(kind)])
+        luaL_error(L, "kind %I is not on this floor", kind);
+    const VECTOR position = check_open_position(L, 2);
+    const auto yaw = optional_yaw(L, 4);
+    const auto free = std::ranges::find_if(actor_state.actors,
+        [](const KfActor &actor) { return actor.slot_state == KF_ACTOR_SLOT_FREE; });
+    if (free == actor_state.actors.end()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto slot = static_cast<std::size_t>(free - actor_state.actors.begin());
+    const SVECTOR rotation = {0, 0, 0};
+    actor_pool_spawn(static_cast<u8>(kind), &position, &rotation);
+    KfActor &actor = actor_state.actors[slot];
+    if (actor.slot_state == KF_ACTOR_SLOT_FREE || actor.definition_id != kind) {
+        lua_pushnil(L);
+        return 1;
+    }
+    if (yaw)
+        actor.rotation.vy = *yaw;   // the spawn takes a random yaw
+    lua_pushinteger(L, static_cast<lua_Integer>(slot));
+    return 1;
+}
+
+// ---------- kf.items: the player's pack ----------
+u8 &pack_count(u8 item) {
+    return item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][item];
+}
+
+// An item the pack can name: 0 to 79 with a name in the menus.
+u8 check_named_item(lua_State *L, int index) {
+    const lua_Integer item = luaL_checkinteger(L, index);
+    if (item < 0 || item >= KF_ITEM_COUNT || !item_english_name(static_cast<u8>(item)))
+        luaL_error(L, "item %I is not a named item (0 to 79)", item);
+    return static_cast<u8>(item);
+}
+
+int kf_items_count(lua_State *L) {
+    const lua_Integer item = luaL_checkinteger(L, 1);
+    if (item < 0 || item >= KF_ITEM_COUNT)
+        luaL_error(L, "item %I is not 0 to 79", item);
+    lua_pushinteger(L, pack_count(static_cast<u8>(item)));
+    return 1;
+}
+
+// A count above a stack gives or takes all of it either way, so it is held to one stack.
+int check_amount(lua_State *L, int index) {
+    const lua_Integer amount = luaL_checkinteger(L, index);
+    if (amount < 1)
+        luaL_error(L, "amount %I is below 1", amount);
+    return static_cast<int>(std::min<lua_Integer>(amount, KF_ITEM_STACK_CAPACITY));
+}
+
+int kf_items_give(lua_State *L) {
+    u8 &count = pack_count(check_named_item(L, 1));
+    const int total = std::min(count + check_amount(L, 2), static_cast<int>(KF_ITEM_STACK_CAPACITY));
+    count = static_cast<u8>(total);
+    lua_pushinteger(L, total);
+    return 1;
+}
+
+int kf_items_take(lua_State *L) {
+    u8 &count = pack_count(check_named_item(L, 1));
+    const int left = std::max(count - check_amount(L, 2), 0);
+    count = static_cast<u8>(left);
+    lua_pushinteger(L, left);
+    return 1;
+}
+
+int kf_items_name(lua_State *L) {
+    const lua_Integer item = luaL_checkinteger(L, 1);
+    const char *name = item >= 0 && item < KF_ITEM_COUNT ? item_english_name(static_cast<u8>(item)) : nullptr;
+    if (name)
+        lua_pushstring(L, name);
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
+// ---------- kf.equipped and kf.equip: what the player wears ----------
+// The slots the mods name, with coop_party.h's order for coop_item_fits. The weapon is not an armour
+// slot: the game puts it on with player_equip_weapon, which loads its model.
+struct EquipmentSlot {
+    const char *name;
+    std::size_t worn_index;
+    std::optional<KfEquipmentSlot> armour;
+    KfObjectId KfPlayerState::*worn;
+};
+constexpr std::array<EquipmentSlot, 7> equipment_slots = {{
+    {"weapon", 0, std::nullopt, &KfPlayerState::equipped_weapon_id},
+    {"head", 1, KF_EQUIPMENT_SLOT_HEAD, &KfPlayerState::equipped_head_armor_id},
+    {"body", 2, KF_EQUIPMENT_SLOT_BODY, &KfPlayerState::equipped_body_armor_id},
+    {"shield", 3, KF_EQUIPMENT_SLOT_SHIELD, &KfPlayerState::equipped_shield_id},
+    {"arm", 4, KF_EQUIPMENT_SLOT_ARM, &KfPlayerState::equipped_arm_armor_id},
+    {"leg", 5, KF_EQUIPMENT_SLOT_LEG, &KfPlayerState::equipped_leg_armor_id},
+    {"accessory", 6, KF_EQUIPMENT_SLOT_ACCESSORY, &KfPlayerState::equipped_accessory_id},
+}};
+
+std::size_t check_equipment_slot(lua_State *L, int index) {
+    const char *name = luaL_checkstring(L, index);
+    const auto found = std::ranges::find_if(equipment_slots,
+        [name](const EquipmentSlot &slot) { return std::strcmp(slot.name, name) == 0; });
+    if (found == equipment_slots.end())
+        luaL_error(L, "there is no equipment slot '%s'", name);
+    return static_cast<std::size_t>(found - equipment_slots.begin());
+}
+
+// A worn item, which must fit the slot and be carried.
+std::uint8_t check_worn_item(lua_State *L, int index, std::size_t entry) {
+    const lua_Integer item = luaL_checkinteger(L, index);
+    if (item < 0 || item >= KF_ITEM_COUNT)
+        luaL_error(L, "item %I is not 0 to 79", item);
+    const auto id = static_cast<std::uint8_t>(item);
+    if (!coop_item_fits(equipment_slots[entry].worn_index, id))
+        luaL_error(L, "item %I does not fit the %s slot", item, equipment_slots[entry].name);
+    if (pack_count(id) < 1)
+        luaL_error(L, "the player does not carry item %I", item);
+    return id;
+}
+
+// An equip waits for the next update, as a warp does; nil takes the item off.
+struct EquipRequest {
+    std::size_t entry;
+    std::optional<std::uint8_t> item;
+};
+std::vector<EquipRequest> equip_requests;
+
+int kf_equipped(lua_State *L) {
+    const EquipmentSlot &slot = equipment_slots[check_equipment_slot(L, 1)];
+    const KfObjectId worn = player_state.*slot.worn;
+    if (worn == KF_OBJECT_NONE)
+        lua_pushnil(L);
+    else
+        lua_pushinteger(L, kf_enum_encode<lua_Integer>(worn));
+    return 1;
+}
+
+int kf_equip(lua_State *L) {
+    const std::size_t entry = check_equipment_slot(L, 1);
+    std::optional<std::uint8_t> item;
+    if (!lua_isnoneornil(L, 2))
+        item = check_worn_item(L, 2, entry);
+    // A slot keeps only its latest request, so the queue holds at most one per slot, in call order.
+    std::erase_if(equip_requests, [entry](const EquipRequest &request) { return request.entry == entry; });
+    equip_requests.push_back({entry, item});
+    return 0;
+}
+
+// Puts an item on or takes one off, as the equipment menu does. Its stock is not changed: a worn
+// item stays in the pack's count.
+void apply_equip(const EquipRequest &request) {
+    const EquipmentSlot &slot = equipment_slots[request.entry];
+    if (request.item && pack_count(*request.item) < 1) {
+        std::printf("[mods] equip %s: the player no longer carries item %d\n", slot.name, *request.item);
+        return;
+    }
+    const KfObjectId item = request.item ? kf_enum_decode<KfObjectId>(*request.item) : KF_OBJECT_NONE;
+    if (!slot.armour) {
+        player_equip_weapon(item);
+        return;
+    }
+    player_set_equipment_slot(item, *slot.armour);
+    // Full Plate covers the arms and legs, so the game takes those off, as its menu does.
+    if (slot.armour == KF_EQUIPMENT_SLOT_BODY && request.item == kf_enum_encode<u8>(KF_ITEM_FULL_PLATE)) {
+        player_set_equipment_slot(KF_OBJECT_NONE, KF_EQUIPMENT_SLOT_ARM);
+        player_set_equipment_slot(KF_OBJECT_NONE, KF_EQUIPMENT_SLOT_LEG);
+    }
+}
+
+// ---------- kf.magic: the player's spells ----------
+KfEffectKind check_spell(lua_State *L, int index) {
+    const lua_Integer spell = luaL_checkinteger(L, index);
+    if (spell < 0 || spell >= KF_MAGIC_PLAYER_COUNT)
+        luaL_error(L, "spell %I is not 0 to 8", spell);
+    return kf_enum_decode<KfEffectKind>(static_cast<u8>(spell));
+}
+
+int kf_magic_learned(lua_State *L) {
+    const KfEffectKind spell = check_spell(L, 1);
+    lua_pushboolean(L, effect_state.magic.entries[kf_enum_encode<u8>(spell)].learned == KF_MAGIC_LEARNED);
+    return 1;
+}
+
+int kf_magic_set_learned(lua_State *L) {
+    const KfEffectKind spell = check_spell(L, 1);
+    luaL_checktype(L, 2, LUA_TBOOLEAN);
+    const bool learned = lua_toboolean(L, 2) != 0;
+    effect_state.magic.entries[kf_enum_encode<u8>(spell)].learned = learned ? KF_MAGIC_LEARNED : KF_MAGIC_UNLEARNED;
+    // An unlearned spell is deselected, as the spell menu does.
+    if (!learned && player_state.selected_magic_id == spell)
+        player_select_magic(KF_MAGIC_NONE);
+    return 0;
+}
+
 // ---------- kf.* ----------
 int kf_log(lua_State *L) {
     std::string text;
@@ -580,7 +1031,11 @@ std::vector<verdite::ModTable> api_tables() {
                kf_save_config},
               {"warp", "fun(floor: integer, cell_x?: integer, cell_z?: integer, yaw?: integer)",
                "Queued, run between updates: moves the player to a floor and cell, or the first open cell.",
-               kf_warp}},
+               kf_warp},
+              {"equipped", "fun(slot: \"weapon\"|\"head\"|\"body\"|\"arm\"|\"leg\"|\"shield\"|\"accessory\"): integer?",
+               "The item id worn in a slot, or nil.", kf_equipped},
+              {"equip", "fun(slot: \"weapon\"|\"head\"|\"body\"|\"arm\"|\"leg\"|\"shield\"|\"accessory\", item?: integer)",
+               "Wears a carried item that fits the slot, or takes it off (nil). Done between updates.", kf_equip}},
          .fields = {{"api_version", "string", "The API's version.", push_api_version, nullptr}}},
         {.path = "kf.player",
          .doc = "The player's state, read and written in the game's player_state.",
@@ -600,6 +1055,53 @@ std::vector<verdite::ModTable> api_tables() {
          .doc = "The calling mod's game speed and pause; the game combines every running mod's.",
          .functions = {},
          .fields = game_fields()},
+        {.path = "kf.actors",
+         .doc = "The monsters on the floor. A slot is listed when it is in use and not disabled; a call on an "
+                "unlisted slot is an error, except get. Gameplay or a menu, with a floor loaded.",
+         .functions =
+             {ModFunction{"list",
+                          "fun(): {slot: integer, kind: integer, hp: integer, x: integer, y: integer, z: integer, "
+                          "yaw: integer, cell_x: integer, cell_z: integer, action: string}[]",
+                          "The listed actors, in slot order. Positions in world units, 2000 to a cell.",
+                          kf_actors_list},
+              {"get",
+               "fun(slot: integer): {slot: integer, kind: integer, hp: integer, x: integer, y: integer, z: integer, "
+               "yaw: integer, cell_x: integer, cell_z: integer, action: string}?",
+               "The actor in a slot, or nil when it is not listed.", kf_actors_get},
+              {"kinds", "fun(): {kind: integer, hp: integer, experience: integer, gold: integer, drop_item: integer}[]",
+               "The monster kinds placed on this floor. drop_item is -1 for none.", kf_actors_kinds},
+              {"set_hp", "fun(slot: integer, hp: integer)", "Sets an actor's HP, 1 to 65535; not one that is dying.",
+               kf_actors_set_hp},
+              {"move", "fun(slot: integer, x: integer, z: integer, yaw?: integer)",
+               "Moves an actor to a world position in an open cell; its height is the floor's.", kf_actors_move},
+              {"kill", "fun(slot: integer)",
+               "Kills an actor as the game does: it dies, drops as usual, and gives no experience.", kf_actors_kill},
+              {"remove", "fun(slot: integer)", "Takes an actor out without a death or a drop; its slot and cell are free.",
+               kf_actors_remove},
+              {"spawn", "fun(kind: integer, x: integer, z: integer, yaw?: integer): integer?",
+               "Spawns a kind placed on this floor at a world position; the slot, or nil when the pool is full.",
+               kf_actors_spawn}},
+         .fields = {}},
+        {.path = "kf.items",
+         .doc = "The player's pack: stacks of 99 for each item id (0 to 79).",
+         .functions =
+             {ModFunction{"count", "fun(item: integer): integer", "How many of an item the pack holds.", kf_items_count},
+              {"give", "fun(item: integer, n: integer): integer",
+               "Adds n of a named item, up to a stack; the new count.", kf_items_give},
+              {"take", "fun(item: integer, n: integer): integer", "Takes n of a named item, down to 0; the new count.",
+               kf_items_take},
+              {"name", "fun(item: integer): string?", "The item's English name, or nil for an id with none.",
+               kf_items_name}},
+         .fields = {}},
+        {.path = "kf.magic",
+         .doc = "The player's spells, ids 0 to 8 as KfEffectKind (the spell menu lists 4 to 8).",
+         .functions =
+             {ModFunction{"learned", "fun(spell: integer): boolean", "Whether the player has learned a spell.",
+                          kf_magic_learned},
+              {"set_learned", "fun(spell: integer, learned: boolean)",
+               "Learns or unlearns a spell; an unlearned spell that is selected is deselected.",
+               kf_magic_set_learned}},
+         .fields = {}},
         {.path = "ui",
          .doc = "Dear ImGui, inside on_draw and on_settings only. Colours are 0-1.",
          .functions =
@@ -848,13 +1350,18 @@ void mods_shutdown() {
 }
 
 void mods_between_updates() {
-    if (!warp_request)
-        return;
-    const WarpRequest request = *warp_request;
-    warp_request.reset();
-    // A warp queued before coop began is dropped, not applied to the coop world.
-    if (!mods_paused())
-        apply_warp(request);
+    // Requests queued before coop began are dropped, not applied to the coop world.
+    const bool apply = !mods_paused();
+    if (warp_request) {
+        const WarpRequest request = *warp_request;
+        warp_request.reset();
+        if (apply)
+            apply_warp(request);
+    }
+    if (apply)
+        for (const EquipRequest &request : equip_requests)
+            apply_equip(request);
+    equip_requests.clear();
 }
 
 bool mods_pause_requested() {
@@ -1005,6 +1512,7 @@ void mods_item_picked_up(u16 item) {
 // In coop last_floor keeps the single-player floor, so on_floor_change after leaving compares with
 // the floor the game was on before it, not a coop floor.
 void mods_floor_loaded(u8 floor, u8 map_variant) {
+    ext::record_kinds_on_floor();   // the kinds this floor's placements use, for kf.actors
     if (ext::mods_paused())
         return;
     const u8 from = ext::last_floor;

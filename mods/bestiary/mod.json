@@ -1,0 +1,7 @@
+{
+  "id": "bestiary",
+  "name": "Bestiary",
+  "version": "1.0",
+  "author": "Verdite",
+  "description": "The nearest monsters on the floor, with their kind, HP, action and distance. Settings has buttons to spawn one in front of the player and to give a Medicinal Herb. Example of kf.actors and kf.items."
+}

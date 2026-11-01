@@ -249,6 +249,8 @@ std::string coop_panel_line();
 void automap_draw(int input_context);   // minimap or full map, before the overlay windows
 void automap_toggle_full();
 bool automap_full_open();
+// The English name of an item as the map labels it, or nullptr for an id with none.
+const char *item_english_name(std::uint8_t id);
 
 // ---- touch controls ----
 void touch_controls_draw();   // inside the ImGui frame
