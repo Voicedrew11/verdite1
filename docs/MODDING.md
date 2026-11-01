@@ -485,8 +485,11 @@ on every access, so a mod may keep one (`local vitals = kf.raw.player_state.vita
 for as long as it likes. Every write is checked before it is stored: against
 the field's type (an integer's width and sign, an enum's declared values, a
 flags enum's bits, a string's length), its array's bounds, and the range the
-game survives, from `port/ext/raw_layer.toml` (an equipped armour id is 13 to
-54, the armour records the game indexes). A wrong name, index, kind or range,
+game survives, from `port/ext/raw_layer.toml` (a map object's `cell_x` is 0 to
+99, the grids' columns). Some fields are read-only, each with its reason in that
+file and in `api.d.lua`: the equipped and selected ids, the player's position
+and current floor, the model and animation choices, and others a write would
+crash the game through. A wrong name, index, kind or range,
 or a write to a read-only field, is an error that stops the mod, as a bad
 `kf.player` write does. Assigning to a whole struct or array is an error.
 
@@ -500,8 +503,8 @@ What a write does is the mod's to manage. The game may overwrite it at its
 next update, or leave other state out of step with it. Raw writes and
 `kf.rules` reach the same tables (monster definitions, level growth, prices,
 equipment records); `kf.rules` lays its values again at the next map load,
-over a raw write. A slot cannot be emptied through `kf.raw` (the "none" id is
-outside the equipped ids' range); `kf.equip` does that.
+over a raw write. Equipment changes through `kf.equip`, and the floor through
+`kf.warp`, not through `kf.raw`.
 
 Cost, measured headless: about 0.3 µs to read through the whole path from
 `kf.raw` and 0.12 µs to read or write through a kept proxy, so 1,000 accesses
@@ -673,8 +676,8 @@ mods are off in coop (decided 2026-10-31).
 4. ~~Entities, items, equipment and magic, then rules.~~ Done in 0.5
    (2026-10-31): `kf.actors`, `kf.items`, `kf.equip`, `kf.magic`. Rules done in
    0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
-5. The generated raw layer: built in 0.9 (2026-11-01), its writes not yet
-   fuzzed clean ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md), step 5).
+5. ~~The generated raw layer.~~ Built in 0.9 (2026-11-01); its writes fuzzed
+   clean the same day ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md), step 5).
 6. Asset overrides, audio, 3D drawing.
 7. ~~Input actions: reading, pressing and blocking them. Reading done in 0.7
    (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,

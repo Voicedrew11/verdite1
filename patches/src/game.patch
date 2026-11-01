@@ -1611,10 +1611,26 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
          menu_draw_pickup_preview(item_id);
          menu_draw_two_option(
 diff --git a/src/game/magic.cpp b/src/game/magic.cpp
-index 4fe18c8e7eede5473389e9b1044366d9608d42f4..f65a199f16b466c8a89573ebc8a208b8722f12f2 100644
+index 4fe18c8e7eede5473389e9b1044366d9608d42f4..54d7b8a0731ec402f23824a6645b6d378982061a 100644
 --- a/src/game/magic.cpp
 +++ b/src/game/magic.cpp
-@@ -154,8 +154,11 @@ void effect_pool_update(void)
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <algorithm>
+ #include <kf/game/collision.h>
+ #include <kf/game/game.h>
+ #include <kf/game/magic.h>
+@@ -140,6 +141,9 @@ void magic_cast(void)
+             spawn.vz = probe.z;
+             cell_z = spawn.vz / KF_MAP_TILE_SIZE;
+             cell_x = spawn.vx / KF_MAP_TILE_SIZE;
++            // PC fix: the probe is 3 cells ahead with no check, so near a map edge it left the grid.
++            cell_z = std::clamp<s32>(cell_z, 0, KF_MAP_ROWS - 1);
++            cell_x = std::clamp<s32>(cell_x, 0, KF_MAP_COLUMNS - 1);
+             spawn.vy = -(map_floor_height_grid.cells[cell_z][cell_x] * KF_MAP_HEIGHT_STEP);
+             effect_spawn_fire_wall(KF_PLAYER_DAMAGE_MULTIPLIER_ONE,
+                 KF_EFFECT_USE_PLAYER_MAGIC | KF_EFFECT_COLLISION_TARGET_ACTORS_AND_PLAYER, spawn,
+@@ -154,8 +158,11 @@ void effect_pool_update(void)
  {
      for (auto &record : effect_state.records) {
          if (record.type != KF_EFFECT_SLOT_FREE) {
@@ -5452,7 +5468,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
  }
  
 diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
-index 73c6900e478aa3769791136fbf65a88230b2c272..92f5dfb566d0243bb03a06a012298c42b662decb 100644
+index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045fff294d8 100644
 --- a/src/game/render_frame.cpp
 +++ b/src/game/render_frame.cpp
 @@ -1,6 +1,7 @@
@@ -5508,6 +5524,19 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..92f5dfb566d0243bb03a06a012298c42
      animation_cache_mark_stale();
      render_map_cells();
      poison_icon = &hud_sprites[KF_HUD_POISON_ICON];
+@@ -102,10 +124,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+         hud_sprites[KF_HUD_MAGIC_PANEL].state = KF_SPRITE_VISIBLE;
+         hud_sprites[KF_HUD_HP_GAUGE].sprite.w = (player_state.vitals.current_hp * HUD_GAUGE_WIDTH
+                                    + (player_state.vitals.maximum_hp - 1) / HUD_GAUGE_WIDTH)
+-                                  / player_state.vitals.maximum_hp;
++                                  / std::max<int>(player_state.vitals.maximum_hp, 1); // PC fix: a mod may write 0
+         hud_sprites[KF_HUD_MP_GAUGE].sprite.w = (player_state.vitals.current_mp * HUD_GAUGE_WIDTH
+                                    + (player_state.vitals.maximum_mp - 1) / HUD_GAUGE_WIDTH)
+-                                  / player_state.vitals.maximum_mp;
++                                  / std::max<int>(player_state.vitals.maximum_mp, 1); // PC fix: a mod may write 0
+         hud_sprites[KF_HUD_ATTACK_GAUGE].sprite.w = player_state.attack_charge_state.current / HUD_CHARGE_UNITS_PER_PIXEL;
+         hud_sprites[KF_HUD_MAGIC_GAUGE].sprite.w = player_state.magic_charge / HUD_CHARGE_UNITS_PER_PIXEL;
+         flags = player_state.status_effect_flags;
 @@ -140,6 +162,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      game_graphics_runtime.active_render_color.g = game_graphics_runtime.hud_brightness;
      game_graphics_runtime.active_render_color.r = game_graphics_runtime.hud_brightness;
@@ -5556,7 +5585,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..92f5dfb566d0243bb03a06a012298c42
      animation_cache_release_stale();
      // World rendering also advances floor sprites and notifications. Pace every
 diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
-index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b616aaa71 100644
+index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62e3ef6964 100644
 --- a/src/game/render_map_cells.cpp
 +++ b/src/game/render_map_cells.cpp
 @@ -3,6 +3,11 @@
@@ -5687,7 +5716,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..1f0fe8ff4ac8016a54c37e5c46f3455b
 -            &render_cell_windows[KF_CELL_WINDOW_YAW_COUNT - 1
 -                - (game_graphics_runtime.render_state.view_rotation.vy >> KF_CELL_WINDOW_YAW_SHIFT)];
 +        const int yaw_index = KF_CELL_WINDOW_YAW_COUNT - 1
-+            - (game_graphics_runtime.render_state.view_rotation.vy >> KF_CELL_WINDOW_YAW_SHIFT);
++            - ((game_graphics_runtime.render_state.view_rotation.vy & KF_ANGLE_WRAP_MASK) >> KF_CELL_WINDOW_YAW_SHIFT); // PC fix: a mod or the view shake can leave the yaw unwrapped
 +        game_graphics_runtime.active_cell_window = &render_cell_windows[yaw_index];
 +        if (kf::render_smoothing)
 +            game_graphics_runtime.active_cell_window = render_widen_cell_window(yaw_index, KF_CELL_WINDOW_YAW_COUNT / 2);

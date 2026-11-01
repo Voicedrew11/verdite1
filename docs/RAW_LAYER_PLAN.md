@@ -88,7 +88,10 @@ range, from three places:
 
 A field that cannot be given a safe range (one the game indexes with no single
 array behind it) is read-only, with a line in the listed file saying why.
-That is the only way a field becomes read-only. The fuzzer found three kinds
+That is the only way a field becomes read-only. A check can also go in the game
+as a patch where that gives the write back or no range can close the fault: the
+HUD gauges' divisors, the yaw's window index and the fire wall's grid lookup
+(2026-11-01). The fuzzer found three kinds
 (2026-11-01): a bound on a product or a sentinel ("not the last row", a cell
 window's width times height), a value the game keeps beside a pointer it sets
 (an equipped id and its record, the animation cache's owner), and a sub-field of
@@ -157,14 +160,19 @@ Following [MODDING.md](MODDING.md#where-the-code-goes):
    compiles with no hand edits. Report what it left out and why.
 5. The fuzzer's raw-write mode, and runs under ASan and UBSan until clean,
    each found range in the listed file. Mode built 2026-11-01 (`KF_FUZZ_RAW`,
-   `fuzz.py --raw`); **not clean**. 25 entries came from 10 rounds of 16
-   runs, but the first rounds were shallow: a `game_result` write ends the
-   loop, so most runs stalled within a few hundred updates. With the chooser
-   skipping it (seeds 201-216, about 1500 writes a run), 11 of 16 runs crashed
-   or failed: the notification queue's tail, a map object's action, the copy
-   regions, the collision grid, a fog value used as a divisor, and others.
-   The game indexes much of its own working state with no check, so a field
-   at a time will not converge soon.
+   `fuzz.py --raw`). **Clean 2026-11-01**: no crash, sanitizer report or
+   `host_fail` in 96 runs (`--preset fuzz --raw 6000 --mix --vary`, seeds
+   1100-1195, 1.3 million writes). Getting there took ten rounds and a scan of
+   every exposed field's uses as an index, divisor or bound, reading the sites it
+   flagged: 36 read-only fields and 19 ranges more than the first pass. Reading
+   found a hole the fuzzer had not hit: the saved floor records, parsed into
+   indices at load. The last two
+   campaigns before the clean one found one new field each in 96 runs, so a rare
+   one may remain. What a clean run does not cover: a run's stall in the opening
+   counts for nothing (5 of the 96; the game left gameplay and writes stop there,
+   and whether each was a death or the menu's return to the intro was not traced),
+   so the cutscenes' fields rest on reading, and on the opening running after
+   writes made earlier in the run. `game_result` is skipped: a write ends the loop.
 6. KF1's binding, the definitions file, MODDING.md's reference section, the
    API version, step 5 struck in the order.
 7. Measure: a raw read and write cost per access (a loop of 100 000 in a

@@ -64,12 +64,14 @@ why = "An accessory id: menu_resources().items[id] (80 entries, KF_ITEM_COUNT) w
 
 [fields."KfPlayerState.selected_magic_id"]
 range = [0, 8]
+read_only = "a raw write sets the id but not selected_magic_record, which player_select_magic sets beside it (src/game/player_death.cpp) and player_handle_magic_input (src/game/player_update.cpp) dereferences: a null reference, found by the fuzzer (seed 331)."
 why = "A magic id: effect_state.magic.entries[id] with no check in player_select_magic (src/game/player_death.cpp), and menu_resources().magic[id] (KF_MAGIC_PLAYER_COUNT = 9) in menu_draw_equipment_names (src/game/menu_runtime.cpp); save_state_valid rejects an id at or above 9 other than KF_MAGIC_NONE (src/game/save_system.cpp). KF_MAGIC_NONE (0xff) is outside the range, as for the equipment ids."
 
 # --- Actor definitions: an index with no check.
 
 [fields."KfActor.definition_id"]
 range = [0, 11]
+read_only = "chooses the actor's model, and the clip the actor holds must be that model's: render_bind_instance_vertices (src/game/animation_cache.cpp) stops the game with host_fail on a clip past it, and a written id can do that"
 why = "An index into actor_state.definitions.entries (12 entries, KF_ACTOR_DEFINITION_COUNT) with no check in actor_initialize (src/game/actor.cpp), collision_query_world (src/game/collision.cpp) and render_actor (src/game/entity_model_render.cpp)."
 
 # --- The union the game reads both ways: both members are three s16 over the same six bytes.
@@ -148,14 +150,6 @@ why = "The number of floor items the renderer draws: render_entities (src/game/r
 [fields."KfHudSprite.state"]
 read_only = "the HUD table is walked until a row's state is KF_SPRITE_END (render_hud_sprites, src/game/geometry_render.cpp), with no index: a non-END state in the table's last row runs the walk past the table, and no range expresses that"
 
-# The render's view yaw is camera_rotation plus this offset in s16 (player_update_transform_snapshot,
-# src/game/player_core.cpp), unmasked; render_map_cells (src/game/render_map_cells.cpp) indexes its 16 cell windows
-# with the yaw shifted right by KF_CELL_WINDOW_YAW_SHIFT, so an offset that wraps the yaw indexes past them.
-# The offset is the damage view shake's data (player_update.cpp), and no range is safe for every camera yaw
-# (found by the fuzzer, seed 102). The camera's own yaw can reach the same index: left writable, see the report.
-[fields."KfPlayerState.view_rotation_offset"]
-read_only = "the view shake added to the camera's yaw: player_update_transform_snapshot (src/game/player_core.cpp) adds it in s16 with no mask, and render_map_cells (src/game/render_map_cells.cpp) indexes the 16 cell windows by the yaw; no range is safe for every camera yaw"
-
 # effect_collision_in_cell (src/game/effect_map_collision.cpp) indexes map_cell_height_records (7 entries) with
 # a non-negative entry of this table, and a negative entry takes a branch that reads no record. So every value
 # up to 6 is safe: the range covers both. Found by the fuzzer (seed 55).
@@ -197,6 +191,250 @@ read_only = "the link's index: an effect record, a partner object or a copy regi
 # without an owner is a store through null (found by the fuzzer, seed 119), so the cache is read-only.
 [fields."KfGraphicsRuntimeGame.animation_cache_records"]
 read_only = "the renderer's animation cache: animation_cache_release (src/game/animation_cache.cpp) stores through each busy record's owner_slot, which a raw write cannot set, so a record written busy is a store through null"
+
+# --- Found by scanning the exposed fields' uses in the game's source (2026-11-01), alongside the fuzzer:
+# the fields below reach memory through a bound, an index or a parsed record with no check.
+
+# tmd_object_bytes (src/lib/tmd.cpp) bounds its object table by this size; the data pointer beside it is the
+# game's. A larger size reads past the model, and a size below the header is a host_fail (fuzzer, seed 306).
+[fields."KfTmdResource.size"]
+read_only = "the byte size of the model the pointer beside it holds: tmd_object_bytes (src/lib/tmd.cpp) bounds its reads by it, so a larger size reads past the model and a smaller one stops the game with host_fail"
+
+# Passed as the capacity of every read into asset_load_buffer (src/game/render.cpp, display_play_transition.cpp,
+# menu_map_viewer.cpp, save_system.cpp). Above the buffer's size a file overruns it; below the file's, a host_fail
+# (fuzzer, seeds 305 and 315: "Cannot load system screen.").
+[fields."KfDisplayState.asset_load_capacity"]
+read_only = "the capacity passed with every read into asset_load_buffer (display_show_system_screen, src/game/render.cpp): above the buffer's real size a file overruns it, below the file's size the game stops with host_fail"
+
+# The floor's saved records are parsed back with no check on the indices they hold: map_restore_floor_state
+# (src/game/map_load.cpp) stores through actors[index] and objects[index] read from these bytes.
+[fields."KfMapSavedFloor.records"]
+read_only = "bytes map_restore_floor_state (src/game/map_load.cpp) parses at each floor load, indexing actors and objects with values read from them and no check: a write here is an out-of-bounds store"
+
+# notify_effect_update (src/game/geometry_render.cpp) indexes eight entries with these and only masks after the
+# access (fuzzer, seed 301: a tail of 250).
+[fields."KfNotificationControl.queue_tail"]
+range = [0, 7]
+why = "The queue's read index: notify_effect_update (src/game/geometry_render.cpp) indexes notification_message_ids (KF_NOTIFICATION_CAPACITY = 8) with it, masking only after the access."
+
+[fields."KfNotificationControl.queue_head"]
+range = [0, 7]
+why = "The queue's write index: notify_enqueue (src/game/geometry_render.cpp) indexes notification_message_ids (KF_NOTIFICATION_CAPACITY = 8) with it, masking only after the access."
+
+# map_apply_copy_region (src/game/map_object_pool.cpp) walks width by height cells from source and destination
+# across the 100 by 100 grids with no check: the bound is on a sum of two fields.
+[fields."KfMapCopyRegion.source_x"]
+read_only = "map_apply_copy_region (src/game/map_object_pool.cpp) walks from here across the 100 by 100 grids with no check; the bound is on this plus width, which no single range states"
+
+[fields."KfMapCopyRegion.source_z"]
+read_only = "map_apply_copy_region (src/game/map_object_pool.cpp) walks from here across the 100 by 100 grids with no check; the bound is on this plus height, which no single range states"
+
+[fields."KfMapCopyRegion.destination_x"]
+read_only = "map_apply_copy_region (src/game/map_object_pool.cpp) walks from here across the 100 by 100 grids with no check; the bound is on this plus width, which no single range states"
+
+[fields."KfMapCopyRegion.destination_z"]
+read_only = "map_apply_copy_region (src/game/map_object_pool.cpp) walks from here across the 100 by 100 grids with no check; the bound is on this plus height, which no single range states"
+
+[fields."KfMapCopyRegion.width"]
+read_only = "map_apply_copy_region (src/game/map_object_pool.cpp) walks this many columns across the 100 by 100 grids with no check; the bound is on the start plus this"
+
+[fields."KfMapCopyRegion.height"]
+read_only = "map_apply_copy_region (src/game/map_object_pool.cpp) walks this many rows across the 100 by 100 grids with no check; the bound is on the start plus this"
+
+# render_floor_item (src/lib/floor_item.cpp) indexes the sprites by base plus frame; item_load_floor_placements
+# checks the pair when it loads them from the disc, and nothing does after (fuzzer, seed 304).
+[fields."KfFloorItem.base_sprite_index"]
+read_only = "render_floor_item (src/lib/floor_item.cpp) indexes the sprites by this plus animation_frame with no check; the sum's bound is on two fields, checked only when the disc's placements load"
+
+[fields."KfFloorItem.animation_frame"]
+read_only = "render_floor_item (src/lib/floor_item.cpp) indexes the sprites by base_sprite_index plus this with no check; the sum's bound is on two fields, checked only when the disc's placements load"
+
+[fields."KfFloorItem.frame_count"]
+read_only = "floor_item_advance_frame wraps animation_frame at this, and render_floor_item (src/lib/floor_item.cpp) indexes the sprites by the frame with no check"
+
+# effect_dispatch.cpp indexes effect_state.records with this with no check.
+[fields."KfEffectRecord.parent_effect_index"]
+range = [0, 47]
+why = "An index into effect_state.records (KF_EFFECT_CAPACITY = 48) with no check in src/game/effect_dispatch.cpp."
+
+# The effect's render id picks a billboard sprite or a model asset, by what the effect is, with no check
+# (render_effect, src/game/entity_render.cpp): no range states which table.
+[fields."KfEffectRenderId.value"]
+read_only = "a billboard sprite or a model asset, by the effect's kind, indexed with no check in src/game/entity_render.cpp; no single range states which table"
+
+# render_bind_instance_vertices (src/game/animation_cache.cpp) stops the game with host_fail when a clip is past
+# the asset's, and the asset is another field's choice (fuzzer, seed 300).
+[fields."KfActor.animation_clip"]
+read_only = "the clip of this actor's model: render_bind_instance_vertices (src/game/animation_cache.cpp) stops the game with host_fail on a clip past the model's, and models differ, so no range is safe"
+
+[fields."KfMapEvent.animation_clip"]
+read_only = "the clip of this character's model: render_bind_instance_vertices (src/game/animation_cache.cpp) stops the game with host_fail on a clip past the model's, and models differ, so no range is safe"
+
+[fields."KfEffectRecord.animation_clip"]
+read_only = "the clip of this effect's model: render_bind_instance_vertices (src/game/animation_cache.cpp) stops the game with host_fail on a clip past the model's, and models differ, so no range is safe"
+
+[fields."KfHudModel.animation_clip"]
+read_only = "the clip of this HUD model: render_bind_instance_vertices (src/game/animation_cache.cpp) stops the game with host_fail on a clip past the model's, and models differ, so no range is safe"
+
+[fields."KfActorDefinition.action_animations"]
+read_only = "the clips an actor's actions play: src/game/actor_behavior.cpp copies them to animation_clip, and render_bind_instance_vertices stops the game with host_fail on a clip past the model's"
+
+# A divisor once multiplied by a period (actor_boss_death, src/game/actor_behavior.cpp).
+[fields."KfActorDefinition.action_animation_steps"]
+range = [1, 65535]
+why = "Multiplied into a divisor by the boss death in src/game/actor_behavior.cpp, so never 0."
+
+# Which asset and which files a character uses: the asset selects a model the render reads, and the character
+# names the talk image, which fails the game when the floor has none.
+[fields."KfMapEvent.model_index"]
+read_only = "the character's model, added to KF_ASSET_MAP_EVENT_FIRST and indexed into asset_animations with no check (src/game/map_scripts.cpp, map_event_render.cpp)"
+
+[fields."KfMapEvent.character_id"]
+read_only = "names the character's talk image (talk_show_dialogue_page, src/game/save_system.cpp); a character the floor has no image for stops the game with host_fail"
+
+# save stops the game above five, and last_page[stage - 1] at 0 reads before the array whenever stage_limit is set
+# (fuzzer, seed 210).
+[fields."KfDialogueState.stage"]
+range = [1, 5]
+why = "Indexes last_page[stage - 1] (KF_DIALOGUE_STAGE_COUNT = 5) with no check in src/game/map_scripts.cpp and map_events.cpp; the save stops the game above 5. 0, 'no stage', is outside the range: a mod cannot clear it."
+
+[fields."KfDialogueState.stage_limit"]
+read_only = "nonzero makes map_event_interact (src/game/map_scripts.cpp) read last_page[stage - 1], and a character with stage 0 then reads before the array"
+
+# A saved object's identity is checked against the floor's at the next load, and its operation decides how its link
+# is read: map_restore_floor_state and map_saved_link_valid (src/game/map_load.cpp) stop the game on a mismatch
+# (fuzzer, seeds 208 and 310).
+[fields."KfMapObject.object_id"]
+read_only = "indexes map_object_state.definitions with no check, and map_restore_floor_state (src/game/map_load.cpp) stops the game with host_fail when a saved id differs from the floor's"
+
+[fields."KfMapObject.action"]
+read_only = "decides how the link is read as an index (map_object_pool_update, src/game/map_object.cpp), and map_saved_link_valid (src/game/map_load.cpp) stops the game with host_fail on a mismatch"
+
+[fields."KfMapObjectDefinition.behavior_type"]
+read_only = "decides how an object's link is read, and map_saved_link_valid (src/game/map_load.cpp) stops the game with host_fail on a mismatch"
+
+# The actor being updated.
+[fields."KfActorState.current_index"]
+range = [0, 127]
+why = "Indexes actor_target_players (KF_ACTOR_CAPACITY = 128) with no check in src/game/actor_pool.cpp."
+
+# The cell an object sits in goes into the floor's saved records and comes back at the next load as a grid index,
+# with no check (map_restore_floor_state, src/game/map_load.cpp; fuzzer, seeds 325, 327 and 332). magic.cpp and
+# map_scripts.cpp index the grids with it directly.
+[fields."KfMapObject.cell_x"]
+range = [0, 99]
+why = "A column of the 100 by 100 grids, indexed with no check by map_restore_floor_state (src/game/map_load.cpp) after a save, and by src/game/map_scripts.cpp."
+
+[fields."KfMapObject.cell_z"]
+range = [0, 99]
+why = "A row of the 100 by 100 grids, indexed with no check by map_restore_floor_state (src/game/map_load.cpp) after a save, and by src/game/map_scripts.cpp."
+
+[fields."KfActor.cell_x"]
+range = [0, 99]
+why = "A column of the 100 by 100 grids, indexed with no check by src/game/magic.cpp."
+
+[fields."KfActor.cell_z"]
+range = [0, 99]
+why = "A row of the 100 by 100 grids, indexed with no check by src/game/magic.cpp."
+
+[fields."KfMapEvent.cell_x"]
+range = [0, 99]
+why = "A column of the 100 by 100 grids, indexed with no check by src/game/map_event.cpp."
+
+[fields."KfMapEvent.cell_z"]
+range = [0, 99]
+why = "A row of the 100 by 100 grids, indexed with no check by src/game/map_event.cpp."
+
+# The player's cell and the cells around it index the grids directly (player_move_horizontal, src/game/player_core.cpp;
+# fuzzer, seed 334).
+[fields."KfMapCellCoordinates.x"]
+range = [0, 99]
+why = "A column of the 100 by 100 grids, indexed with no check by player_move_horizontal (src/game/player_core.cpp)."
+
+[fields."KfMapCellCoordinates.z"]
+range = [0, 99]
+why = "A row of the 100 by 100 grids, indexed with no check by player_move_horizontal (src/game/player_core.cpp)."
+
+# The floor the game believes it is on: map_world_state_persist stores the loaded floor's records under it
+# (src/game/player_core.cpp), so a written floor files one floor's objects under another's, and map_restore_floor_state
+# (src/game/map_load.cpp) stops the game at the next load; floor 0 also indexes floors[-1] (fuzzer, seeds 335 and 395).
+[fields."KfPlayerProgressState.current_floor"]
+read_only = "the floor whose records map_world_state_persist files the loaded floor under: a written floor mixes two floors' objects, and map_restore_floor_state (src/game/map_load.cpp) stops the game with host_fail at the next load. A warp changes the floor (kf.warp)."
+
+# notify_dequeue_group (src/game/geometry_render.cpp) clears entries until one differs from the id it took. With the
+# queue empty that id is NONE, every entry it clears is NONE, and the loop never ends; only a queue with an entry
+# reaches it unless this is written (fuzzer, seed 324).
+[fields."KfNotificationControl.effect_phase"]
+read_only = "a phase past idle with an empty queue has notify_dequeue_group (src/game/geometry_render.cpp) clear NONE entries looking for one that differs: the game hangs"
+
+# An actor's model is an asset the render selects, and its clip and texture must be the model's: a written descriptor
+# is a host_fail on the clip or an index past the materials (render_actor, src/game/entity_model_render.cpp; fuzzer,
+# seeds 346 and 347). The actor's definition chooses the same descriptor.
+[fields."KfActorDefinition.model_and_texture"]
+read_only = "the actor's model asset and texture: render_actor (src/game/entity_model_render.cpp) indexes the materials by it with no check, and a clip past the model's stops the game with host_fail"
+
+# A container's items live in the link's first bytes (map_container_item, kf/lib/map.h), four of them starting at
+# byte 0 or 1, so a write to these is an item id: map_saved_link_valid (src/game/map_load.cpp) stops the game on one
+# past the items at the next load (fuzzer, seed 351).
+[fields."KfMapObjectLink.link_id"]
+read_only = "in a container, the first item (map_container_item, kf/lib/map.h): map_saved_link_valid (src/game/map_load.cpp) stops the game with host_fail on an id past the items at the next load"
+
+[fields."KfMapObjectLink.spawn_sequence"]
+read_only = "in a container, two of the items (map_container_item, kf/lib/map.h): map_saved_link_valid (src/game/map_load.cpp) stops the game with host_fail on an id past the items at the next load"
+
+[fields."KfMapObjectLink.vertical_velocity"]
+read_only = "in a container, the last item in its low byte (map_container_item, kf/lib/map.h): map_saved_link_valid (src/game/map_load.cpp) stops the game with host_fail on an id past the items at the next load"
+
+# Which disc file the floor's character models come from: map_variant_assets_load (src/game/resources.cpp) builds the
+# name from it, and a variant the floor has no file for stops the game (fuzzer, seed 375).
+[fields."KfPlayerState.map_variant"]
+read_only = "names the floor's model file (map_variant_assets_load, src/game/resources.cpp): a variant the floor has no file for stops the game with host_fail"
+
+# render_map_event selects a model for a slot a live state marks; a slot the floor left empty has none registered, so
+# writing its state stops the game (asset_registry_select, src/game/asset_registry.cpp; fuzzer, seed 370).
+[fields."KfMapEvent.state"]
+read_only = "a live state on a slot the floor left empty has render_map_event (src/game/map_event_render.cpp) select a model nothing registered: asset_registry_select stops the game with host_fail"
+
+# Read for the camera's next point with no check against the path's length (src/game/camera_path.cpp,
+# src/cutscene/camera_path.cpp). Found by reading: the fuzzer rarely runs the cutscenes.
+[fields."KfCameraPathState.point_index"]
+read_only = "indexes the path's points with no check against its length (src/game/camera_path.cpp, src/cutscene/camera_path.cpp), and paths differ in length"
+
+# The cell a warp puts the player in: player_warp_to_floor_entry (src/game/player_core.cpp) sets the position from it
+# with no check, and the 100 by 100 grids are indexed with that position (fuzzer, seed 380).
+[fields."KfFloorEntryCell.x"]
+range = [0, 99]
+why = "A column of the 100 by 100 grids: the warp sets the player's position from it with no check (src/game/player_core.cpp)."
+
+[fields."KfFloorEntryCell.z"]
+range = [0, 99]
+why = "A row of the 100 by 100 grids: the warp sets the player's position from it with no check (src/game/player_core.cpp)."
+
+# Found by reading; the fuzzer rarely runs the cutscenes.
+[fields."KfFloorItemStateOpen.count"]
+range = [0, 64]
+why = "The number of floor items a cutscene draws: src/cutscene/entity_render.cpp walks items (KF_FLOOR_ITEM_CAPACITY = 64) with no check."
+
+[fields."KfGraphicsRuntimeOpen.tmd_projection_shift"]
+range = [0, 31]
+why = "A shift amount in src/cutscene/render.cpp; 32 or more is undefined."
+
+# A world flag map_restore_floor_state reads to accept a broken stone cross in floor 1's saved objects; written back,
+# the same save stops the game (src/game/map_load.cpp).
+[fields."KfMapFloor1Script.actor_activation_stage"]
+read_only = "map_restore_floor_state (src/game/map_load.cpp) accepts a saved broken stone cross only at KF_MAP_TRIGGER_COMPLETE: written back, the floor's next load stops the game with host_fail"
+
+# The low five bits are an effect kind, and actor_try_select_profiled_action (src/game/actor.cpp) indexes
+# actor_action_profiles (KF_ACTOR_ACTION_PROFILE_COUNT = 25) with them with no check (fuzzer, seed 743). "Those five
+# bits below 25" is not an interval, so the range also leaves out KF_ACTOR_EFFECT_PAIRED (0x20): a raw write cannot set it.
+[fields."KfActorActionParameters.effect_codes"]
+range = [0, 24]
+why = "An effect kind: actor_try_select_profiled_action (src/game/actor.cpp) indexes actor_action_profiles (25 entries) with its low five bits with no check. The paired flag (0x20) is outside the range."
+
+# Any value but "inactive" means a swing, and render_weapon (src/game/geometry_render.cpp) then reads the equipped
+# weapon's record, which is null with no weapon equipped; the game starts a swing only with one (fuzzer, seeds 924, 962).
+[fields."KfPlayerState.weapon_attack_phase"]
+read_only = "a swing in progress: render_weapon (src/game/geometry_render.cpp) dereferences equipped_weapon_record for any value but inactive, and that pointer is null with no weapon equipped"
 
 # --- Held back. Reasons are the report's; these say why the layer may not reach them.
 
