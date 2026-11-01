@@ -6,6 +6,8 @@
 #include <verdite/crash.h>
 #include <verdite/mods.h>
 
+#include "raw_lua.h"
+
 #include <cJSON.h>
 #include <lauxlib.h>
 #include <lua.h>
@@ -716,6 +718,8 @@ int open_mod(lua_State *L) {
         bind_table(L, table);
     for (const ModTable &table : mod.host->api)
         bind_table(L, table);
+    if (!mod.host->raw.path.empty())
+        raw_open(L, mod.host->raw);
     push_table_json(L, mod.config_json);
     lua_setglobal(L, "config");
     apply_save(L);
@@ -942,6 +946,8 @@ std::string make_definitions(const ModHostConfig &config) {
         write_table_definition(out, table);
     for (const ModTable &table : config.api)
         write_table_definition(out, table);
+    if (!config.raw.path.empty())
+        out += "\n" + raw_definitions(config.raw);
     return out;
 }
 

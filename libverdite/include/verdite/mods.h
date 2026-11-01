@@ -33,6 +33,8 @@
 #include <variant>
 #include <vector>
 
+#include "verdite/raw.h"
+
 struct lua_State;
 
 namespace verdite {
@@ -109,6 +111,7 @@ struct ModHostConfig {
     std::string api_version;                  // a mod's kf.api_version, say; also in the definitions
     std::vector<ModTable> api;
     std::vector<ModEvent> events;             // the events the game raises (ModHost::raise)
+    RawLayer raw;                             // the raw layer, hung at raw.path; an empty path: none
     std::string definitions_name = "api.d.lua";   // written into mods_dir from api and events
     std::size_t memory_cap_bytes = 64u << 20;     // per mod
     std::uint64_t instructions_per_call = 100'000'000;   // per callback, and for the script's first run
