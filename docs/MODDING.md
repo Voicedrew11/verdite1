@@ -517,7 +517,11 @@ missing types are made up for by a definitions file (below).
 Inside the game, everything; outside it, nothing but the mod's own folder. The
 API is not a short list of approved knobs: a curated layer covers the common
 cases with stable names, and a raw layer reaches every named global the decomp
-has, so no mod waits on the curated layer to grow.
+has, so no mod waits on the curated layer to grow. A mod is meant to be able
+to change how the game works, not only its numbers: call the game's functions,
+run its own code in place of them, and add content the disc does not have. The
+one line the raw layer holds is memory safety (decided 2026-11-01): no value
+from Lua reaches the game's memory unchecked, since mods come from strangers.
 
 | area | what | |
 |---|---|---|
@@ -533,6 +537,8 @@ has, so no mod waits on the curated layer to grow.
 | audio | play the game's sound effects and music, or the mod's own | |
 | saves | a `save` table stored with each save slot, beside the game's own | |
 | other mods | `mods.get(id)` returns another mod's exported table; mods can raise their own events | |
+| functions | call any game function the decomp's headers declare; run a mod's code before, after or in place of one | arguments checked as raw writes are |
+| content | new items, monster kinds, floors: the game's fixed-size tables grown so a mod's rows fit beside the disc's | |
 | raw | `kf.game.<global>.<field>`: every named global and struct field in the decomp, typed and bounds-checked | unstable: follows the decomp's renames |
 
 ### What a mod cannot do
@@ -614,18 +620,29 @@ mods are off in coop (decided 2026-10-31).
 4. ~~Entities, items, equipment and magic, then rules.~~ Done in 0.5
    (2026-10-31): `kf.actors`, `kf.items`, `kf.equip`, `kf.magic`. Rules done in
    0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
-5. The generated raw layer.
+5. The generated raw layer: the handoff is [RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md).
 6. Asset overrides, audio, 3D drawing.
 7. ~~Input actions: reading, pressing and blocking them. Reading done in 0.7
    (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,
    `kf.play.top_speed` and `kf.game.mouse` and `music_while_paused`, which
    the run and the map need to be mods.~~ Pressing and blocking done in 0.8
    (2026-11-01): `kf.action_hold`, `kf.action_press`, `kf.action_block`.
+8. Calling the game's functions: bindings generated from the same headers as
+   the raw layer, each argument checked against its type and range.
+9. Hooking and replacing the game's functions: a mod's code before, after or
+   in place of a game function. We compile the decomp, so the build can give
+   each function a hook point; no patching at run time.
+10. Growing the game's tables for new content: more item ids than the disc's
+    80 (`port/ext/extra_items.cpp` fills unused ids today, it does not add
+    any), more monster kinds a floor, new floors, as patches that raise the
+    capacities and keep the disc's rows where the game expects them.
 
 ### Open questions
 
-- How the raw layer is generated: libclang over the decomp's headers, or a
-  listed subset.
+- ~~How the raw layer is generated: libclang over the decomp's headers, or a
+  listed subset.~~ Decided 2026-11-01: clang over the patched headers, with a
+  short listed file of value ranges and aliases; everything is writable but
+  raw pointers and the allocators ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md)).
 - Asset formats: PNG for textures, and how replaced textures sit in the Vulkan
   backend's texture pages, including larger replacements.
 - ~~Whether rules that run every update (regeneration) are worth an event per
