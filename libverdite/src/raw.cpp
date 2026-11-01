@@ -43,15 +43,16 @@ struct StepList {
 };
 
 // A place the path reaches: the global and the steps that locate it, and what the way there adds.
+// Resolving never builds the path's text: path_text does, for a message or kf.raw.path only.
 struct Place {
+    const RawLayer *layer = nullptr;
     std::size_t global = 0; // index into the layer's globals
     StepList steps;
     const RawType *type = nullptr;
     void *address = nullptr;
-    RawRange range = full_range; // narrowed by every limit on the way
-    std::string shown;           // the path text: "player_state.vitals"
-    std::string read_only;       // the first read-only reason on the way; empty: writable
-    std::string read_only_path;  // the path that reason applies to
+    RawRange range = full_range;     // narrowed by every limit on the way
+    std::string_view read_only;      // the first read-only reason on the way; empty: writable
+    std::size_t read_only_steps = 0; // the steps taken when that reason applied
 };
 
 // A place, or why the path does not reach one.
@@ -61,7 +62,7 @@ struct Lookup {
 };
 
 Lookup reached(Place place) {
-    return {std::move(place), {}};
+    return {place, {}};
 }
 Lookup refused(std::string error) {
     return {std::nullopt, std::move(error)};
@@ -72,12 +73,6 @@ struct Part {
     bool element = false;
     std::string_view name;
     std::size_t index = 0;
-};
-
-struct ParsedPath {
-    std::string_view global;
-    std::vector<Part> parts;
-    std::string error;
 };
 
 bool is_name_char(char c) {
@@ -126,23 +121,18 @@ bool take_part(std::string_view text, std::size_t &pos, Part &part) {
     return !part.name.empty();
 }
 
-ParsedPath parse_path(std::string_view path) {
-    ParsedPath parsed;
+// The syntax error in a path, or empty if it is well formed. Checked before any lookup, so a
+// malformed path is reported as one even after a name that does not exist.
+std::string syntax_error(std::string_view path) {
     std::size_t pos = 0;
-    parsed.global = take_name(path, pos);
-    if (parsed.global.empty()) {
-        parsed.error = path.empty() ? "empty path" : "bad path '" + std::string(path) + "'";
-        return parsed;
-    }
+    if (take_name(path, pos).empty())
+        return path.empty() ? "empty path" : "bad path '" + std::string(path) + "'";
     while (pos < path.size()) {
         Part part;
-        if (!take_part(path, pos, part)) {
-            parsed.error = "bad path '" + std::string(path) + "'";
-            return parsed;
-        }
-        parsed.parts.push_back(part);
+        if (!take_part(path, pos, part))
+            return "bad path '" + std::string(path) + "'";
     }
-    return parsed;
+    return {};
 }
 
 RawRange intersect(RawRange a, RawRange b) {
@@ -158,18 +148,41 @@ void apply_limits(Place &place, const RawLimits &limits) {
     if (limits.range)
         place.range = intersect(place.range, *limits.range);
     if (!limits.read_only.empty() && place.read_only.empty()) {
-        place.read_only = std::string(limits.read_only);
-        place.read_only_path = place.shown;
+        place.read_only = limits.read_only;
+        place.read_only_steps = place.steps.count;
     }
+}
+
+// The path text of the first steps of place: "player_state.vitals[2]". Built only when asked for.
+std::string path_prefix(const Place &place, std::size_t steps) {
+    const RawGlobal &global = place.layer->globals[place.global];
+    std::string text(global.name);
+    const RawType *type = global.type;
+    for (std::size_t i = 0; i < steps; ++i) {
+        const Step step = place.steps.items[i];
+        if (step.element) {
+            text += "[" + std::to_string(step.at) + "]";
+            type = type->element;
+        } else {
+            const RawField &field = type->fields[step.at];
+            text += "." + std::string(field.name);
+            type = field.type;
+        }
+    }
+    return text;
+}
+
+std::string path_text(const Place &place) {
+    return path_prefix(place, place.steps.count);
 }
 
 Place global_place(const RawLayer &layer, std::size_t index) {
     const RawGlobal &global = layer.globals[index];
     Place place;
+    place.layer = &layer;
     place.global = index;
     place.type = global.type;
     place.address = global.address();
-    place.shown = std::string(global.name);
     apply_limits(place, global.limits);
     return place;
 }
@@ -192,7 +205,7 @@ std::optional<std::uint32_t> field_position(const RawType &type, std::string_vie
 
 Lookup field_at(const Place &parent, std::size_t at) {
     if (parent.type->kind != RawKind::Struct)
-        return refused(parent.shown + " is not a struct");
+        return refused(path_text(parent) + " is not a struct");
     if (parent.steps.count >= max_depth)
         return refused("path too deep");
     const RawField &field = parent.type->fields[at];
@@ -200,26 +213,25 @@ Lookup field_at(const Place &parent, std::size_t at) {
     child.steps.items[child.steps.count++] = Step{false, static_cast<std::uint32_t>(at)};
     child.type = field.type;
     child.address = field.member(parent.address);
-    child.shown = parent.shown + "." + std::string(field.name);
     apply_limits(child, field.limits);
-    return reached(std::move(child));
+    return reached(child);
 }
 
 Lookup element_at_index(const Place &parent, std::size_t index) {
     if (parent.type->kind != RawKind::Array)
-        return refused(parent.shown + " is not an array");
-    const std::string shown = parent.shown + "[" + std::to_string(index) + "]";
-    if (index >= parent.type->length)
-        return refused(shown + " is past the end (" + std::to_string(parent.type->length) +
+        return refused(path_text(parent) + " is not an array");
+    if (index >= parent.type->length) {
+        const std::string element_path = path_text(parent) + "[" + std::to_string(index) + "]";
+        return refused(element_path + " is past the end (" + std::to_string(parent.type->length) +
                        " elements)");
+    }
     if (parent.steps.count >= max_depth)
         return refused("path too deep");
     Place child = parent;
     child.steps.items[child.steps.count++] = Step{true, static_cast<std::uint32_t>(index)};
     child.type = parent.type->element;
     child.address = parent.type->element_at(parent.address, index);
-    child.shown = shown;
-    return reached(std::move(child));
+    return reached(child);
 }
 
 // The step a part of a written path takes from parent.
@@ -227,28 +239,32 @@ Lookup step_text(const Place &parent, const Part &part) {
     if (part.element)
         return element_at_index(parent, part.index);
     if (parent.type->kind != RawKind::Struct)
-        return refused(parent.shown + " is not a struct");
+        return refused(path_text(parent) + " is not a struct");
     const std::optional<std::uint32_t> at = field_position(*parent.type, part.name);
     if (!at)
-        return refused(parent.shown + " has no field '" + std::string(part.name) + "'");
+        return refused(path_text(parent) + " has no field '" + std::string(part.name) + "'");
     return field_at(parent, *at);
 }
 
 Lookup locate_text(const RawLayer &layer, std::string_view path) {
-    const ParsedPath parsed = parse_path(path);
-    if (!parsed.error.empty())
-        return refused(parsed.error);
-    const std::optional<std::size_t> index = global_index(layer, parsed.global);
+    const std::string error = syntax_error(path);
+    if (!error.empty())
+        return refused(error);
+    std::size_t pos = 0;
+    const std::string_view global_name = take_name(path, pos);
+    const std::optional<std::size_t> index = global_index(layer, global_name);
     if (!index)
-        return refused("no global '" + std::string(parsed.global) + "'");
+        return refused("no global '" + std::string(global_name) + "'");
     Place place = global_place(layer, *index);
-    for (const Part &part : parsed.parts) {
+    while (pos < path.size()) {
+        Part part;
+        take_part(path, pos, part); // well formed: syntax_error has checked the whole path
         Lookup next = step_text(place, part);
         if (!next.place)
             return next;
-        place = std::move(*next.place);
+        place = *next.place;
     }
-    return reached(std::move(place));
+    return reached(place);
 }
 
 // The place a proxy's steps reach now, from its global.
@@ -259,9 +275,9 @@ Lookup locate_steps(const RawLayer &layer, std::size_t global, const StepList &s
         Lookup next = step.element ? element_at_index(place, step.at) : field_at(place, step.at);
         if (!next.place)
             return next;
-        place = std::move(*next.place);
+        place = *next.place;
     }
-    return reached(std::move(place));
+    return reached(place);
 }
 
 // ---- values ----
@@ -272,7 +288,7 @@ bool is_container(const RawType &type) {
 
 std::string not_a_value(const Place &place) {
     const std::string_view noun = place.type->kind == RawKind::Struct ? "a struct" : "an array";
-    return place.shown + " is " + std::string(noun) + ", not a value";
+    return path_text(place) + " is " + std::string(noun) + ", not a value";
 }
 
 std::string_view expected_phrase(RawKind kind) {
@@ -305,8 +321,8 @@ std::string_view value_phrase(const RawValue &value) {
 }
 
 std::string mismatch(const Place &place, const RawValue &value) {
-    return place.shown + " needs " + std::string(expected_phrase(place.type->kind)) + ", not " +
-           std::string(value_phrase(value));
+    return path_text(place) + " needs " + std::string(expected_phrase(place.type->kind)) +
+           ", not " + std::string(value_phrase(value));
 }
 
 // The checks every integer kind shares: its width and the limits on the way to it.
@@ -316,7 +332,7 @@ std::string check_integer(const Place &place, const RawValue &value) {
         return mismatch(place, value);
     const RawRange range = intersect(place.range, place.type->range);
     if (*number < range.min || *number > range.max)
-        return std::to_string(*number) + " is out of range for " + place.shown + " " +
+        return std::to_string(*number) + " is out of range for " + path_text(place) + " " +
                range_text(range);
     return {};
 }
@@ -330,7 +346,7 @@ std::string check_enum(const Place &place, const RawValue &value) {
         std::any_of(place.type->values.begin(), place.type->values.end(),
                     [&](const RawEnumValue &item) { return item.value == number; });
     if (!declared)
-        return std::to_string(number) + " is not a value of " + place.shown;
+        return std::to_string(number) + " is not a value of " + path_text(place);
     return {};
 }
 
@@ -343,7 +359,7 @@ std::string check_flags(const Place &place, const RawValue &value) {
         mask |= static_cast<std::uint64_t>(item.value);
     const auto bits = static_cast<std::uint64_t>(std::get<std::int64_t>(value));
     if ((bits & ~mask) != 0)
-        return std::to_string(bits & ~mask) + " is not a flag of " + place.shown;
+        return std::to_string(bits & ~mask) + " is not a flag of " + path_text(place);
     return {};
 }
 
@@ -358,9 +374,9 @@ std::string check_number(const Place &place, const RawValue &value) {
     if (!number)
         return mismatch(place, value);
     if (!std::isfinite(*number))
-        return place.shown + " is not a finite number";
+        return path_text(place) + " is not a finite number";
     if (std::fabs(*number) > static_cast<double>(std::numeric_limits<float>::max()))
-        return place.shown + " is out of range for a float";
+        return path_text(place) + " is out of range for a float";
     return {};
 }
 
@@ -369,10 +385,10 @@ std::string check_string(const Place &place, const RawValue &value) {
     if (!text)
         return mismatch(place, value);
     if (text->size() >= place.type->length)
-        return place.shown + " is too long (at most " + std::to_string(place.type->length - 1) +
-               " bytes)";
+        return path_text(place) + " is too long (at most " +
+               std::to_string(place.type->length - 1) + " bytes)";
     if (text->find('\0') != std::string::npos)
-        return place.shown + " contains a NUL byte";
+        return path_text(place) + " contains a NUL byte";
     return {};
 }
 
@@ -410,7 +426,8 @@ std::string write_place(const Place &place, const RawValue &given) {
     if (is_container(*place.type))
         return not_a_value(place);
     if (!place.read_only.empty())
-        return place.read_only_path + " is read-only: " + place.read_only;
+        return path_prefix(place, place.read_only_steps) +
+               " is read-only: " + std::string(place.read_only);
     const RawValue value = as_kind(*place.type, given);
     std::string error = check_value(place, value);
     if (!error.empty())
@@ -446,7 +463,7 @@ static_assert(std::is_trivially_destructible_v<RawLayer>);
 Place resolve_or_raise(lua_State *L, Lookup lookup) {
     if (!lookup.place)
         lua_fail(L, lookup.error);
-    return std::move(*lookup.place);
+    return *lookup.place;
 }
 
 // The layer, kept as a copy in a full userdata that every binding has as its first upvalue.
@@ -514,8 +531,9 @@ void write_from_lua(lua_State *L, const Place &target, int index) {
         lua_fail(L, not_a_value(target));
     const std::optional<RawValue> value = value_from_lua(L, index);
     if (!value)
-        lua_fail(L, target.shown + " needs " + std::string(expected_phrase(target.type->kind)) +
-                        ", not " + luaL_typename(L, index));
+        lua_fail(L, path_text(target) + " needs " +
+                        std::string(expected_phrase(target.type->kind)) + ", not " +
+                        luaL_typename(L, index));
     const std::string error = write_place(target, *value);
     if (!error.empty())
         lua_fail(L, error);
@@ -565,14 +583,19 @@ int proxy_newindex(lua_State *L) {
 int proxy_len(lua_State *L) {
     const Place place = place_of_proxy(L, 1);
     if (place.type->kind != RawKind::Array)
-        lua_fail(L, place.shown + " is a struct, not an array");
+        lua_fail(L, path_text(place) + " is a struct, not an array");
     lua_pushinteger(L, static_cast<lua_Integer>(place.type->length));
     return 1;
 }
 
+// The place's path as a Lua string.
+void push_path(lua_State *L, const Place &place) {
+    const std::string text = path_text(place);
+    lua_pushlstring(L, text.data(), text.size());
+}
+
 int proxy_tostring(lua_State *L) {
-    const Place place = place_of_proxy(L, 1);
-    lua_pushlstring(L, place.shown.data(), place.shown.size());
+    push_path(L, place_of_proxy(L, 1));
     return 1;
 }
 
@@ -636,8 +659,7 @@ int raw_copy(lua_State *L) {
 }
 
 int raw_path(lua_State *L) {
-    const Place place = place_of_proxy(L, 1);
-    lua_pushlstring(L, place.shown.data(), place.shown.size());
+    push_path(L, place_of_proxy(L, 1));
     return 1;
 }
 

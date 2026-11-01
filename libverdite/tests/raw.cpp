@@ -491,6 +491,7 @@ TEST_CASE("an unknown name or a malformed path is refused") {
     reset_game();
     CHECK(read_game("player_state.foo").error == "player_state has no field 'foo'");
     CHECK(read_game("nope.x").error == "no global 'nope'");
+    CHECK(read_game("nope.").error == "bad path 'nope.'");
     CHECK(read_game("player_state.").error == "bad path 'player_state.'");
     CHECK(read_game("player_state[x]").error == "bad path 'player_state[x]'");
     CHECK(read_game("").error == "empty path");
@@ -507,6 +508,17 @@ TEST_CASE("a read-only field is refused with its reason, and still reads") {
     CHECK(write_int("player_state.version", 4) ==
           "player_state.version is read-only: const in the decomp");
     CHECK(read_int("player_state.version") == 3);
+}
+
+TEST_CASE("a read-only global is named by its own path however deep the write goes") {
+    static const std::array<RawGlobal, 1> frozen_globals = {
+        raw_global<[]() -> auto & { return game::player_state; }>("player_state",
+                                                                  read_only_limit("frozen", ""))};
+    static const RawLayer frozen_layer{.path = "t.raw", .doc = "", .globals = frozen_globals};
+    reset_game();
+    CHECK(raw_write(frozen_layer, "player_state.vitals.current_hp", RawValue{std::int64_t{1}}) ==
+          "player_state is read-only: frozen");
+    CHECK(game::player_state.vitals.current_hp == 40);
 }
 
 TEST_CASE("a struct or an array is not a value") {
