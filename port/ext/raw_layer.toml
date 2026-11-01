@@ -30,26 +30,32 @@ instances = [
 
 [fields."KfPlayerState.equipped_weapon_id"]
 range = [0, 15]
+read_only = "a raw write sets the id but not equipped_weapon_record, which the equip code sets beside it (src/game/player_core.cpp) and player_update_equipment_effects (src/game/player_update.cpp) dereferences whenever the id is not KF_OBJECT_NONE: a null reference, found by the fuzzer (raw-write mode, seeds 26 and 32). The range is the window the id may take when set by the game."
 why = "A weapon id: weapon_records.entries[id] (16 entries, KF_WEAPON_RECORD_COUNT) with no check in player_compute_combat_stats (src/game/player_death.cpp) and menu_draw_equipment_names (src/game/menu_runtime.cpp); save_state_valid accepts only KF_OBJECT_NONE or a count below 16 (src/game/save_system.cpp)."
 
 [fields."KfPlayerState.equipped_head_armor_id"]
 range = [13, 54]
+read_only = "a raw write sets the id but not equipped_head_armor_record, which the equip code sets beside it (src/game/player_core.cpp) and player_update_equipment_effects (src/game/player_update.cpp) dereferences whenever the id is not KF_OBJECT_NONE: a null reference, found by the fuzzer (raw-write mode, seeds 26 and 32). The range is the window the id may take when set by the game."
 why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries, KF_ARMOR_RECORD_COUNT) with no check in player_compute_combat_stats (src/game/player_death.cpp); save_state_valid rejects an id outside that window (src/game/save_system.cpp). menu_resources().items[id] reads it too (menu_draw_equipment_names)."
 
 [fields."KfPlayerState.equipped_body_armor_id"]
 range = [13, 54]
+read_only = "a raw write sets the id but not equipped_body_armor_record, which the equip code sets beside it (src/game/player_core.cpp) and player_update_equipment_effects (src/game/player_update.cpp) dereferences whenever the id is not KF_OBJECT_NONE: a null reference, found by the fuzzer (raw-write mode, seeds 26 and 32). The range is the window the id may take when set by the game."
 why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
 
 [fields."KfPlayerState.equipped_shield_id"]
 range = [13, 54]
+read_only = "a raw write sets the id but not equipped_shield_record, which the equip code sets beside it (src/game/player_core.cpp) and player_update_equipment_effects (src/game/player_update.cpp) dereferences whenever the id is not KF_OBJECT_NONE: a null reference, found by the fuzzer (raw-write mode, seeds 26 and 32). The range is the window the id may take when set by the game."
 why = "A shield id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
 
 [fields."KfPlayerState.equipped_arm_armor_id"]
 range = [13, 54]
+read_only = "a raw write sets the id but not equipped_arm_armor_record, which the equip code sets beside it (src/game/player_core.cpp) and player_update_equipment_effects (src/game/player_update.cpp) dereferences whenever the id is not KF_OBJECT_NONE: a null reference, found by the fuzzer (raw-write mode, seeds 26 and 32). The range is the window the id may take when set by the game."
 why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
 
 [fields."KfPlayerState.equipped_leg_armor_id"]
 range = [13, 54]
+read_only = "a raw write sets the id but not equipped_leg_armor_record, which the equip code sets beside it (src/game/player_core.cpp) and player_update_equipment_effects (src/game/player_update.cpp) dereferences whenever the id is not KF_OBJECT_NONE: a null reference, found by the fuzzer (raw-write mode, seeds 26 and 32). The range is the window the id may take when set by the game."
 why = "An armour id: armor_records.entries[id - KF_ITEM_IRON_MASK] (42 entries) with no check in player_compute_combat_stats (src/game/player_death.cpp); the same window in save_state_valid (src/game/save_system.cpp)."
 
 [fields."KfPlayerState.equipped_accessory_id"]
@@ -81,6 +87,116 @@ flags = true
 
 [enums.KfActorEffectCode]
 flags = true
+
+# --- Found by the fuzzer's raw-write mode (KF_FUZZ_RAW, scripts/fuzz.py --raw). Each entry names the
+# crash or fail it fixes, and the replay of its run (fuzz/runs/...) is in the fuzzer's report.
+
+# audio_play_voice (src/lib/audio.cpp) advances this index and indexes voice_slots.voice_ids, ten
+# entries, with no check; the game keeps it in 0..9 by wrapping at KF_AUDIO_VOICE_SLOTS (src/game/audio.cpp).
+[globals.audio_voice_slot_index]
+range = [0, 9]
+why = "The voice slot the next sound takes: audio_play_voice (src/lib/audio.cpp) indexes voice_slots.voice_ids (KF_AUDIO_VOICE_SLOTS = 10) with no check; the game keeps it in 0..9 by wrapping at KF_AUDIO_VOICE_SLOTS (src/game/audio.cpp)."
+
+# The cutscene's copy of the same index, used through the same audio_play_voice (src/cutscene/audio.cpp).
+[globals.cutscene_audio_voice_slot_index]
+range = [0, 9]
+why = "The cutscene's voice slot: audio_play_voice (src/lib/audio.cpp) indexes voice_slots.voice_ids (KF_AUDIO_VOICE_SLOTS = 10) with no check; the game keeps it in 0..9 by wrapping (src/cutscene/audio.cpp)."
+
+# render_map_cells (src/game/render_map_cells.cpp) reads width times height cells from the window's table
+# (KF_CELL_WINDOW_CELL_CAPACITY, or the wide window's table) with no check. The bound is on the product,
+# which no single-field range states, so both sides are read-only: the windows are the disc's (cell_windows_load).
+[fields."KfCellWindow.width"]
+read_only = "the window's cell count per row: render_map_cells (src/game/render_map_cells.cpp) reads width times height cells from the window's table with no check, and no single range bounds the product"
+
+[fields."KfCellWindow.height"]
+read_only = "the window's cell count per column: render_map_cells (src/game/render_map_cells.cpp) reads width times height cells from the window's table with no check, and no single range bounds the product"
+
+# A path the game loads a file by. A name the disc does not hold fails the loader, and the game stops
+# with host_fail (src/lib/resource_file.cpp, resource_file_fail). The fuzzer wrote printable bytes into
+# these and reached that stop, so they are read-only: no single range states "a name on the disc".
+[globals.opening_initial_tim_path]
+read_only = "the intro's first image file: opening_controller (src/cutscene/opening_controller.cpp) loads it by this name, and a name not on the disc fails the game (host_fail)"
+
+[globals.talk_image_path_template]
+read_only = "the talk image's file name, filled in at each line: talk_show_dialogue_page (src/game/save_system.cpp) shows the image it names through screen_show_image_until_input, and a name not on the disc fails the game (host_fail)"
+
+[globals.map_resource_path]
+read_only = "the floor's file name after B0/ and the floor digit: map_resource_load_file (src/game/resources.cpp) loads it by this name, and a name not on the disc fails the game (host_fail)"
+
+[fields."KfItemModelFile.path"]
+read_only = "an item's model file name: resource_file_load_item_model (src/game/resource_file.cpp) loads it by this name, and a name not on the disc fails the game (host_fail)"
+
+# camera_path_prepare_segment (src/lib/camera_path.cpp) divides by the distance to the point, and by
+# distance / speed (frames_remaining), so a point at the current position, or a speed above the distance
+# (or a negative one), faults. No single range on speed or position is safe: the distance depends on
+# where the camera is, so both are read-only (the cutscenes' paths are the disc's data).
+[fields."KfCameraPathPoint.speed"]
+read_only = "the segment's speed: camera_path_prepare_segment (src/lib/camera_path.cpp) divides by distance / speed, which is zero (a fault) when the speed is above the distance, and a negative speed gives such a zero; the fuzzer found it (seeds 17 and 27)"
+
+[fields."KfCameraPathPoint.position"]
+read_only = "the point's position: camera_path_prepare_segment (src/lib/camera_path.cpp) divides by the distance from the camera to it, which is zero (a fault) at the camera's own position"
+
+# render_frame's floor items (src/game/render_scene.cpp) loop index 0 .. floor_item_count over floor_items,
+# which holds KF_FLOOR_ITEM_CAPACITY (64) entries, with no check. Found by the fuzzer (seed 113).
+[fields."KfGraphicsRuntimeGame.floor_item_count"]
+range = [0, 64]
+why = "The number of floor items the renderer draws: render_entities (src/game/render_scene.cpp) loops over floor_items, which holds KF_FLOOR_ITEM_CAPACITY (64) entries, with no check."
+
+# render_hud_sprites (src/game/geometry_render.cpp) walks the table until a row's state is KF_SPRITE_END, with no
+# index: a row written to a state other than END in the table's last row runs past the table. No single range
+# expresses "not the last row", so the state is read-only (found by the fuzzer, seed 101).
+[fields."KfHudSprite.state"]
+read_only = "the HUD table is walked until a row's state is KF_SPRITE_END (render_hud_sprites, src/game/geometry_render.cpp), with no index: a non-END state in the table's last row runs the walk past the table, and no range expresses that"
+
+# The render's view yaw is camera_rotation plus this offset in s16 (player_update_transform_snapshot,
+# src/game/player_core.cpp), unmasked; render_map_cells (src/game/render_map_cells.cpp) indexes its 16 cell windows
+# with the yaw shifted right by KF_CELL_WINDOW_YAW_SHIFT, so an offset that wraps the yaw indexes past them.
+# The offset is the damage view shake's data (player_update.cpp), and no range is safe for every camera yaw
+# (found by the fuzzer, seed 102). The camera's own yaw can reach the same index: left writable, see the report.
+[fields."KfPlayerState.view_rotation_offset"]
+read_only = "the view shake added to the camera's yaw: player_update_transform_snapshot (src/game/player_core.cpp) adds it in s16 with no mask, and render_map_cells (src/game/render_map_cells.cpp) indexes the 16 cell windows by the yaw; no range is safe for every camera yaw"
+
+# effect_collision_in_cell (src/game/effect_map_collision.cpp) indexes map_cell_height_records (7 entries) with
+# a non-negative entry of this table, and a negative entry takes a branch that reads no record. So every value
+# up to 6 is safe: the range covers both. Found by the fuzzer (seed 55).
+[globals.map_cell_attribute_height_table]
+range = [-32768, 6]
+why = "The height record each cell attribute uses: effect_collision_in_cell (src/game/effect_map_collision.cpp) indexes map_cell_height_records (KF_MAP_CELL_HEIGHT_RECORD_COUNT = 7) with a non-negative entry, with no check; a negative entry reads no record."
+
+# map_interaction_dispatch (src/game/map_scripts.cpp) probes the attribute grid at a point made from the player's
+# position, and the grid is 100 by 100 cells: a position off the map indexes past it (found by the fuzzer, seed 53).
+# A position is a whole VECTOR, shared by every position in the game, so no range can name its x and z here: the
+# player's position and the update's snapshot of it are read-only.
+[fields."KfPlayerState.camera_position"]
+read_only = "the player's position: map_interaction_dispatch (src/game/map_scripts.cpp) and the grid lookups index the 100 by 100 map with it, and no range can name its x and z (a VECTOR shared by every position); an off-map position is a crash"
+
+[globals.player_position_snapshot]
+read_only = "the update's copy of the player's position: map_interaction_dispatch (src/game/map_scripts.cpp) indexes the 100 by 100 map with it, and a position off the map is a crash; no range can name its x and z (a VECTOR shared by every position)"
+
+# render_hud_models (src/game/geometry_render.cpp) walks the HUD model table while a row's state is
+# KF_SPRITE_VISIBLE, with no index: a table whose rows all read visible to its end runs past it. As for the
+# sprite table above, no single range expresses that, so the state is read-only (found by the fuzzer, seed 66).
+[fields."KfHudModel.state"]
+read_only = "the HUD model table is walked while a row's state is KF_SPRITE_VISIBLE (render_hud_models, src/game/geometry_render.cpp), with no index: a visible last row runs the walk past the table, and no range expresses that"
+
+# render_bind_instance_vertices (src/game/animation_cache.cpp) host_fails when a caller's vertex count is not this
+# animation's, which is the count the decoder read from the disc's model: a written count makes every bind fail
+# (found by the fuzzer, seed 86, a write 40 updates before the failure).
+[fields."KfAnimationData.vertex_count"]
+read_only = "the animation's vertex count, read from the model on disc: render_bind_instance_vertices (src/game/animation_cache.cpp) host_fails when a caller's count differs from it, so a written count fails the game"
+
+# The link's second byte is an index into several tables, by the object's action (src/game/map_object.cpp,
+# map_object_pool_update): an effect record (effect_state.records, 48), a partner object (objects) or a copy
+# region. No single range states which, so it is read-only (found by the fuzzer, seed 111: an effect index of
+# an object whose action reads effect records, past the 48).
+[fields."KfMapObjectLink.action_parameter"]
+read_only = "the link's index: an effect record, a partner object or a copy region, by the object's action (map_object_pool_update, src/game/map_object.cpp); no single range states which table, so an index past effect_state.records (48) is a crash"
+
+# The renderer's animation cache: each record's owner_slot points back at the instance that holds it,
+# and animation_cache_release (src/game/animation_cache.cpp) stores through it. A record written busy
+# without an owner is a store through null (found by the fuzzer, seed 119), so the cache is read-only.
+[fields."KfGraphicsRuntimeGame.animation_cache_records"]
+read_only = "the renderer's animation cache: animation_cache_release (src/game/animation_cache.cpp) stores through each busy record's owner_slot, which a raw write cannot set, so a record written busy is a store through null"
 
 # --- Held back. Reasons are the report's; these say why the layer may not reach them.
 

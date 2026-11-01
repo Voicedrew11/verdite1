@@ -3,7 +3,8 @@
 Written 2026-11-01, after API 0.8. Step 5 of [MODDING.md](MODDING.md#order):
 every named global and struct field in the decomp, reachable from Lua, typed
 and bounds-checked, generated from the decomp's headers so it follows the pin.
-Nothing of it is built yet. This page is what the next session needs to start.
+Built 2026-11-01 (API 0.9): steps 2 to 7 below are done; the fuzzer's status
+is under step 5. This page was the handoff and is now the record.
 Steps 8 to 10 (calling the game's functions, hooking them, growing the tables)
 come after it and reuse its type descriptions and range checks.
 
@@ -87,7 +88,12 @@ range, from three places:
 
 A field that cannot be given a safe range (one the game indexes with no single
 array behind it) is read-only, with a line in the listed file saying why.
-That is the only way a field becomes read-only.
+That is the only way a field becomes read-only. The fuzzer found three kinds
+(2026-11-01): a bound on a product or a sentinel ("not the last row", a cell
+window's width times height), a value the game keeps beside a pointer it sets
+(an equipped id and its record, the animation cache's owner), and a sub-field of
+a shared type (a position's x and z, a `VECTOR` like every other). One interval
+per field says none of these; a richer range would give some of them back.
 
 ## What the headers hold
 
@@ -150,7 +156,15 @@ Following [MODDING.md](MODDING.md#where-the-code-goes):
 4. The generator, its listed file, the CMake step; the generated source
    compiles with no hand edits. Report what it left out and why.
 5. The fuzzer's raw-write mode, and runs under ASan and UBSan until clean,
-   each found range in the listed file.
+   each found range in the listed file. Mode built 2026-11-01 (`KF_FUZZ_RAW`,
+   `fuzz.py --raw`); **not clean**. 25 entries came from 10 rounds of 16
+   runs, but the first rounds were shallow: a `game_result` write ends the
+   loop, so most runs stalled within a few hundred updates. With the chooser
+   skipping it (seeds 201-216, about 1500 writes a run), 11 of 16 runs crashed
+   or failed: the notification queue's tail, a map object's action, the copy
+   regions, the collision grid, a fog value used as a divisor, and others.
+   The game indexes much of its own working state with no check, so a field
+   at a time will not converge soon.
 6. KF1's binding, the definitions file, MODDING.md's reference section, the
    API version, step 5 struck in the order.
 7. Measure: a raw read and write cost per access (a loop of 100 000 in a

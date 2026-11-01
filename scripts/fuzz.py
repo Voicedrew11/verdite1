@@ -208,7 +208,7 @@ def fuzz_env(args, run: Run, replay: Path | None = None) -> dict:
     if args.no_macros:
         env["KF_FUZZ_MACROS"] = "0"
     values = {"KF_FUZZ_AREA": args.area, "KF_FUZZ_MACRORATE": args.macro_rate, "KF_FUZZ_WEIGHTS": args.weights,
-              "KF_FUZZ_SKIP": args.skip, "KF_FUZZ_GAME_SEED": args.game_seed}
+              "KF_FUZZ_SKIP": args.skip, "KF_FUZZ_GAME_SEED": args.game_seed, "KF_FUZZ_RAW": args.raw}
     env.update({k: str(v) for k, v in values.items() if v is not None})
     if args.trace:
         env["KF_TRACE"] = str(run.dir / "trace.txt")
@@ -378,6 +378,8 @@ def rerun_command(args, run: Run) -> str:
     words = ["python3", "scripts/fuzz.py", "--runs", "1", "--seed-base", str(run.seed), "--ticks", str(args.ticks)]
     if args.preset != "linux":
         words += ["--preset", args.preset]
+    if args.raw:
+        words += ["--raw", str(args.raw)]
     for k, v in sorted(run.extra_env.items()):
         words += ["--env", f"{k}={v}"]
     for k, v in sorted(run.settings.items()):
@@ -687,6 +689,9 @@ def main() -> int:
     g.add_argument("--macro-rate", type=int, help="every macro's chance, in percent (default 100)")
     g.add_argument("--weights", help="name=weight,...: a press's weight or a macro's chance per 10000 updates")
     g.add_argument("--skip", help="invariants to turn off: vitals,progress,position,cell,in-rock,items,equipment,actors,effects")
+    g.add_argument("--raw", type=int, metavar="PER_10000",
+                   help="raw writes to random fields of kf.raw, this many per 10000 updates; invariants are then off, "
+                        "so only crashes and fails are findings")
     g.add_argument("--area", help="start on floor 1-5, or random")
     g.add_argument("--kit", action="store_true", help="start with every item and spells 0-8")
     g.add_argument("--strong", action="store_true", help="start with max HP and MP 999")

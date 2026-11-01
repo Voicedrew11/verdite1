@@ -14,6 +14,9 @@
 //     KF_FUZZ_WEIGHTS=walk=0,warp=20   a press's weight or a macro's chance per 10000 updates, by name
 //     KF_FUZZ_SKIP=in-rock,...    invariants turned off, by name
 //     KF_FUZZ_AREA=<1-5|random>   start on that floor, in an open cell
+//     KF_FUZZ_RAW=3000            a raw write (a random writable field of kf.raw's layer, in range) in
+//                                 this many per 10000 updates; invariants are off, so only crashes and
+//                                 host_fail are findings (the raw-refused note is a chooser bug)
 //     KF_FUZZ_KIT=1               start with one of every item and spells 0-8
 //     KF_FUZZ_STRONG=1            start with max HP and MP 999 (not topped up)
 //     KF_FUZZ_GODMODE=1           HP topped up every update

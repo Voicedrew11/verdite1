@@ -673,7 +673,8 @@ mods are off in coop (decided 2026-10-31).
 4. ~~Entities, items, equipment and magic, then rules.~~ Done in 0.5
    (2026-10-31): `kf.actors`, `kf.items`, `kf.equip`, `kf.magic`. Rules done in
    0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
-5. The generated raw layer: the handoff is [RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md).
+5. The generated raw layer: built in 0.9 (2026-11-01), its writes not yet
+   fuzzed clean ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md), step 5).
 6. Asset overrides, audio, 3D drawing.
 7. ~~Input actions: reading, pressing and blocking them. Reading done in 0.7
    (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,

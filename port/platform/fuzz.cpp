@@ -1,5 +1,6 @@
 #include <kf/platform/fuzz.h>
 #include "../ext/coop_floor.h"
+#include "../ext/raw_layer.h"
 #include <kf/platform/automap.h>
 #include <kf/platform/host.h>
 #include <kf/platform/saves.h>
@@ -20,9 +21,11 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <set>
 #include <string>
@@ -271,12 +274,352 @@ bool run_strong(std::string_view) {
     return true;
 }
 
+// --- raw writes (KF_FUZZ_RAW): a random writable leaf of the raw layer, and a value in its range.
+// The walk and the ranges follow raw.cpp (the limits on the way narrow the type's range); raw_write
+// makes the final check, so a refusal is the chooser's bug and is reported as "raw-refused".
+
+constexpr int raw_walk_tries = 32;
+constexpr std::size_t raw_max_steps = 16; // raw.cpp's depth limit: a longer path is refused
+constexpr int raw_edge_chance = 5000;     // per 10000 integer draws: an edge rather than uniform
+// Globals the chooser leaves alone though a mod may write them: game_result ends the game loop by
+// design, so a run that writes it sees no update again and stalls before reaching anything else.
+constexpr std::array<std::string_view, 1> raw_unwritten_globals{"game_result"};
+constexpr verdite::RawRange raw_full_range{std::numeric_limits<std::int64_t>::min(),
+                                           std::numeric_limits<std::int64_t>::max()};
+
+// The path to a place of the layer as the walk goes down, and the range a write there may take.
+struct RawLeaf {
+    std::string path;
+    const verdite::RawType *type = nullptr;
+    verdite::RawRange range = raw_full_range; // narrowed by every listed range on the way
+    std::size_t steps = 0;
+};
+
+// A value as the chooser writes it: its kind letter and its text.
+struct RawText {
+    char kind = 'i';
+    std::string text;
+};
+
+// "<path> <kind> <value>", parsed back: the path, the kind letter and the rest of the line.
+struct RawArgs {
+    std::string_view path;
+    char kind = 'i';
+    std::string_view text;
+};
+
+verdite::RawRange raw_intersect(verdite::RawRange a, verdite::RawRange b) {
+    return {std::max(a.min, b.min), std::min(a.max, b.max)};
+}
+
+bool raw_in_range(std::int64_t value, verdite::RawRange range) {
+    return value >= range.min && value <= range.max;
+}
+
+bool raw_is_container(const verdite::RawType &type) {
+    return type.kind == verdite::RawKind::Struct || type.kind == verdite::RawKind::Array;
+}
+
+char hex_digit(unsigned nibble) {
+    return "0123456789abcdef"[nibble & 15u];
+}
+
+int hex_value(char c) {
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    return -1;
+}
+
+// One step down from the leaf: a random field of a struct, or a random element of an array.
+// False where the way is read-only, empty, or too deep for raw.cpp.
+bool raw_step_down(RawLeaf &leaf, verdite::FuzzRandom &random) {
+    if (leaf.steps >= raw_max_steps)
+        return false;
+    const verdite::RawType &type = *leaf.type;
+    if (type.kind == verdite::RawKind::Array) {
+        if (type.length == 0 || type.element == nullptr)
+            return false;
+        const auto index = random.below(static_cast<std::uint32_t>(type.length));
+        leaf.path += "[" + std::to_string(index) + "]";
+        leaf.type = type.element;
+    } else {
+        if (type.fields.empty())
+            return false;
+        const verdite::RawField &field =
+            type.fields[random.below(static_cast<std::uint32_t>(type.fields.size()))];
+        if (!field.limits.read_only.empty())
+            return false;
+        if (field.limits.range)
+            leaf.range = raw_intersect(leaf.range, *field.limits.range);
+        leaf.path += "." + std::string(field.name);
+        leaf.type = field.type;
+    }
+    ++leaf.steps;
+    return true;
+}
+
+// A random walk from a random global down to a value (not a struct or an array); nothing when it
+// meets a read-only limit or a dead end.
+std::optional<RawLeaf> raw_walk_to_leaf(const verdite::RawLayer &layer,
+                                        verdite::FuzzRandom &random) {
+    if (layer.globals.empty())
+        return std::nullopt;
+    const verdite::RawGlobal &global =
+        layer.globals[random.below(static_cast<std::uint32_t>(layer.globals.size()))];
+    if (!global.limits.read_only.empty() ||
+        std::ranges::find(raw_unwritten_globals, global.name) != raw_unwritten_globals.end())
+        return std::nullopt;
+    RawLeaf leaf{std::string(global.name), global.type};
+    if (global.limits.range)
+        leaf.range = raw_intersect(leaf.range, *global.limits.range);
+    while (raw_is_container(*leaf.type)) {
+        if (!raw_step_down(leaf, random))
+            return std::nullopt;
+    }
+    return leaf;
+}
+
+// Uniform over the range; the range is not empty.
+std::int64_t raw_uniform(verdite::RawRange range, verdite::FuzzRandom &random) {
+    const auto span = static_cast<std::uint64_t>(range.max) - static_cast<std::uint64_t>(range.min);
+    if (span == std::numeric_limits<std::uint64_t>::max())
+        return static_cast<std::int64_t>(random.next());
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(range.min) +
+                                     random.next() % (span + 1));
+}
+
+// An integer in range: half the time an edge (min, max, min+1, max-1, and 0 when in range).
+std::int64_t raw_integer(verdite::RawRange range, verdite::FuzzRandom &random) {
+    if (!random.chance(raw_edge_chance))
+        return raw_uniform(range, random);
+    std::vector<std::int64_t> edges{range.min, range.max};
+    if (range.min < range.max) {
+        edges.push_back(range.min + 1);
+        edges.push_back(range.max - 1);
+    }
+    if (raw_in_range(0, range))
+        edges.push_back(0);
+    return edges[random.below(static_cast<std::uint32_t>(edges.size()))];
+}
+
+// A declared value within range, at random; nothing when no declared value is.
+std::optional<std::int64_t> raw_declared(const verdite::RawType &type, verdite::RawRange range,
+                                         verdite::FuzzRandom &random) {
+    std::vector<std::int64_t> fits;
+    for (const verdite::RawEnumValue &item : type.values) {
+        if (raw_in_range(item.value, range))
+            fits.push_back(item.value);
+    }
+    if (fits.empty())
+        return std::nullopt;
+    return fits[random.below(static_cast<std::uint32_t>(fits.size()))];
+}
+
+// Any combination of the declared bits that stays in range; a single declared value when none does.
+std::optional<std::int64_t> raw_flags(const verdite::RawType &type, verdite::RawRange range,
+                                      verdite::FuzzRandom &random) {
+    std::int64_t bits = 0;
+    for (const verdite::RawEnumValue &item : type.values) {
+        if (random.chance(5000))
+            bits |= item.value;
+    }
+    if (raw_in_range(bits, range))
+        return bits;
+    return raw_declared(type, range, random);
+}
+
+// Printable ASCII, hex-encoded so the line has no spaces: fewer bytes than the field holds.
+std::optional<RawText> raw_string(const verdite::RawType &type, verdite::FuzzRandom &random) {
+    if (type.length == 0)
+        return std::nullopt;
+    const auto length = random.below(static_cast<std::uint32_t>(type.length));
+    std::string text;
+    for (std::uint32_t i = 0; i < length; ++i) {
+        const auto byte = 0x20u + random.below(95);
+        text += hex_digit(byte >> 4);
+        text += hex_digit(byte);
+    }
+    return RawText{'s', text};
+}
+
+// A finite float in [-1e6, 1e6], printed so that it reads back as the same double.
+RawText raw_number(verdite::FuzzRandom &random) {
+    const double unit = static_cast<double>(random.next() >> 11) * 0x1p-53;
+    char text[40];
+    std::snprintf(text, sizeof text, "%.17g", -1e6 + 2e6 * unit);
+    return RawText{'n', text};
+}
+
+// A value for the leaf, or nothing when the leaf has no value in its range.
+std::optional<RawText> raw_value(const RawLeaf &leaf, verdite::FuzzRandom &random) {
+    const verdite::RawType &type = *leaf.type;
+    const verdite::RawRange range = raw_intersect(leaf.range, type.range);
+    switch (type.kind) {
+    case verdite::RawKind::Integer:
+        if (range.min > range.max)
+            return std::nullopt;
+        return RawText{'i', std::to_string(raw_integer(range, random))};
+    case verdite::RawKind::Enum: {
+        const auto value = raw_declared(type, range, random);
+        if (!value)
+            return std::nullopt;
+        return RawText{'e', std::to_string(*value)};
+    }
+    case verdite::RawKind::Flags: {
+        const auto value = raw_flags(type, range, random);
+        if (!value)
+            return std::nullopt;
+        return RawText{'f', std::to_string(*value)};
+    }
+    case verdite::RawKind::Boolean:
+        return RawText{'b', random.below(2) != 0 ? "true" : "false"};
+    case verdite::RawKind::Number:
+        return raw_number(random);
+    case verdite::RawKind::String:
+        return raw_string(type, random);
+    case verdite::RawKind::Struct:
+    case verdite::RawKind::Array:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> choose_raw(verdite::FuzzRandom &random) {
+    for (int attempt = 0; attempt < raw_walk_tries; ++attempt) {
+        const auto leaf = raw_walk_to_leaf(kf_raw_layer(), random);
+        if (!leaf)
+            continue;
+        const auto value = raw_value(*leaf, random);
+        if (value)
+            return leaf->path + " " + value->kind + " " + value->text;
+    }
+    return std::nullopt;
+}
+
+// The path, the kind letter, then the rest of the line (empty for an empty string).
+std::optional<RawArgs> raw_parse_args(std::string_view args) {
+    const auto space = args.find(' ');
+    if (space == std::string_view::npos || space + 1 >= args.size())
+        return std::nullopt;
+    const std::size_t after_kind = space + 2;
+    if (after_kind < args.size() && args[after_kind] != ' ')
+        return std::nullopt;
+    const std::string_view text =
+        after_kind < args.size() ? args.substr(after_kind + 1) : std::string_view{};
+    return RawArgs{args.substr(0, space), args[space + 1], text};
+}
+
+// A decimal integer with an optional minus sign, checked against int64's range.
+std::optional<std::int64_t> raw_integer_text(std::string_view text) {
+    const bool negative = !text.empty() && text.front() == '-';
+    const std::string_view digits = negative ? text.substr(1) : text;
+    if (digits.empty())
+        return std::nullopt;
+    const std::uint64_t limit = negative ? std::uint64_t{1} << 63 : (std::uint64_t{1} << 63) - 1;
+    std::uint64_t magnitude = 0;
+    for (const char c : digits) {
+        if (c < '0' || c > '9')
+            return std::nullopt;
+        const auto digit = static_cast<std::uint64_t>(c - '0');
+        if (magnitude > (limit - digit) / 10)
+            return std::nullopt;
+        magnitude = magnitude * 10 + digit;
+    }
+    return negative ? static_cast<std::int64_t>(0 - magnitude)
+                    : static_cast<std::int64_t>(magnitude);
+}
+
+std::optional<double> raw_number_text(std::string_view text) {
+    const std::string copy(text);
+    char *end = nullptr;
+    const double value = std::strtod(copy.c_str(), &end);
+    if (copy.empty() || end != copy.c_str() + copy.size())
+        return std::nullopt;
+    return value;
+}
+
+std::optional<std::string> raw_bytes_text(std::string_view text) {
+    if (text.size() % 2 != 0)
+        return std::nullopt;
+    std::string bytes;
+    for (std::size_t i = 0; i < text.size(); i += 2) {
+        const int high = hex_value(text[i]), low = hex_value(text[i + 1]);
+        if (high < 0 || low < 0)
+            return std::nullopt;
+        bytes += static_cast<char>(high * 16 + low);
+    }
+    return bytes;
+}
+
+std::optional<verdite::RawValue> raw_value_text(const RawArgs &args) {
+    switch (args.kind) {
+    case 'i':
+    case 'e':
+    case 'f': {
+        const auto number = raw_integer_text(args.text);
+        if (!number)
+            return std::nullopt;
+        return verdite::RawValue{*number};
+    }
+    case 'b':
+        if (args.text == "true")
+            return verdite::RawValue{true};
+        if (args.text == "false")
+            return verdite::RawValue{false};
+        return std::nullopt;
+    case 'n': {
+        const auto number = raw_number_text(args.text);
+        if (!number)
+            return std::nullopt;
+        return verdite::RawValue{*number};
+    }
+    case 's': {
+        auto bytes = raw_bytes_text(args.text);
+        if (!bytes)
+            return std::nullopt;
+        return verdite::RawValue{std::move(*bytes)};
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+// Writes one chosen value. Its line is already in the log as the macro's event, which names the
+// path and the value before this runs. A refusal is a chooser bug: it is noted, and the run
+// records a bad-macro violation.
+bool run_raw(std::string_view args) {
+    const auto parsed = raw_parse_args(args);
+    if (!parsed) {
+        verdite::fuzz_note("raw-refused " + std::string(args) + ": the arguments do not parse");
+        return false;
+    }
+    const auto value = raw_value_text(*parsed);
+    if (!value) {
+        verdite::fuzz_note("raw-refused " + std::string(args) + ": the value does not parse");
+        return false;
+    }
+    const std::string error = verdite::raw_write(kf_raw_layer(), parsed->path, *value);
+    if (!error.empty()) {
+        verdite::fuzz_note("raw-refused " + std::string(args) + ": " + error);
+        return false;
+    }
+    return true;
+}
+
+// KF_FUZZ_RAW: a raw write in this many per 10000 updates; 0 (the default) is off.
+int raw_rate() {
+    return static_cast<int>(std::clamp(env_number("KF_FUZZ_RAW", 0), 0L, 10000L));
+}
+
 std::vector<verdite::FuzzMacro> macros() {
     return {
         {"warp", 4, choose_warp, run_warp, settle_after_change},
         {"goto", 3, random_open_cell, run_goto, 30},
         {"save", 2, choose_quick_save, [](std::string_view) { return run_quick(QuickRequest::Save); }, 0},
         {"load", 2, choose_quick_load, [](std::string_view) { return run_quick(QuickRequest::Load); }, 30},
+        {"raw", raw_rate(), choose_raw, run_raw, 0},
         {"kit", 0, nullptr, run_kit, 0},
         {"strong", 0, nullptr, run_strong, 0},
     };
@@ -395,6 +738,10 @@ std::optional<std::string> check_effects_and_events() {
 }
 
 std::vector<verdite::FuzzInvariant> invariants() {
+    // A raw write breaks the game's own invariants by design, so under KF_FUZZ_RAW a violation is
+    // not a finding; crashes, sanitizer reports and host_fail still are.
+    if (raw_rate() > 0)
+        return {};
     std::vector<verdite::FuzzInvariant> all = {
         {"vitals", check_vitals},       {"progress", check_progress}, {"position", check_position},
         {"cell", check_cell},           {"in-rock", check_in_rock},   {"items", check_items},
@@ -711,7 +1058,8 @@ Options read_options(std::uint64_t seed) {
 std::vector<std::string> notes() {
     std::vector<std::string> out;
     for (const char *name : {"KF_FUZZ_TICKS", "KF_FUZZ_MACROS", "KF_FUZZ_MACRORATE", "KF_FUZZ_WEIGHTS", "KF_FUZZ_AREA",
-                             "KF_FUZZ_KIT", "KF_FUZZ_STRONG", "KF_FUZZ_GODMODE", "KF_FUZZ_LOAD", "KF_FUZZ_GAME_SEED"})
+                             "KF_FUZZ_KIT", "KF_FUZZ_STRONG", "KF_FUZZ_GODMODE", "KF_FUZZ_LOAD", "KF_FUZZ_GAME_SEED",
+                             "KF_FUZZ_RAW"})
         if (const char *value = env(name))
             out.push_back(std::string(name) + "=" + value);
     return out;
