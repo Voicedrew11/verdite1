@@ -115,7 +115,7 @@ constexpr auto templates = std::to_array<MessageTemplate>({
 });
 static_assert(templates.size() <= 256, "a template id is one byte");
 
-// The item ids the game names: the non-null rows of automap.cpp's item_names, in order.
+// The item ids the game names: the non-null rows of item_text.cpp's item_names, in order.
 constexpr auto named_items = std::to_array<std::uint8_t>({
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     13, 14, 15, 16, 17,

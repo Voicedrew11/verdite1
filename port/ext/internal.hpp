@@ -92,18 +92,6 @@ struct Settings {
     bool enemy_track = true;        // fixed, above x1: a pursuing enemy re-aims at the player every update
     bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump
     bool fix_spatial_panning = true; // bug fix: flagged sounds get their panning adjustment
-    bool minimap = true;
-    int minimap_corner = 1;     // 0 top right, 1 bottom right, 2 top left, 3 bottom left
-    int minimap_size = 28;      // percent of the picture's height
-    int minimap_zoom = 8;      // cells from the centre to the edge
-    int minimap_opacity = 85;   // percent
-    bool map_fog = true;        // only draw what has been seen
-    bool map_pause = true;      // the full map pauses the game
-    bool map_keep_music = true; // ...but the music keeps playing
-    bool map_items = false;     // cheat markers
-    bool map_chests = false;
-    bool map_enemies = false;
-    bool map_key_hints = false; // cheat: name the key a locked door or chest needs
     float ui_scale = 1.0f;
     bool item_descriptions = true;  // what an item does, in the game's item menus
     std::string ui_font;        // empty: first available system font
@@ -246,9 +234,6 @@ void title_return();
 std::string coop_panel_line();
 
 // ---- automap ----
-void automap_draw(int input_context);   // minimap or full map, before the overlay windows
-void automap_toggle_full();
-bool automap_full_open();
 // The English name of an item as the map labels it, or nullptr for an id with none.
 const char *item_english_name(std::uint8_t id);
 

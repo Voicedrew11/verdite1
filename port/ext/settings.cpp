@@ -185,18 +185,6 @@ void settings_load() {
     current.fix_ceiling_fall = read_bool(gameplay, "fix_ceiling_fall", current.fix_ceiling_fall);
     current.fix_spatial_panning = read_bool(gameplay, "fix_spatial_panning", current.fix_spatial_panning);
     const cJSON *map = cJSON_GetObjectItemCaseSensitive(document, "map");
-    current.minimap = read_bool(map, "minimap", current.minimap);
-    current.minimap_corner = std::clamp(static_cast<int>(read_number(map, "minimap_corner", current.minimap_corner)), 0, 3);
-    current.minimap_size = std::clamp(static_cast<int>(read_number(map, "minimap_size", current.minimap_size)), 10, 50);
-    current.minimap_zoom = std::clamp(static_cast<int>(read_number(map, "minimap_zoom", current.minimap_zoom)), 4, 30);
-    current.minimap_opacity = std::clamp(static_cast<int>(read_number(map, "minimap_opacity", current.minimap_opacity)), 20, 100);
-    current.map_fog = read_bool(map, "fog_of_war", current.map_fog);
-    current.map_pause = read_bool(map, "pause_game", current.map_pause);
-    current.map_keep_music = read_bool(map, "keep_music", current.map_keep_music);
-    current.map_items = read_bool(map, "show_items", current.map_items);
-    current.map_chests = read_bool(map, "show_chests", current.map_chests);
-    current.map_enemies = read_bool(map, "show_enemies", current.map_enemies);
-    current.map_key_hints = read_bool(map, "key_hints", current.map_key_hints);
     const cJSON *overlay = cJSON_GetObjectItemCaseSensitive(document, "overlay");
     current.pause_when_open = read_bool(overlay, "pause_when_open", current.pause_when_open);
     current.ui_scale = static_cast<float>(read_number(overlay, "ui_scale", current.ui_scale));
@@ -279,18 +267,6 @@ void settings_save() {
     write_value(gameplay, "fix_ceiling_fall", cJSON_CreateBool(current.fix_ceiling_fall));
     write_value(gameplay, "fix_spatial_panning", cJSON_CreateBool(current.fix_spatial_panning));
     cJSON *map = object_entry(document, "map");
-    write_value(map, "minimap", cJSON_CreateBool(current.minimap));
-    write_value(map, "minimap_corner", cJSON_CreateNumber(current.minimap_corner));
-    write_value(map, "minimap_size", cJSON_CreateNumber(current.minimap_size));
-    write_value(map, "minimap_zoom", cJSON_CreateNumber(current.minimap_zoom));
-    write_value(map, "minimap_opacity", cJSON_CreateNumber(current.minimap_opacity));
-    write_value(map, "fog_of_war", cJSON_CreateBool(current.map_fog));
-    write_value(map, "pause_game", cJSON_CreateBool(current.map_pause));
-    write_value(map, "keep_music", cJSON_CreateBool(current.map_keep_music));
-    write_value(map, "show_items", cJSON_CreateBool(current.map_items));
-    write_value(map, "show_chests", cJSON_CreateBool(current.map_chests));
-    write_value(map, "show_enemies", cJSON_CreateBool(current.map_enemies));
-    write_value(map, "key_hints", cJSON_CreateBool(current.map_key_hints));
     cJSON *overlay = object_entry(document, "overlay");
     write_value(overlay, "pause_when_open", cJSON_CreateBool(current.pause_when_open));
     write_value(overlay, "ui_scale", cJSON_CreateNumber(current.ui_scale));
@@ -358,7 +334,6 @@ const Settings &effective_settings() {
     classic.analog.enabled = false;   // the game came out before the DualShock
     classic.fix_ceiling_fall = false;
     classic.fix_spatial_panning = false;
-    classic.minimap = false;
     classic.item_descriptions = false;
     return classic;
 }

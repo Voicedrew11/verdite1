@@ -365,22 +365,17 @@ bool overlay_open() { return covered(); }
 bool overlay_captures_input() { return covered(); }
 // Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
-    return settings_panel_open() || setup_open() || (open && settings().pause_when_open)
-        || (automap_full_open() && settings().map_pause) || mods_pause_requested();
+    return settings_panel_open() || setup_open() || (open && settings().pause_when_open) || mods_pause_requested();
 }
 bool pause_keeps_music() {
     if (settings_panel_open() || (open && settings().pause_when_open))
         return false;
-    const bool map_pauses = automap_full_open() && settings().map_pause;
-    if (map_pauses && !settings().map_keep_music)
-        return false;
-    // A mod's pause keeps the music only when every pause keeps it.
-    return mods_pause_requested() ? mods_pause_keeps_music() : map_pauses;
+    return mods_pause_keeps_music();
 }
 // Nothing of the game shows under Android's panel, so it is not redrawn.
 // A paused mod still gets on_draw, which is how it unpauses.
-bool redraw_while_paused() { return open || setup_open() || automap_full_open() || mods_pause_requested(); }
-bool wants_cursor() { return covered() || automap_full_open() || mods_take_mouse(); }
+bool redraw_while_paused() { return open || setup_open() || mods_pause_requested(); }
+bool wants_cursor() { return covered() || mods_take_mouse(); }
 
 ViewRect game_view() {
     int width = 0, height = 0;
@@ -471,9 +466,6 @@ bool process_event(const SDL_Event &event) {
             settings_mark_dirty();
             return true;
         }
-        // M: full floor map (the game has no binding for it).
-        if (event.key.key == SDLK_M && !open)
-            automap_toggle_full();
         if (event.key.key == SDLK_F1 || (open && event.key.key == SDLK_ESCAPE && !ImGui::GetIO().WantTextInput)) {
             set_open(!open);
             return true;
@@ -484,10 +476,10 @@ bool process_event(const SDL_Event &event) {
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
         apply_render_settings();
     ImGui_ImplSDL3_ProcessEvent(&event);
-    // The full map takes the mouse (zoom, drag, hover); the keyboard still reaches the game.
+    // A mod that takes the mouse (the full map: zoom, drag, hover) gets it; the keyboard still reaches the game.
     const bool mouse_event = event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
         || event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL;
-    if ((automap_full_open() || mods_take_mouse()) && mouse_event)
+    if (mods_take_mouse() && mouse_event)
         return true;
     return covered() && is_input_event(event.type);
 }
@@ -563,9 +555,7 @@ ImDrawData *build_overlay(int width, int height) {
         if (const char *task = std::getenv("KF_TEST_LANGUAGE_TASK"); task && std::strcmp(task, "download") == 0)
             language_task_download_english();
     }
-    // After mod HUDs, so the full map covers them.
     mods_draw_hud();
-    automap_draw(last_context);
     item_description_draw();
     touch_controls_draw();
     draw_message(width, height);

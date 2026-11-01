@@ -10,6 +10,31 @@
 #include <cfloat>
 
 namespace kf::ext {
+
+// Item names as the English translation patch shows them in the menus (read
+// from the game's own name rows), with apostrophes the patch leaves out.
+const char *const item_names[] = {
+    "Short Sword", "Battle Axe", "Knight Sword", "Colichemarde", "Morningstar", "Bastard Sword",
+    "Crescent Axe", "Triple Fang", "Flame Sword", "Shadow Blade", "Dragon Sword", "Moonlight Sword",
+    nullptr, "Iron Mask", "Knight Helm", "Great Helm", "Blood Mask", "Mist Crown", nullptr,
+    "Breast Plate", "Knight Plate", "Full Plate", "Fire Mail", "Skull Armor", "Forest Armor", nullptr,
+    "Small Shield", "Knight Shield", "Tower Shield", "Black Dragon", "Wind Guard", nullptr,
+    "Gauntlets", "Knight Gloves", "Stone Hands", "Iron Boots", "Knight Boots", "Leg Guards", "Feather Boots",
+    "Gold Coin", "Blood Stone", "Moon Stone", "Verdite", "Medicinal Herb", "Antidote Herb", "Recovery Medicine",
+    "Dragon Tree Leaf", "Dragon Tree Fruit", "Light Ring", "Moon Charm", "Wind Blade Bracelet",
+    "Twin Dragon Ring", "Gold Cross", "Deceased's Key", "Light Family Key", "Keeper's Map",
+    "Dragon Cup", "Phantom Rod", "Green Dragon Rod", "Truth Mirror", "Dungeon Key",
+    "Dragon Crest", "Harp", "Water Seal Stone", "Earth Seal Stone", nullptr, nullptr, "Light Tower Seal",
+    "Fire Seal Stone", "Wind Seal Stone", "Light Seal Stone", nullptr, nullptr, "Magician's Map",
+    "Magician's Key", "Magic Hand", "Sword Fan Dragon", nullptr, nullptr, nullptr};
+static_assert(sizeof item_names / sizeof item_names[0] == 80, "one name per item id");
+
+const char *item_english_name(std::uint8_t id) {
+    if (id < sizeof item_names / sizeof item_names[0])
+        return item_names[id];
+    return nullptr;
+}
+
 namespace {
 constexpr const char *sword_magic = "Sword magic: press Magic during a fully charged swing";
 

@@ -184,11 +184,11 @@ SetupPage gameplay_page() {
     }};
     const SetupGroup help{"help", "Help", "", {
         choice("None", "Keys chosen from the item menu, no item descriptions, no minimap.", {"original"},
-               {{"gameplay.auto_use_keys", false}, {"overlay.item_descriptions", false}, {"map.minimap", false}}),
+               {{"gameplay.auto_use_keys", false}, {"overlay.item_descriptions", false}, {"mods.map.minimap", false}}),
         choice("Light", "A carried key opens its lock; items say what they do. No minimap.", {"balanced"},
-               {{"gameplay.auto_use_keys", true}, {"overlay.item_descriptions", true}, {"map.minimap", false}}),
+               {{"gameplay.auto_use_keys", true}, {"overlay.item_descriptions", true}, {"mods.map.minimap", false}}),
         choice("Full", "As Light, with a minimap of what you have seen.", {"modern"},
-               {{"gameplay.auto_use_keys", true}, {"overlay.item_descriptions", true}, {"map.minimap", true}}),
+               {{"gameplay.auto_use_keys", true}, {"overlay.item_descriptions", true}, {"mods.map.minimap", true}}),
     }};
     return {"gameplay", "Gameplay", "", {fixes, help}, SetupPageTiers::Offered};
 }

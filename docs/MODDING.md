@@ -65,9 +65,11 @@ extension, Neovim and others then complete names and flag mistakes.
 
 ## Mods in the settings
 
-A mod the game ships can have a row in the settings, so Setup and the game's
+A mod the game ships can have rows in the settings, so Setup and the game's
 own menu switch it: `mods.<id>` is its enabled switch (`mods.run`, the Run key
-on the Controls page). The row shows while the mod is in the mods folder.
+on the Controls page; `mods.map` on the Map page), and `mods.<id>.<key>` a
+boolean in its `config` (`mods.map.minimap`), set as the mod's own write would
+be. The rows show while the mod is in the mods folder.
 
 ## Coop
 
@@ -487,7 +489,8 @@ player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
 `mods/killcount` (`on_kill` and the `save` table), `mods/bestiary`
 (`kf.actors`, `kf.items`), `mods/hardmode` (`kf.rules`) and `mods/run`
 (`kf.action_pressed`, `kf.play.top_speed`: the run key, which the game no longer has
-itself) in this repository. The
+itself) and `mods/map` (`kf.automap`, `kf.online`, the drawing calls, `kf.game.mouse`:
+the minimap and the full map on M) in this repository. The
 build puts them beside the executable, and the game copies each one into the
 mods folder the first time it sees it, disabled unless it says
 `default_enabled`; `mods/.examples` lists those

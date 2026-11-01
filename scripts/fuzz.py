@@ -71,7 +71,6 @@ VARY = {
     "gameplay.auto_use_keys": [None, True],
     "display.aspect": [None, "4:3", "21:9"],
     "display.hud_at_edges": [None, False],
-    "map.minimap": [None, False],
 }
 
 # --compare-setting with no value: the settings that claim to change only the picture. Each must
@@ -80,7 +79,7 @@ VISUAL_SETTINGS = (
     "display.aspect=4:3", "display.aspect=21:9", "display.hud_at_edges=false", "display.frame_rate=20",
     "display.resolution=1", "display.true_color=false", "display.subpixel=false", "display.perspective=false",
     "display.depth_buffer=false", "display.fog=0", "display.detailed_map=false", "display.dynamic_lights=false",
-    "map.minimap=false", "overlay.item_descriptions=false",
+    "overlay.item_descriptions=false",
 )
 
 FUZZ_RE = re.compile(r"^\[KF1-FUZZ\] (\{.*\})$")

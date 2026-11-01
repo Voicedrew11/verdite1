@@ -26,7 +26,7 @@ namespace kf {
 enum class TouchCover : u8 { None, FullMap, Overlay };
 
 // Port commands with no game button, for the overlay to carry out.
-enum class TouchCommand : u8 { None, Settings, FullMap };
+enum class TouchCommand : u8 { None, Settings };
 
 // The host's side. Every event: fingers, and the other devices that hide the controls.
 void host_touch_event(SDL_Window *window, const SDL_Event &event);

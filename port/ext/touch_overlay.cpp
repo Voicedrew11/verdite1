@@ -79,7 +79,6 @@ void touch_commands_poll() {
         if (!settings_panel_show())
             overlay_set_open(true);
         break;
-    case TouchCommand::FullMap: automap_toggle_full(); break;
     case TouchCommand::None: break;
     }
 }

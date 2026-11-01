@@ -61,7 +61,7 @@ constexpr std::array<Kf1Control, 10> walking_controls = {{
     {TouchKind::Button, TouchShape::Button, "Run", Action::run, TouchCommand::None, Edge::Right, 0.50f, 0.58f, 0.08f, {}},
     {TouchKind::Button, TouchShape::Button, "Menu", Action::inventory, TouchCommand::None, Edge::Right, 0.56f, 0.09f, 0.06f, {}},
     {TouchKind::Button, TouchShape::Button, "Pause", Action::pause, TouchCommand::None, Edge::Right, 0.40f, 0.09f, 0.06f, {}},
-    {TouchKind::Button, TouchShape::Button, "Map", no_action, TouchCommand::FullMap, Edge::Right, 0.24f, 0.09f, 0.06f, {}},
+    {TouchKind::Button, TouchShape::Button, "Map", Action::full_map, TouchCommand::None, Edge::Right, 0.24f, 0.09f, 0.06f, {}},
     {TouchKind::Button, TouchShape::Gear, nullptr, no_action, TouchCommand::Settings, Edge::Right, 0.08f, 0.09f, 0.06f, {}},
     {TouchKind::Stick, TouchShape::Stick, nullptr, no_action, TouchCommand::None, Edge::Left, 0.32f, 0.68f, 0.13f, {0, 0, 0.45f, 1}},
     {TouchKind::Drag, TouchShape::Button, nullptr, no_action, TouchCommand::None, Edge::Left, 0, 0, 0, {0.45f, 0, 0.55f, 1}},
@@ -165,8 +165,8 @@ void lay_out(Layout layout, const SafeArea &area) {
     screen.rows.clear();
     std::vector<verdite::TouchControl> controls;
     for (const Kf1Control &control : layout_controls(layout)) {
-        if (control.command == TouchCommand::FullMap && classic_mode)
-            continue;   // no automap in Classic mode
+        if (control.action == Action::full_map && classic_mode)
+            continue;   // no map in Classic mode
         controls.push_back({static_cast<std::uint32_t>(screen.rows.size()), control.kind, zone_of(control, area),
                             control.radius});
         screen.rows.push_back(&control);

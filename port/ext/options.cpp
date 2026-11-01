@@ -165,6 +165,20 @@ OptionRow mod_switch(const std::string &mod, std::string label, std::string help
     return made;
 }
 
+// A boolean in a mod's config ("mods.<id>.<key>"), read as fallback until the mod has one.
+OptionRow mod_config_switch(const std::string &mod, const std::string &key, bool fallback, std::string label,
+                            std::string help) {
+    OptionRow made = row("mods." + mod + "." + key, OptionKind::Toggle, std::move(label), std::move(help));
+    made.get = [mod, key, fallback] {
+        const auto value = mods_config_value(mod, key);
+        const bool *flag = value ? std::get_if<bool>(&*value) : nullptr;
+        return OptionValue(flag ? *flag : fallback);
+    };
+    made.set = [mod, key](const OptionValue &v) { mods_set_config_value(mod, key, std::get<bool>(v)); };
+    made.state = [mod] { return mod_row_state(mod); };
+    return made;
+}
+
 bool not_classic() { return !settings().classic; }
 
 // Classic mode overrides the section's rows; they keep the player's values for later.
@@ -667,48 +681,13 @@ OptionPage language_page() { return {"Language", {OptionSection{"", {language_ch
 // ---- Map ----
 
 OptionPage map_page() {
-    Settings &s = settings();
-    auto minimap_on = [] { return settings().minimap; };
-    OptionSection minimap = classic_locked({"Minimap", {
+    return {"Map", {classic_locked({"", {
         classic_note("map"),
-        toggle("map.minimap", "Show minimap", "", s.minimap, store_only),
-        shown_if(choice("map.minimap_corner", "Corner", "", s.minimap_corner,
-                        {{0, "Top right"}, {1, "Bottom right"}, {2, "Top left"}, {3, "Bottom left"}}, store_only),
-                 minimap_on),
-        shown_if(number("map.minimap_size", "Size", "Minimap size as a percentage of the picture's height.",
-                        s.minimap_size, {10, 50, 1, "%.0f%%"}, store_only),
-                 minimap_on),
-        shown_if(number("map.minimap_zoom", "Zoom", "How many map cells the minimap shows from the centre to its edge.",
-                        s.minimap_zoom, {4, 30, 1, "%.0f cells"}, store_only),
-                 minimap_on),
-        shown_if(number("map.minimap_opacity", "Opacity", "", s.minimap_opacity, {20, 100, 1, "%.0f%%"}, store_only),
-                 minimap_on),
-    }});
-    OptionSection full = classic_locked({"Full map", {
-        needs(note("map.full_key", "Press M in game for the full floor map."), PlatformFeature::Keyboard),
-        toggle("map.pause_game", "Pause the game while the full map is open",
-               "Off: the game keeps running, so you can walk around with the map open.", s.map_pause, store_only),
-        enabled_if(toggle("map.keep_music", "Keep the music playing",
-                          "While the map pauses the game, the music carries on; sound effects wait and continue when "
-                          "you close the map.",
-                          s.map_keep_music, store_only),
-                   [] { return settings().map_pause; }),
-    }});
-    OptionSection exploration = classic_locked({"Exploration", {
-        toggle("map.fog_of_war", "Fog of war",
-               "On: only places you have seen are drawn (the Keeper's or Magician's Map reveals the whole floor). "
-               "Off: the whole floor is always shown.",
-               s.map_fog, store_only),
-    }});
-    OptionSection cheats = classic_locked({"Extra markers (cheats)", {
-        toggle("map.show_items", "Items on the ground", "", s.map_items, store_only),
-        toggle("map.show_chests", "Chests with something inside", "", s.map_chests, store_only),
-        toggle("map.show_enemies", "Enemies", "", s.map_enemies, store_only),
-        toggle("map.key_hints", "Which key opens locked doors and chests",
-               "Shown when pointing at a locked door or chest on the full map.", s.map_key_hints, store_only),
-        note("map.always_shown", "Doors, warps, save points, fountains and people always show once seen."),
-    }});
-    return {"Map", {minimap, full, exploration, cheats}};
+        mod_switch("map", "Map",
+                   "A minimap of what you have seen, and the full floor map on M or the touch Map button (mods/map). "
+                   "Its look, the full map's pause and its cheats are in the Mods panel."),
+        shown_if(mod_config_switch("map", "minimap", true, "Show minimap", ""), [] { return mods_enabled("map"); }),
+    }})}};
 }
 
 // ---- Interface ----
