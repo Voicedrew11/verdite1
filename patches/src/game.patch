@@ -160,14 +160,15 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4d4f49e2c95baade30ef1e327a3b3f1d
          definition->attack_components[KF_COMBAT_COMPONENT_CUTTING],
          definition->attack_components[KF_COMBAT_COMPONENT_STRIKING],
 diff --git a/src/game/actor_behavior.cpp b/src/game/actor_behavior.cpp
-index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d9009eef891 100644
+index e88d8973767040536c3668beb2f4f80bc85f32f6..f8f441fc1b80e1af907e36c7a5ff7bdf02a32ddc 100644
 --- a/src/game/actor_behavior.cpp
 +++ b/src/game/actor_behavior.cpp
-@@ -5,11 +5,15 @@
+@@ -5,11 +5,16 @@
  #include <kf/game/game.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/random.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/mod_events.h>
  
  #include <algorithm>
 +#include <cmath>
@@ -179,7 +180,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
  
  enum {
      ACTOR_ACTIVATION_RANGE = 28000,
-@@ -48,6 +52,8 @@ enum {
+@@ -48,6 +53,8 @@ enum {
  
  enum {
      ACTOR_BLOCKED_TURN_STEP = KF_ANGLE_FULL_TURN / 64,
@@ -188,7 +189,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
      ACTOR_LONG_DROP_HEIGHT = 600,
      ACTOR_DEEP_DROP_HEIGHT = 3000,
      ACTOR_LONG_DROP_RANDOM_MAX = (kf::random_max + 1) / 2,
-@@ -441,18 +447,27 @@ KfActorMoveResult actor_move_xz_with_collision(const struct KfVecXZs *delta, KfA
+@@ -441,18 +448,27 @@ KfActorMoveResult actor_move_xz_with_collision(const struct KfVecXZs *delta, KfA
      return KF_ACTOR_MOVE_SUCCEEDED;
  }
  
@@ -219,7 +220,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
      }
      angle_to_forward_xz(actor->rotation.vy, &delta);
      vector2s_scale_shift11(definition->move_speed, &delta);
-@@ -463,6 +478,24 @@ KfActorMoveResult actor_move_along_heading(KfActorMoveDirection direction, KfAct
+@@ -463,6 +479,24 @@ KfActorMoveResult actor_move_along_heading(KfActorMoveDirection direction, KfAct
      return actor_move_xz_with_collision(&delta, collision_policy);
  }
  
@@ -244,7 +245,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
  static s32 actor_effect_travel_steps(s32 distance, s32 speed)
  {
      return distance <= speed ? 1 : distance / speed;
-@@ -525,7 +558,7 @@ void actor_spawn_action_effect(KfActorEffectCode effect_code, KfActorEffectSlot
+@@ -525,7 +559,7 @@ void actor_spawn_action_effect(KfActorEffectCode effect_code, KfActorEffectSlot
              position = kf::matrix_apply_rotation(matrix, offset);
              position += actor->position;
              facing = (KF_ANGLE_HALF_TURN - actor->rotation.vy) & KF_ANGLE_WRAP_MASK;
@@ -253,7 +254,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
                  &position, facing, ACTOR_EFFECT_AIM_RANGE, KF_ACTOR_AIM_TOLERANCE);
              if (distance == -1) {
                  effect_rotation.vx = 0;
-@@ -588,9 +621,12 @@ void actor_spawn_action_effect(KfActorEffectCode effect_code, KfActorEffectSlot
+@@ -588,9 +622,12 @@ void actor_spawn_action_effect(KfActorEffectCode effect_code, KfActorEffectSlot
                  burst_rotation.vx = actor->rotation.vx;
                  burst_rotation.vy = facing;
                  burst_rotation.vz = actor->rotation.vz;
@@ -269,7 +270,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
                  break;
              case KF_EFFECT_KIND_SCATTER_PROJECTILE:
                  effect_spawn_scatter_projectile(definition->effect_owner_id,
-@@ -672,7 +708,8 @@ void actor_apply_horizontal_movement(void)
+@@ -672,7 +709,8 @@ void actor_apply_horizontal_movement(void)
          definition->collision_height,
          ACTOR_VELOCITY_COLLISION_FLAGS);
      if (result.kind != KfCollisionKind::None) {
@@ -279,7 +280,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
              actor->movement_x = -actor->movement_x >> 1;
              actor->movement_z = -actor->movement_z >> 1;
          } else {
-@@ -835,7 +872,9 @@ static void actor_update_pursuit(KfActor *actor, const KfActorDefinition *defini
+@@ -835,7 +873,9 @@ static void actor_update_pursuit(KfActor *actor, const KfActorDefinition *defini
                  + KF_ACTOR_PROGRESS_BACKOFF_BASE;
              return;
          }
@@ -290,7 +291,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
              actor->movement_yaw = actor_bearing_to_player(actor);
          }
          break;
-@@ -914,6 +953,11 @@ static void actor_update_vertical_motion(KfActor *actor, const KfActorDefinition
+@@ -914,6 +954,11 @@ static void actor_update_vertical_motion(KfActor *actor, const KfActorDefinition
          if (hit.kind == KfCollisionKind::Player) {
              player_apply_damage(0, ACTOR_JUMP_CONTACT_STRIKING_DAMAGE, 0, KF_PLAYER_STATUS_NONE, 0, 0, KF_FIXED12_ONE, KF_PLAYER_DAMAGE_MULTIPLIER_ONE);
              actor_bounce_from_jump(actor);
@@ -302,7 +303,106 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
          } else if (hit.kind == KfCollisionKind::BelowFloor) {
              floor_height = map_floor_height_at_position(&actor->position);
              actor_land(actor, floor_height);
-@@ -1029,6 +1073,9 @@ void actor_update_current_action(void)
+@@ -927,6 +972,61 @@ static void actor_update_vertical_motion(KfActor *actor, const KfActorDefinition
+     }
+ }
+ 
++// PC extension (mods): changes the gold the game dropped to what on_drop left.
++static void actor_amend_gold_drop(KfMapObject *gold_drop, u16 gold_amount, const VECTOR *position, s32 y_offset)
++{
++    if (gold_drop == NULL) {
++        map_object_spawn_gold_drop(gold_amount, position, y_offset);
++    } else if (gold_amount == 0) {
++        gold_drop->object_id = KF_OBJECT_NONE;
++        gold_drop->action = KF_MAP_OBJECT_OP_NONE;
++    } else {
++        map_object_set_gold_amount(gold_drop->link, gold_amount);
++    }
++}
++
++// The death drop. PC extension (mods): on_drop sees the game's rolls and changes what falls. The
++// rolls and spawns draw random numbers in the game's order, so the gold spawns at its roll and is
++// amended after the event; an item added where the game drops none falls from the definition pool.
++static void actor_spawn_death_drop(KfActor *actor, const KfActorDefinition *definition)
++{
++    u16 gold_amount;
++    KfMapObject *gold_drop = NULL;
++    KfMapObjectDropSource drop_source = KF_MAP_OBJECT_DROP_FROM_DEFINITION;
++    KfObjectId drop_object = KF_OBJECT_NONE;
++    bool drops = false;
++    const s32 y_offset = -(definition->collision_height >> 1);
++
++    gold_amount = ((u32)kf::random_next() * definition->gold_drop_limit) >> ACTOR_GOLD_RANDOM_SHIFT;
++    if (gold_amount != 0) {
++        gold_drop = map_object_spawn_gold_drop(gold_amount, &actor->position, y_offset);
++    }
++    if (actor->slot_state == KF_ACTOR_SLOT_DYNAMIC || actor->slot_state == KF_ACTOR_SLOT_RESPAWNING) {
++        if (definition->action_parameters.drop_object != KF_MAP_OBJECT_DROP_DISABLED && definition->action_parameters.drop_object != KF_OBJECT_NONE
++            && (kf::random_next() >> ACTOR_DROP_CHANCE_RANDOM_SHIFT) <= definition->action_parameters.drop_chance) {
++            drop_object = definition->action_parameters.drop_object;
++            drops = true;
++        }
++    } else if (actor->death_drop_object_id != KF_MAP_OBJECT_DROP_DISABLED) {
++        drop_source = KF_MAP_OBJECT_DROP_FROM_PLACEMENT;
++        drop_object = actor->death_drop_object_id;
++        drops = true;
++    }
++
++    const s16 game_item = drops && kf_enum_encode<u8>(drop_object) < KF_ITEM_COUNT ? kf_enum_encode<s16>(drop_object) : -1;
++    const kf::ActorDrop drop = kf::mods_actor_drops({actor_state.current_index, actor->definition_id, gold_amount, game_item});
++    if (drop.gold != gold_amount) {
++        actor_amend_gold_drop(gold_drop, drop.gold, &actor->position, y_offset);
++    }
++    if (drop.item != game_item) {
++        drops = drop.item != -1;
++        drop_object = kf_enum_decode<KfObjectId>(static_cast<u8>(drop.item));
++    }
++    if (drops) {
++        map_object_spawn_drop(drop_source, drop_object, &actor->position, y_offset);
++    }
++}
++
+ void actor_update_current_action(void)
+ {
+     KfActor *actor = actor_state.current;
+@@ -934,7 +1034,6 @@ void actor_update_current_action(void)
+     struct KfVecXZs direction;
+     VECTOR target;
+     KfCollisionResult result;
+-    u16 gold_amount;
+     KfMapAttribute attribute;
+ 
+     collision_adjust_cell_occupancy(actor->cell_x, actor->cell_z, -1);
+@@ -993,27 +1092,7 @@ void actor_update_current_action(void)
+             return;
+         }
+         if (actor_animation_crossed_phase(actor, ACTOR_DEATH_DROP_PHASE)) {
+-            gold_amount = ((u32)kf::random_next() * definition->gold_drop_limit) >> ACTOR_GOLD_RANDOM_SHIFT;
+-            if (gold_amount != 0) {
+-                map_object_spawn_gold_drop(
+-                    gold_amount, &actor->position, -(definition->collision_height >> 1));
+-            }
+-            if (actor->slot_state == KF_ACTOR_SLOT_DYNAMIC || actor->slot_state == KF_ACTOR_SLOT_RESPAWNING) {
+-                if (definition->action_parameters.drop_object != KF_MAP_OBJECT_DROP_DISABLED && definition->action_parameters.drop_object != KF_OBJECT_NONE
+-                    && (kf::random_next() >> ACTOR_DROP_CHANCE_RANDOM_SHIFT) <= definition->action_parameters.drop_chance) {
+-                    map_object_spawn_drop(
+-                        KF_MAP_OBJECT_DROP_FROM_DEFINITION,
+-                        definition->action_parameters.drop_object,
+-                        &actor->position,
+-                        -(definition->collision_height >> 1));
+-                }
+-            } else if (actor->death_drop_object_id != KF_MAP_OBJECT_DROP_DISABLED) {
+-                map_object_spawn_drop(
+-                    KF_MAP_OBJECT_DROP_FROM_PLACEMENT,
+-                    actor->death_drop_object_id,
+-                    &actor->position,
+-                    -(definition->collision_height >> 1));
+-            }
++            actor_spawn_death_drop(actor, definition);
+         }
+         if (actor->animation_phase >= KF_ACTOR_ANIMATION_PHASE_MAX) {
+             actor->action = KF_ACTOR_ACTION_POST_DEATH;
+@@ -1029,6 +1108,9 @@ void actor_update_current_action(void)
                  actor->animation_phase = 0;
              }
              actor->movement_yaw = actor_bearing_to_player(actor);
@@ -312,7 +412,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..1958814cedd40f122a627078792b6d90
          }
          if (actor_move_along_heading(KF_ACTOR_MOVE_BACKWARD, KF_ACTOR_COLLISION_STOP) != KF_ACTOR_MOVE_SUCCEEDED) {
              actor->action = KF_ACTOR_ACTION_NONE;
-@@ -1117,7 +1164,10 @@ void actor_update_current_action(void)
+@@ -1117,7 +1199,10 @@ void actor_update_current_action(void)
                      actor->position.vx, actor->position.vy, actor->position.vz,
                      definition->collision_radius, definition->collision_height,
                      ACTOR_VELOCITY_COLLISION_FLAGS);
@@ -1357,7 +1457,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
  
  enum {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
-index 660386288c157b2819409141f669eb2ae4d10af9..88090f4f3d2ac0e9713227ba8535b974b8ce6718 100644
+index 660386288c157b2819409141f669eb2ae4d10af9..82fd2b9666689575a0840abe238ef89797aa2fac 100644
 --- a/src/game/item.cpp
 +++ b/src/game/item.cpp
 @@ -10,9 +10,13 @@
@@ -1442,11 +1542,19 @@ index 660386288c157b2819409141f669eb2ae4d10af9..88090f4f3d2ac0e9713227ba8535b974
          stock[selection]--;
          player_state.gold += item_sell_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
      }
-@@ -563,11 +589,16 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
+@@ -561,13 +587,22 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
+             } else {
+                 result = KF_MENU_RESULT_STACK_FULL;
                  if (stock_count != KF_ITEM_STACK_CAPACITY) {
-                     item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<s32>(item_id)]++;
-                     result = KF_MENU_RESULT_ACCEPTED;
-+                    kf::mods_item_picked_up(kf_enum_encode<u16>(item_id));   // PC extension (mods): on_item_pickup
+-                    item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<s32>(item_id)]++;
+-                    result = KF_MENU_RESULT_ACCEPTED;
++                    // PC extension (mods): on_item_pickup; a cancelled pickup is a decline.
++                    if (!kf::mods_item_picked_up(kf_enum_encode<u16>(item_id))) {
++                        result = KF_MENU_RESULT_DECLINED;
++                    } else {
++                        item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<s32>(item_id)]++;
++                        result = KF_MENU_RESULT_ACCEPTED;
++                    }
                  }
              }
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
@@ -1586,7 +1694,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..b86478328a263b837550f67c43098954
  
  void map_load_floor_wrapper(void)
 diff --git a/src/game/map_object.cpp b/src/game/map_object.cpp
-index c4fee7aad3fff0d855e5f329a125281e6bba88a7..f3e3a9f15359429ff891d1144cb5b681547b1309 100644
+index c4fee7aad3fff0d855e5f329a125281e6bba88a7..6394979cac93a44662f90c483360a223eb5e28b4 100644
 --- a/src/game/map_object.cpp
 +++ b/src/game/map_object.cpp
 @@ -138,6 +138,11 @@ KfMapObject *map_object_effect_pool_acquire(u16 first_index, u16 count, u16 sequ
@@ -1601,7 +1709,24 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..f3e3a9f15359429ff891d1144cb5b681
      return oldest;
  }
  
-@@ -216,6 +221,11 @@ void map_object_pool_trigger_link(u8 link_id)
+@@ -176,7 +181,7 @@ void map_object_spawn_drop(KfMapObjectDropSource drop_source, KfObjectId object_
+     object->link.vertical_velocity = 0;
+ }
+ 
+-void map_object_spawn_gold_drop(u16 gold_amount, const VECTOR *position, s32 y_offset)
++KfMapObject *map_object_spawn_gold_drop(u16 gold_amount, const VECTOR *position, s32 y_offset)
+ {
+     KfMapObject *object;
+     u16 *sequence;
+@@ -201,6 +206,7 @@ void map_object_spawn_gold_drop(u16 gold_amount, const VECTOR *position, s32 y_o
+     object->action = KF_MAP_OBJECT_OP_NONE;
+     map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_BOUNCE);
+     object->link.vertical_velocity = MAP_GOLD_DROP_INITIAL_VELOCITY_Y;
++    return object;
+ }
+ 
+ void map_object_pool_trigger_link(u8 link_id)
+@@ -216,6 +222,11 @@ void map_object_pool_trigger_link(u8 link_id)
              }
              break;
          default:
@@ -1613,7 +1738,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..f3e3a9f15359429ff891d1144cb5b681
              if (map_object_state.definitions.entries[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_TRIGGER_END
                  && !(object.link.link_id < KF_MAP_LINK_REUSABLE_FIRST) && object.link.link_id == link_id) {
                  map_object_start_action_if_idle(
-@@ -231,6 +241,10 @@ void map_object_pool_clear_link(u8 link_id)
+@@ -231,6 +242,10 @@ void map_object_pool_clear_link(u8 link_id)
      KfMapObjectDefinition *definitions = map_object_state.definitions.entries;
  
      for (auto &object : map_object_state.objects) {
@@ -1924,7 +2049,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..9c60ad56a292d716b6ebee8a497f2a87
                  menu_map_viewer(item_ids[ctx.selected_index]);
                  menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
 diff --git a/src/game/menu_enter_mode.cpp b/src/game/menu_enter_mode.cpp
-index 28e999d5981c92f4abd18339b757abc90913a319..98ee127514c953628956fab52aea63ccc763b7be 100644
+index 28e999d5981c92f4abd18339b757abc90913a319..30701df9a883ae6652c099a3295783f29c255225 100644
 --- a/src/game/menu_enter_mode.cpp
 +++ b/src/game/menu_enter_mode.cpp
 @@ -1,6 +1,8 @@
@@ -1949,13 +2074,17 @@ index 28e999d5981c92f4abd18339b757abc90913a319..98ee127514c953628956fab52aea63cc
  }
  
  KfMenuResult menu_confirm_pickup(KfObjectId item)
-@@ -36,5 +42,9 @@ KfMenuResult menu_confirm_pickup(KfObjectId item)
+@@ -35,6 +41,13 @@ KfMenuResult menu_confirm_pickup(KfObjectId item)
+ 
  void menu_open_shop(KfItemStockBank bank)
  {
++    // PC extension (mods): on_shop; a cancelled shop is not opened.
++    if (!kf::mods_shop_opened(kf_enum_encode<u8>(bank))) {
++        return;
++    }
      const MenuSession session;
 +    // PC extension: which screen is up, for Discord (kf/platform/screen.h).
 +    const auto screen = kf::host_set_screen(kf::GameScreen::Shop);
-+    kf::mods_shop_opened(kf_enum_encode<u8>(bank));   // PC extension (mods): on_shop
      shop_menu_root(bank);
 +    kf::host_set_screen(screen);
  }
@@ -4437,7 +4566,7 @@ index b90adbb1ec3e303bc920fd26705f1850209ad267..4e225c97c936afe0f29462ea8a8ae98d
          player_death_apply_visual_fade(&player_death_saved_color_matrix, blend);
      }
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8fc90c214 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..c38b8f9a034f852f9de2045e0e3d8a8220419414 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
 @@ -1,4 +1,6 @@
@@ -4447,7 +4576,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
  #include <kf/game/audio.h>
  #include <kf/game/collision.h>
  #include <kf/game/game.h>
-@@ -7,7 +9,10 @@
+@@ -7,7 +9,11 @@
  #include <kf/game/session.h>
  #include <kf/lib/null.h>
  #include <kf/lib/random.h>
@@ -4455,10 +4584,20 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
  #include <kf/platform/input.h>
 +#include <kf/platform/automap.h>
 +#include <kf/platform/messages.h>
++#include <kf/platform/mod_events.h>
  
  #include <algorithm>
  #include <array>
-@@ -335,6 +340,12 @@ static void player_apply_armor_periodic_effects(const KfArmorRecord &armor)
+@@ -331,10 +337,20 @@ static void player_apply_armor_periodic_effects(const KfArmorRecord &armor)
+     }
+     if (armor.hp_drain_interval != 0
+         && player_state.equipment_effect_ticks % armor.hp_drain_interval == 0) {
+-        player_adjust_hp(-1);
++        // PC extension (mods): on_damage, cause "equipment"; a loss left at 0 is none.
++        const s32 loss = kf::mods_player_drained(kf::HpDrain::Equipment, 1);
++        if (loss != 0) {
++            player_adjust_hp(-loss);
++        }
      }
  }
  
@@ -4471,7 +4610,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
  static void player_update_movement_input(u32 input)
  {
      auto &motion = player_state.motion_state;
-@@ -349,9 +360,17 @@ static void player_update_movement_input(u32 input)
+@@ -349,9 +365,17 @@ static void player_update_movement_input(u32 input)
          player_turn_step_limit = PLAYER_SLOWED_TURN_LIMIT;
      } else {
          player_movement_velocity_limit = PLAYER_NORMAL_MOVEMENT_LIMIT;
@@ -4490,7 +4629,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
          forward = motion.forward_velocity
              + (player_movement_velocity_limit >> PLAYER_FORWARD_ACCEL_SHIFT);
          motion.forward_velocity = std::min<s32>(forward, player_movement_velocity_limit);
-@@ -368,7 +387,10 @@ static void player_update_movement_input(u32 input)
+@@ -368,7 +392,10 @@ static void player_update_movement_input(u32 input)
              player_movement_velocity_limit >> PLAYER_FORWARD_DECEL_SHIFT;
          motion.forward_velocity = std::min<s32>(motion.forward_velocity, 0);
      }
@@ -4502,7 +4641,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
          strafe = motion.strafe_velocity
              + (player_movement_velocity_limit >> PLAYER_STRAFE_ACCEL_DECEL_SHIFT);
          motion.strafe_velocity = std::min<s32>(strafe, player_movement_velocity_limit);
-@@ -404,18 +426,23 @@ static void player_update_movement_input(u32 input)
+@@ -404,18 +431,23 @@ static void player_update_movement_input(u32 input)
          }
      }
      motion.movement_speed = kf::length_square_root(strafe * strafe + forward * forward);
@@ -4530,7 +4669,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
      }
      player_update_view_bob();
  }
-@@ -424,7 +451,11 @@ static void player_update_view_input(u32 input)
+@@ -424,7 +456,11 @@ static void player_update_view_input(u32 input)
  {
      auto &motion = player_state.motion_state;
  
@@ -4543,7 +4682,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
          motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
          motion.yaw_step = std::min<s32>(motion.yaw_step, player_turn_step_limit);
      } else if (input & kf::Button::Right) {
-@@ -437,9 +468,14 @@ static void player_update_view_input(u32 input)
+@@ -437,9 +473,14 @@ static void player_update_view_input(u32 input)
          motion.yaw_step += player_turn_step_limit >> PLAYER_YAW_ACCEL_DECEL_SHIFT;
          motion.yaw_step = std::min<s32>(motion.yaw_step, 0);
      }
@@ -4561,7 +4700,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
          motion.pitch_step += PLAYER_PITCH_ACCEL;
          motion.pitch_step = std::min<s32>(motion.pitch_step, PLAYER_PITCH_STEP_LIMIT);
      } else if (input & kf::Button::LookUp) {
-@@ -455,11 +491,11 @@ static void player_update_view_input(u32 input)
+@@ -455,11 +496,11 @@ static void player_update_view_input(u32 input)
      if (motion.pitch_step > 0) {
          player_state.camera_rotation.vx += motion.pitch_step;
          player_state.camera_rotation.vx =
@@ -4575,7 +4714,20 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
      }
  }
  
-@@ -642,6 +678,52 @@ static void player_restore_loaded_game()
+@@ -594,7 +635,11 @@ static void player_update_status_effects()
+             if (phase < POISON_FLASH_UPDATES) {
+                 lighting_set_active_color_matrix(KF_GAME_COLOR_DAMAGE);
+                 if (phase == 0) {
+-                    player_adjust_hp(-1);
++                    // PC extension (mods): on_damage, cause "poison"; a loss left at 0 is none.
++                    const s32 loss = kf::mods_player_drained(kf::HpDrain::Poison, 1);
++                    if (loss != 0) {
++                        player_adjust_hp(-loss);
++                    }
+                 }
+             }
+         }
+@@ -642,6 +687,52 @@ static void player_restore_loaded_game()
      player_select_magic(player_state.selected_magic_id);
  }
  
@@ -4628,7 +4780,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -649,6 +731,27 @@ void player_update(void)
+@@ -649,6 +740,27 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -4656,7 +4808,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
          player_death_update();
          return;
-@@ -662,7 +765,7 @@ void player_update(void)
+@@ -662,7 +774,7 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,
@@ -4665,7 +4817,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..4928f2891a0c420e1eb70cac27d0fdd8
      if (input & kf::Button::Select) {
          display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
      }
-@@ -688,7 +791,11 @@ void player_update(void)
+@@ -688,7 +800,11 @@ void player_update(void)
          }
          player_previous_input = input;
      } else {

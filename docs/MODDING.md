@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.5, what ships today. Where it is going, API 1.0, is
+This page documents API 0.6, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -87,20 +87,23 @@ The game is paused while the F1 overlay is open (Settings → Interface), so
 The game raises these. A global function of the same name gets one table of
 the event's fields. Handlers run inline, at the point in the game where the
 thing happens, on the game's thread, so they see the state the game is about to
-use. A writable integer may be changed within its range; a value outside it is
-an error that stops the mod, as a `kf.player` write is. Nothing is cancellable
-yet. The events are listed in `kf.d.lua` too.
+use. A writable integer may be changed within its range, and a writable
+boolean to `true` or `false`; any other value is an error that stops the mod,
+as a `kf.player` write is. An event with a writable `cancel` is cancelled when
+a handler leaves it `true`; a later mod sees it cancelled and may set it back.
+The events are listed in `kf.d.lua` too.
 
 | event | fields | when |
 |---|---|---|
-| `on_damage` | `target` string, `"player"` or `"actor"`; `actor` integer, the actor's slot (-1 for the player); `kind` integer, the actor's definition id (-1 for the player); `amount` integer, writable 0 to 65535, the HP lost (0 for none); `by_player` boolean, the player made the blow (false for the player's own damage) | a blow hits the player or an actor. Hazards, poison and falls are not blows: no event. `amount` is the blow's loss before `kf.play.invincible` ignores it. |
+| `on_damage` | `target` string, `"player"` or `"actor"`; `actor` integer, the actor's slot (-1 for the player); `kind` integer, the actor's definition id (-1 for the player); `amount` integer, writable 0 to 65535, the HP lost (0 for none); `by_player` boolean, the player made the blow (false for the player's own damage); `cause` string, `"blow"`, `"poison"` or `"equipment"` | the player or an actor loses HP. A `"blow"` is any hit that takes HP, including the pitfall's spikes (a poison hole only poisons, and its poison's ticks are `"poison"`); `"poison"` is the poisoned player's tick, 1 HP every 20 updates; `"equipment"` is worn armour's drain, 1 HP each time its interval comes round (of the armour, only the Blood Mask drains: every 30 updates). A fall deep enough to kill loses no HP: it raises only `on_death`. `amount` is the loss before `kf.play.invincible` ignores it. |
 | `on_kill` | `actor`, `kind`, `experience` integer, writable 0 to 32767 (the EXP the player gets; 0 unless the player made the kill, and writes are then ignored), `by_player` boolean | a blow kills an actor |
+| `on_drop` | `actor`, `kind`; `gold` integer, writable 0 to 65535 (0 for none); `item` integer, writable -1 to 79, the item that falls (-1 for none) | a dying actor reaches the point of its death animation where it drops (one with no death animation drops nothing), once per death, after the game's own rolls: `gold` and `item` are what the game would drop, and what the handlers leave is what falls. A placed monster's `item` is its placement's item (-1 when it has none), which always falls; a respawning monster's is its kind's item when the drop roll passed, -1 when it failed. An item set where the game dropped none falls as a kind's drop does. Item 39, the gold coin, falls as nothing: give gold with `gold`. The floor 5 boss and the transforming floor 4 monster drop nothing, so raise no event. |
 | `on_level_up` | `level` integer, the new level | the player reaches a level |
-| `on_item_pickup` | `item` integer, the item id | the player takes an item from the ground |
+| `on_item_pickup` | `item` integer, the item id; `cancel` boolean, writable | the player chooses to take an item from the ground or a container and has room for it, before it goes into the pack (`kf.items.count` does not count it yet). Cancelled, it is as if the player had chosen Cancel: the item stays where it lies and can be taken again. |
 | `on_map_load` | `floor` integer (1 to 5), `map_variant` integer | a floor's map loads, including a reload of the same floor |
 | `on_floor_change` | `from` integer, `to` integer | the floor loaded differs from the last one loaded (`from` is 0 before any) |
 | `on_dialogue` | `floor`, `character`, `stage`, `page` integers | a dialogue page is shown |
-| `on_shop` | `bank` integer, the shop's stock bank | a shop opens |
+| `on_shop` | `bank` integer, the shop's stock bank; `cancel` boolean, writable | a shop is about to open, after the shopkeeper's dialogue. Cancelled, the shop does not open, and the shopkeeper goes back to standing. |
 | `on_death` | none | the player dies, before the revival or restart |
 | `on_save` | `slot` integer: 1 to 3 the game's slots, 4 the quick save, 5 the game set aside in coop | the game is saved, after its save data is written: a change to `save` in this handler goes into the next save |
 | `on_load_game` | `slot` integer, as `on_save` | a save is loaded, after its save data is read |
@@ -195,7 +198,7 @@ end
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.5"` |
+| `kf.api_version` | `"0.6"` |
 
 `kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
@@ -439,9 +442,10 @@ mods are off in coop (decided 2026-10-31).
    `kf.game`, `kf.play` and `mods/debug`. Not yet: doors, chests and the automap,
    which the decomp keeps no reveal state for.
 3. ~~Events and the per-save `save` table.~~ Done in 0.4 (2026-10-31): the
-   events above and `save`. Not yet: nothing is cancellable, and HP lost outside
-   blows (hazards, poison, falls) raises no event.
-4. Entities, items, equipment and magic done in 0.5 (2026-10-31): kf.actors, kf.items, kf.equip, kf.magic. Rules: next.
+   events above and `save`. In 0.6 (2026-10-31): `on_damage` for poison and
+   equipment drain, `on_drop`, and cancelling `on_item_pickup` and `on_shop`.
+4. Entities, items, equipment and magic done in 0.5 (2026-10-31): kf.actors, kf.items, kf.equip, kf.magic.
+   Rules: `kf.rules` comes next, in 0.6.
 5. The generated raw layer.
 6. Asset overrides, audio, 3D drawing.
 7. Input actions: reading, pressing and blocking them.

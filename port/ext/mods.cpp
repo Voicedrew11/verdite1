@@ -52,7 +52,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.5";
+constexpr const char *api_version = "0.6";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -1144,6 +1144,9 @@ verdite::ModEventField writable_field(std::string_view name, std::string_view do
 verdite::ModEventField boolean_field(std::string_view name, std::string_view doc) {
     return {.name = name, .type = "boolean", .doc = doc};
 }
+verdite::ModEventField writable_boolean_field(std::string_view name, std::string_view doc) {
+    return {.name = name, .type = "boolean", .doc = doc, .writable = true};
+}
 verdite::ModEventField string_field(std::string_view name, std::string_view doc) {
     return {.name = name, .type = "string", .doc = doc};
 }
@@ -1151,24 +1154,33 @@ verdite::ModEventField string_field(std::string_view name, std::string_view doc)
 std::vector<verdite::ModEvent> event_table() {
     return {
         {.name = "on_damage",
-         .doc = "A blow hit the player or an actor. Not hazards or poison.",
+         .doc = "The player or an actor loses HP: a blow, or the player's poison or equipment drain.",
          .fields = {string_field("target", "\"player\" or \"actor\"."),
                     integer_field("actor", "The actor's slot; -1 for the player."),
                     integer_field("kind", "The actor's definition id; -1 for the player."),
                     writable_field("amount", "HP lost; 0 for none.", 0, 65535),
-                    boolean_field("by_player", "The player made the blow; false for the player's own damage.")}},
+                    boolean_field("by_player", "The player made the blow; false for the player's own damage."),
+                    string_field("cause", "\"blow\", \"poison\" or \"equipment\".")}},
         {.name = "on_kill",
          .doc = "A blow killed an actor.",
          .fields = {integer_field("actor", "The actor's slot."),
                     integer_field("kind", "The actor's definition id."),
                     writable_field("experience", "EXP the player gets; 0 unless the player made the kill.", 0, 32767),
                     boolean_field("by_player", "The player made the killing blow.")}},
+        {.name = "on_drop",
+         .doc = "A dying actor drops its gold and item.",
+         .fields = {integer_field("actor", "The actor's slot."),
+                    integer_field("kind", "The actor's definition id."),
+                    writable_field("gold", "The gold that falls; 0 for none.", 0, 65535),
+                    writable_field("item", "The item that falls; -1 for none. 39, the gold coin, falls as none.", -1,
+                                   KF_ITEM_COUNT - 1)}},
         {.name = "on_level_up",
          .doc = "The player reached a new level.",
          .fields = {integer_field("level", "The new level.")}},
         {.name = "on_item_pickup",
-         .doc = "The player took an item from the ground.",
-         .fields = {integer_field("item", "The item id.")}},
+         .doc = "The player takes an item from the ground or a container.",
+         .fields = {integer_field("item", "The item id."),
+                    writable_boolean_field("cancel", "true leaves the item where it lies.")}},
         {.name = "on_map_load",
          .doc = "A floor's map was loaded.",
          .fields = {integer_field("floor", "1 to 5."),
@@ -1185,7 +1197,8 @@ std::vector<verdite::ModEvent> event_table() {
                     integer_field("page", "The page within the stage.")}},
         {.name = "on_shop",
          .doc = "A shop opens.",
-         .fields = {integer_field("bank", "The shop's stock bank.")}},
+         .fields = {integer_field("bank", "The shop's stock bank."),
+                    writable_boolean_field("cancel", "true keeps the shop closed.")}},
         {.name = "on_death",
          .doc = "The player dies, before the revival or restart.",
          .fields = {}},
@@ -1461,23 +1474,41 @@ void raise_event(std::string_view event, std::span<verdite::ModEventValue> value
     ext::host->raise(event, values);
     ext::refresh_mod_play();
 }
-}
 
-s32 mods_player_damaged(s32 loss_hp) {
+// on_damage on the player, from cause; returns the loss the mods left.
+s32 raise_player_damage(std::string_view cause, s32 loss_hp) {
     if (!ext::mods_active() || !holds(loss_hp, 0, 65535))
         return loss_hp;
-    std::array<verdite::ModEventValue, 5> values{std::string_view{"player"}, std::int64_t{-1}, std::int64_t{-1},
-                                                 std::int64_t{loss_hp}, false};
+    std::array<verdite::ModEventValue, 6> values{std::string_view{"player"}, std::int64_t{-1}, std::int64_t{-1},
+                                                 std::int64_t{loss_hp}, false, cause};
     raise_event("on_damage", values);
     return static_cast<s32>(std::get<std::int64_t>(values[3]));
+}
+
+// The cause on_damage names for each HpDrain.
+constexpr std::array<std::string_view, 2> drain_causes{"poison", "equipment"};
+
+// Raises an event whose last field is cancel; true when no mod cancelled.
+bool raise_cancellable(std::string_view event, std::span<verdite::ModEventValue> values) {
+    raise_event(event, values);
+    return !std::get<bool>(values.back());
+}
+} // namespace
+
+s32 mods_player_damaged(s32 loss_hp) {
+    return raise_player_damage("blow", loss_hp);
+}
+
+s32 mods_player_drained(HpDrain cause, s32 loss_hp) {
+    return raise_player_damage(drain_causes.at(kf_enum_encode<std::size_t>(cause)), loss_hp);
 }
 
 s32 mods_actor_damaged(const ActorHit &hit) {
     if (!ext::mods_active() || !holds(hit.damage_hp, 0, 65535))
         return hit.damage_hp;
-    std::array<verdite::ModEventValue, 5> values{std::string_view{"actor"}, std::int64_t{hit.actor_index},
+    std::array<verdite::ModEventValue, 6> values{std::string_view{"actor"}, std::int64_t{hit.actor_index},
                                                  std::int64_t{hit.definition_id}, std::int64_t{hit.damage_hp},
-                                                 hit.by_player};
+                                                 hit.by_player, std::string_view{"blow"}};
     raise_event("on_damage", values);
     return static_cast<s32>(std::get<std::int64_t>(values[3]));
 }
@@ -1495,6 +1526,21 @@ s16 mods_actor_killed(const ActorHit &hit, s16 experience) {
     return static_cast<s16>(std::get<std::int64_t>(values[2]));
 }
 
+// The gold coin as an item has no amount, so a mod's item 39 falls as none; the game's own is kept.
+ActorDrop mods_actor_drops(const ActorDrop &drop) {
+    if (!ext::mods_active() || !holds(drop.item, -1, KF_ITEM_COUNT - 1))
+        return drop;
+    std::array<verdite::ModEventValue, 4> values{std::int64_t{drop.actor_index}, std::int64_t{drop.definition_id},
+                                                 std::int64_t{drop.gold}, std::int64_t{drop.item}};
+    raise_event("on_drop", values);
+    ActorDrop left = drop;
+    left.gold = static_cast<u16>(std::get<std::int64_t>(values[2]));
+    left.item = static_cast<s16>(std::get<std::int64_t>(values[3]));
+    if (left.item == kf_enum_encode<s16>(KF_ITEM_GOLD_COIN) && left.item != drop.item)
+        left.item = -1;
+    return left;
+}
+
 void mods_level_up(u8 level) {
     if (!ext::mods_active())
         return;
@@ -1502,11 +1548,11 @@ void mods_level_up(u8 level) {
     raise_event("on_level_up", values);
 }
 
-void mods_item_picked_up(u16 item) {
+bool mods_item_picked_up(u16 item) {
     if (!ext::mods_active())
-        return;
-    std::array<verdite::ModEventValue, 1> values{std::int64_t{item}};
-    raise_event("on_item_pickup", values);
+        return true;
+    std::array<verdite::ModEventValue, 2> values{std::int64_t{item}, false};
+    return raise_cancellable("on_item_pickup", values);
 }
 
 // In coop last_floor keeps the single-player floor, so on_floor_change after leaving compares with
@@ -1535,11 +1581,11 @@ void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page) {
     raise_event("on_dialogue", values);
 }
 
-void mods_shop_opened(u8 bank) {
+bool mods_shop_opened(u8 bank) {
     if (!ext::mods_active())
-        return;
-    std::array<verdite::ModEventValue, 1> values{std::int64_t{bank}};
-    raise_event("on_shop", values);
+        return true;
+    std::array<verdite::ModEventValue, 2> values{std::int64_t{bank}, false};
+    return raise_cancellable("on_shop", values);
 }
 
 void mods_player_died() {

@@ -10,6 +10,10 @@ namespace kf {
 
 s32 mods_player_damaged(s32 loss_hp);
 
+enum class HpDrain : u8 { Poison, Equipment };
+// HP lost outside a blow; returns the loss the mods left (0 for none).
+s32 mods_player_drained(HpDrain cause, s32 loss_hp);
+
 // A blow on an actor. by_player: the player made it (not a hazard or another actor).
 struct ActorHit {
     u16 actor_index;
@@ -22,11 +26,22 @@ s32 mods_actor_damaged(const ActorHit &hit);
 // the kill, and is ignored otherwise.
 s16 mods_actor_killed(const ActorHit &hit, s16 experience);
 
+// What a dying actor drops: the gold, and the item that falls (-1: none).
+struct ActorDrop {
+    u16 actor_index;
+    u16 definition_id;
+    u16 gold;
+    s16 item;
+};
+ActorDrop mods_actor_drops(const ActorDrop &drop);
+
 void mods_level_up(u8 level);
-void mods_item_picked_up(u16 item);
+// false: a mod cancelled the pickup, and the item stays where it lies.
+bool mods_item_picked_up(u16 item);
 void mods_floor_loaded(u8 floor, u8 map_variant);
 void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page);
-void mods_shop_opened(u8 bank);
+// false: a mod cancelled the shop, which does not open.
+bool mods_shop_opened(u8 bank);
 // A revival keeps the game and its save data; a restart is a new game (mods_new_game).
 void mods_player_died();
 // A new game starts with empty save data (no event).
