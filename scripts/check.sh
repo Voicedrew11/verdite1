@@ -34,6 +34,9 @@ cmake --preset linux >/dev/null
 cmake --build --preset linux
 step "tests"
 ctest --preset linux
+step "call audit"
+python3 tools/call_audit.py --compile-commands build/linux/compile_commands.json \
+    --decomp-src build/linux/decomp_src --out port/ext/call_layer_audit.toml --check
 step "lint"
 python3 scripts/lint.py --base "$base"
 step "smoke"

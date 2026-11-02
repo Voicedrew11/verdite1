@@ -1,4 +1,5 @@
 #include <kf/platform/fuzz.h>
+#include "../ext/call_checks.h"
 #include "../ext/coop_floor.h"
 #include "../ext/raw_layer.h"
 #include <kf/platform/automap.h>
@@ -613,6 +614,104 @@ int raw_rate() {
     return static_cast<int>(std::clamp(env_number("KF_FUZZ_RAW", 0), 0L, 10000L));
 }
 
+// --- calls (KF_FUZZ_CALL): a random function of the call layer, with arguments in range. raw_call
+// makes the final checks, so a refusal is the chooser's bug and is noted as "call-refused". The line
+// is "<function> <kind>:<value> ...", each value as a raw write's, every leaf in order.
+
+constexpr int call_tries = 16;
+
+// A value for one leaf passes the parameter's run-time check too.
+std::optional<RawText> call_leaf(const verdite::RawType &type, verdite::RawRange range, const verdite::RawParam &param,
+                                 verdite::FuzzRandom &random) {
+    if (param.nil_passes_null && random.chance(1000))
+        return RawText{'i', "-1"};
+    for (int attempt = 0; attempt < call_tries; ++attempt) {
+        RawLeaf leaf;
+        leaf.type = &type;
+        leaf.range = range;
+        auto value = raw_value(leaf, random);
+        if (!value)
+            return std::nullopt;
+        if (!param.check || param.check(std::strtoll(value->text.c_str(), nullptr, 10)).empty())
+            return value;
+    }
+    return std::nullopt;
+}
+
+// Adds every leaf of a value of this type to line; false when one has no value that will do.
+bool call_value(const verdite::RawType &type, verdite::RawRange range, const verdite::RawParam &param,
+                verdite::FuzzRandom &random, std::string &line) {
+    if (type.kind == verdite::RawKind::Struct) {
+        for (const verdite::RawField &field : type.fields) {
+            const auto inner = field.limits.range ? raw_intersect(range, *field.limits.range) : range;
+            if (!call_value(*field.type, inner, param, random, line))
+                return false;
+        }
+        return true;
+    }
+    if (type.kind == verdite::RawKind::Array) {
+        for (std::size_t i = 0; i < type.length; ++i)
+            if (!call_value(*type.element, range, param, random, line))
+                return false;
+        return true;
+    }
+    const auto value = call_leaf(type, range, param, random);
+    if (!value)
+        return false;
+    line += std::string(" ") + value->kind + ":" + value->text;
+    return true;
+}
+
+std::optional<std::string> choose_call(verdite::FuzzRandom &random) {
+    const auto functions = kf_call_layer().functions;
+    if (functions.empty())
+        return std::nullopt;
+    for (int attempt = 0; attempt < call_tries; ++attempt) {
+        const auto &function = functions[random.below(static_cast<std::uint32_t>(functions.size()))];
+        std::string line(function.name);
+        const bool chosen = std::ranges::all_of(function.params, [&](const verdite::RawParam &param) {
+            return param.role == verdite::RawParamRole::Out ||
+                   call_value(*param.type, param.limits.range.value_or(raw_full_range), param, random, line);
+        });
+        if (chosen)
+            return line;
+    }
+    return std::nullopt;
+}
+
+// One "<kind>:<value>" token as a value; nothing if it does not parse.
+std::optional<verdite::RawValue> call_token(std::string_view token) {
+    if (token.size() < 2 || token[1] != ':')
+        return std::nullopt;
+    return raw_value_text(RawArgs{{}, token[0], token.substr(2)});
+}
+
+bool run_call(std::string_view args) {
+    std::vector<verdite::RawValue> arguments;
+    const std::size_t name_end = std::min(args.find(' '), args.size());
+    for (std::size_t at = name_end; at < args.size();) {
+        const std::size_t end = std::min(args.find(' ', at + 1), args.size());
+        const auto value = call_token(args.substr(at + 1, end - at - 1));
+        if (!value) {
+            verdite::fuzz_note("call-refused " + std::string(args) + ": a value does not parse");
+            return false;
+        }
+        arguments.push_back(*value);
+        at = end;
+    }
+    const auto result = verdite::raw_call(kf_call_layer(), args.substr(0, name_end), arguments);
+    if (!result.error.empty()) {
+        verdite::fuzz_note("call-refused " + std::string(args) + ": " + result.error);
+        return false;
+    }
+    return true;
+}
+
+// KF_FUZZ_CALL: a call in this many per 10000 updates; 0 (the default) is off.
+int call_rate() {
+    return static_cast<int>(std::clamp(env_number("KF_FUZZ_CALL", 0), 0L, 10000L));
+}
+
 std::vector<verdite::FuzzMacro> macros() {
     return {
         {"warp", 4, choose_warp, run_warp, settle_after_change},
@@ -620,6 +719,7 @@ std::vector<verdite::FuzzMacro> macros() {
         {"save", 2, choose_quick_save, [](std::string_view) { return run_quick(QuickRequest::Save); }, 0},
         {"load", 2, choose_quick_load, [](std::string_view) { return run_quick(QuickRequest::Load); }, 30},
         {"raw", raw_rate(), choose_raw, run_raw, 0},
+        {"call", call_rate(), choose_call, run_call, 0},
         {"kit", 0, nullptr, run_kit, 0},
         {"strong", 0, nullptr, run_strong, 0},
     };
@@ -738,9 +838,9 @@ std::optional<std::string> check_effects_and_events() {
 }
 
 std::vector<verdite::FuzzInvariant> invariants() {
-    // A raw write breaks the game's own invariants by design, so under KF_FUZZ_RAW a violation is
-    // not a finding; crashes, sanitizer reports and host_fail still are.
-    if (raw_rate() > 0)
+    // A raw write or a call breaks the game's own invariants by design, so under KF_FUZZ_RAW or
+    // KF_FUZZ_CALL a violation is not a finding; crashes, sanitizer reports and host_fail still are.
+    if (raw_rate() > 0 || call_rate() > 0)
         return {};
     std::vector<verdite::FuzzInvariant> all = {
         {"vitals", check_vitals},       {"progress", check_progress}, {"position", check_position},
@@ -1059,7 +1159,7 @@ std::vector<std::string> notes() {
     std::vector<std::string> out;
     for (const char *name : {"KF_FUZZ_TICKS", "KF_FUZZ_MACROS", "KF_FUZZ_MACRORATE", "KF_FUZZ_WEIGHTS", "KF_FUZZ_AREA",
                              "KF_FUZZ_KIT", "KF_FUZZ_STRONG", "KF_FUZZ_GODMODE", "KF_FUZZ_LOAD", "KF_FUZZ_GAME_SEED",
-                             "KF_FUZZ_RAW"})
+                             "KF_FUZZ_RAW", "KF_FUZZ_CALL"})
         if (const char *value = env(name))
             out.push_back(std::string(name) + "=" + value);
     return out;
@@ -1209,6 +1309,11 @@ bool player_move_to_cell(int x, int z) {
     player_state.camera_position.vz = z * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
     player_sync_position_to_map();
     return true;
+}
+
+void fuzz_frame_reached() {
+    if (fuzz.active && kf_call_running())
+        host_fail("fuzz: a call into the game reached a frame, which call_audit.py did not see");
 }
 
 void fuzz_between_updates() {

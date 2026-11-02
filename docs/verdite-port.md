@@ -339,6 +339,7 @@ python3 scripts/fuzz.py --compare-setting          # every visual setting must l
 python3 scripts/fuzz.py --minimise fuzz/runs/000117
 python3 scripts/fuzz.py --preset fuzz --runs 12    # under ASan, UBSan and checked containers
 python3 scripts/fuzz.py --targets --seconds 600    # the libFuzzer targets (fuzz preset)
+python3 scripts/fuzz.py --preset fuzz --call 6000  # random in-range calls through kf.call; invariants off, a frame reached in a call is a finding
 python3 scripts/fuzz.py --preset fuzz --raw 3000   # random in-range writes through kf.raw; invariants off
 ```
 

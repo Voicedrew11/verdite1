@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.12, what ships today. Where it is going, API 1.0, is
+This page documents API 0.13, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -90,6 +90,7 @@ Define any of these as globals:
 | `on_load()` | after the script runs, on every (re)load |
 | `on_update()` | once per game update, when the game hands over its picture (gameplay, menus, cutscenes); not per displayed frame, which smoothing makes more frequent. Read and change game state here. `on_frame()`, its 0.1 name, still works |
 | `on_draw()` | every presented frame, for drawing over the game with `ui.draw_*` or a `ui.begin_window` |
+| `on_between_updates()` | between two world updates, where no menu or script holds the game; the only place a [`kf.call`](#kfcall) that changes state may run. It does not run in menus, cutscenes, at the title or while the game is paused |
 | `on_settings()` | while the mod's **Settings** node is open in the Mods panel |
 | `on_unload()` | before a reload or when the mod is disabled |
 
@@ -562,6 +563,54 @@ function on_update()
 end
 ```
 
+### `kf.call`
+
+The game's own functions, called by their decomp names, every argument checked
+before any game code runs. Like `kf.raw` it promises nothing: the names follow the
+decomp's renames, and the curated tables are better where they reach.
+
+```lua
+function on_between_updates()
+    kf.call.player_add_experience(100)
+    local slot = kf.call.actor_pool_find_at_tile(10, 12)
+    if slot >= 0 then
+        kf.call.actor_apply_damage(slot, 50, 10, 0, 0, 0, 0, 4096, 0)
+    end
+end
+```
+
+| crossing | as |
+|---|---|
+| an integer, enum or flags | an integer, within the parameter's range and the enum's values |
+| a bool, float or fixed string | a boolean, number or string |
+| a struct or array | a table with every field, arrays keyed from 0: what `kf.raw.copy` gives. It is copied |
+| an actor, effect, map object, map event or floor item | its slot in the game's pool, an integer; a null returned is `nil` |
+| the return value, then any out parameters | the call's results, in that order |
+
+A call that changes state may run only directly in `on_between_updates`, on the
+mod's main thread: not in `on_update`, `on_draw`, an event handler or a coroutine.
+Elsewhere the game may be walking what the call changes, so a call there could
+corrupt memory, and it is an error. Functions the definitions file marks "May be
+called anywhere" (the math in `kf/lib/math.h` and `fixed_math.h`) change nothing and
+can run from any callback. To act on an event, set a flag in its handler and call in
+the next `on_between_updates`.
+
+A wrong count, type or range, a free slot, or a call at the wrong time is an error
+that stops the mod. If a call raises an event and the mod's own handler errs, the
+call's effect stays and the mod stops as soon as the call returns; catching it with
+`pcall` does not save the mod. Each call costs 1,000 instructions of the callback's
+budget, and everything nested in a callback spends that one budget. A call measured
+0.16 µs of its own, or 0.71 µs passing tables both ways (the plain build, 2026-11-01).
+
+What a call leaves out of step (HP above the maximum, a door open with no one
+through it) is the mod's to manage. What it could corrupt memory with is held back.
+`kf.d.lua` lists all 126 functions with their ranges. Held back so far, with each
+reason in the build's `raw_layer_report.txt`: functions that run frames (shops,
+dialogue, warps, cutscenes), load files, or use the current actor, effect or map
+event, which come in a second stage; anything that draws, writes the player's files,
+or takes a raw buffer; and any pointer to a struct not yet read to confirm it is one
+struct and not an array. See [CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md).
+
 ### `kf.audio`
 
 The game's sounds and music, and a mod's own WAV files.
@@ -789,8 +838,10 @@ mods are off in coop (decided 2026-10-31).
    the run and the map need to be mods.~~ Pressing and blocking done in 0.8
    (2026-11-01): `kf.action_hold`, `kf.action_press`, `kf.action_block`.
 8. Calling the game's functions: bindings generated from the same headers as
-   the raw layer, each argument checked against its type and range. Planned in
-   [CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md); not started.
+   the raw layer, each argument checked against its type and range. First stage
+   done in 0.13 (2026-11-01): `kf.call`, 126 functions, its calls fuzzed clean
+   ([CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md)). Left for the second stage: functions
+   that run frames, load files or use a current object.
 9. Hooking and replacing the game's functions: a mod's code before, after or
    in place of a game function. We compile the decomp, so the build can give
    each function a hook point; no patching at run time.

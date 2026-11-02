@@ -741,6 +741,7 @@ void host_press_actions(u32 actions) { host.mod_pressed |= actions; }
 u32 host_action_overrides_blocked() { return host.overrides.blocked; }
 
 u32 host_read_buttons() {
+    fuzz_frame_reached();
     host_poll();
     // Original game code samples held buttons and derives its own edges.
     const TouchActions touch = host_touch_take_actions();
@@ -1075,6 +1076,7 @@ void host_light_occluders(const u8 *solid, int columns, int rows, float tile_siz
 static void frontend_submit(const FaceList *faces);
 
 void host_present_faces(const FaceList *faces) {
+    fuzz_frame_reached();
     menu_preview_shown = menu_preview_building;
     ++host.frames_presented;
 #if KF_EXT

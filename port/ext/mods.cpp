@@ -42,6 +42,7 @@
 #include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
 #include "coop_party.h"
+#include "call_checks.h"
 #include "raw_layer.h"
 #include "mod_assets.h"
 #include "mod_audio.h"
@@ -61,7 +62,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.12";
+constexpr const char *api_version = "0.13";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -1467,6 +1468,7 @@ void mods_start() {
     config.api = api_tables();
     config.events = event_table();
     config.raw = kf_raw_layer();
+    config.calls = kf_call_layer();
     config.definitions_name = "kf.d.lua";
     config.read_stored = read_stored;
     config.write_stored = write_stored;
@@ -1511,6 +1513,8 @@ void mods_between_updates() {
         for (const EquipRequest &request : equip_requests)
             apply_equip(request);
     equip_requests.clear();
+    if (apply && host)
+        host->call_each(verdite::ModCallback::BetweenUpdates);
 }
 
 bool mods_pause_requested() {
@@ -1583,7 +1587,7 @@ void mods_frame(int context) {
     // The scene built this update's faces before this runs, so the last on_update's shapes are drawn
     // and these are drawn from the next update's picture.
     mod_scene_clear_all();
-    if (!mods_paused())
+    if (!mods_paused() && !kf_call_running())
         host->call_each(verdite::ModCallback::Update);
     stop_shapes_of_inactive_mods();   // a mod that failed in its update leaves no shapes behind
     // Also while paused, so the game sees the defaults from the first frame of coop.

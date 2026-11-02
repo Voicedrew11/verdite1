@@ -2,8 +2,8 @@
 
 Written 2026-11-01, after API 0.12. Step 8 of [MODDING.md](MODDING.md#order): a mod calls the
 game's functions, through bindings generated from the same headers as the
-[raw layer](RAW_LAYER_PLAN.md), each argument checked against its type and range. The host's two
-bugs are fixed (step 2); the layer itself is not built yet.
+[raw layer](RAW_LAYER_PLAN.md), each argument checked against its type and range. Stage one is
+built (API 0.13, 2026-11-01): 126 functions, fuzzed clean. Stage two (step 9) is not started.
 
 ## What makes this harder than the raw layer
 
@@ -61,16 +61,21 @@ And by what the function does when run. Each function counts once, in the first 
 | the current actor | 27 |
 | none of these | 259 |
 
-The second table is an estimate. Of the 259, about 90 sit in headers that need a frame, loaded
+The second table came from a throwaway call graph, measured before anything was built; what shipped
+is at the end of this section. Of the 259, about 90 sit in headers that need a frame, loaded
 resources or the card (render, menu drawing, cutscene, TMD, save, sound lifecycle), which leaves
-about **170** callable in the first stage, before the fuzzer takes any out. It includes
-`player_add_experience`, `player_adjust_hp`, `actor_pool_find_at_tile` and the `effect_spawn_*`
-family.
+about 170 callable in the first stage by that estimate. **126 shipped**, of the 558: `call_audit.py`
+follows tables the throwaway graph did not, so it held back more (it lists 91 reaching a frame, 4
+file writes, 30 loads, 33 a current object, some already held back by signature), and reading took
+out 9 more. They include `player_add_experience`, `player_adjust_hp`, `actor_pool_find_at_tile` and
+the `effect_spawn_*` family.
 
-The hazard counts come from a throwaway call graph over 100 translation units, and they are low:
-it matches by name, so overloads merge; it does not follow function pointers, so the map scripts'
-and actors' dispatch tables are missing; only the current actor was traced, not effects or map
-events; and `src/audio/sound.cpp` failed to dump and was not looked into. Step 4 replaces it.
+The hazard counts came from a throwaway call graph over 100 translation units, and they were low: it
+matched by name, did not follow function pointers, traced only the current actor, and
+`src/audio/sound.cpp` failed to dump. `tools/call_audit.py` replaced it (step 5): it follows
+global tables and all three current objects, and `sound.cpp` dumps cleanly in it. It still merges
+overloads and cannot see a function pointer set at run time, which is why the fuzzer also fails a
+run if a frame is reached during a call. No run did.
 
 Every parameter in the headers has a name, so the listed file can key on it. There are 989
 parameters, 384 of them plain integers with no type-level bound: that is the range work.
@@ -149,23 +154,39 @@ end
    call that raises an event in *another* mod still gives that mod a whole budget per raise, so the
    charge bounds this only together with the handler's budget: at worst a stall, not memory, and
    step 8 measures it.
-3. Write `verdite/raw_call.h` and the definitions it adds, and get it agreed before the implementation.
-   Any change found while implementing, including by a subagent, goes back to the user, each named.
-4. **Stage one (API 0.13).** libverdite implementation and tests, its own commit.
-5. An audit in the generator's tool, run by `scripts/check.sh` and not by the build, since it reads
+3. ~~Write `verdite/raw_call.h` and the definitions it adds, and get it agreed before the implementation.
+   Any change found while implementing, including by a subagent, goes back to the user, each named.~~
+   Agreed 2026-11-01.
+4. ~~**Stage one (API 0.13).** libverdite implementation and tests, its own commit.~~ Done 2026-11-01.
+5. ~~An audit in the generator's tool, run by `scripts/check.sh` and not by the build, since it reads
    every source: it fails when a callable function reaches a frame, the allocator, a file write, or a
    current object without the listed file saying so. It replaces the throwaway graph and must follow
-   the dispatch tables or list them, and cover `sound.cpp`.
-6. The generator, the listed file and the CMake step. Report what was left out and why.
-7. The fuzzer: a `KF_FUZZ_CALL` mode (`fuzz.py --call`) that calls a random callable function with
+   the dispatch tables or list them, and cover `sound.cpp`.~~ Done: `tools/call_audit.py` writes
+   `port/ext/call_layer_audit.toml`, which the generator holds back whole, and `check.sh` fails if it
+   is stale.
+6. ~~The generator, the listed file and the CMake step. Report what was left out and why.~~ Done:
+   `tools/call_layer.py`, part of the raw layer's run; the report is `raw_layer_report.txt`.
+7. ~~The fuzzer: a `KF_FUZZ_CALL` mode (`fuzz.py --call`) that calls a random callable function with
    in-range arguments from `fuzz_between_updates`, half at the edges, as the raw mode does, and a
    finding when a stage-one call reaches a frame at run time, which catches what the audit cannot see.
    Each crash, stall or `host_fail` becomes a range, a run-time check, a hold or a game patch; the
    source is scanned for each parameter's use as an index, divisor or bound, since reading found what
    the fuzzer missed last time. Then `--call --raw` together, since a raw write can break what a call
-   assumes. It does not ship before 96 clean runs under ASan and UBSan, the raw layer's bar.
-8. Binding, definitions file, MODDING.md's reference, API 0.13. Measure a call's cost in a probe mod
-   (a loop of 100 000) and set the charge from it.
+   assumes. It does not ship before 96 clean runs under ASan and UBSan, the raw layer's bar.~~
+   **Clean 2026-11-01**: `--preset fuzz --call 6000 --mix --vary --ticks 20000`, seeds 3000-3095: 96
+   runs, 388,667 calls, every one of the 126 functions at least 1,954 times, no crash, sanitizer
+   report, `host_fail` or stall. `--call 4000 --raw 4000`, seeds 4000-4095: no crash, sanitizer report
+   or `host_fail`; 2 of the 96 stalled in the `opening` context, which the raw layer's plan already
+   counts for nothing since writes stop there. One of those two made no call at all; why each left
+   play was not traced. Getting there took five rounds: ranges for each index, in-use checks for
+   actors and map objects, and three holds. Arguments were read for the functions that take an index,
+   not for all 384 integer parameters as the plan proposed; the fuzzer covered the rest, so a rare
+   bad value may remain. A clean run covers only gameplay, the one place `on_between_updates` runs.
+8. ~~Binding, definitions file, MODDING.md's reference, API 0.13. Measure a call's cost in a probe mod
+   (a loop of 100 000) and set the charge from it.~~ Done. Measured with loops of 20,000 on the plain
+   build: 0.16 us a call, 0.71 us passing a table each way, so the charge of 1,000 instructions limits
+   a callback to 100,000 calls. The same run under ASan proved a call deals damage, `on_damage` errs,
+   and the mod stops at once with the game going on.
 9. **Stage two (API 0.14).** Handle the three remaining classes, each with its own fuzz campaign:
    current-object functions take the slot as their first argument, and the binding binds it, calls,
    and unbinds; allocator and load functions get a hold or a reason to allow each one; frame-running
@@ -174,8 +195,12 @@ end
    `ModHost::scan`, which unload mods, so those must wait for the outermost call to end. MODDING.md's
    step 8 is struck when this lands.
 
-To check during step 2: whether `host_between_updates` runs while `kf.play.paused` holds the game,
-since a paused mod may then get no `on_between_updates`. It does not run at the title or in a menu.
+`host_between_updates` is in the world loop, which a pause holds inside a frame, so a paused game
+runs no `on_between_updates`, as it runs no `on_update`. It does not run at the title, in a menu or
+in a cutscene either; this was read from the code, not run.
+
+To widen stage one without stage two: 38 functions wait only on a role in the listed file, which
+needs someone to read each and confirm its pointer is to one struct.
 
 ## Held back from the start
 
@@ -186,9 +211,16 @@ The fuzzer would not necessarily find these, so they are listed by reading:
 - **Ends or stalls the program**: `game_shutdown`, `sound_start`, `sound_shutdown`,
   `frame_pacer_wait`, `game_main_loop`, `game_play`.
 - **Needs an open frame or loaded scene**: `kf/game/render.h`, `kf/lib/tmd.h`, `kf/lib/render_face.h`,
-  `menu_draw_*` and all of `kf/cutscene/`. Some may come back later; `render_publish_light` is the
+  all of `kf/game/menu.h` and `kf/cutscene/`. Some may come back later; `render_publish_light` is the
   first candidate.
 - **By signature**: any raw buffer, span, arena or callback. No Lua value becomes an address.
+- **Bounds a range cannot say**: `map_object_effect_pool_acquire` (a first index and a count that must
+  stay in the pool together), `player_set_equipment_slot` (the id's range depends on the slot; found by
+  reading, and `kf.equip` does this), `map_object_start_action_if_idle` (found by the fuzzer: its swinging
+  and switch actions read an effect's index only their own objects hold).
+- **Breaks what the world goes on using**: `map_unload_floor`, `map_resource_path_set_floor`,
+  `asset_registry_clear_floor`, `asset_registry_select`, `game_apply_language`,
+  `game_update_language_comparison`, held by reading before any fuzz.
 
 ## Checks
 

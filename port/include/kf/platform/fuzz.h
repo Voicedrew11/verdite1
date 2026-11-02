@@ -17,6 +17,9 @@
 //     KF_FUZZ_RAW=3000            a raw write (a random writable field of kf.raw's layer, in range) in
 //                                 this many per 10000 updates; invariants are off, so only crashes and
 //                                 host_fail are findings (the raw-refused note is a chooser bug)
+//     KF_FUZZ_CALL=3000           a call into the game (a random function of kf.call's layer, arguments
+//                                 in range) in this many per 10000 updates; invariants are off, as with
+//                                 KF_FUZZ_RAW, and a frame reached during a call is a host_fail
 //     KF_FUZZ_KIT=1               start with one of every item and spells 0-8
 //     KF_FUZZ_STRONG=1            start with max HP and MP 999 (not topped up)
 //     KF_FUZZ_GODMODE=1           HP topped up every update
@@ -44,6 +47,8 @@ u32 fuzz_buttons();
 QuickRequest fuzz_quick_request();
 // Between two world updates (host_between_updates): macros, invariants, the trace.
 void fuzz_between_updates();
+// A frame is being read or presented: a finding if a mod's call into the game is running.
+void fuzz_frame_reached();
 // Moves the player to the centre of a cell of this floor, as floor 5's teleport moves them; between
 // updates only (the fuzzer's goto, the agent's move). False for a cell off the map.
 bool player_move_to_cell(int x, int z);

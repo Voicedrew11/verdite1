@@ -1,0 +1,134 @@
+# The listed file of the call layer (docs/CALL_LAYER_PLAN.md), read by tools/raw_layer.py.
+#
+# Everything the generator can describe is callable, less what is held here and what
+# tools/call_audit.py found (call_layer_audit.toml). A key that names nothing fails the generator.
+#
+#   [held]                 function = why it is not callable
+#   [held_headers]         a whole header = why
+#   any_time_headers       a header whose functions change nothing and raise nothing
+#   [pools.Struct]         a struct kept in a pool crosses as its slot: pool (the array), check (optional)
+#   [functions.name]       any_time, why (the doc), and per parameter:
+#   [functions.name.params.p]  range ([min, max] or a global array), role (in, out, inout),
+#                          check (a function of call_checks.h), nil (nil passes null), why
+#
+# A role on a pointer or a non-const reference also says it is to one struct and not to an array,
+# since the game would read past a single copy: read the function before giving one.
+
+instructions_per_call = 1000
+
+any_time_headers = [
+    "kf/lib/math.h",
+    "kf/lib/fixed_math.h",
+]
+
+[pools.KfActor]
+pool = "actor_state.actors"
+check = "kf_call_actor_in_use"
+
+[pools.KfEffectRecord]
+pool = "effect_state.records"
+
+[pools.KfMapObject]
+pool = "map_object_state.objects"
+check = "kf_call_map_object_in_use"
+
+[pools.KfMapEvent]
+pool = "map_runtime_state.events"
+
+[pools.KfFloorItem]
+pool = "game_graphics_runtime.floor_items"
+
+[held]
+map_unload_floor = "frees the floor the world update goes on to walk"
+map_resource_path_set_floor = "changes which floor's files the next load reads, with no load to follow"
+asset_registry_clear_floor = "forgets the loaded floor's models while the world still draws them"
+asset_registry_select = "selects a model for drawing: needs a frame being built"
+game_apply_language = "reloads the text while the game may hold it"
+game_update_language_comparison = "reloads the text while the game may hold it"
+
+map_object_effect_pool_acquire = "first_index + count must stay in the pool, and count 0 wraps: a range on each cannot say so"
+player_set_equipment_slot = "the id's range depends on the slot, and a wrong id is an index the game does not check; kf.equip does this"
+
+map_object_start_action_if_idle = "starts the given action on an object of any behaviour, and the swinging and switch actions read link.action_parameter as an effect's index, which only their own objects hold"
+
+[held_headers]
+"kf/game/save.h" = "writes or replaces the player's save"
+"kf/game/render.h" = "draws: needs an open frame and a built scene"
+"kf/game/menu.h" = "draws or runs a menu: needs an open frame, its loaded resources, or a loop of its own"
+"kf/game/animation_cache.h" = "owns the animation cache's memory"
+"kf/game/system.h" = "runs or ends the game's own loop"
+"kf/lib/tmd.h" = "reads a loaded model through a context of raw pointers"
+"kf/lib/render_face.h" = "draws: needs an open frame"
+"kf/lib/render_types.h" = "draws: needs an open frame"
+"kf/lib/resources.h" = "reads a loaded file's bytes"
+"kf/lib/resource_file.h" = "reads a file"
+"kf/lib/byte_reader.h" = "reads raw bytes"
+"kf/lib/codec.h" = "decodes raw bytes"
+"kf/audio/codec.h" = "decodes raw bytes"
+"kf/audio/sound.h" = "the sound device's lifecycle"
+"kf/cutscene/audio.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/camera_path.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/controller.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/opening_helpers.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/opening_render.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/opening_scenes.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/playback.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/render.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/resources.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/scene0.h" = "a cutscene's own state: API stage two"
+
+# --- Ranges: each is an index the game uses with no check.
+
+[functions.map_attribute_at_cell.params.x]
+range = [0, 99]
+why = "A column: map_cell_attribute_grid.cells[z][x]."
+[functions.map_attribute_at_cell.params.z]
+range = [0, 99]
+why = "A row."
+[functions.map_base_floor_height.params.x]
+range = [0, 99]
+why = "A column: map_floor_height_grid.cells[z][x]."
+[functions.map_base_floor_height.params.z]
+range = [0, 99]
+why = "A row."
+[functions.map_floor_height_for_cell_position.params.cell_index]
+range = [0, 9999]
+why = "A cell of the 100 by 100 grid."
+[functions.effect_floor_deform_segment.params.segment_index]
+range = [0, 4]
+why = "floor_deform_segments[segment_index]."
+[functions.actor_apply_damage.params.actor_index]
+range = [0, 127]
+check = "kf_call_actor_in_use"
+why = "A slot of the actor pool: actor_state.actors[actor_index], whose definition_id is an index too."
+[functions.actor_initialize_slot.params.actor_index]
+range = [0, 127]
+check = "kf_call_actor_in_use"
+why = "A slot of the actor pool, which must hold an actor."
+[functions.actor_pool_begin_death_by_definition.params.definition_id]
+range = [0, 11]
+why = "actor_state.definitions.entries[definition_id]."
+[functions.map_object_pool_find_interaction_from.params.start_index]
+range = [0, 189]
+why = "map_object_state.objects[start_index]."
+[functions.player_select_magic.params.magic_id]
+range = [0, 8]
+why = "The player's spells: menu_draw_equipment_names indexes a table of 9 by it. KF_MAGIC_NONE is outside, as a range is one interval."
+[functions.map_container_item.params.slot]
+range = [0, 6]
+why = "A byte of the link, after the hinged container's link id."
+[functions.radial_damage_attenuated_scale.params.distance]
+range = [0, 524287]
+why = "Shifted left by 12 in an s32."
+[functions.radial_damage_attenuated_scale.params.radius]
+range = [1, 4294967295]
+why = "A divisor."
+[functions.player_calculate_damage_component.params.defender_power]
+range = [0, 32767]
+why = "Goes into a threshold the game multiplies and divides by."
+[functions.player_calculate_damage_component.params.defense]
+range = [0, 32767]
+why = "Goes into a threshold the game multiplies and divides by."
+[functions.player_calculate_damage_component.params.attack]
+range = [0, 32767]
+why = "Squared in an s32."
