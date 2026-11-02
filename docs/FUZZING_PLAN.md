@@ -328,6 +328,14 @@ becomes sanitizer and assertion reports), signatures from the crash report's nam
    card files, then `fork()` snapshots if the boot is the cost.
 6. **Against the recompilation**, once there is a name-to-address table.
 
+`fuzz.py --corrupt-assets N` plays with a mod that replaces N of the disc's item models by seeded
+mutants that pass the load-time check (`kf_asset_check`). 2026-11-01, sanitize build, `--kit --mix`,
+144 runs of 30 000 ticks: no crash, sanitizer report or hang, 441 distinct TMD mutants read. Reads
+are counted, not draws. That run also carried `.MIM` mutants, also without a crash, but `.MIM` is
+not a kind a mod may replace: reading the game found a hole the fuzzer had not hit (a file with too
+few animation clips reaches `animation_cache.cpp`'s `host_fail`), as "Replacing disc files" in
+MODDING.md says.
+
 ## Questions
 
 Taken as the defaults when the plan was agreed; open to change.

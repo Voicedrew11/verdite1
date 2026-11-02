@@ -42,6 +42,7 @@
 #include <kf/platform/play_overrides.h>
 #include "coop_party.h"
 #include "raw_layer.h"
+#include "mod_assets.h"
 #include "mod_automap.h"
 #include "mod_draw.h"
 #include "mod_play.h"
@@ -57,7 +58,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.9";
+constexpr const char *api_version = "0.10";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -1427,17 +1428,27 @@ void mods_start() {
     config.read_stored = read_stored;
     config.write_stored = write_stored;
     config.unloaded = forget_mod_play;
+    config.asset_kinds = mod_asset_kinds();
+    config.disc_file_size = mod_disc_file_size;
     host = std::make_unique<verdite::ModHost>(std::move(config));
+    kf::data_files_set_replacer(mod_asset_for_path);
     hold_enhancements_in_classic();
     host->scan();
     last_scan = SDL_GetTicks();
 }
 
 void mods_shutdown() {
+    kf::data_files_set_replacer(nullptr);
     host.reset();
     mod_plays.clear();
     last_floor = 0;
     refresh_mod_play();
+}
+
+std::shared_ptr<const std::vector<std::uint8_t>> mod_asset_for_path(const char *path) {
+    if (!mods_active())
+        return nullptr;
+    return host->asset_override(path);
 }
 
 void mods_between_updates() {

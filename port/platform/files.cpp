@@ -1,17 +1,26 @@
 #include <kf/platform/files.h>
 
+#include <verdite/fuzz.h>
+
 #include <sys/stat.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <limits>
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace kf {
 static constexpr unsigned ascii_first_printable = 32;
 static std::string data_root;
+static std::atomic<DataReplacer> replacer{nullptr};
+
+void data_files_set_replacer(DataReplacer replacer_function) {
+    replacer.store(replacer_function);
+}
 
 bool data_files_set_root(const char *directory) {
     struct stat info {};
@@ -50,7 +59,28 @@ static bool valid_relative_path(const char *path) {
     }
 }
 
+bool data_file_open_replaced(DataFile *file, const char *path) {
+    const DataReplacer replace = replacer.load();
+    if (!replace || !valid_relative_path(path))
+        return false;
+    auto bytes = replace(path);
+    if (!bytes)
+        return false;
+    *file = {};
+    file->size = bytes->size();
+    file->replaced = std::move(bytes);
+    file->replaced_path = path;
+    return true;
+}
+
 FileResult data_file_open(DataFile *file, const char *path) {
+    *file = {};
+    if (data_file_open_replaced(file, path))
+        return FileResult::Ok;
+    return data_file_open_disc(file, path);
+}
+
+FileResult data_file_open_disc(DataFile *file, const char *path) {
     return data_file_open_at(file, data_root.c_str(), path);
 }
 
@@ -83,7 +113,16 @@ FileResult data_file_open_at(DataFile *file, const char *directory, const char *
         std::fclose(stream);
         return FileResult::TooLarge;
     }
-    *file = {stream, static_cast<std::size_t>(info.st_size)};
+    *file = {stream, static_cast<std::size_t>(info.st_size), nullptr, {}};
+    return FileResult::Ok;
+}
+
+static FileResult data_file_read_replaced(DataFile *file, void *destination) {
+    if (!destination)
+        return FileResult::IoError;
+    // The game's read of a mod's replacement (fuzz.py --corrupt-assets counts these; a no-op unless fuzzing).
+    verdite::fuzz_note("asset-read " + file->replaced_path);
+    std::memcpy(destination, file->replaced->data(), file->size);
     return FileResult::Ok;
 }
 
@@ -92,6 +131,8 @@ FileResult data_file_read(DataFile *file, void *destination, std::size_t capacit
         return FileResult::IoError;
     if (file->size > capacity)
         return FileResult::TooLarge;
+    if (file->replaced)
+        return data_file_read_replaced(file, destination);
     if (!file->stream || (!destination && file->size) || std::fseek(file->stream, 0, SEEK_SET) != 0)
         return FileResult::IoError;
     if (file->size && std::fread(destination, 1, file->size, file->stream) != file->size)

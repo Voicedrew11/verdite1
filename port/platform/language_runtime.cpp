@@ -223,6 +223,8 @@ Language language_requested() {
 
 FileResult language_file_open(DataFile *file, Language language, const char *path) {
     *file = {};
+    if (data_file_open_replaced(file, path))
+        return FileResult::Ok;
     if (!prepare_resources(language))
         return FileResult::IoError;
     return data_file_open_at(file, language_folder(language).c_str(), path);

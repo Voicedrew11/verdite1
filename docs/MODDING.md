@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.9, what ships today. Where it is going, API 1.0, is
+This page documents API 0.10, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -33,7 +33,8 @@ mods/stathud/main.lua
 }
 ```
 
-Only `main.lua` is required; `id` defaults to the folder name and `entry` to
+Only `main.lua` is required, or an `assets/` folder
+([Replacing disc files](#replacing-disc-files)); `id` defaults to the folder name and `entry` to
 `main.lua`. `"default_enabled": true` starts a mod enabled the first time the
 game sees it (the run and the map ship this way); after that its switch is
 stored like any other. `"enhancement": true` marks a mod that changes the game
@@ -55,7 +56,7 @@ extension, Neovim and others then complete names and flag mistakes.
 
 * The game scans the mods folder twice a second. A new folder appears in the
   Mods panel immediately; mods start **disabled**, like Verdite2.
-* Saving any `.lua` file or `mod.json` in an enabled mod reloads it: `on_unload`
+* Saving any `.lua` file or `mod.json`, or changing a file under `assets/`, in an enabled mod reloads it: `on_unload`
   runs, the Lua state is discarded, and the mod starts fresh.
 * An error stops only that mod, as does going over its budget (below). The message and stack trace go to the Console
   (F1 → Console) and appear under the mod in the Mods panel. Fix the file and
@@ -150,12 +151,55 @@ Given by the host to every mod, in every game.
 | `mod.time()` | seconds since the game started |
 | `mod.save_config()` | saves `config` when the callback returns |
 | `mod.fs.read(path)` | the file's bytes, or `nil, reason` |
-| `mod.fs.write(path, text)` | `true`, or `nil, reason`; makes the folders; not `.lua` files or `mod.json`, which would reload the mod |
+| `mod.fs.write(path, text)` | `true`, or `nil, reason`; makes the folders; not `.lua` files, `mod.json` or `assets/`, which would reload the mod |
 | `mod.fs.exists(path)` | boolean |
 | `mod.fs.list([folder])` | the names in a folder, sorted, folders ending in `/` |
+| `mod.assets.set(disc_path, file)` | the mod's `file` replaces the disc's from its next load; a refused file is an error ([Replacing disc files](#replacing-disc-files)) |
+| `mod.assets.clear(disc_path)` | this mod no longer replaces it, from its next load, even a file in `assets/` until the mod reloads |
 
 Paths are relative to the mod's folder; `..`, an absolute path or a link that
 leads outside it is refused.
+
+## Replacing disc files
+
+A mod's `assets/` folder holds files that replace the disc's, under the disc's
+paths, so `mods/quiet/assets/KF/B1/SND0.SEQ` replaces the disc's `KF/B1/SND0.SEQ`.
+A mod may be nothing else: a folder with `assets/` needs no `mod.json` or
+`main.lua`. The disc's own files are never changed.
+
+| kind | what it is |
+|---|---|
+| `.TIM` | textures and pictures |
+| `.SEQ` | music, in the game's sequence format (it plays through the floor's sound bank) |
+| `.TMD` | item models (`KF/ITEM1/I001.TMD`) |
+
+Each file is checked when the mod loads, with the game's own parse, and held in
+memory. A bad one fails the whole mod with a reason in the Mods panel, as a Lua
+error does; the game goes on. It is refused if it is not one of the kinds above,
+the disc has no file at its path, it is empty or larger than the disc's file (the
+game reads these into buffers made for the disc's sizes), it fails the check, or it
+is a link.
+
+- A replacement applies the next time the game loads that file: a texture loaded
+  already stays until then, and `KF/COM/MIX.TIM` is kept for the whole run.
+- When two mods replace a file, the last in the listed order wins.
+- A replacement applies in both languages, and its size is checked against the
+  language being played.
+- None apply in a coop room, or from a mod Classic mode holds.
+
+`mod.assets.set` and `mod.assets.clear` change this from Lua. `set` raises an error
+with the same reasons.
+
+What cannot be replaced yet, and why:
+
+- **`.MIM`** (weapon and monster models). The game asks a model for animation clips
+  by numbers in its code, and stops with an error if the file has fewer, which a
+  check of the file's own bytes cannot see. Allowing it would mean comparing the
+  file against the disc's.
+- **`.DAT`** (the floors' monster models, sound banks, maps, menu text). Each is a
+  container of many things read in a fixed order, and the game trusts values in it.
+- **Larger textures, and PNG.** A `.TIM` lands in the PS1's 1024x512 texture store,
+  so it is no sharper than the disc's. High-resolution textures are their own step.
 
 ## `config`
 
@@ -678,7 +722,8 @@ mods are off in coop (decided 2026-10-31).
    0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
 5. ~~The generated raw layer.~~ Built in 0.9 (2026-11-01); its writes fuzzed
    clean the same day ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md), step 5).
-6. Asset overrides, audio, 3D drawing.
+6. Asset overrides, audio, 3D drawing. Overrides done in 0.10 (2026-11-01):
+   `.TIM`, `.SEQ` and `.TMD` ([Replacing disc files](#replacing-disc-files)).
 7. ~~Input actions: reading, pressing and blocking them. Reading done in 0.7
    (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,
    `kf.play.top_speed` and `kf.game.mouse` and `music_while_paused`, which
@@ -700,8 +745,9 @@ mods are off in coop (decided 2026-10-31).
   listed subset.~~ Decided 2026-11-01: clang over the patched headers, with a
   short listed file of value ranges and aliases; everything is writable but
   raw pointers and the allocators ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md)).
-- Asset formats: PNG for textures, and how replaced textures sit in the Vulkan
-  backend's texture pages, including larger replacements.
+- Asset formats. Decided 2026-11-01: a replaced file is in the disc's own format
+  for now (`.TIM`, `.SEQ`, `.TMD`). Still open: PNG for textures, and how
+  larger replacements sit in the Vulkan backend's texture layers (256x256 today).
 - ~~Whether rules that run every update (regeneration) are worth an event per
   call, or are better as values a mod sets.~~ Decided 2026-10-31: values. KF1's
   rules are tables (regeneration is an interval on the equipment records), so a

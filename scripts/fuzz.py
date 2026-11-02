@@ -37,6 +37,7 @@ docs/FUZZING_PLAN.md and "Fuzzing" in docs/verdite-port.md.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -56,7 +57,9 @@ DATA = REPO / "data/en"
 USER_FOLDER = Path("home/Verdite/Verdite1")   # inside a run directory, under XDG_DATA_HOME
 QUICK_CARD = "BISLPS-00017KF.quick"
 ENV_FILE = "fuzz-env.json"
-KEPT_ON_CLEAN = ("log.txt", "fuzz-input.log", "fuzz-coverage.txt", "trace.txt", ENV_FILE)
+CORRUPT_MOD = "corruptassets"
+CORRUPT_MANIFEST = "corrupt-assets.json"
+KEPT_ON_CLEAN = ("log.txt", "fuzz-input.log", "fuzz-coverage.txt", "trace.txt", ENV_FILE, CORRUPT_MANIFEST)
 TICKS_PER_SECOND = 60
 
 # --vary: settings that change what the game does, each with the values tried; None leaves
@@ -107,6 +110,7 @@ class Run:
     extra_env: dict = field(default_factory=dict)
     settings: dict = field(default_factory=dict)
     label: str = ""
+    reads: list = field(default_factory=list)   # disc paths the game read from a mod's replacement
 
 
 def rel(p: Path) -> str:
@@ -225,7 +229,102 @@ def prepare(args, run: Run, base_settings: dict) -> None:
     (run.dir / "saves").mkdir(parents=True)
     if args.load:
         shutil.copy2(args.load, run.dir / "saves" / QUICK_CARD)
-    write_settings(run.dir, base_settings, run.settings)
+    settings = dict(run.settings)
+    if args.corrupt_assets:
+        corrupt_mod(args, run)
+        settings[f"mods.{CORRUPT_MOD}"] = {"enabled": True}
+    write_settings(run.dir, base_settings, settings)
+
+
+# --- --corrupt-assets: a mod whose assets/ replaces N of the disc's models with mutants
+
+WORD_VALUES = (0, 1, 2, 0x7F, 0x80, 0xFF, 0x100, 0x7FFF, 0x8000, 0xFFFF, 0x10000, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF)
+MUTANTS_PER_BATCH, MUTANT_BATCHES = 16, 6
+
+
+def disc_models(data: Path) -> list[str]:
+    """Every TMD on the disc, by disc path (KF/ITEM1/I001.TMD)."""
+    return sorted(p.relative_to(data).as_posix() for p in (data / "KF").rglob("*")
+                  if p.is_file() and p.suffix.upper() == ".TMD")
+
+
+def mutate(rng: random.Random, original: bytes) -> tuple[bytes, str]:
+    """One random change, never making the file larger: flipped bytes, a u16 or u32 set to an edge
+    value (0, 1, 0xFF.., 0x7FFF..) or a random one, a region copied within the file, or a truncation."""
+    data, n = bytearray(original), len(original)
+    kind = rng.choice(("flip", "word", "splice", "truncate"))
+    if kind == "flip":
+        count = rng.randint(1, 8)
+        for _ in range(count):
+            data[rng.randrange(n)] = rng.randrange(256)
+        return bytes(data), f"flip {count} byte(s)"
+    if kind == "word":
+        width = rng.choice((2, 4))
+        mask = (1 << (8 * width)) - 1
+        at = rng.randrange(0, n - width + 1)
+        value = (rng.choice(WORD_VALUES) if rng.random() < 0.8 else rng.randrange(mask + 1)) & mask
+        data[at:at + width] = value.to_bytes(width, "little")
+        return bytes(data), f"u{8 * width} at {at} = {value:#x}"
+    if kind == "splice":
+        length = rng.randint(1, max(1, n // 4))
+        src, dst = rng.randrange(0, n - length + 1), rng.randrange(0, n - length + 1)
+        data[dst:dst + length] = original[src:src + length]
+        return bytes(data), f"copy {length} byte(s) from {src} to {dst}"
+    cut = rng.randrange(1, n)
+    return bytes(data[:cut]), f"truncate to {cut} bytes"
+
+
+def passing_mutant(rng: random.Random, helper: Path, disc_path: str, original: bytes,
+                   scratch: Path) -> tuple[bytes, str] | None:
+    """A mutant the game's own check passes (kf_asset_check runs port/ext/mod_assets.cpp), or nothing
+    after a few batches. The host runs the same check, so a passing mutant loads."""
+    for _ in range(MUTANT_BATCHES):
+        candidates = []
+        while len(candidates) < MUTANTS_PER_BATCH:
+            mutant, description = mutate(rng, original)
+            if mutant != original:
+                candidates.append((mutant, description))
+        files = []
+        for index, (mutant, _) in enumerate(candidates):
+            files.append(scratch / f"candidate-{index}.bin")
+            files[-1].write_bytes(mutant)
+        result = subprocess.run([str(helper), disc_path, *map(str, files)], capture_output=True, text=True)
+        verdicts = result.stdout.splitlines()
+        if result.returncode != 0 or len(verdicts) != len(files):
+            raise RuntimeError(f"kf_asset_check failed on {disc_path}: {result.stderr.strip() or result.stdout.strip()}")
+        for (mutant, description), verdict in zip(candidates, verdicts):
+            if verdict == "ok":
+                return mutant, description
+    return None
+
+
+def corrupt_mod(args, run: Run) -> None:
+    """The run's mod, with assets/ holding a mutant for each of --corrupt-assets disc models, chosen and
+    mutated from the run's seed. corrupt-assets.json says what each is; the run's own folder holds it."""
+    rng = random.Random(run.seed * 1000003 + 0xC0FFEE)
+    helper = binary(args).with_name("kf_asset_check")
+    models = disc_models(Path(args.data))
+    chosen = rng.sample(models, min(args.corrupt_assets, len(models)))
+    mod_dir = run.dir / USER_FOLDER / "mods" / CORRUPT_MOD
+    scratch = run.dir / "candidates"
+    scratch.mkdir(parents=True, exist_ok=True)
+    manifest = []
+    for disc_path in chosen:
+        original = (Path(args.data) / disc_path).read_bytes()
+        found = passing_mutant(rng, helper, disc_path, original, scratch)
+        if found is None:
+            manifest.append({"disc_path": disc_path, "mutant": None})
+            continue
+        mutant, description = found
+        target = mod_dir / "assets" / disc_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(mutant)
+        manifest.append({"disc_path": disc_path, "disc_bytes": len(original), "bytes": len(mutant),
+                         "sha256": hashlib.sha256(mutant).hexdigest(), "mutation": description})
+    shutil.rmtree(scratch)
+    (mod_dir / "mod.json").write_text(json.dumps({"id": CORRUPT_MOD, "name": "Corrupt assets (fuzz)",
+                                                  "version": "1", "description": "Fuzzing only."}, indent=2))
+    (run.dir / CORRUPT_MANIFEST).write_text(json.dumps(manifest, indent=2))
 
 
 def launch(args, run: Run, env: dict) -> None:
@@ -301,6 +400,8 @@ def classify(run: Run) -> None:
                                  "headline": f"{event['kind']}: {event['detail']}", "update": event["update"]})
         elif event.get("event") == "end":
             run.end = event
+        elif event.get("event") == "note" and str(event.get("what", "")).startswith("asset-read "):
+            run.reads.append(event["what"][len("asset-read "):])
     sanitizer = sanitizer_signature(log)
     asserted = ASSERT_RE.search(log)
     reports = crash_reports(run)
@@ -380,6 +481,8 @@ def rerun_command(args, run: Run) -> str:
         words += ["--preset", args.preset]
     if args.raw:
         words += ["--raw", str(args.raw)]
+    if args.corrupt_assets:
+        words += ["--corrupt-assets", str(args.corrupt_assets)]
     for k, v in sorted(run.extra_env.items()):
         words += ["--env", f"{k}={v}"]
     for k, v in sorted(run.settings.items()):
@@ -426,6 +529,31 @@ def coverage_markdown(cov: dict) -> list[str]:
     return lines
 
 
+KIND_OF_PATH = (("ITEM", "item model (TMD)"),)
+
+
+def corrupt_coverage(runs: list[Run]) -> dict:
+    """What the game read from the mutants: per kind, the reads, and the distinct mutants (by hash)
+    read at least once in a run. A read is the game's open of the replacement; its parse follows it."""
+    kinds: dict[str, dict] = defaultdict(lambda: {"reads": 0, "mutants": set(), "runs": set()})
+    runs_with_mutants = 0
+    for run in runs:
+        manifest_path = run.dir / CORRUPT_MANIFEST
+        if not manifest_path.exists():
+            continue
+        mutants = {m["disc_path"]: m for m in json.loads(manifest_path.read_text()) if m.get("sha256")}
+        read_here = [path for path in run.reads if path in mutants]
+        runs_with_mutants += bool(read_here)
+        for path in read_here:
+            kind = next((name for prefix, name in KIND_OF_PATH if prefix in path), "other")
+            kinds[kind]["reads"] += 1
+            kinds[kind]["mutants"].add(mutants[path]["sha256"])
+            kinds[kind]["runs"].add(run.seed)
+    return {"runs_with_a_mutant_read": runs_with_mutants,
+            "kinds": {k: {"reads": v["reads"], "distinct_mutants": len(v["mutants"]), "runs": len(v["runs"])}
+                      for k, v in sorted(kinds.items())}}
+
+
 def write_report(args, runs: list[Run], wall: float) -> None:
     out = Path(args.out)
     counts = Counter(r.outcome for r in runs)
@@ -448,13 +576,19 @@ def write_report(args, runs: list[Run], wall: float) -> None:
             md.append("- set in its runs: " + ", ".join(f"{k} ({n}/{len(hits)})" for k, n in settings.most_common(8)))
         md.append("")
     md += coverage_markdown(cov)
+    corrupt = corrupt_coverage(runs) if args.corrupt_assets else None
+    if corrupt:
+        md += ["## Corrupted assets", "",
+               f"{corrupt['runs_with_a_mutant_read']} of {len(runs)} runs read at least one mutant.", ""]
+        md += [f"- {k}: {v['reads']} read(s), {v['distinct_mutants']} distinct mutant(s), in {v['runs']} run(s)"
+               for k, v in corrupt["kinds"].items()] + [""]
     (out / "report.md").write_text("\n".join(md) + "\n")
     (out / "report.json").write_text(json.dumps({
         "runs": [{"seed": r.seed, "label": r.label, "dir": rel(r.dir), "outcome": r.outcome, "exit": r.exit,
                   "seconds": round(r.seconds, 1), "findings": r.findings, "end": r.end,
-                  "env": r.extra_env, "settings": r.settings} for r in runs],
+                  "env": r.extra_env, "settings": r.settings, "reads": r.reads} for r in runs],
         "groups": [{"kind": k, "signature": s, "seeds": [r.seed for r, _ in hits]} for (k, s), hits in groups.items()],
-        "coverage": cov}, indent=2))
+        "coverage": cov, "corrupt_assets": corrupt}, indent=2))
     print(f"\n{len(runs)} runs in {wall:.0f} s: " + ", ".join(f"{k} {n}" for k, n in counts.most_common()))
     for (kind, sig), hits in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:12]:
         print(f"  {len(hits):3d}  {kind}: {sig}")
@@ -596,7 +730,6 @@ def campaign(args, base_settings: dict) -> int:
 # and the earlier C# build beside this repo; local only, the corpus is gitignored).
 TARGETS = {
     "memory_card": ("a raw 128 KB memory card image", ["../verdite1/*.sav", "../verdite1/**/*.mcd", "../verdite1/**/*.mcr"]),
-    "wav": ("a WAV file a mod plays: PCM at 8 or 16 bits, 1 or 2 channels", []),
     "save_card": ("the game's 40960-byte save card, as the game file and the quick save",
                   ["fuzz/**/saves/BISLPS-00017KF*", "~/.local/share/Verdite/Verdite1/BISLPS-00017KF*"]),
     "disc_image": ("a disc image, plain or CHD", ["libverdite/tests/data/disc/*.bin", "libverdite/tests/data/disc/*.chd",
@@ -607,6 +740,7 @@ TARGETS = {
     "coop_floor": ("the game state a room's players send, put into the game: snapshots (then run), writes, frames, "
                    "spells, records, a host's character and world", []),
     "online_frames": ("the service's frames, base64, records and the mesh's gossip", []),
+    "wav": ("a WAV file a mod plays: PCM at 8 or 16 bits, 1 or 2 channels", []),
 }
 FINDING_PREFIXES = ("crash-", "leak-", "timeout-", "oom-", "slow-unit-")
 
@@ -693,6 +827,8 @@ def main() -> int:
     g.add_argument("--raw", type=int, metavar="PER_10000",
                    help="raw writes to random fields of kf.raw, this many per 10000 updates; invariants are then off, "
                         "so only crashes and fails are findings")
+    g.add_argument("--corrupt-assets", type=int, default=0, metavar="N",
+                   help="each run's mod replaces N disc models (TMD) with mutants the game's check passes")
     g.add_argument("--area", help="start on floor 1-5, or random")
     g.add_argument("--kit", action="store_true", help="start with every item and spells 0-8")
     g.add_argument("--strong", action="store_true", help="start with max HP and MP 999")
@@ -743,6 +879,9 @@ def main() -> int:
         return 2
     if not Path(args.data).is_dir():
         print(f"fuzz: no game data at {args.data}", file=sys.stderr)
+        return 2
+    if args.corrupt_assets and not binary(args).with_name("kf_asset_check").exists():
+        print(f"fuzz: --corrupt-assets needs kf_asset_check beside {rel(binary(args))}; build it", file=sys.stderr)
         return 2
     if args.windowed and not args.replay:
         print("fuzz: --windowed is for --replay", file=sys.stderr)
