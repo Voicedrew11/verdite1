@@ -3634,10 +3634,10 @@ index 0000000000000000000000000000000000000000..3477b71c3ce52813dacbf961e0253277
 +}
 diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..067a5acaedf58714bf5501c9d9340203b5aebeab
+index 0000000000000000000000000000000000000000..8da20c5b39285fdc4feacfadcf9e16db326e433e
 --- /dev/null
 +++ b/src/game/message_render.cpp
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,98 @@
 +// PC extension (messages on the ground, docs/MESSAGES_PLAN.md): a message's mark is a flat, pale
 +// quad on the floor of its cell, a third of a cell across, drawn additively so it glows.
 +#include <kf/platform/prelude.h>
@@ -3647,6 +3647,7 @@ index 0000000000000000000000000000000000000000..067a5acaedf58714bf5501c9d9340203
 +#include <kf/lib/map_data.h>
 +#include <kf/lib/render_face.h>
 +#include <kf/platform/messages.h>
++#include <kf/platform/mod_scene.h>
 +
 +#include <array>
 +
@@ -3701,6 +3702,39 @@ index 0000000000000000000000000000000000000000..067a5acaedf58714bf5501c9d9340203
 +    const kf::DepthCuedColor color = kf::render_light_normal_cued(view.lighting, *lights, up,
 +        message_mark_colour, centre.fog);
 +    render_face_submit(&face, {&color, 1}, kf::FaceShading::Flat, otz & KF_ORDERING_TABLE_INDEX_MASK);
++}
++
++// PC extension (kf.scene): each shape a mod drew, as the message marks are drawn: a flat quad at its
++// centre's depth, unlit and not fogged, casting no shadow. Smoothing reprojects its corners.
++void render_mod_scene(void)
++{
++    const auto &view = game_graphics_runtime.render_state;
++    MATRIX model = view.view_matrix;
++    model.t = {0, 0, 0};
++    for (const kf::ModSceneFace &shape : kf::mod_scene_faces(view.view_position, view.view_matrix)) {
++        const auto centre = kf::render_project_point(model, view.projection, shape.centre);
++        const s32 otz = centre.depth >> KF_GTE_DEPTH_TO_OT_SHIFT;
++        if (otz < KF_SCENE_MIN_OT_DEPTH)
++            continue;
++
++        kf::DrawFace face {};
++        face.shape = kf::FaceShape::Quad;
++        face.casts_shadow = false;
++        face.transparency = shape.blend == kf::BlendMode::opaque ? kf::FaceTransparency::Opaque : kf::FaceTransparency::Blend;
++        face.material = {kf::SurfaceKind::Solid, {}, shape.blend};
++        for (unsigned i = 0; i < 4; ++i) {
++            const auto corner = kf::render_project_point(model, view.projection, shape.corners[i]);
++            face.vertices[i].x = kf::render_subpixel ? corner.fx : corner.x;
++            face.vertices[i].y = kf::render_subpixel ? corner.fy : corner.y;
++            face.vertices[i].w = kf::render_perspective ? corner.w : 0.0f;
++            const bool world = !kf::render_camera_fixed && corner.cz > 0;
++            face.vertices[i].cx = world ? corner.cx : 0.0f;
++            face.vertices[i].cy = world ? corner.cy : 0.0f;
++            face.vertices[i].cz = world ? corner.cz : 0.0f;
++        }
++        const CVECTOR colour = shape.colour;
++        render_face_submit(&face, {&colour, 1}, kf::FaceShading::Flat, otz & KF_ORDERING_TABLE_INDEX_MASK);
++    }
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
@@ -5781,7 +5815,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8a195d2ae353e68607453294e8bd8699ab6ef09e 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632a414bd82ef9909f1ab0b2a2130c8b0e7914c 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -3,6 +3,8 @@
@@ -5858,7 +5892,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8a195d2ae353e68607453294e8bd8699
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +106,76 @@ void render_entities(void)
+@@ -77,23 +106,77 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -5935,6 +5969,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..8a195d2ae353e68607453294e8bd8699
 +        if (render_cell_is_visible(mark.cell_x, mark.cell_z, origin))
 +            render_message_mark(mark, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
 +    }
++    render_mod_scene();
 +    kf::render_entity_tag = 0;
  }
 diff --git a/src/game/render_sprite.cpp b/src/game/render_sprite.cpp

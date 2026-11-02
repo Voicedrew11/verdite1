@@ -98,6 +98,7 @@ void fill_camera(ShownView &view, const Projection &projection, const Matrix3 &r
         for (int c = 0; c < 3; ++c)
             view.camera_to_world[r * 3 + c] = to_world[r][c];
     view.camera_world = position;
+    view.world = true;
 }
 
 // A model part placed by to_world (model to world), from model space to the shown camera's.

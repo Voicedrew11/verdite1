@@ -25,6 +25,7 @@ struct ShownView {
     float center_x = 160, center_y = 120;
     std::array<float, 9> camera_to_world{1, 0, 0, 0, 1, 0, 0, 0, 1};
     std::array<float, 3> camera_world{};
+    bool world = false;            // the update had a camera: the fields above are set
 };
 
 class ViewSmoothing {

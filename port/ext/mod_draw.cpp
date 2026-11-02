@@ -1,6 +1,7 @@
 #include "mod_draw.h"
 
 #include "internal.hpp"
+#include <kf/renderer/frontend.h>
 #include <imgui.h>
 #include <lauxlib.h>
 #include <lua.h>
@@ -213,6 +214,26 @@ int ui_game_to_screen(lua_State *L) {
     return 2;
 }
 
+// A world point through the camera the frame shows, in window pixels, or nil.
+int ui_world_to_screen(lua_State *L) {
+    ui_require_frame(L);
+    const std::array<double, 3> world{luaL_checknumber(L, 1), luaL_checknumber(L, 2), luaL_checknumber(L, 3)};
+    for (const double value : world) {
+        if (!std::isfinite(value))
+            luaL_error(L, "world coordinates must be finite numbers");
+    }
+    const auto point = kf::renderer_world_to_picture(world);
+    if (!point) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
+    const auto view = original_view();
+    lua_pushnumber(L, view.x + (*point)[0] * view.w / 320.0);
+    lua_pushnumber(L, view.y + (*point)[1] * view.h / 240.0);
+    return 2;
+}
+
 } // namespace
 
 void ui_frame_open() {
@@ -231,6 +252,8 @@ void ui_require_frame(lua_State *L) {
     if (!frame.open)
         luaL_error(L, "ui.* functions only work inside on_draw or on_settings");
 }
+
+bool ui_frame_is_open() { return frame.open; }
 
 std::vector<verdite::ModFunction> ui_draw_functions() {
     using verdite::ModFunction;
@@ -269,6 +292,9 @@ std::vector<verdite::ModFunction> ui_draw_functions() {
          ui_mouse_wheel},
         {"game_to_screen", "fun(x: number, y: number): number, number",
          "The PS1's 320x240 coordinates to window pixels.", ui_game_to_screen},
+        {"world_to_screen", "fun(x: number, y: number, z: number): number?, number?",
+         "A world point in window pixels, through the camera as the frame shows it; nil, nil behind the "
+         "camera or in a menu.", ui_world_to_screen},
     };
 }
 

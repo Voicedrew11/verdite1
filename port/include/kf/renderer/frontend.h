@@ -181,6 +181,12 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns);
 // so looking has no update of lag.
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look,
                       int window_width, int window_height, ImDrawData *overlay);
+// The camera the frame about to be presented shows (as renderer_present would show it at now_ns),
+// for renderer_world_to_picture: call it before the overlay is built, which reads the picture.
+void renderer_begin_picture(std::uint64_t now_ns, const SVECTOR &pending_look);
+// A world point (world units) on the PS1's 320 x 240 picture, through the camera begun by
+// renderer_begin_picture. None behind the camera, or in a frame with no world camera.
+std::optional<std::array<double, 2>> renderer_world_to_picture(const std::array<double, 3> &world);
 // The game's picture as last drawn, RGBA8 with the top row first, at the
 // target's size: no letterbox and no overlay, so it can be compared pixel for
 // pixel with another build (KF_CAPTURE). None if the backend cannot read back.

@@ -5,6 +5,7 @@
 #include "light_sets.h"
 #include "texture_layers.h"
 #include "view_smoothing.h"
+#include "world_to_picture.h"
 
 #include <cstdio>
 #include <utility>
@@ -26,6 +27,8 @@ struct Frontend {
     std::vector<u16> light_set_parts;   // light_set_parts of the last update
     int logical_width = render_width;
     int scale = 1;
+    std::uint64_t picture_ns = 0;      // the frame being presented, for renderer_world_to_picture
+    SVECTOR picture_look{};
 };
 Frontend frontend;
 
@@ -52,6 +55,17 @@ ShownView shown_view(const PictureOptions &options, std::uint64_t now_ns, const 
     if (render_subpixel)
         return frontend.smoothing.view_exact();
     return frontend.smoothing.view_as_drawn();
+}
+
+PictureCamera picture_camera_of(const ShownView &view) {
+    PictureCamera camera;
+    camera.world = view.world;
+    camera.camera_to_world = view.camera_to_world;
+    camera.camera_world = {view.camera_world[0], view.camera_world[1], view.camera_world[2]};
+    camera.projection_distance = view.projection_distance;
+    camera.center_x = view.center_x;
+    camera.center_y = view.center_y;
+    return camera;
 }
 
 void upload_new_layers() {
@@ -134,6 +148,18 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns) {
     frontend.lights.assign(frame.lights.begin(), frame.lights.end());
     frontend.light_sets.assign(frame.light_sets.begin(), frame.light_sets.begin() + rules.light_set_count);
     frontend.light_set_parts = light_set_parts(rules.light_set_count, frame.faces, frame.parts);
+}
+
+void renderer_begin_picture(std::uint64_t now_ns, const SVECTOR &pending_look) {
+    frontend.picture_ns = now_ns;
+    frontend.picture_look = pending_look;
+}
+
+std::optional<std::array<double, 2>> renderer_world_to_picture(const std::array<double, 3> &world) {
+    if (!frontend.backend)
+        return std::nullopt;
+    // Worked out on demand: a frame with no mod asking should not build the shown view twice.
+    return world_to_picture(picture_camera_of(shown_view(drawn_options(), frontend.picture_ns, frontend.picture_look)), world);
 }
 
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look, int window_width, int window_height,

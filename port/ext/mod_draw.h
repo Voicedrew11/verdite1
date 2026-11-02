@@ -17,5 +17,6 @@ void ui_frame_open();
 void ui_frame_close();
 // A Lua error unless a frame is open.
 void ui_require_frame(lua_State *L);
+[[nodiscard]] bool ui_frame_is_open();
 
 } // namespace kf::ext

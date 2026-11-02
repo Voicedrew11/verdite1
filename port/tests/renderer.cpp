@@ -737,3 +737,15 @@ TEST_CASE("light sets: a set's part is a model in the world, never the dial") {
     const std::vector<PartMove> parts = {DialTurn{160, 120}, ModelMove{}};
     CHECK(light_set_parts(2, faces, parts) == std::vector<u16>{2, 0});
 }
+
+TEST_CASE("smoothing: a shown view says whether it has a world camera, in every mode") {
+    ViewSmoothing smoothing;
+    smoothing.take_update(std::nullopt, {0, 0, 0}, {}, 0);
+    CHECK_FALSE(smoothing.view_as_drawn().world);
+    CHECK_FALSE(smoothing.view_at(10 * ms, {0, 0, 0}).world);
+    CHECK_FALSE(smoothing.view_exact().world);
+    smoothing.take_update(pose_at(0), {0, 0, 0}, {}, 100 * ms);
+    CHECK(smoothing.view_as_drawn().world);
+    CHECK(smoothing.view_at(120 * ms, {0, 0, 0}).world);
+    CHECK(smoothing.view_exact().world);
+}

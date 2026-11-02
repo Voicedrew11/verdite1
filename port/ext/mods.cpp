@@ -49,6 +49,7 @@
 #include "mod_draw.h"
 #include "mod_play.h"
 #include "mod_rules.h"
+#include "mod_scene.h"
 #include <lauxlib.h>
 #include <lua.h>
 #include <cstdint>
@@ -60,7 +61,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.11";
+constexpr const char *api_version = "0.12";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -435,10 +436,11 @@ void forget_mod_play(std::string_view id) {
     refresh_mod_play();
 }
 
-// A mod's Lua state is discarded: its kf.play values and its sounds go with it.
+// A mod's Lua state is discarded: its kf.play values, its sounds and its shapes go with it.
 void forget_mod(std::string_view id) {
     forget_mod_play(id);
     mod_audio_forget(id);
+    mod_scene_clear_mod(id);
 }
 
 // Mods' sounds stop while mods are off (coop), and while a mod is held or not running.
@@ -452,6 +454,17 @@ void stop_sounds_of_inactive_mods() {
     for (const verdite::ModInfo &mod : host->mods())
         if (mod.state != verdite::ModState::Running || mod.held)
             mod_audio_stop_mod(mod.id);
+}
+
+// Mods' shapes vanish while mods are off (coop), and while a mod is held or not running.
+void stop_shapes_of_inactive_mods() {
+    if (mods_paused()) {
+        mod_scene_clear_all();
+        return;
+    }
+    for (const verdite::ModInfo &mod : host->mods())
+        if (mod.state != verdite::ModState::Running || mod.held)
+            mod_scene_clear_mod(mod.id);
 }
 
 // ---------- kf.actors: the monsters on the floor ----------
@@ -1219,6 +1232,11 @@ std::vector<verdite::ModTable> api_tables() {
          .doc = "The game's sound effects and music, and the mod's own WAV sounds (voices shared by all mods).",
          .functions = mod_audio_functions(),
          .fields = {}},
+        {.path = "kf.scene",
+         .doc = "Lines and markers in the world, from on_update only. Mods' shapes are cleared each update and "
+                "while mods are off.",
+         .functions = mod_scene_functions(),
+         .fields = {}},
         automap_table(),
         online_table(),
         ui_table(),
@@ -1562,8 +1580,12 @@ void mods_frame(int context) {
         return;
     hold_enhancements_in_classic();
     stop_sounds_of_inactive_mods();
+    // The scene built this update's faces before this runs, so the last on_update's shapes are drawn
+    // and these are drawn from the next update's picture.
+    mod_scene_clear_all();
     if (!mods_paused())
         host->call_each(verdite::ModCallback::Update);
+    stop_shapes_of_inactive_mods();   // a mod that failed in its update leaves no shapes behind
     // Also while paused, so the game sees the defaults from the first frame of coop.
     refresh_mod_play();
 }

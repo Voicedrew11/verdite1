@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.11, what ships today. Where it is going, API 1.0, is
+This page documents API 0.12, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -587,6 +587,35 @@ function on_load() bell = kf.audio.load("bell.wav") end
 function on_level_up() kf.audio.play(bell, {volume = 0.8}) end
 ```
 
+### `kf.scene`
+
+Lines and markers in the world, as real faces of the game's picture: walls hide
+them and smoothing moves them with the camera. For text at a point, use
+`ui.world_to_screen` with `ui.draw_text`; the overlay is over everything, so walls do
+not hide that.
+
+| call | notes |
+|---|---|
+| `kf.scene.line(x1, y1, z1, x2, y2, z2 [, r, g, b, a [, width]])` | world units, y down; `width` above 0, at most 1024 (default 1) |
+| `kf.scene.marker(x, y, z [, size [, r, g, b, a]])` | a square facing the camera; `size` above 0, at most 4096 (default 16) |
+
+- Call them in `on_update` or an event; in `on_draw` or `on_settings` they are an
+  error. All shapes are cleared before each `on_update`, so draw them every update.
+- The game builds a picture before `on_update` runs, so a shape shows in the next
+  update's picture. Menus and transitions draw no world, so none shows there.
+- Colours are 0-1, unlit and not fogged. The PS1 has no alpha: `a` below 1 adds the
+  colour scaled by `a`, so a shape can brighten what is behind it, not darken it.
+- A line is cut 16000 units from the view and at the camera; a marker past that is
+  not drawn. Going over 4096 shapes in an update is an error, which stops the mod.
+
+```lua
+-- A marker in the next cell to the +z side of the player, who stands at the camera.
+function on_update()
+  local p = kf.player
+  kf.scene.marker(p.x, p.y, p.z + 2000, 64, 1, 0.8, 0.2)
+end
+```
+
 ## `ui` (Dear ImGui)
 
 Only inside `on_draw` and `on_settings`. Colours are 0–1 floats. Sliders show a
@@ -615,6 +644,7 @@ interface scale.
 | `ui.mouse_down(button)` → bool | 1 left, 2 right, 3 middle; false while the overlay is open |
 | `ui.mouse_wheel()` → steps | this frame, up positive; 0 while the overlay is open |
 | `ui.game_to_screen(x, y)` → x, y | converts PS1 320×240 coordinates (the original area, where the game's HUD and menus are) |
+| `ui.world_to_screen(x, y, z)` → x, y or nil, nil | a world point through the camera this frame shows; nil behind the camera or with no world drawn (menus) |
 
 ## Examples
 
@@ -747,9 +777,12 @@ mods are off in coop (decided 2026-10-31).
    0.6 (2026-10-31): `kf.rules` and `mods/hardmode`.
 5. ~~The generated raw layer.~~ Built in 0.9 (2026-11-01); its writes fuzzed
    clean the same day ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md), step 5).
-6. Asset overrides, audio, 3D drawing. Overrides done in 0.10 (2026-11-01):
-   `.TIM`, `.SEQ` and `.TMD` ([Replacing disc files](#replacing-disc-files)). Audio
-   done in 0.11 (2026-11-01): `kf.audio`.
+6. ~~Asset overrides, audio, 3D drawing.~~ Done (2026-11-01): overrides in 0.10
+   (`.TIM`, `.SEQ` and `.TMD`, [Replacing disc files](#replacing-disc-files)), `kf.audio`
+   in 0.11, `kf.scene` and `ui.world_to_screen` in 0.12. Left for later: `.MIM` and
+   `.DAT` replacement, high-resolution textures and PNG, audio files other than WAV,
+   and lights in the world, which wait on dynamic lights in the renderer (Vulkan does
+   not read the lights it is given today).
 7. ~~Input actions: reading, pressing and blocking them. Reading done in 0.7
    (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,
    `kf.play.top_speed` and `kf.game.mouse` and `music_while_paused`, which
