@@ -135,7 +135,7 @@ always shown to them and do not count.
   the action button facing one opens it in the game's message box with "Good" and "Leave".
 - **Online off, or offline**: nothing is drawn or posted, and the Message Stone is not offered.
 
-## Interfaces (proposed, to be agreed before building)
+## Interfaces (proposed)
 
 - `online/client/include/verdite_online.h`, "Records": identity, the board (enter a floor,
   post, rate, the floor's records), all game-agnostic.

@@ -275,5 +275,4 @@ From AGENTS.md and the global rules; a subagent's brief names these:
 - An offscreen run with a probe mod: a call the game then shows (`player_adjust_hp` against
   `kf.player.hp`), an error for each bad argument, a refusal from `on_update` and from an event, and a
   handler that errs inside a call.
-- Commit messages state the finding, in the imperative, with the consequence and what was and was
-  not checked.
+- Commit messages follow `AGENTS.md`, and the body also says what was and was not checked.

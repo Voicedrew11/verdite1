@@ -152,9 +152,8 @@ Following [MODDING.md](MODDING.md#where-the-code-goes):
 
 1. ~~Ask the three questions.~~ Answered 2026-11-01 (above).
 2. Write the libverdite header (the type description and the Lua surface) and
-   get it agreed before the implementation; that is the global rule for a
-   module bigger than a function or two. Any change found while implementing,
-   including by a subagent, goes back to the user, each change named.
+   build on it without waiting; the report at the end shows the interface and
+   names each change to it found while implementing, including by a subagent.
 3. libverdite implementation and its tests, in its own commit.
 4. The generator, its listed file, the CMake step; the generated source
    compiles with no hand edits. Report what it left out and why.
@@ -195,5 +194,5 @@ From AGENTS.md and the global rules; a subagent's brief names these:
 - Offscreen run with a probe mod, as the 0.7 and 0.8 commits did: a raw write
   the game then shows (HP through `player_state` against `kf.player.hp`), and
   an error for each bad path, index, type and range.
-- Commit messages state the finding, in the imperative, with the consequence
-  and what was and was not checked.
+- Commit messages follow `AGENTS.md`, and the body also says what was and was
+  not checked.

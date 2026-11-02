@@ -23,8 +23,8 @@ is out of date.
 ## Modules
 
 - **The header first.** A module's header says what it does, in the reader's terms, with nothing
-  the caller does not need. For anything bigger than a function or two, the header is written and
-  agreed before the implementation.
+  the caller does not need. For a new module or a new public header, the header is written before
+  the implementation, as a design step; the work does not wait on review of it.
 - **Deep, not wide.** Few functions that each do a lot beat many that each do a little. If every
   caller has to call three functions in the right order, that order belongs inside the module.
 - **State is private.** File-local state lives in an anonymous namespace in the `.cpp`, usually

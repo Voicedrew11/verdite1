@@ -245,7 +245,7 @@ on the Pixel), judged by the user in play.
 
 ### C. Touch controls
 
-The interface first, agreed before the implementation (`code-style.md`).
+The interface first, before the implementation (`code-style.md`).
 
 - **`libverdite/include/verdite/touch.h`** (game-agnostic, unit-tested): a
   layout is a table of controls (stick, button, look area, D-pad), placed in
@@ -352,7 +352,7 @@ touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has un
 ## Order
 
 A1-A2, then B1 and B2, so that the game boots on both kinds of device and
-survives backgrounding. Then A3-A4, B3-B5, the touch interface agreed and C,
+survives backgrounding. Then A3-A4, B3-B5, the touch interface and C,
 then B6-B9, D and E. Gyro aim (SDL reads the phone's own gyroscope) is cheap
 once C exists and is in the inventory already.
 

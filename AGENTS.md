@@ -53,5 +53,5 @@ done and what comes next; running it is "Fuzzing" in `verdite-port.md`),
 - Build: `nix develop -c cmake --preset linux && nix develop -c cmake --build --preset linux`.
 - Run: `scripts/run-linux.sh [--skip-intro]` (data in the gitignored `data/en`).
 - Never commit disc data (`data/`, images, `.ppf`, the English delta).
-- Anything judged by eye is the user's job: do not screenshot the window.
-- Commit messages state the finding, in the imperative, with the consequence.
+- How the game looks is the user's call, above all in motion, which stills and numbers cannot show: do not screenshot the window or say a visual change looks right. Check what can be measured and name what to look at. For model and art work, render stills offline and fix what they show before handing over.
+- Commit messages: an imperative subject under 72 characters, a blank line, then a short body with the finding and the consequence.
