@@ -6,6 +6,7 @@
 #include <verdite/crash.h>
 #include <verdite/mods.h>
 
+#include "raw_call_lua.h"
 #include "raw_lua.h"
 
 #include <cJSON.h>
@@ -88,6 +89,7 @@ struct Mod {
     // Calls into this mod's state now running. Game code a mod calls can raise an event on the same
     // state, so its state cannot close until the outermost returns.
     int calls_running = 0;
+    bool in_between_updates = false;   // the outermost call is on_between_updates
     std::optional<std::string> stop_reason;   // failed inside a running call: stops when it returns
     std::unique_ptr<lua_State, StateClose> lua;   // last: closed before the counters above go
 };
@@ -936,6 +938,8 @@ int open_mod(lua_State *L) {
         bind_table(L, table);
     if (!mod.host->raw.path.empty())
         raw_open(L, mod.host->raw);
+    if (!mod.host->calls.path.empty())
+        raw_call_open(L, mod.host->calls);
     push_table_json(L, mod.config_json);
     lua_setglobal(L, "config");
     apply_save(L);
@@ -953,12 +957,14 @@ struct CallbackName {
     ModCallback callback;
     std::string_view global, old_global, doc;
 };
-constexpr std::array<CallbackName, 5> callback_names{{
+constexpr std::array<CallbackName, 6> callback_names{{
     {ModCallback::Load, "on_load", "", "After the script runs, on every (re)load."},
     {ModCallback::Update, "on_update", "on_frame", "Once per game update: read and change game state here."},
     {ModCallback::Draw, "on_draw", "", "Once per displayed frame: draw, do not change game state."},
     {ModCallback::Settings, "on_settings", "", "While the mod's settings are shown in the Mods panel."},
     {ModCallback::Unload, "on_unload", "", "Before a reload, or when the mod is disabled."},
+    {ModCallback::BetweenUpdates, "on_between_updates", "",
+     "Between two world updates, where no menu or script holds the game: the place for calls that change state."},
 }};
 
 const CallbackName &name_of(ModCallback callback) {
@@ -1166,6 +1172,8 @@ std::string make_definitions(const ModHostConfig &config) {
         write_table_definition(out, table);
     if (!config.raw.path.empty())
         out += "\n" + raw_definitions(config.raw);
+    if (!config.calls.path.empty())
+        out += "\n" + raw_call_definitions(config.calls);
     return out;
 }
 
@@ -1317,7 +1325,10 @@ struct ModHost::State {
     bool call(Mod &mod, ModCallback callback) {
         if (!mod.lua)
             return false;
-        if (auto error = run_protected(mod, run_callback, static_cast<lua_Integer>(callback))) {
+        const bool outer = std::exchange(mod.in_between_updates, callback == ModCallback::BetweenUpdates);
+        auto error = run_protected(mod, run_callback, static_cast<lua_Integer>(callback));
+        mod.in_between_updates = outer;
+        if (error) {
             fail(mod, std::string(name_of(callback).global) + ": " + *error);
             return false;
         }
@@ -1672,6 +1683,15 @@ void mod_config_changed(lua_State *L) {
 
 void mod_log(lua_State *L, std::string_view text) {
     print_line(mod_of_state(L).id, text);
+}
+
+bool mod_may_change_game(lua_State *L) {
+    const Mod &mod = mod_of_state(L);
+    if (!mod.in_between_updates || mod.calls_running != 1)
+        return false;
+    const bool main_thread = lua_pushthread(L) == 1;
+    lua_pop(L, 1);
+    return main_thread;
 }
 
 void mod_spend_instructions(lua_State *L, std::int64_t instructions) {

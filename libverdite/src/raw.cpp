@@ -1,5 +1,6 @@
 #include "verdite/raw.h"
 
+#include "raw_leaf.h"
 #include "raw_lua.h"
 
 #include <lauxlib.h>
@@ -135,18 +136,10 @@ std::string syntax_error(std::string_view path) {
     return {};
 }
 
-RawRange intersect(RawRange a, RawRange b) {
-    return {std::max(a.min, b.min), std::min(a.max, b.max)};
-}
-
-std::string range_text(RawRange range) {
-    return "(" + std::to_string(range.min) + " to " + std::to_string(range.max) + ")";
-}
-
 // A limit on a global or a field: the range it narrows to, and why it is read-only.
 void apply_limits(Place &place, const RawLimits &limits) {
     if (limits.range)
-        place.range = intersect(place.range, *limits.range);
+        place.range = raw_intersect(place.range, *limits.range);
     if (!limits.read_only.empty() && place.read_only.empty()) {
         place.read_only = limits.read_only;
         place.read_only_steps = place.steps.count;
@@ -291,135 +284,13 @@ std::string not_a_value(const Place &place) {
     return path_text(place) + " is " + std::string(noun) + ", not a value";
 }
 
-std::string_view expected_phrase(RawKind kind) {
-    switch (kind) {
-    case RawKind::Boolean:
-        return "a boolean";
-    case RawKind::Number:
-        return "a number";
-    case RawKind::String:
-        return "a string";
-    case RawKind::Integer:
-    case RawKind::Enum:
-    case RawKind::Flags:
-        return "an integer";
-    case RawKind::Struct:
-    case RawKind::Array:
-        return "a value";
-    }
-    return "a value";
-}
-
-std::string_view value_phrase(const RawValue &value) {
-    if (std::holds_alternative<std::int64_t>(value))
-        return "an integer";
-    if (std::holds_alternative<bool>(value))
-        return "a boolean";
-    if (std::holds_alternative<double>(value))
-        return "a number";
-    return "a string";
-}
-
-std::string mismatch(const Place &place, const RawValue &value) {
-    return path_text(place) + " needs " + std::string(expected_phrase(place.type->kind)) +
-           ", not " + std::string(value_phrase(value));
-}
-
-// The checks every integer kind shares: its width and the limits on the way to it.
-std::string check_integer(const Place &place, const RawValue &value) {
-    const auto *number = std::get_if<std::int64_t>(&value);
-    if (!number)
-        return mismatch(place, value);
-    const RawRange range = intersect(place.range, place.type->range);
-    if (*number < range.min || *number > range.max)
-        return std::to_string(*number) + " is out of range for " + path_text(place) + " " +
-               range_text(range);
-    return {};
-}
-
-std::string check_enum(const Place &place, const RawValue &value) {
-    std::string error = check_integer(place, value);
-    if (!error.empty())
-        return error;
-    const std::int64_t number = std::get<std::int64_t>(value);
-    const bool declared =
-        std::any_of(place.type->values.begin(), place.type->values.end(),
-                    [&](const RawEnumValue &item) { return item.value == number; });
-    if (!declared)
-        return std::to_string(number) + " is not a value of " + path_text(place);
-    return {};
-}
-
-std::string check_flags(const Place &place, const RawValue &value) {
-    std::string error = check_integer(place, value);
-    if (!error.empty())
-        return error;
-    std::uint64_t mask = 0;
-    for (const RawEnumValue &item : place.type->values)
-        mask |= static_cast<std::uint64_t>(item.value);
-    const auto bits = static_cast<std::uint64_t>(std::get<std::int64_t>(value));
-    if ((bits & ~mask) != 0)
-        return std::to_string(bits & ~mask) + " is not a flag of " + path_text(place);
-    return {};
-}
-
-std::string check_boolean(const Place &place, const RawValue &value) {
-    if (!std::holds_alternative<bool>(value))
-        return mismatch(place, value);
-    return {};
-}
-
-std::string check_number(const Place &place, const RawValue &value) {
-    const auto *number = std::get_if<double>(&value);
-    if (!number)
-        return mismatch(place, value);
-    if (!std::isfinite(*number))
-        return path_text(place) + " is not a finite number";
-    if (std::fabs(*number) > static_cast<double>(std::numeric_limits<float>::max()))
-        return path_text(place) + " is out of range for a float";
-    return {};
-}
-
-std::string check_string(const Place &place, const RawValue &value) {
-    const auto *text = std::get_if<std::string>(&value);
-    if (!text)
-        return mismatch(place, value);
-    if (text->size() >= place.type->length)
-        return path_text(place) + " is too long (at most " +
-               std::to_string(place.type->length - 1) + " bytes)";
-    if (text->find('\0') != std::string::npos)
-        return path_text(place) + " contains a NUL byte";
-    return {};
+std::string path_of_place(const void *place) {
+    return path_text(*static_cast<const Place *>(place));
 }
 
 // Whether value may be stored in place. Store then needs no check of its own.
 std::string check_value(const Place &place, const RawValue &value) {
-    switch (place.type->kind) {
-    case RawKind::Integer:
-        return check_integer(place, value);
-    case RawKind::Enum:
-        return check_enum(place, value);
-    case RawKind::Flags:
-        return check_flags(place, value);
-    case RawKind::Boolean:
-        return check_boolean(place, value);
-    case RawKind::Number:
-        return check_number(place, value);
-    case RawKind::String:
-        return check_string(place, value);
-    case RawKind::Struct:
-    case RawKind::Array:
-        return not_a_value(place);
-    }
-    return {};
-}
-
-// A whole number given to a float is a float: the one conversion a write makes.
-RawValue as_kind(const RawType &type, const RawValue &value) {
-    const auto *integer = std::get_if<std::int64_t>(&value);
-    if (type.kind == RawKind::Number && integer)
-        return static_cast<double>(*integer);
-    return value;
+    return raw_leaf_error(*place.type, place.range, value, {&place, path_of_place});
 }
 
 std::string write_place(const Place &place, const RawValue &given) {
@@ -428,7 +299,7 @@ std::string write_place(const Place &place, const RawValue &given) {
     if (!place.read_only.empty())
         return path_prefix(place, place.read_only_steps) +
                " is read-only: " + std::string(place.read_only);
-    const RawValue value = as_kind(*place.type, given);
+    const RawValue value = raw_as_kind(*place.type, given);
     std::string error = check_value(place, value);
     if (!error.empty())
         return error;
@@ -454,15 +325,9 @@ struct Proxy {
 static_assert(std::is_trivially_destructible_v<Proxy>);
 static_assert(std::is_trivially_destructible_v<RawLayer>);
 
-// Raises a Lua error. Lua is built as C++, so luaL_error throws and never returns here.
-[[noreturn]] void lua_fail(lua_State *L, const std::string &message) {
-    luaL_error(L, "%s", message.c_str());
-    std::abort();
-}
-
 Place resolve_or_raise(lua_State *L, Lookup lookup) {
     if (!lookup.place)
-        lua_fail(L, lookup.error);
+        raw_lua_fail(L, lookup.error);
     return *lookup.place;
 }
 
@@ -474,19 +339,6 @@ const RawLayer &layer_of(lua_State *L) {
 void push_bound(lua_State *L, int layer_index, lua_CFunction function) {
     lua_pushvalue(L, layer_index);
     lua_pushcclosure(L, function, 1);
-}
-
-void push_value(lua_State *L, const RawValue &value) {
-    if (const auto *integer = std::get_if<std::int64_t>(&value)) {
-        lua_pushinteger(L, static_cast<lua_Integer>(*integer));
-    } else if (const auto *flag = std::get_if<bool>(&value)) {
-        lua_pushboolean(L, *flag ? 1 : 0);
-    } else if (const auto *number = std::get_if<double>(&value)) {
-        lua_pushnumber(L, *number);
-    } else {
-        const std::string &text = std::get<std::string>(value);
-        lua_pushlstring(L, text.data(), text.size());
-    }
 }
 
 void push_proxy(lua_State *L, const Place &place) {
@@ -501,49 +353,27 @@ void push_place(lua_State *L, const Place &place) {
         push_proxy(L, place);
         return;
     }
-    push_value(L, place.type->load(place.address));
-}
-
-// The Lua value as a RawValue; nullopt for nil, tables and functions.
-std::optional<RawValue> value_from_lua(lua_State *L, int index) {
-    switch (lua_type(L, index)) {
-    case LUA_TBOOLEAN:
-        return lua_toboolean(L, index) != 0;
-    case LUA_TSTRING: {
-        std::size_t size = 0;
-        const char *text = lua_tolstring(L, index, &size);
-        return std::string(text, size);
-    }
-    case LUA_TNUMBER: {
-        int is_integer = 0;
-        const lua_Integer integer = lua_tointegerx(L, index, &is_integer);
-        if (is_integer)
-            return static_cast<std::int64_t>(integer);
-        return lua_tonumber(L, index);
-    }
-    default:
-        return std::nullopt;
-    }
+    raw_push_value(L, place.type->load(place.address));
 }
 
 void write_from_lua(lua_State *L, const Place &target, int index) {
     if (is_container(*target.type))
-        lua_fail(L, not_a_value(target));
-    const std::optional<RawValue> value = value_from_lua(L, index);
+        raw_lua_fail(L, not_a_value(target));
+    const std::optional<RawValue> value = raw_value_from_lua(L, index);
     if (!value)
-        lua_fail(L, path_text(target) + " needs " +
-                        std::string(expected_phrase(target.type->kind)) + ", not " +
+        raw_lua_fail(L, path_text(target) + " needs " +
+                        std::string(raw_expected_phrase(target.type->kind)) + ", not " +
                         luaL_typename(L, index));
     const std::string error = write_place(target, *value);
     if (!error.empty())
-        lua_fail(L, error);
+        raw_lua_fail(L, error);
 }
 
 // The proxy at index, resolved again from its global: the place it reaches now.
 Place place_of_proxy(lua_State *L, int index) {
     const auto *proxy = static_cast<const Proxy *>(luaL_testudata(L, index, proxy_metatable));
     if (!proxy)
-        lua_fail(L, std::string("expected a raw proxy, got ") + luaL_typename(L, index));
+        raw_lua_fail(L, std::string("expected a raw proxy, got ") + luaL_typename(L, index));
     return resolve_or_raise(L, locate_steps(layer_of(L), proxy->global, proxy->steps));
 }
 
@@ -559,10 +389,10 @@ Part key_part(lua_State *L, int index) {
     int is_integer = 0;
     const lua_Integer integer = lua_tointegerx(L, index, &is_integer);
     if (!is_integer)
-        lua_fail(L, std::string("a raw proxy is indexed by a name or a number, not ") +
+        raw_lua_fail(L, std::string("a raw proxy is indexed by a name or a number, not ") +
                         luaL_typename(L, index));
     if (integer < 0)
-        lua_fail(L, "raw arrays index from 0, and " + std::to_string(integer) + " is not an index");
+        raw_lua_fail(L, "raw arrays index from 0, and " + std::to_string(integer) + " is not an index");
     part.element = true;
     part.index = static_cast<std::size_t>(integer);
     return part;
@@ -583,7 +413,7 @@ int proxy_newindex(lua_State *L) {
 int proxy_len(lua_State *L) {
     const Place place = place_of_proxy(L, 1);
     if (place.type->kind != RawKind::Array)
-        lua_fail(L, path_text(place) + " is a struct, not an array");
+        raw_lua_fail(L, path_text(place) + " is a struct, not an array");
     lua_pushinteger(L, static_cast<lua_Integer>(place.type->length));
     return 1;
 }
@@ -633,7 +463,7 @@ int proxy_pairs(lua_State *L) {
 // A struct or array as a plain table; arrays keyed from 0.
 void push_copy(lua_State *L, const Place &place) {
     if (!is_container(*place.type)) {
-        push_value(L, place.type->load(place.address));
+        raw_push_value(L, place.type->load(place.address));
         return;
     }
     lua_newtable(L);
@@ -665,7 +495,7 @@ int raw_path(lua_State *L) {
 
 std::string_view global_name_key(lua_State *L, int index) {
     if (lua_type(L, index) != LUA_TSTRING)
-        lua_fail(L, std::string("the raw layer is indexed by a global's name, not ") +
+        raw_lua_fail(L, std::string("the raw layer is indexed by a global's name, not ") +
                         luaL_typename(L, index));
     std::size_t size = 0;
     const char *text = lua_tolstring(L, index, &size);
@@ -678,7 +508,7 @@ int raw_index(lua_State *L) {
     const std::string_view name = global_name_key(L, 2);
     const std::optional<std::size_t> index = global_index(layer, name);
     if (!index)
-        lua_fail(L, std::string(layer.path) + " has no global '" + std::string(name) + "'");
+        raw_lua_fail(L, std::string(layer.path) + " has no global '" + std::string(name) + "'");
     push_place(L, global_place(layer, *index));
     return 1;
 }
@@ -688,7 +518,7 @@ int raw_newindex(lua_State *L) {
     const std::string_view name = global_name_key(L, 2);
     const std::optional<std::size_t> index = global_index(layer, name);
     if (!index)
-        lua_fail(L, std::string(layer.path) + " has no global '" + std::string(name) + "'");
+        raw_lua_fail(L, std::string(layer.path) + " has no global '" + std::string(name) + "'");
     write_from_lua(L, global_place(layer, *index), 3);
     return 0;
 }
@@ -710,176 +540,11 @@ void make_proxy_metatable(lua_State *L, int layer_index) {
     lua_pop(L, 1);
 }
 
-// The table at path ("kf.raw") pushed, made where missing. Raw access: no metamethod runs.
-void push_table_at(lua_State *L, std::string_view path) {
-    lua_pushglobaltable(L);
-    std::size_t start = 0;
-    while (true) {
-        const std::size_t dot = path.find('.', start);
-        const std::string_view part =
-            path.substr(start, dot == std::string_view::npos ? dot : dot - start);
-        lua_pushlstring(L, part.data(), part.size());
-        if (lua_rawget(L, -2) != LUA_TTABLE) {
-            lua_pop(L, 1);
-            lua_newtable(L);
-            lua_pushlstring(L, part.data(), part.size());
-            lua_pushvalue(L, -2);
-            lua_rawset(L, -4);
-        }
-        lua_remove(L, -2);
-        if (dot == std::string_view::npos)
-            return;
-        start = dot + 1;
-    }
-}
-
 void check_no_clash(lua_State *L, const RawLayer &layer) {
     for (const RawGlobal &global : layer.globals) {
         if (global.name == "copy" || global.name == "path")
-            lua_fail(L, "a raw global may not be named '" + std::string(global.name) + "'");
+            raw_lua_fail(L, "a raw global may not be named '" + std::string(global.name) + "'");
     }
-}
-
-// ---- the definitions file ----
-
-std::string type_text(const RawType &type, const std::string &prefix) {
-    switch (type.kind) {
-    case RawKind::Integer:
-        return "integer";
-    case RawKind::Number:
-        return "number";
-    case RawKind::Boolean:
-        return "boolean";
-    case RawKind::String:
-        return "string";
-    case RawKind::Enum:
-    case RawKind::Flags:
-    case RawKind::Struct:
-        return prefix + std::string(type.name);
-    case RawKind::Array:
-        return "{[integer]: " + type_text(*type.element, prefix) + "}";
-    }
-    return "any";
-}
-
-// The innermost element of nested arrays, or the type itself.
-const RawType &innermost(const RawType &type) {
-    const RawType *leaf = &type;
-    while (leaf->kind == RawKind::Array)
-        leaf = leaf->element;
-    return *leaf;
-}
-
-std::string join(const std::vector<std::string> &parts) {
-    std::string out;
-    for (const std::string &part : parts) {
-        if (!out.empty())
-            out += " ";
-        out += part;
-    }
-    return out;
-}
-
-// What a field's description says after its type: its count, range or length, read-only reason,
-// doc.
-std::string field_description(const RawType &type, const RawLimits &limits) {
-    std::vector<std::string> parts;
-    const RawType &leaf = innermost(type);
-    if (type.kind == RawKind::Array)
-        parts.push_back("(" + std::to_string(type.length) + " elements, from 0)");
-    if (leaf.kind == RawKind::Integer) {
-        RawRange range = leaf.range;
-        if (limits.range)
-            range = intersect(range, *limits.range);
-        parts.push_back(range_text(range));
-    } else if ((leaf.kind == RawKind::Enum || leaf.kind == RawKind::Flags) && limits.range) {
-        parts.push_back(range_text(intersect(leaf.range, *limits.range)));
-    }
-    if (leaf.kind == RawKind::String)
-        parts.push_back("(at most " + std::to_string(leaf.length - 1) + " bytes)");
-    if (!limits.read_only.empty())
-        parts.emplace_back("(read-only: " + std::string(limits.read_only) + ")");
-    if (!limits.doc.empty())
-        parts.emplace_back(limits.doc);
-    return join(parts);
-}
-
-void append_field(std::string &out, std::string_view name, const RawType &type,
-                  const RawLimits &limits, const std::string &prefix) {
-    out += "---@field " + std::string(name) + " " + type_text(type, prefix);
-    const std::string description = field_description(type, limits);
-    if (!description.empty())
-        out += " " + description;
-    out += "\n";
-}
-
-void append_doc(std::string &out, std::string_view doc) {
-    std::size_t start = 0;
-    while (start < doc.size()) {
-        const std::size_t end = doc.find('\n', start);
-        out += "---" +
-               std::string(doc.substr(start, end == std::string_view::npos ? end : end - start)) +
-               "\n";
-        if (end == std::string_view::npos)
-            return;
-        start = end + 1;
-    }
-}
-
-// The struct and enum types the globals reach, by name (sorted); each once.
-struct TypeTables {
-    std::map<std::string, const RawType *> structs;
-    std::map<std::string, const RawType *> enums;
-};
-
-void collect_types(const RawType &type, TypeTables &tables) {
-    switch (type.kind) {
-    case RawKind::Struct:
-        if (!tables.structs.try_emplace(std::string(type.name), &type).second)
-            return;
-        for (const RawField &field : type.fields)
-            collect_types(*field.type, tables);
-        return;
-    case RawKind::Enum:
-    case RawKind::Flags:
-        tables.enums.try_emplace(std::string(type.name), &type);
-        return;
-    case RawKind::Array:
-        collect_types(*type.element, tables);
-        return;
-    case RawKind::Integer:
-    case RawKind::Number:
-    case RawKind::Boolean:
-    case RawKind::String:
-        return;
-    }
-}
-
-void append_struct(std::string &out, const RawType &type, const std::string &prefix) {
-    out += "\n---@class " + prefix + std::string(type.name) + "\n";
-    for (const RawField &field : type.fields)
-        append_field(out, field.name, *field.type, field.limits, prefix);
-}
-
-std::string value_list(std::span<const RawEnumValue> values, std::string_view separator) {
-    std::string out;
-    for (const RawEnumValue &item : values) {
-        if (!out.empty())
-            out += std::string(separator);
-        out += std::string(item.name) + " = " + std::to_string(item.value);
-    }
-    return out;
-}
-
-void append_enum(std::string &out, const RawType &type, const std::string &prefix) {
-    out += "\n";
-    if (type.kind == RawKind::Flags) {
-        out += "---bits: " + value_list(type.values, ", ") + "\n";
-    } else {
-        for (const RawEnumValue &item : type.values)
-            out += "---" + std::string(item.name) + " = " + std::to_string(item.value) + "\n";
-    }
-    out += "---@alias " + prefix + std::string(type.name) + " integer\n";
 }
 
 } // namespace
@@ -891,7 +556,7 @@ void raw_open(lua_State *L, const RawLayer &layer) {
     ::new (memory) RawLayer(layer);
     const int layer_index = lua_gettop(L);
     make_proxy_metatable(L, layer_index);
-    push_table_at(L, layer.path);
+    raw_push_table_at(L, layer.path);
     push_bound(L, layer_index, raw_copy);
     lua_setfield(L, -2, "copy");
     push_bound(L, layer_index, raw_path);
@@ -923,22 +588,23 @@ std::string raw_write(const RawLayer &layer, std::string_view path, const RawVal
 
 std::string raw_definitions(const RawLayer &layer) {
     const std::string prefix = std::string(layer.path) + ".";
-    TypeTables tables;
+    RawTypeTables tables;
     std::string out;
-    append_doc(out, layer.doc);
+    raw_append_doc(out, layer.doc);
     out += "---@class " + std::string(layer.path) + "\n";
     for (const RawGlobal &global : layer.globals) {
-        collect_types(*global.type, tables);
-        append_field(out, global.name, *global.type, global.limits, prefix);
+        raw_collect_types(*global.type, tables);
+        out += "---@field " + std::string(global.name) + " " + raw_type_text(*global.type, prefix);
+        const std::string description = raw_field_description(*global.type, global.limits);
+        if (!description.empty())
+            out += " " + description;
+        out += "\n";
     }
     out += "---@field copy fun(proxy: any): table A struct or array as a plain table, arrays from "
            "0.\n";
     out += "---@field path fun(proxy: any): string The path a proxy stands for.\n";
     out += std::string(layer.path) + " = {}\n";
-    for (const auto &entry : tables.structs)
-        append_struct(out, *entry.second, prefix);
-    for (const auto &entry : tables.enums)
-        append_enum(out, *entry.second, prefix);
+    raw_append_types(out, tables, prefix);
     return out;
 }
 

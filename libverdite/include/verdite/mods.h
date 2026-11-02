@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "verdite/raw.h"
+#include "verdite/raw_call.h"
 
 struct lua_State;
 
@@ -82,6 +83,9 @@ enum class ModCallback : std::uint8_t {
     Draw,       // on_draw: once per displayed frame
     Settings,   // on_settings: while the mod's settings are shown
     Unload,     // on_unload: before a reload, or when disabled
+    // on_between_updates: between two world updates, where no menu or script holds the game. Calls
+    // into the game that change state run here (verdite/raw_call.h).
+    BetweenUpdates,
 };
 
 // A field of an event's table, as the definitions file lists it. A handler may change a
@@ -132,6 +136,7 @@ struct ModHostConfig {
     // Without it, no file is on the disc.
     std::function<std::optional<std::size_t>(std::string_view path)> disc_file_size;
     RawLayer raw;                             // the raw layer, hung at raw.path; an empty path: none
+    RawCallLayer calls;                       // the call layer, hung at calls.path; an empty path: none
     std::string definitions_name = "api.d.lua";   // written into mods_dir from api and events
     std::size_t memory_cap_bytes = 64u << 20;     // per mod
     std::uint64_t instructions_per_call = 100'000'000;   // per callback, and for the script's first run
