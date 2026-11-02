@@ -5,7 +5,8 @@ Reads every source of the decomp through clang's text AST and follows what each 
 through global tables too, so a dispatch table's entries count as reached. A function is listed
 under the first class it reaches. tools/raw_layer.py holds back every function listed.
 
-  frame        presents or waits for a frame: called from a mod's callback it would run the callback again
+  frame        presents or waits for a frame: unless listed as allowed, called from a mod's callback it
+               would run the callback again
   file_write   writes the player's files, which a mod may not
   loads        reads a file or allocates from the game's arenas
   current      uses the current actor, effect or map event, which nothing a mod passes can set

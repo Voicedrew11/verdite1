@@ -7,7 +7,13 @@
 #   [held_headers]         a whole header = why
 #   any_time_headers       a header whose functions change nothing and raise nothing
 #   [pools.Struct]         a struct kept in a pool crosses as its slot: pool (the array), check (optional)
-#   [functions.name]       any_time, why (the doc), and per parameter:
+#   [subjects.Struct]      what a function using a current Struct is bound by: binder (a class of
+#                          call_checks.h, alive around the call), check (a function of call_checks.h)
+#   [functions.name]       any_time, why (the doc),
+#                          allowed (why this is safe, though a held header or the audit holds it back:
+#                          something the audit found running frames then runs as RunsFrames),
+#                          subject (a [subjects] struct, which becomes the first parameter),
+#                          check (a function of call_checks.h over all the arguments), and per parameter:
 #   [functions.name.params.p]  range ([min, max] or a global array), role (in, out, inout),
 #                          check (a function of call_checks.h), nil (nil passes null), why
 #
@@ -15,6 +21,7 @@
 # since the game would read past a single copy: read the function before giving one.
 
 instructions_per_call = 1000
+instructions_per_frame_call = 1000000
 
 any_time_headers = [
     "kf/lib/math.h",
@@ -38,6 +45,14 @@ pool = "map_runtime_state.events"
 [pools.KfFloorItem]
 pool = "game_graphics_runtime.floor_items"
 
+[subjects.KfActor]
+binder = "KfBoundActor"
+check = "kf_call_actor_in_use"
+
+[subjects.KfEffectRecord]
+binder = "KfBoundEffect"
+check = "kf_call_effect_in_use"
+
 [held]
 map_unload_floor = "frees the floor the world update goes on to walk"
 map_resource_path_set_floor = "changes which floor's files the next load reads, with no load to follow"
@@ -50,6 +65,34 @@ map_object_effect_pool_acquire = "first_index + count must stay in the pool, and
 player_set_equipment_slot = "the id's range depends on the slot, and a wrong id is an index the game does not check; kf.equip does this"
 
 map_object_start_action_if_idle = "starts the given action on an object of any behaviour, and the swinging and switch actions read link.action_parameter as an effect's index, which only their own objects hold"
+
+game_play = "does not return until the game ends, and is what is running beneath the call"
+player_update = "the world loop's own step: it reaches the menus, whose outcome the world loop carries out"
+player_death_update = "the death path's own step, which replaces the game when it ends"
+player_death_restart = "replaces the game beneath the call"
+map_load_floor = "loads over the floor in use unless map_unload_floor came first; player_warp_change_floor does both"
+map_load_floor_wrapper = "loads over the floor in use unless map_unload_floor came first; player_warp_change_floor does both"
+map_resources_load = "resets the arena and frees the floor's effects, with no reload of the rest; player_warp_change_floor does both"
+map_interaction_dispatch = "runs what a probe from any position finds, whose scripts assume the player stands there; kf.action_press reaches it from where the player does"
+map_action_script_floor2 = "one floor's own script: reads that floor's objects by fixed index"
+map_action_script_floor5 = "one floor's own script: reads that floor's objects by fixed index"
+map_ambient_script_floor3 = "one floor's own script: reads that floor's objects by fixed index"
+map_ambient_script_floor5 = "one floor's own script: reads that floor's objects by fixed index"
+actor_transform_definition5_to6 = "floor 4's boss: gives the actor a definition no other floor has loaded"
+map_event_advance_animation_blocking = "waits for a phase a step may wrap past, or never reach"
+player_move_horizontal = "a long move leaves the grid in an index it does not check"
+effect_update_orbiting_projectile = "the update of one kind of effect: reads fields only that kind has set"
+effect_update_swinging_hazard = "the update of one kind of effect: reads fields only that kind has set"
+actor_bind_current = "would leave the current actor set: a subject binds it for one call"
+effect_pool_set_current = "would leave the current effect set: a subject binds it for one call"
+map_event_set_current = "would leave the current map event set"
+audio_initialize = "opens the sound state the world is using"
+common_resources_load = "loads into the arena at its start, over the floor"
+game_initialize_session = "resets the game beneath the call"
+game_state_initialize = "resets the game beneath the call"
+game_state_start_new = "resets the game beneath the call"
+map_variant_assets_load = "loads a variant's models with the old ones in use; player_warp_same_floor releases them first"
+resource_file_index_item_models = "rebuilds the index the menus read"
 
 [held_headers]
 "kf/game/save.h" = "writes or replaces the player's save"
@@ -66,16 +109,16 @@ map_object_start_action_if_idle = "starts the given action on an object of any b
 "kf/lib/codec.h" = "decodes raw bytes"
 "kf/audio/codec.h" = "decodes raw bytes"
 "kf/audio/sound.h" = "the sound device's lifecycle"
-"kf/cutscene/audio.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/camera_path.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/controller.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/opening_helpers.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/opening_render.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/opening_scenes.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/playback.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/render.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/resources.h" = "a cutscene's own state: API stage two"
-"kf/cutscene/scene0.h" = "a cutscene's own state: API stage two"
+"kf/cutscene/audio.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/camera_path.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/controller.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/opening_helpers.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/opening_render.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/opening_scenes.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/playback.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/render.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/resources.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
+"kf/cutscene/scene0.h" = "a cutscene's own state, built to run between games: cutscene_play resets the sound device the world's bank is on"
 
 # --- Ranges: each is an index the game uses with no check.
 
@@ -132,3 +175,170 @@ why = "Goes into a threshold the game multiplies and divides by."
 [functions.player_calculate_damage_component.params.attack]
 range = [0, 32767]
 why = "Squared in an s32."
+
+# --- Functions using a current object. Between updates no pool loop is running, so one is bound here
+# as that loop would. allowed with no subject: it reads the current object only to skip it in a walk,
+# and null skips nothing.
+
+[functions.actor_apply_horizontal_movement]
+allowed = "moves its subject as the actor loop does; collision_query_world checks the point"
+subject = "KfActor"
+[functions.actor_apply_random_movement]
+allowed = "moves its subject as the actor loop does; collision_query_world checks the point"
+subject = "KfActor"
+[functions.actor_initialize_current]
+allowed = "resets its subject at its home"
+subject = "KfActor"
+[functions.actor_move_along_heading]
+allowed = "moves its subject as the actor loop does"
+subject = "KfActor"
+[functions.actor_move_xz_with_collision]
+allowed = "moves its subject as the actor loop does"
+subject = "KfActor"
+[functions.actor_move_xz_with_collision.params.delta]
+role = "in"
+why = "One vector: read once."
+[functions.actor_prepare_charge_toward_player]
+allowed = "sets its subject's movement"
+subject = "KfActor"
+[functions.actor_select_next_action]
+allowed = "picks its subject's next action"
+subject = "KfActor"
+[functions.actor_targets_this_player]
+allowed = "reads its subject's target"
+subject = "KfActor"
+[functions.actor_try_attack_player]
+allowed = "its subject's attack"
+subject = "KfActor"
+[functions.actor_try_select_action_distance_facing]
+allowed = "picks its subject's next action"
+subject = "KfActor"
+[functions.actor_try_select_ground_action]
+allowed = "picks its subject's next action"
+subject = "KfActor"
+[functions.actor_try_select_multi_hit_action]
+allowed = "picks its subject's next action"
+subject = "KfActor"
+[functions.actor_try_select_profiled_action]
+allowed = "picks its subject's next action"
+subject = "KfActor"
+[functions.actor_try_select_profiled_action.params.effect_code]
+check = "kf_call_actor_profile_exists"
+why = "Its low bits index actor_action_profiles, which is shorter than they reach."
+[functions.actor_update_awareness]
+allowed = "its subject's sight of the player"
+subject = "KfActor"
+[functions.actor_update_effect_action]
+allowed = "advances its subject's effect action"
+subject = "KfActor"
+[functions.actor_update_current_action]
+allowed = "one step of its subject, as the actor loop runs it; the frames are a boss's own"
+subject = "KfActor"
+
+[functions.effect_map_collision]
+allowed = "tests a point against the map for its subject; the cell is checked"
+subject = "KfEffectRecord"
+[functions.effect_map_collision.params.position]
+role = "inout"
+why = "One vector."
+[functions.effect_update_dispatch]
+allowed = "one step of its subject, as the effect loop runs it"
+subject = "KfEffectRecord"
+
+[functions.actor_pool_find_overlap]
+allowed = "null skips nothing in its walk"
+[functions.collision_query_world]
+allowed = "null skips nothing in its walk; the point is checked against the grid first"
+[functions.actor_pool_apply_radial_damage]
+allowed = "null skips nothing in its walk"
+[functions.actor_pool_apply_radial_damage.params.origin]
+role = "in"
+why = "One vector."
+[functions.actor_pool_apply_radial_damage.params.radius]
+range = [1, 524287]
+why = "The most a distance may be, as radial_damage_attenuated_scale shifts it and divides by this."
+[functions.magic_cast]
+allowed = "null skips nothing in its walk; reads the player's own selected spell"
+[functions.map_object_probe_door_closing]
+allowed = "null skips nothing in its walk"
+[functions.player_update_weapon_attack]
+allowed = "null skips nothing in its walk; returns at once with no weapon"
+[functions.effect_pool_update]
+allowed = "the world's own step, which sets its own current effect for each record"
+[functions.map_object_pool_update]
+allowed = "the world's own step, between updates as it is in the world's"
+
+# --- Functions that run frames. Between updates the world loop is where a menu or a warp would be
+# reached from anyway, and each restores its input context.
+
+[functions.actor_pool_update]
+allowed = "the world's own step, which binds each actor itself and leaves none current"
+[functions.map_event_pool_update]
+allowed = "the world's own step"
+[functions.audio_play_current_map_sequence]
+allowed = "fades the music out, then plays the floor's; a missing file plays nothing"
+[functions.audio_play_map_sequence]
+allowed = "fades the music out, then plays this floor's; a missing file plays nothing"
+[functions.audio_play_map_sequence.params.sequence_index]
+range = [0, 9]
+why = "One digit of the file's name."
+[functions.audio_stop_sequence_fade]
+allowed = "fades the music out over its own frames"
+[functions.audio_stop_sequence_master_fade]
+allowed = "fades all sound out over its own frames: the mod must bring it back"
+[functions.audio_stop_sequence_master_fade.params.fade_step]
+range = [64, 65536]
+why = "It counts the volume down by this until it is gone: 0 or less never ends, and 64 takes the game's own ending fade twice as long, about 8 seconds."
+[functions.player_warp_change_floor]
+allowed = "as a stairway does it, but the check keeps the floor and its variant on the disc"
+check = "kf_call_floor_and_variant_exist"
+[functions.player_warp_same_floor]
+allowed = "as floor 5's own gates do it: no other floor has a variant to load"
+check = "kf_call_variant_exists_here"
+[functions.player_warp_same_floor.params.cell_x]
+range = [0, 99]
+why = "A column."
+[functions.player_warp_same_floor.params.cell_z]
+range = [0, 99]
+why = "A row."
+[functions.player_warp_shimmer]
+allowed = "draws the warp's effect around a point; a full effect pool draws fewer"
+[functions.player_warp_shimmer.params.position]
+role = "inout"
+why = "One vector, read when the effects spawn."
+[functions.player_warp_shimmer_at_player]
+allowed = "draws the warp's effect around the player; a full effect pool draws fewer"
+[functions.player_warp_to_floor_entry]
+allowed = "as the Green Dragon Staff does it"
+[functions.player_warp_trigger_update]
+allowed = "takes the warp on the player's cell, if any, as the world loop does"
+[functions.player_use_item]
+allowed = "as the Use list does it: an item with no use does nothing"
+[functions.player_restore_vitals_with_color_cycle]
+allowed = "as a recovery spring does it"
+[functions.menu_open_shop]
+allowed = "as a shopkeeper does it, with on_shop raised first"
+[functions.menu_open_shop.params.shop_bank]
+range = [1, 2]
+why = "The two shops: bank 0 is the player's own stock."
+[functions.menu_confirm_pickup]
+allowed = "a yes-or-no prompt over the item's model, with its own session"
+[functions.menu_confirm_pickup.params.item_id]
+range = [0, 79]
+why = "An item's model; a map object has none."
+[functions.talk_show_dialogue_page]
+allowed = "as a conversation does it, waiting for a press; a page not on the disc shows nothing"
+[functions.talk_show_dialogue_page.params.stage]
+range = [0, 9]
+why = "One digit of the file's name."
+[functions.talk_show_dialogue_page.params.page]
+range = [0, 9]
+why = "One digit of the file's name."
+
+# --- A load, read and allowed.
+
+[functions.player_equip_weapon]
+allowed = "loads into the player's own weapon buffer, as the equipment menu does"
+[functions.player_equip_weapon.params.weapon_id]
+check = "kf_call_weapon_or_none"
+why = "A weapon, or KF_OBJECT_NONE: the id names a file, and a missing one stops the game."

@@ -662,6 +662,35 @@ bool call_value(const verdite::RawType &type, verdite::RawRange range, const ver
     return true;
 }
 
+// One "<kind>:<value>" token as a value; nothing if it does not parse.
+std::optional<verdite::RawValue> call_token(std::string_view token) {
+    if (token.size() < 2 || token[1] != ':')
+        return std::nullopt;
+    return raw_value_text(RawArgs{{}, token[0], token.substr(2)});
+}
+
+// The values of a call's line, after its function's name; nothing if one does not parse.
+std::optional<std::vector<verdite::RawValue>> call_arguments(std::string_view line) {
+    std::vector<verdite::RawValue> arguments;
+    for (std::size_t at = std::min(line.find(' '), line.size()); at < line.size();) {
+        const std::size_t end = std::min(line.find(' ', at + 1), line.size());
+        const auto value = call_token(line.substr(at + 1, end - at - 1));
+        if (!value)
+            return std::nullopt;
+        arguments.push_back(*value);
+        at = end;
+    }
+    return arguments;
+}
+
+// Whether the function's own check takes the line's values, as raw_call will ask.
+bool call_check_passes(const verdite::RawFunction &function, std::string_view line) {
+    if (!function.check)
+        return true;
+    const auto arguments = call_arguments(line);
+    return arguments && function.check(*arguments).empty();
+}
+
 std::optional<std::string> choose_call(verdite::FuzzRandom &random) {
     const auto functions = kf_call_layer().functions;
     if (functions.empty())
@@ -673,33 +702,20 @@ std::optional<std::string> choose_call(verdite::FuzzRandom &random) {
             return param.role == verdite::RawParamRole::Out ||
                    call_value(*param.type, param.limits.range.value_or(raw_full_range), param, random, line);
         });
-        if (chosen)
+        if (chosen && call_check_passes(function, line))
             return line;
     }
     return std::nullopt;
 }
 
-// One "<kind>:<value>" token as a value; nothing if it does not parse.
-std::optional<verdite::RawValue> call_token(std::string_view token) {
-    if (token.size() < 2 || token[1] != ':')
-        return std::nullopt;
-    return raw_value_text(RawArgs{{}, token[0], token.substr(2)});
-}
-
 bool run_call(std::string_view args) {
-    std::vector<verdite::RawValue> arguments;
-    const std::size_t name_end = std::min(args.find(' '), args.size());
-    for (std::size_t at = name_end; at < args.size();) {
-        const std::size_t end = std::min(args.find(' ', at + 1), args.size());
-        const auto value = call_token(args.substr(at + 1, end - at - 1));
-        if (!value) {
-            verdite::fuzz_note("call-refused " + std::string(args) + ": a value does not parse");
-            return false;
-        }
-        arguments.push_back(*value);
-        at = end;
+    const auto arguments = call_arguments(args);
+    if (!arguments) {
+        verdite::fuzz_note("call-refused " + std::string(args) + ": a value does not parse");
+        return false;
     }
-    const auto result = verdite::raw_call(kf_call_layer(), args.substr(0, name_end), arguments);
+    const std::size_t name_end = std::min(args.find(' '), args.size());
+    const auto result = verdite::raw_call(kf_call_layer(), args.substr(0, name_end), *arguments);
     if (!result.error.empty()) {
         verdite::fuzz_note("call-refused " + std::string(args) + ": " + result.error);
         return false;

@@ -2,7 +2,10 @@
 functions a mod may call, and their table in the generated source.
 
 Everything the generator can describe is callable, less what port/ext/call_layer.toml holds back and
-what tools/call_audit.py found (port/ext/call_layer_audit.toml). A parameter crosses by its type:
+what tools/call_audit.py found (port/ext/call_layer_audit.toml), unless the listed file allows that
+function with a reason. One found running frames then runs as RunsFrames. A function using a current
+object takes it as a first parameter, its subject, which a wrapper binds around the call. A parameter
+crosses by its type:
 
   a value                 as the raw layer's value; a struct only if every field is described
   const T &               a copy
@@ -16,28 +19,33 @@ import re
 import tomllib
 
 LAYER_PATH = "kf.call"
-TOP_LEVEL_KEYS = ("instructions_per_call", "any_time_headers", "held_headers", "held", "pools", "functions")
-FUNCTION_KEYS = ("any_time", "why", "params")
+TOP_LEVEL_KEYS = ("instructions_per_call", "instructions_per_frame_call", "any_time_headers", "held_headers",
+                  "held", "pools", "subjects", "functions")
+FUNCTION_KEYS = ("any_time", "why", "params", "allowed", "subject", "check")
+SUBJECT_KEYS = ("binder", "check")
 PARAM_KEYS = ("range", "role", "check", "nil", "why")
 POOL_KEYS = ("pool", "check")
 ROLES = {"in": "In", "out": "Out", "inout": "InOut"}
 AUDIT_REASONS = {
-    "frame": "runs frames of its own: API stage two",
+    "frame": "runs frames of its own, and no one has read it to allow it",
     "file_write": "writes the player's files, outside a mod's folder",
-    "loads": "reads a file or allocates from the game's arenas: API stage two",
-    "current": "uses the current actor, effect or map event: API stage two",
+    "loads": "reads a file or allocates from the game's arenas, and no one has read it to allow it",
+    "current": "uses the current actor, effect or map event, and no one has read it to allow it",
 }
 
 
 @dataclasses.dataclass
 class Listing:
     instructions_per_call: int
+    instructions_per_frame_call: int
     any_time_headers: set
     held_headers: dict
     held: dict
     pools: dict
+    subjects: dict
     functions: dict
     audit: dict
+    audit_classes: dict
 
 
 @dataclasses.dataclass
@@ -54,9 +62,13 @@ class FunctionEmit:
     name: str
     lua_name: str
     params: list
-    any_time: bool
+    when: str
     doc: str
     file: str
+    check: str = ""
+    subject: str = ""
+    subject_params: list = dataclasses.field(default_factory=list)   # (name, type text) of the game's
+    returns: str = ""
 
 
 def load(path, audit_path, config_error):
@@ -71,19 +83,23 @@ def load(path, audit_path, config_error):
     unknown = set(data) - set(TOP_LEVEL_KEYS)
     if unknown:
         raise config_error(f"{path}: unknown key(s) {', '.join(sorted(unknown))}")
-    audit = {}
+    audit, audit_classes = {}, {}
     for name, functions in read(audit_path).items():
         if name not in AUDIT_REASONS:
             raise config_error(f"{audit_path}: unknown class {name}")
         audit.update({function: AUDIT_REASONS[name] for function in functions})
+        audit_classes.update({function: name for function in functions})
     return Listing(
         instructions_per_call=data.get("instructions_per_call", 0),
+        instructions_per_frame_call=data.get("instructions_per_frame_call", 0),
         any_time_headers=set(data.get("any_time_headers", [])),
         held_headers=data.get("held_headers", {}),
         held=data.get("held", {}),
         pools=data.get("pools", {}),
+        subjects=data.get("subjects", {}),
         functions=data.get("functions", {}),
         audit=audit,
+        audit_classes=audit_classes,
     )
 
 
@@ -232,7 +248,7 @@ class Classifier:
             entry = self.listing.functions.get(short, {})
             if entry:
                 self.used_keys.add(short)
-            why = self._why_held(short, function, distinct, include_dir)
+            why = self._why_held(short, function, distinct, include_dir, entry)
             if not why:
                 why = self._signature_problem(function, entry)
             if why:
@@ -242,14 +258,18 @@ class Classifier:
         self._check_keys(by_name)
         return emitted, held
 
-    def _why_held(self, short, function, distinct, include_dir):
+    def _why_held(self, short, function, distinct, include_dir, entry):
         if short in self.listing.held:
             return self.listing.held[short]
         header = function.file[len(include_dir) + 1:]
-        if header in self.listing.held_headers:
-            return self.listing.held_headers[header]
-        if short in self.listing.audit:
-            return self.listing.audit[short]
+        hold = self.listing.held_headers.get(header, self.listing.audit.get(short, ""))
+        if "allowed" in entry:
+            if not hold:
+                raise self.config_error(f"[functions.{short}]: allowed, but nothing holds it back")
+            if self.listing.audit_classes.get(short) == "file_write":
+                raise self.config_error(f"[functions.{short}]: what writes the player's files cannot be allowed")
+        elif hold:
+            return hold
         if short.startswith("operator"):
             return "an operator"
         if len(distinct) > 1:
@@ -281,7 +301,21 @@ class Classifier:
         ]
         header = function.file[len(include_dir) + 1:]
         any_time = entry.get("any_time", header in self.listing.any_time_headers)
-        return FunctionEmit(function.name, short, params, any_time, entry.get("why", ""), function.file)
+        when = "AnyTime" if any_time else "BetweenUpdates"
+        if self.listing.audit_classes.get(short) == "frame" and "allowed" in entry:
+            when = "RunsFrames"
+        emitted = FunctionEmit(function.name, short, params, when, entry.get("why", ""), function.file,
+                               check=entry.get("check", ""))
+        subject = entry.get("subject", "")
+        if subject:
+            if subject not in self.listing.subjects:
+                raise self.config_error(f"[functions.{short}]: no [subjects.{subject}]")
+            emitted.subject = subject
+            emitted.subject_params = list(function.params)
+            emitted.returns = _return_text(function.signature)
+            emitted.params = [ParamEmit("subject", "In", None, self.listing.subjects[subject].get("check", ""), False),
+                              *params]
+        return emitted
 
     def _check_keys(self, by_name):
         for table, label in ((self.listing.held, "held"), (self.listing.functions, "functions")):
@@ -297,6 +331,11 @@ class Classifier:
                 raise self.config_error(f"[pools.{name}]: needs pool, and may have check")
             if name not in self.layer.index.record_names:
                 raise self.config_error(f"[pools.{name}]: no struct of that name")
+        for name, table in self.listing.subjects.items():
+            if set(table) - set(SUBJECT_KEYS) or "binder" not in table:
+                raise self.config_error(f"[subjects.{name}]: needs binder, and may have check")
+            if name not in self.listing.pools:
+                raise self.config_error(f"[subjects.{name}]: a subject crosses as its slot, so it needs a pool")
 
 
 def _limits_text(limits, cpp_string):
@@ -316,6 +355,23 @@ def _param_text(param, cpp_string):
     )
 
 
+def _subject_wrapper_name(function):
+    return f"kf_call_on_subject_{function.lua_name}"
+
+
+def _subject_wrapper(function, listing):
+    """The game's function with its current object as a first parameter, bound around the call."""
+    binder = listing.subjects[function.subject]["binder"]
+    params = ", ".join([f"{function.subject} *subject", *(f"{text} {name}" for name, text in function.subject_params)])
+    arguments = ", ".join(name for name, _ in function.subject_params)
+    return [
+        f"static {function.returns} {_subject_wrapper_name(function)}({params}) {{",
+        f"    const {binder} bound(subject);",
+        f"    return {function.name}({arguments});",
+        "}",
+    ]
+
+
 def render(functions, listing, cpp_string):
     """The lines after the raw layer's: each pool's description, and kf_call_layer."""
     lines = []
@@ -325,6 +381,10 @@ def render(functions, listing, cpp_string):
             f"    static std::span<{name}> pool() {{ return {table['pool']}; }}",
             "};",
         ]
+    lines += [""]
+    for function in functions:
+        if function.subject:
+            lines += _subject_wrapper(function, listing)
     lines += ["", "const verdite::RawCallLayer &kf_call_layer() {", "    static const std::array functions = {"]
     for function in functions:
         if function.params:
@@ -332,16 +392,17 @@ def render(functions, listing, cpp_string):
             array = f"std::array{{{params}}}"
         else:
             array = "std::array<verdite::RawParamListing, 0>{}"
-        when = "AnyTime" if function.any_time else "BetweenUpdates"
         doc = cpp_string(function.doc) if function.doc else "{}"
+        check = function.check or "nullptr"
+        called = _subject_wrapper_name(function) if function.subject else function.name
         lines.append(
-            f"        verdite::raw_function<&{function.name}>({cpp_string(function.lua_name)}, {array}, "
-            f"verdite::RawFunctionListing{{verdite::RawCallWhen::{when}, {doc}}}),"
+            f"        verdite::raw_function<&{called}>({cpp_string(function.lua_name)}, {array}, "
+            f"verdite::RawFunctionListing{{verdite::RawCallWhen::{function.when}, {doc}, {check}}}),"
         )
     lines += [
         "    };",
         f"    static const verdite::RawCallLayer layer{{{cpp_string(LAYER_PATH)}, kf_call_doc, functions, "
-        f"{listing.instructions_per_call}, kf_call_began, kf_call_ended}};",
+        f"{listing.instructions_per_call}, kf_call_began, kf_call_ended, {listing.instructions_per_frame_call}}};",
         "    return layer;",
         "}",
         "",
@@ -354,6 +415,9 @@ def render_report(functions, held):
     for _, why in held:
         reasons[why] = reasons.get(why, 0) + 1
     lines = ["", "call layer", "", f"functions callable: {len(functions)}", f"functions held back: {len(held)}", ""]
-    lines += ["callable:"] + [f"  {f.lua_name}{' (any time)' if f.any_time else ''}" for f in functions]
+    notes = {"AnyTime": " (any time)", "RunsFrames": " (runs frames)", "BetweenUpdates": ""}
+    lines += ["callable:"] + [
+        f"  {f.lua_name}{notes[f.when]}{f' (on a {f.subject})' if f.subject else ''}" for f in functions
+    ]
     lines += ["", "held back:"] + [f"  {name}: {why}" for name, why in sorted(held)]
     return lines

@@ -3,7 +3,8 @@
 Written 2026-11-01, after API 0.12. Step 8 of [MODDING.md](MODDING.md#order): a mod calls the
 game's functions, through bindings generated from the same headers as the
 [raw layer](RAW_LAYER_PLAN.md), each argument checked against its type and range. Stage one is
-built (API 0.13, 2026-11-01): 126 functions, fuzzed clean. Stage two (step 9) is not started.
+built (API 0.13, 2026-11-01): 126 functions. Stage two is built (API 0.14, 2026-11-02): 170
+functions, with those using a current object or running frames. Both fuzzed clean; see Order, step 9.
 
 ## What makes this harder than the raw layer
 
@@ -187,20 +188,58 @@ end
    build: 0.16 us a call, 0.71 us passing a table each way, so the charge of 1,000 instructions limits
    a callback to 100,000 calls. The same run under ASan proved a call deals damage, `on_damage` errs,
    and the mod stops at once with the game going on.
-9. **Stage two (API 0.14).** Handle the three remaining classes, each with its own fuzz campaign:
-   current-object functions take the slot as their first argument, and the binding binds it, calls,
-   and unbinds; allocator and load functions get a hold or a reason to allow each one; frame-running
-   functions run with nested `on_update` and `on_draw` allowed, a `game_play`-style function that
-   never returns held, and a stall the fuzzer can see. A nested frame also reaches the Mods panel and
-   `ModHost::scan`, which unload mods, so those must wait for the outermost call to end. MODDING.md's
-   step 8 is struck when this lands.
+9. ~~**Stage two (API 0.14).** Handle the three remaining classes: current-object functions take the
+   slot as their first argument, and the binding binds it, calls, and unbinds; allocator and load
+   functions get a hold or a reason to allow each one; frame-running functions run with nested
+   `on_update` and `on_draw` allowed, a `game_play`-style function that never returns held, and a stall
+   the fuzzer can see. A nested frame also reaches the Mods panel and `ModHost::scan`, which unload
+   mods, so those must wait for the outermost call to end.~~ Done 2026-11-02. What it became:
+   - **The listed file now opts each one in.** The audit's four classes stay held unless
+     `[functions.x]` has `allowed`, with why. Each of the 44 was read; the rest of the classes keep a
+     generic reason or one of their own in `[held]`. What writes the player's files cannot be allowed.
+   - **Subjects.** `subject = "KfActor"` makes the generator write a wrapper that binds the slot
+     (`KfBoundActor`, `KfBoundEffect`) around the call and puts back what was current. Functions that
+     read the current object only to skip it in a walk are allowed with none.
+   - **Frames** (`RawCallWhen::RunsFrames`). Each frame gives the calling mod a whole budget for
+     what runs in it (`ModHost::frame_passed`), and what was left of the callback's own comes back
+     when the call returns. A shop open for 26,000 frames in a probe kept its mod running. A
+     frame-running call costs 1,000,000 instructions, so a loop of them ends at 100 calls in a callback;
+     measured, a loop of `audio_stop_sequence_fade` stops at the 100th. `scan` does nothing during one;
+     `enable`, `disable` and `reload_all` wait and run when it ends, so no state in use closes.
+   - **A check over all the arguments** (`RawCallCheck`), for what depends on two of them or on the
+     game's state: `player_warp_change_floor`'s floor and variant. `player_set_equipment_slot` and
+     `map_object_effect_pool_acquire` could come back through one; they were left held.
+   - **`KfCharacterId` lists all 15 people on the disc** (a patch), since it named only the 4 the code
+     compares with and `talk_show_dialogue_page` could reach no one else.
+   - **Left out: cutscenes.** `cutscene_play` resets the sound device the world's bank is on and runs
+     the title loop, and it is built to run between games. Playing one during the world needs the
+     floor and its sound brought back afterwards, which only the eye can judge. `menu_open_root` is left
+     out too: its outcome (load a game, quit) is the world loop's to carry out.
+
+   **Campaigns**: clean. `--preset fuzz --call 6000 --mix --vary --ticks 20000`, seeds 7000-7095: 96 runs, 140,505
+   calls, every one of the 170 functions at least 55 times (`player_warp_same_floor`, which only floor 5
+   allows; the next least 254). No crash, sanitizer report, `host_fail` or stall. `--call 4000 --raw 4000`,
+   seeds 8000-8095: 26,043 calls, no crash, sanitizer report or `host_fail`; 1 of the 96 stalled in the
+   `opening` context, as raw-only runs do and which that plan counts for nothing; why it left play was not
+   traced. These calls come from the fuzzer directly, so the mods' nested callbacks were exercised by
+   unit tests and three probe mods instead: headless and drawn offscreen under ASan and UBSan (a shop, a
+   warp and a shimmer with `on_update` and `on_draw` running in them, each refusal, another mod failing
+   inside a shop), and quitting with a shop open, which exits cleanly with on_unload run. Whether these
+   look right in play was not judged.
+
+   Found on the way, under `--preset fuzz`: 12 of the first 16 runs crashed on `actor_try_select_profiled_action`, whose
+   effect code indexes a table shorter than its bits reach (a check); `audio_stop_sequence_master_fade`
+   at step 1 took 32,000 frames, which the fuzzer called a stall (a range); a player left on the grid's
+   last cell made `map_interaction_dispatch` index past the attributes, which noclip could always do
+   (a game patch); and a floor's load freed a slot without ending its action, so the door update read
+   definition 255 (a game patch).
 
 `host_between_updates` is in the world loop, which a pause holds inside a frame, so a paused game
 runs no `on_between_updates`, as it runs no `on_update`. It does not run at the title, in a menu or
 in a cutscene either; this was read from the code, not run.
 
-To widen stage one without stage two: 38 functions wait only on a role in the listed file, which
-needs someone to read each and confirm its pointer is to one struct.
+To widen it further: 38 functions wait only on a role in the listed file, which needs someone to read
+each and confirm its pointer is to one struct.
 
 ## Held back from the start
 
@@ -211,8 +250,8 @@ The fuzzer would not necessarily find these, so they are listed by reading:
 - **Ends or stalls the program**: `game_shutdown`, `sound_start`, `sound_shutdown`,
   `frame_pacer_wait`, `game_main_loop`, `game_play`.
 - **Needs an open frame or loaded scene**: `kf/game/render.h`, `kf/lib/tmd.h`, `kf/lib/render_face.h`,
-  all of `kf/game/menu.h` and `kf/cutscene/`. Some may come back later; `render_publish_light` is the
-  first candidate.
+  `kf/game/menu.h` but for `menu_open_shop`, `menu_confirm_pickup` and `talk_show_dialogue_page`, and
+  `kf/cutscene/`. Some may come back later; `render_publish_light` is the first candidate.
 - **By signature**: any raw buffer, span, arena or callback. No Lua value becomes an address.
 - **Bounds a range cannot say**: `map_object_effect_pool_acquire` (a first index and a count that must
   stay in the pool together), `player_set_equipment_slot` (the id's range depends on the slot; found by

@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.13, what ships today. Where it is going, API 1.0, is
+This page documents API 0.14, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -575,6 +575,11 @@ function on_between_updates()
     local slot = kf.call.actor_pool_find_at_tile(10, 12)
     if slot >= 0 then
         kf.call.actor_apply_damage(slot, 50, 10, 0, 0, 0, 0, 4096, 0)
+        kf.call.actor_prepare_charge_toward_player(slot)   -- on that actor
+    end
+    if want_shop then
+        want_shop = false
+        kf.call.menu_open_shop(1)                          -- returns when the player leaves it
     end
 end
 ```
@@ -587,6 +592,10 @@ end
 | an actor, effect, map object, map event or floor item | its slot in the game's pool, an integer; a null returned is `nil` |
 | the return value, then any out parameters | the call's results, in that order |
 
+The game has functions that act on "the current actor" or "the current effect" and
+take none. Here they take its slot as a first argument, `subject`, and the actor or
+effect is current for that one call.
+
 A call that changes state may run only directly in `on_between_updates`, on the
 mod's main thread: not in `on_update`, `on_draw`, an event handler or a coroutine.
 Elsewhere the game may be walking what the call changes, so a call there could
@@ -595,21 +604,31 @@ called anywhere" (the math in `kf/lib/math.h` and `fixed_math.h`) change nothing
 can run from any callback. To act on an event, set a flag in its handler and call in
 the next `on_between_updates`.
 
+Functions the definitions file marks "Runs frames" (a shop, a dialogue page, a warp,
+fading the music) return when they are done, which may be when the player presses
+something. Every mod's `on_update` and `on_draw` go on running in those frames, the
+caller's own included, and none of them can make a call that changes state. While
+one runs, editing a mod's files or using the Mods panel takes effect only after it
+returns. If a mod errs in those frames it stops: another mod at once, the caller as
+soon as the call returns.
+
 A wrong count, type or range, a free slot, or a call at the wrong time is an error
 that stops the mod. If a call raises an event and the mod's own handler errs, the
 call's effect stays and the mod stops as soon as the call returns; catching it with
 `pcall` does not save the mod. Each call costs 1,000 instructions of the callback's
-budget, and everything nested in a callback spends that one budget. A call measured
-0.16 µs of its own, or 0.71 µs passing tables both ways (the plain build, 2026-11-01).
+budget, and everything nested in a callback spends that one budget. A call that runs
+frames costs 1,000,000 instead, so a callback can make 100 of them, and its frames
+have a whole budget each. A call measured 0.16 µs of its own, or 0.71 µs passing
+tables both ways (the plain build, 2026-11-01).
 
 What a call leaves out of step (HP above the maximum, a door open with no one
 through it) is the mod's to manage. What it could corrupt memory with is held back.
-`kf.d.lua` lists all 126 functions with their ranges. Held back so far, with each
-reason in the build's `raw_layer_report.txt`: functions that run frames (shops,
-dialogue, warps, cutscenes), load files, or use the current actor, effect or map
-event, which come in a second stage; anything that draws, writes the player's files,
-or takes a raw buffer; and any pointer to a struct not yet read to confirm it is one
-struct and not an array. See [CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md).
+`kf.d.lua` lists all 170 functions with their ranges. Held back, with each
+reason in the build's `raw_layer_report.txt`: cutscenes, which reset the sound device
+the world is using; what replaces the game or returns to the world loop (`player_update`,
+`game_play`, the root menu); anything that draws, writes the player's files, or takes
+a raw buffer; and any pointer to a struct not yet read to confirm it is one struct and
+not an array. See [CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md).
 
 ### `kf.audio`
 
@@ -837,11 +856,12 @@ mods are off in coop (decided 2026-10-31).
    `kf.play.top_speed` and `kf.game.mouse` and `music_while_paused`, which
    the run and the map need to be mods.~~ Pressing and blocking done in 0.8
    (2026-11-01): `kf.action_hold`, `kf.action_press`, `kf.action_block`.
-8. Calling the game's functions: bindings generated from the same headers as
-   the raw layer, each argument checked against its type and range. First stage
-   done in 0.13 (2026-11-01): `kf.call`, 126 functions, its calls fuzzed clean
-   ([CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md)). Left for the second stage: functions
-   that run frames, load files or use a current object.
+8. ~~Calling the game's functions: bindings generated from the same headers as
+   the raw layer, each argument checked against its type and range.~~ Done: `kf.call`,
+   126 functions in 0.13 (2026-11-01), 170 in 0.14 (2026-11-02) with functions
+   that run frames and use a current object, its calls fuzzed clean
+   ([CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md)). Left out: playing a cutscene during
+   the world, which needs the world's sound and floor brought back after it.
 9. Hooking and replacing the game's functions: a mod's code before, after or
    in place of a game function. We compile the decomp, so the build can give
    each function a hook point; no patching at run time.

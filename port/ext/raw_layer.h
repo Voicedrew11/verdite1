@@ -16,7 +16,7 @@ inline constexpr std::string_view kf_raw_doc =
 const verdite::RawLayer &kf_raw_layer();
 
 inline constexpr std::string_view kf_call_doc =
-    R"(The call layer: the game's functions, called by name, every argument checked first. The names are the decomp's and follow its renames: nothing here is stable. A call that changes state may run only directly in on_between_updates. A call that leaves the game's other state out of step is the mod's to manage.)";
+    R"(The call layer: the game's functions, called by name, every argument checked first. The names are the decomp's and follow its renames: nothing here is stable. A call that changes state may run only directly in on_between_updates; one that runs frames runs each mod's on_update and on_draw in them. A call that leaves the game's other state out of step is the mod's to manage.)";
 
 // The layer at kf.call (docs/CALL_LAYER_PLAN.md), from the same generated source.
 const verdite::RawCallLayer &kf_call_layer();

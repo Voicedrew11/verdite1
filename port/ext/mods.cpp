@@ -62,7 +62,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.13";
+constexpr const char *api_version = "0.14";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -1587,6 +1587,7 @@ void mods_frame(int context) {
     // The scene built this update's faces before this runs, so the last on_update's shapes are drawn
     // and these are drawn from the next update's picture.
     mod_scene_clear_all();
+    host->frame_passed();
     if (!mods_paused() && !kf_call_running())
         host->call_each(verdite::ModCallback::Update);
     stop_shapes_of_inactive_mods();   // a mod that failed in its update leaves no shapes behind

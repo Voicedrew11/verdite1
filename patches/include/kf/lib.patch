@@ -1,8 +1,34 @@
 diff --git a/include/kf/lib/map.h b/include/kf/lib/map.h
-index 85501920d30d2a9c5683e9d825c129f3195d60eb..5fb036b432a20be32954cccc1c996afc0d9eedbe 100644
+index 85501920d30d2a9c5683e9d825c129f3195d60eb..2c38e31d8a84dc8ee3ea119e2df3dc900e14bf97 100644
 --- a/include/kf/lib/map.h
 +++ b/include/kf/lib/map.h
-@@ -350,6 +350,9 @@ extern s32 map_event_pool_find_overlap(s32 point_x, s32 point_z, s32 radius_padd
+@@ -230,11 +230,24 @@ typedef struct KfMapObject {
+ 
+ #include <kf/lib/camera_path.h>
+ 
++// PC extension (mods): every person with a folder under KF/TALK, so a mod can show their pages;
++// the game's code names only those it compares with.
+ enum class KfCharacterId : u8 {
++    KF_CHARACTER_01 = 1,
++    KF_CHARACTER_02 = 2,
+     KF_CHARACTER_KEY_OF_THE_DEAD_EXCHANGE = 3,
++    KF_CHARACTER_04 = 4,
++    KF_CHARACTER_05 = 5,
++    KF_CHARACTER_06 = 6,
+     KF_CHARACTER_HARP_EXCHANGE = 7,
+     KF_CHARACTER_HEALING_EXCHANGE = 8,
+-    KF_CHARACTER_FLOOR3_DOOR_UNLOCKER = 12
++    KF_CHARACTER_09 = 9,
++    KF_CHARACTER_11 = 11,
++    KF_CHARACTER_FLOOR3_DOOR_UNLOCKER = 12,
++    KF_CHARACTER_13 = 13,
++    KF_CHARACTER_14 = 14,
++    KF_CHARACTER_15 = 15,
++    KF_CHARACTER_17 = 17
+ }; using enum KfCharacterId;
+ 
+ enum class KfMapEventState : u8 {
+@@ -350,6 +363,9 @@ extern s32 map_event_pool_find_overlap(s32 point_x, s32 point_z, s32 radius_padd
  extern KfMapEvent *map_event_pool_find_target_in_cone( const VECTOR *origin, s16 facing, s32 max_distance, s32 angle_tolerance, s32 *distance_out);
  extern void map_event_pool_load(KfResourceChunk placements);
  extern void map_event_pool_update(void);
@@ -12,7 +38,7 @@ index 85501920d30d2a9c5683e9d825c129f3195d60eb..5fb036b432a20be32954cccc1c996afc
  extern void map_event_refresh_dialogue_stage(KfMapEvent *event);
  extern void map_event_set_current(KfMapEvent *event);
  extern void map_event_timers_reset(void);
-@@ -370,7 +373,8 @@ extern void map_object_pool_load(KfResourceChunk placements);
+@@ -370,7 +386,8 @@ extern void map_object_pool_load(KfResourceChunk placements);
  extern void map_object_pool_trigger_link(u8 link_id);
  extern void map_object_pool_update(void);
  extern KfCollisionResult map_object_probe_door_closing(const KfMapObject *object, u16 yaw);

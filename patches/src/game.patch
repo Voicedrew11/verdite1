@@ -1802,7 +1802,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..b86478328a263b837550f67c43098954
  
  void map_load_floor_wrapper(void)
 diff --git a/src/game/map_object.cpp b/src/game/map_object.cpp
-index c4fee7aad3fff0d855e5f329a125281e6bba88a7..6394979cac93a44662f90c483360a223eb5e28b4 100644
+index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb95372107 100644
 --- a/src/game/map_object.cpp
 +++ b/src/game/map_object.cpp
 @@ -138,6 +138,11 @@ KfMapObject *map_object_effect_pool_acquire(u16 first_index, u16 count, u16 sequ
@@ -1857,6 +1857,18 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..6394979cac93a44662f90c483360a223
          if ((definitions[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_CLEAR_LAST
               || definitions[kf_enum_encode<u8>(object.object_id)].behavior_type == KF_MAP_OBJECT_OP_LINK_CLEAR_LAST)
              && object.link.link_id == link_id) {
+@@ -256,6 +271,11 @@ void map_object_pool_update(void)
+         if (object->action == KF_MAP_OBJECT_OP_NONE) {
+             continue;
+         }
++        // PC fix: a floor's load frees a slot without ending its action, and a freed object's id
++        // is past the definitions.
++        if (object->object_id == KF_OBJECT_NONE) {
++            continue;
++        }
+         switch (object->action) {
+         default:
+             // Unlisted operations have no per-frame action here.
 diff --git a/src/game/map_object_pool.cpp b/src/game/map_object_pool.cpp
 index 29c748155b7804433f0616f9c71401d7c797e736..0d6ce28730948d9f1f570ebb93b15978753a821e 100644
 --- a/src/game/map_object_pool.cpp
@@ -1949,7 +1961,7 @@ index 29c748155b7804433f0616f9c71401d7c797e736..0d6ce28730948d9f1f570ebb93b15978
              point_x += KF_MAP_TILE_SIZE;
              break;
 diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
-index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f75a17c7ee 100644
+index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be289624de91 100644
 --- a/src/game/map_scripts.cpp
 +++ b/src/game/map_scripts.cpp
 @@ -1,4 +1,5 @@
@@ -2002,7 +2014,21 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f7
          notify_enqueue(object->link.linked_notification);
          return;
      }
-@@ -637,6 +662,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -613,8 +638,11 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+ 
+     const auto attribute_probe = vector_yaw_probe_xz(
+         *position, rotation->vy, MAP_ATTRIBUTE_PROBE_DISTANCE);
+-    switch (map_attribute_at_cell(
+-        attribute_probe.x / KF_MAP_TILE_SIZE, attribute_probe.z / KF_MAP_TILE_SIZE)) {
++    // PC fix: a player at the grid's last cell, where a mod or noclip can leave them, probes past it.
++    const s32 probe_x = attribute_probe.x / KF_MAP_TILE_SIZE;
++    const s32 probe_z = attribute_probe.z / KF_MAP_TILE_SIZE;
++    const bool probe_on_grid = probe_x >= 0 && probe_x < KF_MAP_COLUMNS && probe_z >= 0 && probe_z < KF_MAP_ROWS;
++    switch (probe_on_grid ? map_attribute_at_cell(probe_x, probe_z) : KF_MAP_ATTRIBUTE_NONE) {
+     case KF_MAP_ATTRIBUTE_PITFALL:
+         notify_enqueue(KF_NOTIFICATION_PITFALL);
+         break;
+@@ -637,6 +665,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
          && (index = map_event_pool_find_overlap(
                  interaction_probe.x, interaction_probe.z, MAP_INTERACTION_RADIUS_PADDING)) != -1) {
          event = &map_runtime_state.events[index];
@@ -2010,7 +2036,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f7
          switch (event->behavior) {
              case KF_MAP_EVENT_BEHAVIOR_SHOP:
                  event->animation_phase = 0;
-@@ -673,6 +699,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -673,6 +702,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
              default:
                  break;
          }
@@ -2018,7 +2044,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f7
      } else {
          for (index = 0;; index++) {
              index = map_object_pool_find_interaction_from(
-@@ -704,7 +731,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -704,7 +734,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
                  if (object->link.link_id != KF_MAP_LINK_NONE) {
@@ -2029,7 +2055,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f7
                      break;
                  }
                  map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_LIFT_DOOR);
-@@ -718,7 +747,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -718,7 +750,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
                  if (object->link.link_id != KF_MAP_LINK_NONE && definition->behavior_type == KF_MAP_OBJECT_OP_HINGED_DOOR) {
@@ -2040,7 +2066,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..d38f3f4806abfd8034653510a47d57f7
                      break;
                  }
  
-@@ -785,7 +816,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -785,7 +819,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
  
              case KF_MAP_OBJECT_OP_SAVE_POINT:
                  map_world_state_persist();
