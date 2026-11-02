@@ -85,6 +85,10 @@ struct Mod {
     std::int64_t instructions_left = 0;
     bool out_of_instructions = false;   // stays set for the call, even if the mod catches the error
     bool memory_refused = false;        // cleared by the next allocation that fits
+    // Calls into this mod's state now running. Game code a mod calls can raise an event on the same
+    // state, so its state cannot close until the outermost returns.
+    int calls_running = 0;
+    std::optional<std::string> stop_reason;   // failed inside a running call: stops when it returns
     std::unique_ptr<lua_State, StateClose> lua;   // last: closed before the counters above go
 };
 
@@ -128,16 +132,23 @@ void *allocate(void *data, void *block, std::size_t old_size, std::size_t new_si
     return moved;
 }
 
-void count_instructions(lua_State *L, lua_Debug * /*unused*/) {
-    Mod &mod = mod_of_state(L);
-    mod.instructions_left -= hook_every_instructions;
-    if (mod.instructions_left > 0)
-        return;
+void count_instructions(lua_State *L, lua_Debug *debug);
+
+void go_over_budget(lua_State *L, Mod &mod) {
     // Every instruction from now on errs, so a mod that catches the error errs again in the frame
     // that caught it, out to the host's call.
     mod.out_of_instructions = true;
     lua_sethook(L, count_instructions, LUA_MASKCOUNT, 1);
     luaL_error(L, "over its instruction budget");
+}
+
+void count_instructions(lua_State *L, lua_Debug * /*unused*/) {
+    Mod &mod = mod_of_state(L);
+    if (mod.stop_reason)
+        luaL_error(L, "stopped: a callback inside this call failed");
+    mod.instructions_left -= hook_every_instructions;
+    if (mod.instructions_left <= 0)
+        go_over_budget(L, mod);
 }
 
 int add_traceback(lua_State *L) {
@@ -146,14 +157,31 @@ int add_traceback(lua_State *L) {
     return 1;
 }
 
-// Calls function(argument) in the mod's state with a fresh budget. The error, with its stack, or
-// none. Going over the budget is an error even when the mod caught it.
-std::optional<std::string> run_protected(Mod &mod, lua_CFunction function, lua_Integer argument = 0) {
+// Counts the calls running in a mod's state. The outermost starts a fresh budget, and what runs
+// inside it spends that budget, so events raised inside a call cannot refill it.
+class RunningCall {
+public:
+    explicit RunningCall(Mod &mod) : mod_(mod) {
+        if (mod_.calls_running++ > 0)
+            return;
+        mod_.instructions_left = static_cast<std::int64_t>(mod_.host->instructions_per_call);
+        mod_.out_of_instructions = false;
+        mod_.memory_refused = false;
+        lua_sethook(mod_.lua.get(), count_instructions, LUA_MASKCOUNT, hook_every_instructions);
+    }
+    ~RunningCall() { --mod_.calls_running; }
+    RunningCall(const RunningCall &) = delete;
+    RunningCall &operator=(const RunningCall &) = delete;
+
+private:
+    Mod &mod_;
+};
+
+std::optional<std::string> run_counted(Mod &mod, lua_CFunction function, lua_Integer argument) {
     lua_State *L = mod.lua.get();
-    mod.instructions_left = static_cast<std::int64_t>(mod.host->instructions_per_call);
-    mod.out_of_instructions = false;
-    mod.memory_refused = false;
-    lua_sethook(L, count_instructions, LUA_MASKCOUNT, hook_every_instructions);
+    const RunningCall running(mod);
+    if (!lua_checkstack(L, 3))
+        return "out of Lua stack";
     lua_pushcfunction(L, add_traceback);
     lua_pushcfunction(L, function);
     lua_pushinteger(L, argument);
@@ -170,6 +198,18 @@ std::optional<std::string> run_protected(Mod &mod, lua_CFunction function, lua_I
         return "over its instruction budget (" + std::to_string(mod.host->instructions_per_call) + " per call)";
     if (mod.memory_refused || status == LUA_ERRMEM)
         return "over its memory cap (" + std::to_string(mod.host->memory_cap_bytes >> 20) + " MiB)";
+    return error;
+}
+
+// Calls function(argument) in the mod's state, on a fresh budget unless a call is already running
+// in it. The error, with its stack, or none. Going over the budget is an error even when the mod
+// caught it. A mod stopping runs nothing more, and the error that stopped it is the outermost call's.
+std::optional<std::string> run_protected(Mod &mod, lua_CFunction function, lua_Integer argument = 0) {
+    if (mod.stop_reason)
+        return mod.stop_reason;
+    auto error = run_counted(mod, function, argument);
+    if (mod.stop_reason && mod.calls_running == 0)
+        return mod.stop_reason;
     return error;
 }
 
@@ -1243,6 +1283,7 @@ struct ModHost::State {
     }
 
     void unload(Mod &mod) {
+        mod.stop_reason.reset();
         mod.assets.clear();   // the replacements go with the state: a reload, disable or failure drops them
         if (!mod.lua)
             return;
@@ -1258,6 +1299,14 @@ struct ModHost::State {
     }
 
     void fail(Mod &mod, const std::string &message) {
+        // Inside a call the state is in use below us: every instruction errs from here, so the call
+        // ends as soon as the game code returns to it, and its caller fails the mod for good.
+        if (mod.calls_running > 0) {
+            if (!mod.stop_reason)
+                mod.stop_reason = message;
+            lua_sethook(mod.lua.get(), count_instructions, LUA_MASKCOUNT, 1);
+            return;
+        }
         mod.error = message;
         print_line(mod.id, "error: " + message);
         crash_event("mod " + mod.id + " failed: " + message);
@@ -1623,6 +1672,13 @@ void mod_config_changed(lua_State *L) {
 
 void mod_log(lua_State *L, std::string_view text) {
     print_line(mod_of_state(L).id, text);
+}
+
+void mod_spend_instructions(lua_State *L, std::int64_t instructions) {
+    Mod &mod = mod_of_state(L);
+    mod.instructions_left -= instructions;
+    if (mod.instructions_left <= 0)
+        go_over_budget(L, mod);
 }
 
 } // namespace verdite

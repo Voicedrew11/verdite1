@@ -2,9 +2,11 @@
 #define VERDITE_MODS_H
 // Lua 5.4 mods with live reload (docs/MODDING.md). A mod is a folder under the mods folder with
 // mod.json and Lua sources; each runs in its own sandboxed lua_State with an instruction budget per
-// call and a memory cap. Saving a file reloads it; an error stops only that mod. Game-agnostic: the
-// game hands in its API as tables of functions and fields, from which the host also writes the
-// editors' definitions file, and stores each mod's enabled flag and config where it keeps settings.
+// call and a memory cap. Saving a file reloads it; an error stops only that mod. A bound function may
+// raise an event, so a handler can run inside its own mod's call: it spends that call's budget, and
+// if it errs the mod stops as soon as the bound function returns. Game-agnostic: the game hands in
+// its API as tables of functions and fields, from which the host also writes the editors'
+// definitions file, and stores each mod's enabled flag and config where it keeps settings.
 //
 // mod.json may also say "default_enabled": true, so a mod never stored before starts enabled (a mod
 // the game ships on), and "enhancement": true, for a mod the game holds while it plays as the
@@ -223,6 +225,9 @@ std::string_view mod_id(lua_State *L);
 std::optional<std::vector<std::uint8_t>> mod_file_bytes(lua_State *L, std::string_view relative, std::size_t max_bytes);
 void mod_config_changed(lua_State *L);   // config is saved when the callback returns
 void mod_log(lua_State *L, std::string_view text);   // "[id] text" on stdout
+// Charges native work to the running callback's budget, which otherwise counts only Lua
+// instructions. Over the budget it raises a Lua error, as the instruction count does.
+void mod_spend_instructions(lua_State *L, std::int64_t instructions);
 
 } // namespace verdite
 

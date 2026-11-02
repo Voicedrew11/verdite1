@@ -59,6 +59,14 @@ int again(lua_State *) {
     nested_host->raise("on_test", values);
     return 0;
 }
+int again_twice(lua_State *L) {
+    again(L);
+    return again(L);
+}
+int spend(lua_State *L) {
+    mod_spend_instructions(L, 100'000);
+    return 0;
+}
 
 // The test game's replaceable files: a .TIM must begin with TIM, a .SEQ may hold anything.
 std::optional<std::string> check_tim(std::span<const std::uint8_t> bytes) {
@@ -105,6 +113,8 @@ struct Mods {
                        .functions = {{"note", "fun(text: string)", "Notes text.", note},
                                      {"changed", "fun()", "Marks config changed.", changed},
                                      {"again", "fun()", "Raises on_test from inside a handler.", again},
+                                     {"again_twice", "fun()", "Raises on_test twice.", again_twice},
+                                     {"spend", "fun()", "Spends 100,000 of the budget.", spend},
                                      {"size", "fun(path: string): integer?", "The size of a file, up to 16 bytes.", file_size}},
                        .fields = {{"value", "integer", "A number.", get_value, set_value},
                                   {"fixed", "integer", "Seven.", get_fixed, nullptr}}}};
@@ -550,6 +560,110 @@ TEST_CASE("a raise inside a handler is ignored, and a later raise runs again") {
     mods.host->raise("on_test", values);
     CHECK(notes == std::vector<std::string>{"outer", "outer"});
     nested_host = nullptr;
+}
+
+// A bound function that runs game code raising an event, as a call into the game will: the handler
+// runs on the state the calling mod is already using.
+TEST_CASE("a handler that errs inside its own mod's call stops the mod when the call returns") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_test(e) error('boom') end\n"
+                  "function on_update() t.again() t.note('after') end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK_FALSE(noted("after"));
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("boom") != std::string::npos);
+    CHECK(mods.info("a").error.find("on_test") != std::string::npos);
+    CHECK(mods.info("a").error.find("on_update") != std::string::npos);
+    CHECK(mods.unloaded_ids == std::vector<std::string>{"a"});
+    nested_host = nullptr;
+}
+
+TEST_CASE("a mod cannot catch a failure inside its own call and go on") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_test(e) error('boom') end\n"
+                  "function on_update() pcall(t.again) t.note('after') end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK_FALSE(noted("after"));
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("boom") != std::string::npos);
+    nested_host = nullptr;
+}
+
+TEST_CASE("a second event in the same call does not run in a mod already stopping") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_test(e) t.note('handler') error('boom') end\n"
+                  "function on_update() t.again_twice() end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(notes == std::vector<std::string>{"handler"});
+    CHECK(mods.info("a").state == ModState::Failed);
+    nested_host = nullptr;
+}
+
+TEST_CASE("another mod's handler that errs inside a call stops that mod, and the caller goes on") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_update() t.again() t.note('after') end");
+    mods.run("b", "function on_test(e) error('boom') end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(noted("after"));
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(mods.info("b").state == ModState::Failed);
+    nested_host = nullptr;
+}
+
+TEST_CASE("a mod stopped inside a call reloads when fixed") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_test(e) error('boom') end\nfunction on_update() t.again() end");
+    mods.host->call_each(ModCallback::Update);
+    REQUIRE(mods.info("a").state == ModState::Failed);
+    mods.write("a/main.lua", "function on_update() t.note('fixed') end");
+    mods.host->scan();
+    mods.host->call_each(ModCallback::Update);
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(noted("fixed"));
+    nested_host = nullptr;
+}
+
+TEST_CASE("events raised inside a call do not refill the calling mod's budget") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_test(e) end\nfunction on_update() while true do t.again() end end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("instruction budget") != std::string::npos);
+    nested_host = nullptr;
+}
+
+TEST_CASE("a handler inside a call spends the caller's budget, and its overrun stops the mod") {
+    Mods mods;
+    nested_host = mods.host.get();
+    mods.run("a", "function on_test(e) while true do end end\nfunction on_update() t.again() t.note('after') end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK_FALSE(noted("after"));
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("instruction budget") != std::string::npos);
+}
+
+TEST_CASE("mod_spend_instructions spends the budget of the running callback") {
+    Mods mods;   // a budget of 1,000,000: t.spend() costs 100,000
+    mods.run("a", "function on_update() while true do t.value = t.value + 1 pcall(t.spend) end end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("instruction budget") != std::string::npos);
+    CHECK(value <= 10);
+    CHECK(value >= 9);
+}
+
+TEST_CASE("a budget spent by one callback is whole for the next") {
+    Mods mods;
+    mods.run("a", "function on_update() t.spend() t.spend() end");
+    for (int i = 0; i < 20; ++i)
+        mods.host->call_each(ModCallback::Update);
+    CHECK(mods.info("a").state == ModState::Running);
 }
 
 TEST_CASE("save survives a reload of the mod") {
