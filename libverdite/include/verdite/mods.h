@@ -43,6 +43,7 @@
 
 #include "verdite/raw.h"
 #include "verdite/raw_call.h"
+#include "verdite/raw_hook.h"
 
 struct lua_State;
 
@@ -137,6 +138,7 @@ struct ModHostConfig {
     std::function<std::optional<std::size_t>(std::string_view path)> disc_file_size;
     RawLayer raw;                             // the raw layer, hung at raw.path; an empty path: none
     RawCallLayer calls;                       // the call layer, hung at calls.path; an empty path: none
+    RawHookLayer hooks;                       // the hook layer, hung at hooks.path; an empty path: none
     std::string definitions_name = "api.d.lua";   // written into mods_dir from api and events
     std::size_t memory_cap_bytes = 64u << 20;     // per mod
     std::uint64_t instructions_per_call = 100'000'000;   // per callback, and for the script's first run
@@ -164,7 +166,8 @@ struct ModInfo {
 
 class ModHost {
 public:
-    // Creates mods_dir if it is missing and writes the definitions file if it changed.
+    // Creates mods_dir if it is missing and writes the definitions file if it changed. Answers the hook
+    // layer from here on, on this thread only.
     explicit ModHost(ModHostConfig config);
     ~ModHost();   // unloads every mod (on_unload, config saved)
     ModHost(const ModHost &) = delete;
@@ -179,7 +182,8 @@ public:
     // The same for one mod (Settings, from the panel).
     void call(std::string_view id, ModCallback callback);
     // The game presented a frame. A mod inside a call that runs frames (verdite/raw_call.h) gets a
-    // whole budget for its next ones.
+    // whole budget for its next ones, and each mod's hook handlers (verdite/raw_hook.h), which share
+    // one budget a frame, get theirs back.
     void frame_passed();
 
     // During a call that runs frames these wait for it to end, as a mod's state is in use.

@@ -7,6 +7,8 @@
 #include <verdite/mods.h>
 
 #include "raw_call_lua.h"
+#include "raw_hook_lua.h"
+#include "raw_leaf.h"
 #include "raw_lua.h"
 
 #include <cJSON.h>
@@ -26,6 +28,7 @@
 #include <map>
 #include <optional>
 #include <sstream>
+#include <thread>
 #include <utility>
 #include <variant>
 
@@ -56,6 +59,45 @@ using SaveTables = std::map<std::string, std::string, std::less<>>;
 using AssetBytes = std::shared_ptr<const std::vector<std::uint8_t>>;
 // The replacements a mod makes, by disc path: from its assets/ folder, or from mod.assets.set.
 using AssetMap = std::map<std::string, AssetBytes, std::less<>>;
+
+// The registry's key of a mod's hook handlers: a table from a point and a kind to a function.
+constexpr const char *hook_handlers_key = "verdite.hook_handlers";
+
+constexpr std::array<RawHookKind, raw_hook_kinds> kinds_of_hook{RawHookKind::Before, RawHookKind::After, RawHookKind::Replace};
+
+lua_Integer hook_handler_key(std::size_t point, RawHookKind kind) {
+    return static_cast<lua_Integer>(point) * static_cast<lua_Integer>(raw_hook_kinds) + static_cast<lua_Integer>(kind);
+}
+
+// One handler's call, for the Lua functions that run it. What it changes outlives the call.
+struct HookRun {
+    void *host = nullptr;                             // the ModHost::State
+    RawHookCall *call = nullptr;
+    RawHookKind kind = RawHookKind::Before;
+    std::vector<RawValue> *arguments = nullptr;       // Before changes these
+    std::span<const RawValue> results;                // After sees these
+    std::size_t next_mod = 0;                         // Replace: original runs the chain from here
+    std::optional<RawCallResult> from_game;           // Replace: what original last gave
+    std::optional<RawCallResult> answer;              // Replace: what the handler returned, checked
+};
+
+// original's first upvalue: the run, until its handler returns.
+struct OriginalLink {
+    HookRun *run = nullptr;
+};
+
+// Cuts original off from its run when the handler ends, however it ends.
+class OriginalScope {
+public:
+    explicit OriginalScope(OriginalLink &link) : link_(link) {}
+    ~OriginalScope() { link_.run = nullptr; }
+    OriginalScope(const OriginalScope &) = delete;
+    OriginalScope &operator=(const OriginalScope &) = delete;
+
+private:
+    OriginalLink &link_;
+};
+
 
 // The event being raised on a mod: its values in, and read back out by run_event.
 struct RaisedEvent {
@@ -93,6 +135,12 @@ struct Mod {
     bool in_frame_call = false;        // a call of it into the game is presenting frames
     int *frame_calls = nullptr;        // the host's count of frame calls running, in any mod
     std::optional<std::string> stop_reason;   // failed inside a running call: stops when it returns
+    // Hooks: for each point of the layer, a bit per RawHookKind this mod has a handler for.
+    std::vector<std::uint8_t> hooks;
+    std::function<void(std::size_t point)> hooks_changed;   // the host counts them
+    HookRun *hook_run = nullptr;                // the handler about to be called
+    std::int64_t hook_instructions_left = 0;    // what its hook handlers share until the next frame
+    bool next_call_is_hook = false;             // the next outermost call spends that, not a fresh budget
     std::unique_ptr<lua_State, StateClose> lua;   // last: closed before the counters above go
 };
 
@@ -166,9 +214,10 @@ int add_traceback(lua_State *L) {
 class RunningCall {
 public:
     explicit RunningCall(Mod &mod) : mod_(mod) {
+        const bool hook = std::exchange(mod_.next_call_is_hook, false);
         if (mod_.calls_running++ > 0)
             return;
-        mod_.instructions_left = static_cast<std::int64_t>(mod_.host->instructions_per_call);
+        mod_.instructions_left = hook ? mod_.hook_instructions_left : static_cast<std::int64_t>(mod_.host->instructions_per_call);
         mod_.out_of_instructions = false;
         mod_.memory_refused = false;
         lua_sethook(mod_.lua.get(), count_instructions, LUA_MASKCOUNT, hook_every_instructions);
@@ -942,6 +991,8 @@ int open_mod(lua_State *L) {
         raw_open(L, mod.host->raw);
     if (!mod.host->calls.path.empty())
         raw_call_open(L, mod.host->calls);
+    if (!mod.host->hooks.path.empty())
+        raw_hook_open(L, mod.host->hooks);
     push_table_json(L, mod.config_json);
     lua_setglobal(L, "config");
     apply_save(L);
@@ -1176,6 +1227,8 @@ std::string make_definitions(const ModHostConfig &config) {
         out += "\n" + raw_definitions(config.raw);
     if (!config.calls.path.empty())
         out += "\n" + raw_call_definitions(config.calls);
+    if (!config.hooks.path.empty())
+        out += "\n" + raw_hook_definitions(config.hooks);
     return out;
 }
 
@@ -1280,6 +1333,7 @@ struct ModHost::State {
     bool enhancements_held = false;
     int frame_calls = 0;    // frame calls running: unloading a mod waits until none is
     std::vector<Waiting> waiting;
+    std::thread::id thread = std::this_thread::get_id();   // hooks fire only on this one
 
     bool held(const Mod &mod) const { return enhancements_held && mod.enhancement; }
 
@@ -1303,6 +1357,7 @@ struct ModHost::State {
     void unload(Mod &mod) {
         mod.stop_reason.reset();
         mod.assets.clear();   // the replacements go with the state: a reload, disable or failure drops them
+        clear_hooks(mod);
         if (!mod.lua)
             return;
         if (mod.config_dirty)
@@ -1329,6 +1384,237 @@ struct ModHost::State {
         print_line(mod.id, "error: " + message);
         crash_event("mod " + mod.id + " failed: " + message);
         unload(mod);
+    }
+
+    // ---- hooks (verdite/raw_hook.h) ----
+
+    bool owns_hooks() const { return config.hooks.dispatch && config.hooks.dispatch->context == this; }
+
+    bool has_hook(const Mod &mod, std::size_t point, RawHookKind kind) const {
+        return mod.lua && !held(mod) && point < mod.hooks.size() &&
+               ((mod.hooks[point] >> static_cast<unsigned>(kind)) & 1u) != 0;
+    }
+
+    void sync_hook_point(std::size_t point) {
+        if (!owns_hooks())
+            return;
+        const bool any = std::any_of(mods.begin(), mods.end(), [&](const auto &mod) {
+            return std::any_of(kinds_of_hook.begin(), kinds_of_hook.end(),
+                               [&](RawHookKind kind) { return has_hook(*mod, point, kind); });
+        });
+        config.hooks.active[point].store(any, std::memory_order_relaxed);
+    }
+
+    void sync_all_hook_points() {
+        for (std::size_t point = 0; point < config.hooks.points.size(); ++point)
+            sync_hook_point(point);
+    }
+
+    void clear_hooks(Mod &mod) {
+        const std::vector<std::uint8_t> had = std::exchange(mod.hooks, {});
+        for (std::size_t point = 0; point < had.size(); ++point)
+            if (had[point] != 0)
+                sync_hook_point(point);
+    }
+
+    // A handler's message for the mod's error.
+    static std::string hook_error(const HookRun &run, const std::string &error) {
+        static constexpr std::array<std::string_view, raw_hook_kinds> names{"before", "after", "replace"};
+        return "hook " + std::string(names[static_cast<std::size_t>(run.kind)]) + " " +
+               std::string(run.call->point().function.name) + ": " + error;
+    }
+
+    // Runs one handler, on what the mod's hooks have left of this frame's budget. False if the mod
+    // failed or has none left.
+    bool run_hook(Mod &mod, HookRun &run) {
+        HookRun *const outer = std::exchange(mod.hook_run, &run);
+        const bool outermost = mod.calls_running == 0;
+        mod.next_call_is_hook = true;
+        const auto error = run_protected(mod, run_hook_handler);
+        mod.next_call_is_hook = false;
+        mod.hook_run = outer;
+        if (outermost)
+            mod.hook_instructions_left = mod.instructions_left;
+        if (error) {
+            fail(mod, hook_error(run, *error));
+            return false;
+        }
+        if (mod.config_dirty && mod.calls_running == 0)
+            save_config(mod);
+        return true;
+    }
+
+    static int run_hook_handler(lua_State *L) {
+        Mod &mod = mod_of_state(L);
+        HookRun &run = *mod.hook_run;
+        const RawHookLayer &layer = mod.host->hooks;
+        mod_spend_instructions(L, layer.instructions_per_fire);
+        lua_settop(L, 0);
+        if (lua_getfield(L, LUA_REGISTRYINDEX, hook_handlers_key) != LUA_TTABLE)
+            return 0;
+        if (lua_rawgeti(L, -1, hook_handler_key(run.call->index(), run.kind)) != LUA_TFUNCTION)
+            return 0;
+        lua_remove(L, 1);
+        switch (run.kind) {
+        case RawHookKind::Before: handle_before(L, run); break;
+        case RawHookKind::After: handle_after(L, run); break;
+        case RawHookKind::Replace: handle_replace(L, run); break;
+        }
+        return 0;
+    }
+
+    static void handle_before(lua_State *L, HookRun &run) {
+        const RawFunction &function = run.call->point().function;
+        luaL_checkstack(L, static_cast<int>(run.arguments->size()) + 4, "a hook has too many arguments");
+        const int count = raw_push_arguments(L, function, *run.arguments);
+        lua_call(L, count, LUA_MULTRET);
+        const int returned = lua_gettop(L);
+        if (returned == 0)
+            return;
+        const std::vector<RawValue> changed = raw_arguments_from_lua(L, 1, returned, function);
+        RawCallResult checked = run.call->check_arguments(changed);
+        if (!checked.error.empty())
+            raw_lua_fail(L, checked.error);
+        *run.arguments = std::move(checked.values);
+    }
+
+    static void handle_after(lua_State *L, HookRun &run) {
+        const RawFunction &function = run.call->point().function;
+        luaL_checkstack(L, static_cast<int>(run.results.size() + run.arguments->size()) + 4, "a hook has too many values");
+        int count = raw_push_results(L, function, run.results);
+        count += raw_push_arguments(L, function, *run.arguments);
+        lua_call(L, count, 0);
+    }
+
+    static void handle_replace(lua_State *L, HookRun &run) {
+        const RawHookPoint &point = run.call->point();
+        const RawFunction &function = point.function;
+        auto *link = static_cast<OriginalLink *>(lua_newuserdatauv(L, sizeof(OriginalLink), 0));
+        link->run = &run;
+        const OriginalScope scope(*link);
+        lua_pushcclosure(L, run_original, 1);
+        luaL_checkstack(L, static_cast<int>(run.arguments->size()) + 4, "a hook has too many arguments");
+        const int count = raw_push_arguments(L, function, *run.arguments);
+        lua_call(L, count + 1, LUA_MULTRET);
+        run.answer = replacement_answer(L, run);
+    }
+
+    // What the replacement at the stack's whole left to return, checked as a kf.call's arguments are.
+    static RawCallResult replacement_answer(lua_State *L, const HookRun &run) {
+        const RawHookPoint &point = run.call->point();
+        const RawFunction &function = point.function;
+        std::vector<RawValue> values;
+        int index = 0;
+        const int returned = lua_gettop(L);
+        const auto take = [&](const RawParam &param) {
+            if (++index > returned)
+                raw_lua_fail(L, std::string(function.name) + "'s replacement returned too few values: " + std::to_string(returned));
+            raw_flatten_from_lua(L, index, function, param, values);
+        };
+        if (point.returned.type) {
+            // nil is a null element: check_results takes it only where the original gave it or it is listed.
+            if (function.may_return_nil && returned > 0 && lua_isnil(L, 1)) {
+                ++index;
+                values.emplace_back(std::int64_t{-1});
+            } else {
+                take(point.returned);
+            }
+        }
+        for (const RawParam &param : function.params)
+            if (param.role != RawParamRole::In)
+                take(param);
+        if (index != returned)
+            raw_lua_fail(L, std::string(function.name) + "'s replacement returned too many values: " + std::to_string(returned));
+        RawCallResult checked = run.call->check_results(values);
+        if (!checked.error.empty())
+            raw_lua_fail(L, checked.error);
+        return checked;
+    }
+
+    static int run_original(lua_State *L) {
+        const auto &link = *static_cast<const OriginalLink *>(lua_touserdata(L, lua_upvalueindex(1)));
+        if (!link.run)
+            raw_lua_fail(L, "original may be called only while its replacement runs");
+        HookRun &run = *link.run;
+        const RawFunction &function = run.call->point().function;
+        const bool main_thread = lua_pushthread(L) == 1;
+        lua_pop(L, 1);
+        if (!main_thread)
+            raw_lua_fail(L, std::string(function.name) + "'s original may not be called inside a coroutine");
+        const RawHookLayer &layer = mod_of_state(L).host->hooks;
+        const bool runs_frames = function.when == RawCallWhen::RunsFrames;
+        mod_spend_instructions(L, runs_frames ? mod_of_state(L).host->calls.instructions_per_frame_call
+                                              : layer.instructions_per_fire);
+        const std::vector<RawValue> arguments = raw_arguments_from_lua(L, 1, lua_gettop(L), function);
+        const RawCallResult checked = run.call->check_arguments(arguments);
+        if (!checked.error.empty())
+            raw_lua_fail(L, checked.error);
+        RawCallResult result = [&] {
+            const ModFrameCall frames(L, runs_frames);
+            return static_cast<State *>(run.host)->replace_chain(*run.call, checked.values, run.next_mod);
+        }();
+        if (!result.error.empty())
+            raw_lua_fail(L, result.error);
+        const int pushed = raw_push_results(L, function, result.values);
+        run.from_game = std::move(result);
+        return pushed;
+    }
+
+    // The first replacement from mod position first on, or the game's function past them all. A mod
+    // that fails is passed over, unless it had run what is below it: the game keeps what happened.
+    RawCallResult replace_chain(RawHookCall &call, std::span<const RawValue> arguments, std::size_t first) {
+        for (std::size_t position = first; position < mods.size(); ++position) {
+            Mod &mod = *mods[position];
+            if (!has_hook(mod, call.index(), RawHookKind::Replace))
+                continue;
+            std::vector<RawValue> held_arguments(arguments.begin(), arguments.end());
+            HookRun run{this, &call, RawHookKind::Replace, &held_arguments, {}, position + 1, {}, {}};
+            const bool ran = run_hook(mod, run);
+            if (ran && run.answer)
+                return std::move(*run.answer);
+            if (run.from_game)
+                return std::move(*run.from_game);
+        }
+        return call.call_game(arguments);
+    }
+
+    // With no replacement no mod's state is in use below the game's function, so a frame in it may
+    // reload a mod; with one, scan and the panel wait for it, as for a frame call.
+    RawCallResult run_replacements(RawHookCall &call, std::span<const RawValue> arguments) {
+        const bool any = std::any_of(mods.begin(), mods.end(), [&](const auto &mod) {
+            return has_hook(*mod, call.index(), RawHookKind::Replace);
+        });
+        if (!any)
+            return call.call_game(arguments);
+        ++frame_calls;
+        RawCallResult result = replace_chain(call, arguments, 0);
+        --frame_calls;
+        return result;
+    }
+
+    std::optional<RawCallResult> fire_hooks(RawHookCall &call) {
+        if (std::this_thread::get_id() != thread)
+            return std::nullopt;
+        std::vector<RawValue> arguments(call.given().begin(), call.given().end());
+        for (const auto &mod : mods) {
+            if (!has_hook(*mod, call.index(), RawHookKind::Before))
+                continue;
+            HookRun run{this, &call, RawHookKind::Before, &arguments, {}, 0, {}, {}};
+            run_hook(*mod, run);
+        }
+        RawCallResult result = run_replacements(call, arguments);
+        for (std::size_t position = mods.size(); position-- > 0;) {
+            Mod &mod = *mods[position];
+            if (!has_hook(mod, call.index(), RawHookKind::After))
+                continue;
+            HookRun run{this, &call, RawHookKind::After, &arguments, result.values, 0, {}, {}};
+            run_hook(mod, run);
+        }
+        return result;
+    }
+
+    static std::optional<RawCallResult> fire_on_host(void *context, RawHookCall &call) {
+        return static_cast<State *>(context)->fire_hooks(call);
     }
 
     // Runs the callback; a mod that errs is stopped. False if it failed.
@@ -1393,6 +1679,8 @@ struct ModHost::State {
             return;
         }
         mod.memory_bytes = 0;
+        mod.hooks.assign(config.hooks.points.size(), 0);
+        mod.hook_instructions_left = static_cast<std::int64_t>(config.instructions_per_call);
         mod.lua.reset(lua_newstate(allocate, &mod));
         if (!mod.lua) {
             fail(mod, "cannot make a Lua state");
@@ -1428,6 +1716,7 @@ struct ModHost::State {
         mod->host = &config;
         mod->saves = &saves;
         mod->frame_calls = &frame_calls;
+        mod->hooks_changed = [this](std::size_t point) { sync_hook_point(point); };
         mod->host_started = started;
         mod->stamp = print.stamp;
         mod->file_count = print.count;
@@ -1443,6 +1732,7 @@ struct ModHost::State {
         if (mod->enabled && mod->error.empty())
             load(*mod);
         mods.push_back(std::move(mod));
+        sync_all_hook_points();   // its script ran before it was listed
     }
 
     void changed(Mod &mod, const Fingerprint &print) {
@@ -1516,6 +1806,8 @@ struct ModHost::State {
 
 ModHost::ModHost(ModHostConfig config) : state_(std::make_unique<State>()) {
     state_->config = std::move(config);
+    if (RawHookDispatch *dispatch = state_->config.hooks.dispatch)
+        *dispatch = {State::fire_on_host, state_.get()};
     std::error_code error;
     fs::create_directories(state_->config.mods_dir, error);
     const fs::path path = state_->config.mods_dir / state_->config.definitions_name;
@@ -1532,6 +1824,8 @@ ModHost::ModHost(ModHostConfig config) : state_(std::make_unique<State>()) {
 ModHost::~ModHost() {
     for (auto &mod : state_->mods)
         state_->stop(*mod);
+    if (state_->owns_hooks())
+        *state_->config.hooks.dispatch = {};
 }
 
 void ModHost::scan() {
@@ -1571,9 +1865,11 @@ void ModHost::call(std::string_view id, ModCallback callback) {
 }
 
 void ModHost::frame_passed() {
-    for (auto &mod : state_->mods)
+    for (auto &mod : state_->mods) {
         if (mod->in_frame_call)
             mod->instructions_left = static_cast<std::int64_t>(state_->config.instructions_per_call);
+        mod->hook_instructions_left = static_cast<std::int64_t>(state_->config.instructions_per_call);
+    }
 }
 
 void ModHost::enable(std::string_view id) {
@@ -1599,9 +1895,15 @@ void ModHost::reload_all() {
         state_->reload_all();
 }
 
-void ModHost::hold_enhancements() { state_->enhancements_held = true; }
+void ModHost::hold_enhancements() {
+    if (!std::exchange(state_->enhancements_held, true))
+        state_->sync_all_hook_points();
+}
 
-void ModHost::release_enhancements() { state_->enhancements_held = false; }
+void ModHost::release_enhancements() {
+    if (std::exchange(state_->enhancements_held, false))
+        state_->sync_all_hook_points();
+}
 
 bool ModHost::set_config_value(std::string_view id, std::string_view key, const ModConfigValue &value) {
     Mod *mod = state_->find(id);
@@ -1740,6 +2042,27 @@ void mod_config_changed(lua_State *L) {
 
 void mod_log(lua_State *L, std::string_view text) {
     print_line(mod_of_state(L).id, text);
+}
+
+void mod_set_hook(lua_State *L, std::size_t point, RawHookKind kind) {
+    Mod &mod = mod_of_state(L);
+    if (point >= mod.hooks.size())
+        return;   // a finalizer, as the state closes: its hooks are gone already
+    if (lua_getfield(L, LUA_REGISTRYINDEX, hook_handlers_key) != LUA_TTABLE) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, hook_handlers_key);
+    }
+    lua_pushvalue(L, 1);
+    lua_rawseti(L, -2, hook_handler_key(point, kind));
+    lua_pop(L, 1);
+    const auto bit = static_cast<std::uint8_t>(1u << static_cast<unsigned>(kind));
+    if (lua_isnil(L, 1))
+        mod.hooks[point] = static_cast<std::uint8_t>(mod.hooks[point] & ~bit);
+    else
+        mod.hooks[point] = static_cast<std::uint8_t>(mod.hooks[point] | bit);
+    mod.hooks_changed(point);
 }
 
 bool mod_may_change_game(lua_State *L) {

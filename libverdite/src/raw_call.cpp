@@ -33,26 +33,27 @@ bool gives_result(const RawParam &param) {
 
 // A parameter's name in a message, with the way to the leaf: "f(position).vx".
 struct ArgumentName {
-    const RawFunction &function;
+    std::string_view function;
     const RawParam &param;
     std::string below;
 };
 
 std::string argument_name(const void *context) {
     const auto &name = *static_cast<const ArgumentName *>(context);
-    return std::string(name.function.name) + "(" + std::string(name.param.name) + ")" + name.below;
+    return std::string(name.function) + "(" + std::string(name.param.name) + ")" + name.below;
 }
 
 class ArgumentCheck {
 public:
-    ArgumentCheck(const RawFunction &function, std::span<const RawValue> given)
-        : function_(function), given_(given) {
+    ArgumentCheck(std::string_view function, std::span<const RawParam> params, std::span<const RawValue> given,
+                  std::span<const RawValue> trusted)
+        : function_(function), params_(params), given_(given), trusted_(trusted) {
         converted_.reserve(given.size());
     }
 
     // The arguments as they will be stored, in converted(), or why they will not do.
     [[nodiscard]] std::string run() {
-        for (const RawParam &param : function_.params) {
+        for (const RawParam &param : params_) {
             if (!takes_argument(param))
                 continue;
             ArgumentName name{function_, param, {}};
@@ -64,11 +65,13 @@ public:
             return count_error();
         return {};
     }
-    [[nodiscard]] std::span<const RawValue> converted() const { return converted_; }
+    [[nodiscard]] std::vector<RawValue> take_converted() { return std::move(converted_); }
+    // Every value was a trusted one, so the function's own check has nothing new to see.
+    [[nodiscard]] bool all_trusted() const { return all_trusted_; }
 
 private:
     [[nodiscard]] std::string count_error() const {
-        return std::string(function_.name) + " takes " + std::to_string(leaf_count()) +
+        return std::string(function_) + " takes " + std::to_string(leaf_count()) +
                " values, not " + std::to_string(given_.size());
     }
     [[nodiscard]] std::size_t leaf_count() const;
@@ -109,13 +112,19 @@ private:
     }
 
     std::string check_leaf(const RawType &type, RawRange range, const RawParam &param, ArgumentName &name) {
-        const RawValue &given = given_[next_++];
+        const std::size_t place = next_++;
+        const RawValue &given = given_[place];
+        RawValue value = raw_as_kind(type, given);
+        if (place < trusted_.size() && value == trusted_[place]) {
+            converted_.push_back(std::move(value));
+            return {};
+        }
+        all_trusted_ = false;
         if (param.nil_passes_null && std::holds_alternative<std::int64_t>(given) &&
             std::get<std::int64_t>(given) == null_slot) {
             converted_.push_back(given);
             return {};
         }
-        RawValue value = raw_as_kind(type, given);
         std::string error = raw_leaf_error(type, range, value, {&name, argument_name});
         if (!error.empty())
             return error;
@@ -128,10 +137,13 @@ private:
         return {};
     }
 
-    const RawFunction &function_;
+    std::string_view function_;
+    std::span<const RawParam> params_;
     std::span<const RawValue> given_;
+    std::span<const RawValue> trusted_;
     std::vector<RawValue> converted_;
     std::size_t next_ = 0;
+    bool all_trusted_ = true;
 };
 
 std::size_t leaves_of(const RawType &type) {
@@ -151,7 +163,7 @@ std::size_t leaves_of(const RawType &type) {
 
 std::size_t ArgumentCheck::leaf_count() const {
     std::size_t count = 0;
-    for (const RawParam &param : function_.params)
+    for (const RawParam &param : params_)
         if (takes_argument(param))
             count += leaves_of(*param.type);
     return count;
@@ -206,21 +218,13 @@ private:
 
 RawCallResult call_function(const RawCallLayer &layer, const RawFunction &function,
                             std::span<const RawValue> arguments) {
-    ArgumentCheck check(function, arguments);
+    RawCheckedValues checked = raw_check_arguments(function, arguments, {});
     RawCallResult result;
-    result.error = check.run();
+    result.error = std::move(checked.error);
     if (!result.error.empty())
         return result;
-    if (function.check) {
-        const std::string_view why = function.check(check.converted());
-        if (!why.empty()) {
-            result.error = std::string(function.name) + ": " + std::string(why);
-            return result;
-        }
-    }
-    RawCallSite site(function, check.converted(), result.values);
     const GameCallScope scope(layer, function);
-    function.invoke(site);
+    raw_run_checked(function, checked.converted, result.values);
     return result;
 }
 
@@ -294,28 +298,6 @@ void push_flattened(lua_State *L, const RawType &type, std::span<const RawValue>
     }
 }
 
-// Pushes the return value, then each Out and InOut. The count pushed.
-int push_results(lua_State *L, const RawFunction &function, std::span<const RawValue> values) {
-    std::size_t next = 0;
-    int pushed = 0;
-    if (function.returns) {
-        if (function.may_return_nil && std::get<std::int64_t>(values[next]) == null_slot) {
-            lua_pushnil(L);
-            ++next;
-        } else {
-            push_flattened(L, *function.returns, values, next);
-        }
-        ++pushed;
-    }
-    for (const RawParam &param : function.params) {
-        if (!gives_result(param))
-            continue;
-        push_flattened(L, *param.type, values, next);
-        ++pushed;
-    }
-    return pushed;
-}
-
 const RawCallLayer &layer_of(lua_State *L) {
     return *static_cast<const RawCallLayer *>(lua_touserdata(L, lua_upvalueindex(1)));
 }
@@ -329,23 +311,14 @@ int run_function(lua_State *L) {
                             " may be called only directly in on_between_updates, on the mod's main "
                             "thread: elsewhere the game may be walking what it changes");
     mod_spend_instructions(L, runs_frames ? layer.instructions_per_frame_call : layer.instructions_per_call);
-    const auto wanted = static_cast<int>(std::ranges::count_if(function.params, takes_argument));
-    const int given = lua_gettop(L);
-    if (given != wanted)
-        raw_lua_fail(L, std::string(function.name) + " takes " + std::to_string(wanted) +
-                            " arguments, not " + std::to_string(given));
-    std::vector<RawValue> arguments;
-    int index = 0;
-    for (const RawParam &param : function.params)
-        if (takes_argument(param))
-            flatten_from_lua(L, ++index, *param.type, function, param, arguments);
+    const std::vector<RawValue> arguments = raw_arguments_from_lua(L, 1, lua_gettop(L), function);
     const RawCallResult result = [&] {
         const ModFrameCall frames(L, runs_frames);
         return call_function(layer, function, arguments);
     }();
     if (!result.error.empty())
         raw_lua_fail(L, result.error);
-    return push_results(L, function, result.values);
+    return raw_push_results(L, function, result.values);
 }
 
 // ---- the definitions file ----
@@ -409,6 +382,94 @@ void append_function(std::string &out, const RawFunction &function, const std::s
 }
 
 } // namespace
+
+RawCheckedValues raw_check_values(std::string_view function, std::span<const RawParam> params,
+                                  std::span<const RawValue> given, std::span<const RawValue> trusted) {
+    ArgumentCheck check(function, params, given, trusted);
+    RawCheckedValues checked;
+    checked.error = check.run();
+    checked.all_trusted = check.all_trusted();
+    if (checked.error.empty())
+        checked.converted = check.take_converted();
+    return checked;
+}
+
+RawCheckedValues raw_check_arguments(const RawFunction &function, std::span<const RawValue> given,
+                                     std::span<const RawValue> trusted) {
+    RawCheckedValues checked = raw_check_values(function.name, function.params, given, trusted);
+    if (checked.error.empty() && !checked.all_trusted && function.check) {
+        const std::string_view why = function.check(checked.converted);
+        if (!why.empty())
+            checked.error = std::string(function.name) + ": " + std::string(why);
+    }
+    return checked;
+}
+
+void raw_run_checked(const RawFunction &function, std::span<const RawValue> converted, std::vector<RawValue> &results) {
+    RawCallSite site(function, converted, results);
+    function.invoke(site);
+}
+
+void raw_store_leaves(const RawType &type, void *place, std::span<const RawValue> values, std::size_t &next) {
+    store_leaves(type, place, values, next);
+}
+
+void raw_flatten_from_lua(lua_State *L, int index, const RawFunction &function, const RawParam &param,
+                          std::vector<RawValue> &values) {
+    flatten_from_lua(L, index, *param.type, function, param, values);
+}
+
+std::vector<RawValue> raw_arguments_from_lua(lua_State *L, int first, int count, const RawFunction &function) {
+    const auto wanted = static_cast<int>(std::ranges::count_if(function.params, takes_argument));
+    if (count != wanted)
+        raw_lua_fail(L, std::string(function.name) + " takes " + std::to_string(wanted) +
+                            " arguments, not " + std::to_string(count));
+    std::vector<RawValue> arguments;
+    int index = first;
+    for (const RawParam &param : function.params)
+        if (takes_argument(param))
+            raw_flatten_from_lua(L, index++, function, param, arguments);
+    return arguments;
+}
+
+int raw_push_results(lua_State *L, const RawFunction &function, std::span<const RawValue> values) {
+    std::size_t next = 0;
+    int pushed = 0;
+    if (function.returns) {
+        if (function.may_return_nil && std::get<std::int64_t>(values[next]) == null_slot) {
+            lua_pushnil(L);
+            ++next;
+        } else {
+            push_flattened(L, *function.returns, values, next);
+        }
+        ++pushed;
+    }
+    for (const RawParam &param : function.params) {
+        if (!gives_result(param))
+            continue;
+        push_flattened(L, *param.type, values, next);
+        ++pushed;
+    }
+    return pushed;
+}
+
+int raw_push_arguments(lua_State *L, const RawFunction &function, std::span<const RawValue> values) {
+    std::size_t next = 0;
+    int pushed = 0;
+    for (const RawParam &param : function.params) {
+        if (!takes_argument(param))
+            continue;
+        if (param.nil_passes_null && std::holds_alternative<std::int64_t>(values[next]) &&
+            std::get<std::int64_t>(values[next]) == null_slot) {
+            lua_pushnil(L);
+            ++next;
+        } else {
+            push_flattened(L, *param.type, values, next);
+        }
+        ++pushed;
+    }
+    return pushed;
+}
 
 void RawCallSite::take(std::size_t param, void *place) {
     const RawParam &described = function_.params[param];
