@@ -22,6 +22,18 @@ index 30a2190fa2ba0398ad16f3967485a699f31abeca..280b95d632dac56a73a6f9bdf6c1d367
  extern void actor_try_attack_player(
      u16 minimum_distance, u16 maximum_distance,
      s16 angle_offset, s16 angle_tolerance);
+diff --git a/include/kf/game/audio.h b/include/kf/game/audio.h
+index 1ea39f4acb24fb617b69424681c95082b42d013a..c0fac8d6695eb74e1b725a9f58156203964f06a2 100644
+--- a/include/kf/game/audio.h
++++ b/include/kf/game/audio.h
+@@ -21,5 +21,7 @@ extern KfAudioPlaybackResult audio_play_spatial_range(
+     s32 max_distance, s32 attenuation_distance);
+ extern void audio_stop_sequence_fade(void);
+ extern void audio_stop_sequence_master_fade(s32 fade_step);
++// PC extension: whether a sequence fade is waiting on frames.
++extern bool audio_sequence_is_fading(void);
+ 
+ #endif // KF_GAME_AUDIO_H
 diff --git a/include/kf/game/collision.h b/include/kf/game/collision.h
 index d95430b514ce0cfa7db0c346e990d660a46d302e..e4cb83894aacf4b9cb77f3883ee35474249bcc4b 100644
 --- a/include/kf/game/collision.h

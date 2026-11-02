@@ -542,7 +542,7 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..953aaeaafb88aa38e46153023ca5f95c
  
  
 diff --git a/src/game/audio.cpp b/src/game/audio.cpp
-index 31f832db7b441760cf013f561eaf55ce8ee9842c..80c2e53fe4ef7943fcf892407d9bd9849a79840d 100644
+index 31f832db7b441760cf013f561eaf55ce8ee9842c..7864916d03aa436f28ec469df9db2c5635fedd55 100644
 --- a/src/game/audio.cpp
 +++ b/src/game/audio.cpp
 @@ -10,6 +10,8 @@
@@ -554,7 +554,56 @@ index 31f832db7b441760cf013f561eaf55ce8ee9842c..80c2e53fe4ef7943fcf892407d9bd984
  
  enum {
      GAME_SEQUENCE_BUFFER_BYTES = 0x3000,
-@@ -131,7 +133,10 @@ KfAudioPlaybackResult audio_play_spatial(
+@@ -23,6 +25,12 @@ enum {
+ s32 audio_voice_slot_index = 9;
+ 
+ KfAudioState audio_state;
++// PC extension: true while a fade waits on frames (mods' draw callbacks run then), so nothing may change the sequence.
++static bool sequence_fading;
++bool audio_sequence_is_fading(void)
++{
++    return sequence_fading;
++}
+ 
+ void audio_initialize(void)
+ {
+@@ -71,22 +79,27 @@ void audio_play_map_sequence(u8 sequence_index)
+ void audio_stop_sequence_fade(void)
+ {
+     s32 volume;
++    const bool was_fading = sequence_fading;
+ 
+     if (audio_state.sequence_active == KF_AUDIO_SEQUENCE_ACTIVE) {
++        sequence_fading = true;   // PC extension
+         volume = GAME_SEQUENCE_VOLUME;
+         do {
+             kf::host_wait_frame();
+             kf::sound_sequence_volume(audio_state.sequence, volume, volume);
+         } while (--volume >= 0);
+         audio_release_sequence(audio_state);
++        sequence_fading = was_fading;   // PC extension
+     }
+ }
+ 
+ void audio_stop_sequence_master_fade(s32 fade_step)
+ {
+     s32 volume;
++    const bool was_fading = sequence_fading;
+ 
+     if (audio_state.sequence_active == KF_AUDIO_SEQUENCE_ACTIVE) {
++        sequence_fading = true;   // PC extension
+         volume = GAME_SEQUENCE_VOLUME << KF_FIXED8_BITS;
+         do {
+             kf::host_wait_frame();
+@@ -96,6 +109,7 @@ void audio_stop_sequence_master_fade(s32 fade_step)
+         kf::sound_master_volume(0, 0);
+         kf::sound_sequence_volume(audio_state.sequence, 0, 0);
+         audio_release_sequence(audio_state);
++        sequence_fading = was_fading;   // PC extension
+     }
+ }
+ 
+@@ -131,7 +145,10 @@ KfAudioPlaybackResult audio_play_spatial(
          angle = KF_ANGLE_FULL_TURN - angle;
      }
      angle >>= 1;

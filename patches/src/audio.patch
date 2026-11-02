@@ -1,8 +1,8 @@
 diff --git a/src/audio/sound.cpp b/src/audio/sound.cpp
-index 46a90d2eae092e35736a2b9aad0caa49559facfd..759a6ccade8749ba569378249163a467bdcb2c5a 100644
+index 46a90d2eae092e35736a2b9aad0caa49559facfd..c52693449a7326a3119a5c07003c207a071db739 100644
 --- a/src/audio/sound.cpp
 +++ b/src/audio/sound.cpp
-@@ -122,6 +122,10 @@ struct SoundState {
+@@ -122,8 +122,14 @@ struct SoundState {
      Reverb reverb;
      float master_left, master_right;
      bool failed, paused;
@@ -12,8 +12,12 @@ index 46a90d2eae092e35736a2b9aad0caa49559facfd..759a6ccade8749ba569378249163a467
 +    std::uint64_t music_frames, music_since_ns;
  };
  static SoundState sound;
++// PC extension: a mod's sound, mixed after the game's and before the master volume.
++static SoundExtraMix extra_mix;
  
-@@ -386,6 +390,8 @@ static void mix_frame(float &left, float &right) {
+ static float volume(s16 value) { return std::clamp<int>(value, 0, midi_value_max) / midi_value_scale; }
+ static void pan_levels(float &left, float &right, u8 pan) {
+@@ -386,6 +392,8 @@ static void mix_frame(float &left, float &right) {
      for (auto &voice : sound.voices) {
          if (voice.envelope.phase == EnvelopePhase::Off)
              continue;
@@ -22,8 +26,18 @@ index 46a90d2eae092e35736a2b9aad0caa49559facfd..759a6ccade8749ba569378249163a467
          if (!voice.current_valid) {
              voice.envelope.phase = EnvelopePhase::Off;
              continue;
-@@ -421,11 +427,17 @@ static void mix_frame(float &left, float &right) {
-     right = std::clamp((right + reverb_channel(1, send_right) * sound.reverb.right) * sound.master_right, -1.0f, 1.0f);
+@@ -417,15 +425,25 @@ static void mix_frame(float &left, float &right) {
+             voice.next_valid = read_sample(voice, voice.next_sample);
+         }
+     }
+-    left = std::clamp((left + reverb_channel(0, send_left) * sound.reverb.left) * sound.master_left, -1.0f, 1.0f);
+-    right = std::clamp((right + reverb_channel(1, send_right) * sound.reverb.right) * sound.master_right, -1.0f, 1.0f);
++    left += reverb_channel(0, send_left) * sound.reverb.left;
++    right += reverb_channel(1, send_right) * sound.reverb.right;
++    if (extra_mix)
++        extra_mix(left, right);
++    left = std::clamp(left * sound.master_left, -1.0f, 1.0f);
++    right = std::clamp(right * sound.master_right, -1.0f, 1.0f);
  }
  
 -static std::uint64_t clock_frame() {
@@ -42,7 +56,7 @@ index 46a90d2eae092e35736a2b9aad0caa49559facfd..759a6ccade8749ba569378249163a467
  static void render_elapsed() {
      if (sound.paused || sound.failed)
          return;
-@@ -541,14 +553,37 @@ void sound_poll() {
+@@ -541,14 +559,37 @@ void sound_poll() {
  }
  
  void sound_set_paused(bool paused) {
@@ -80,3 +94,16 @@ index 46a90d2eae092e35736a2b9aad0caa49559facfd..759a6ccade8749ba569378249163a467
  void sound_reset(ReverbPreset preset, s16 depth_left, s16 depth_right) {
      sound_poll();
      clear();
+@@ -564,6 +605,12 @@ void sound_master_volume(s16 left, s16 right) {
+     sound.master_right = volume(right);
+ }
+ 
++// PC extension: the hook runs in mix_frame, so it must not call back into sound_*.
++void sound_set_extra_mix(SoundExtraMix mix) {
++    sound_poll();
++    extra_mix = mix;
++}
++
+ SoundBank *sound_bank_load(const u8 *header, std::size_t header_size, const u8 *body, std::size_t body_size) try {
+     auto bank = std::make_unique<SoundBank>();
+     kf_audio_bank_decode({header, header_size}, {body, body_size}, bank->data);

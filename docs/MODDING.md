@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.10, what ships today. Where it is going, API 1.0, is
+This page documents API 0.11, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -562,6 +562,31 @@ function on_update()
 end
 ```
 
+### `kf.audio`
+
+The game's sounds and music, and a mod's own WAV files.
+
+| call | notes |
+|---|---|
+| `kf.audio.play_effect(program, tone, note [, volume])` | a sound from the floor's bank: program 0-127, tone 0-15, note 0-127, volume 0-127 (default 127). Out of range is an error; an id the bank lacks is silent. The player's sound setting applies. |
+| `kf.audio.play_effect_at(x, y, z, program, tone, note [, volume])` | the same at a world position, through the game's distance and pan; nothing 16000 or more from the listener on any axis |
+| `kf.audio.play_music(index)` | the current floor's `SND<index>.SEQ`, index 0-2, cutting off what plays. An error with no sound bank loaded (the title, the opening) or while the game fades the music out. |
+| `kf.audio.stop_music()` | stops the music at once. An error during a fade, as above. |
+| `kf.audio.load(file)` → sound | a WAV from the mod's folder: PCM at 8 or 16 bits, 1 or 2 channels, 8000-96000 Hz. An error with the reason if it cannot. |
+| `kf.audio.play(sound [, {volume, pan, loop}])` → voice or nil | volume 0-1, pan -1 (left) to 1 (right). nil when all 16 voices, shared by all mods, are busy |
+| `kf.audio.stop(voice)`, `kf.audio.playing(voice)` → boolean | a voice that has ended does nothing, and is not playing |
+
+A mod's sounds take at most 64 MB decoded, and are freed when it unloads. They follow
+the game's master volume, keep playing while the game pauses with its music on, and
+stop while mods are off (coop) or the mod is held. Only WAV: other formats would add a
+decoder that reads strangers' files.
+
+```lua
+local bell
+function on_load() bell = kf.audio.load("bell.wav") end
+function on_level_up() kf.audio.play(bell, {volume = 0.8}) end
+```
+
 ## `ui` (Dear ImGui)
 
 Only inside `on_draw` and `on_settings`. Colours are 0–1 floats. Sliders show a
@@ -723,7 +748,8 @@ mods are off in coop (decided 2026-10-31).
 5. ~~The generated raw layer.~~ Built in 0.9 (2026-11-01); its writes fuzzed
    clean the same day ([RAW_LAYER_PLAN.md](RAW_LAYER_PLAN.md), step 5).
 6. Asset overrides, audio, 3D drawing. Overrides done in 0.10 (2026-11-01):
-   `.TIM`, `.SEQ` and `.TMD` ([Replacing disc files](#replacing-disc-files)).
+   `.TIM`, `.SEQ` and `.TMD` ([Replacing disc files](#replacing-disc-files)). Audio
+   done in 0.11 (2026-11-01): `kf.audio`.
 7. ~~Input actions: reading, pressing and blocking them. Reading done in 0.7
    (2026-10-31), with `kf.automap`, `kf.online`, the drawing calls,
    `kf.play.top_speed` and `kf.game.mouse` and `music_while_paused`, which

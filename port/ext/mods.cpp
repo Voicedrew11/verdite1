@@ -34,6 +34,7 @@
 #include <kf/lib/map.h>
 #include <kf/lib/map_data.h>
 #include <kf/lib/math.h>
+#include <kf/audio/sound.h>
 #include <kf/platform/coop.h>
 #include <kf/platform/fuzz.h>
 #include <kf/platform/host.h>
@@ -43,6 +44,7 @@
 #include "coop_party.h"
 #include "raw_layer.h"
 #include "mod_assets.h"
+#include "mod_audio.h"
 #include "mod_automap.h"
 #include "mod_draw.h"
 #include "mod_play.h"
@@ -58,7 +60,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.10";
+constexpr const char *api_version = "0.11";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -431,6 +433,25 @@ void forget_mod_play(std::string_view id) {
         mod_plays.erase(found);
     rules_forget(id);
     refresh_mod_play();
+}
+
+// A mod's Lua state is discarded: its kf.play values and its sounds go with it.
+void forget_mod(std::string_view id) {
+    forget_mod_play(id);
+    mod_audio_forget(id);
+}
+
+// Mods' sounds stop while mods are off (coop), and while a mod is held or not running.
+void stop_sounds_of_inactive_mods() {
+    if (!mod_audio_any_playing())
+        return;
+    if (mods_paused()) {
+        mod_audio_stop_all();
+        return;
+    }
+    for (const verdite::ModInfo &mod : host->mods())
+        if (mod.state != verdite::ModState::Running || mod.held)
+            mod_audio_stop_mod(mod.id);
 }
 
 // ---------- kf.actors: the monsters on the floor ----------
@@ -1194,6 +1215,10 @@ std::vector<verdite::ModTable> api_tables() {
                kf_magic_set_learned}},
          .fields = {}},
         rules_table(),
+        {.path = "kf.audio",
+         .doc = "The game's sound effects and music, and the mod's own WAV sounds (voices shared by all mods).",
+         .functions = mod_audio_functions(),
+         .fields = {}},
         automap_table(),
         online_table(),
         ui_table(),
@@ -1427,12 +1452,13 @@ void mods_start() {
     config.definitions_name = "kf.d.lua";
     config.read_stored = read_stored;
     config.write_stored = write_stored;
-    config.unloaded = forget_mod_play;
+    config.unloaded = forget_mod;
     config.asset_kinds = mod_asset_kinds();
     config.disc_file_size = mod_disc_file_size;
     host = std::make_unique<verdite::ModHost>(std::move(config));
     kf::data_files_set_replacer(mod_asset_for_path);
     hold_enhancements_in_classic();
+    kf::sound_set_extra_mix(mod_audio_mix_frame);
     host->scan();
     last_scan = SDL_GetTicks();
 }
@@ -1440,6 +1466,7 @@ void mods_start() {
 void mods_shutdown() {
     kf::data_files_set_replacer(nullptr);
     host.reset();
+    kf::sound_set_extra_mix(nullptr);
     mod_plays.clear();
     last_floor = 0;
     refresh_mod_play();
@@ -1534,6 +1561,7 @@ void mods_frame(int context) {
     if (!host)
         return;
     hold_enhancements_in_classic();
+    stop_sounds_of_inactive_mods();
     if (!mods_paused())
         host->call_each(verdite::ModCallback::Update);
     // Also while paused, so the game sees the defaults from the first frame of coop.
