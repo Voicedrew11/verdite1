@@ -19,8 +19,14 @@
 //   load_save_tables and read by save_tables;
 //   the events the game raises: a global handler of the event's name gets a table of its fields,
 //   and may change the writable integers and booleans (ModHost::raise);
+//   mod.assets.set(disc_path, file) and mod.assets.clear(disc_path): the disc file disc_path is
+//   replaced by the mod's file, or no longer is, the next time the game loads it;
 //   the standard library without io, os, package.loadlib, C modules, string.dump or bytecode, and
 //   with debug.traceback only; require, dofile and loadfile reach only the mod's folder.
+//
+// A mod's assets/ folder holds replacements for disc files: assets/KF/B0/SND0.SEQ replaces the disc
+// file KF/B0/SND0.SEQ. Each file is checked when the mod loads, and a bad one fails the whole mod.
+// A mod may have assets/ and no main.lua.
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -106,11 +112,23 @@ struct ModStored {
     std::string config_json = "{}";   // the config table as a JSON object
 };
 
+// A disc file kind a mod may replace; a new kind is a new row. A file matches the first row whose
+// suffix its disc path ends with.
+struct ModAssetKind {
+    std::string_view suffix;   // ".TIM"
+    // Nothing if the game can load these bytes, else why not.
+    std::optional<std::string> (*check)(std::span<const std::uint8_t> bytes);
+};
+
 struct ModHostConfig {
     std::filesystem::path mods_dir;
     std::string api_version;                  // a mod's kf.api_version, say; also in the definitions
     std::vector<ModTable> api;
     std::vector<ModEvent> events;             // the events the game raises (ModHost::raise)
+    std::vector<ModAssetKind> asset_kinds;    // the disc files a mod may replace (its assets/ folder)
+    // The size of the disc's file at a disc path ("KF/B0/SND0.SEQ"); nothing if the disc has none.
+    // Without it, no file is on the disc.
+    std::function<std::optional<std::size_t>(std::string_view path)> disc_file_size;
     RawLayer raw;                             // the raw layer, hung at raw.path; an empty path: none
     std::string definitions_name = "api.d.lua";   // written into mods_dir from api and events
     std::size_t memory_cap_bytes = 64u << 20;     // per mod
@@ -183,6 +201,11 @@ public:
     // that (re)loads gets its table from here.
     void load_save_tables(std::string_view json);
 
+    // The replacement for a disc file, from the last running mod in the listed order (the one
+    // call_each reaches last), or nothing to use the disc's. Held and failed mods replace nothing.
+    // The bytes are held, so a file changed on disk after its load changes nothing until a rescan.
+    [[nodiscard]] std::shared_ptr<const std::vector<std::uint8_t>> asset_override(std::string_view disc_path) const;
+
     [[nodiscard]] std::vector<ModInfo> mods() const;   // sorted by name
     [[nodiscard]] std::size_t running_count() const;   // not counting held mods
     // The ---@meta definitions file for the API, as written into mods_dir.
@@ -195,6 +218,9 @@ private:
 
 // For the game's bound functions, while a callback of the mod that owns L runs:
 std::string_view mod_id(lua_State *L);
+// The mod's file at a path relative to its folder, resolved as mod.fs resolves it: nothing if it is
+// missing, not a file, outside the folder, unreadable, or larger than max_bytes.
+std::optional<std::vector<std::uint8_t>> mod_file_bytes(lua_State *L, std::string_view relative, std::size_t max_bytes);
 void mod_config_changed(lua_State *L);   // config is saved when the callback returns
 void mod_log(lua_State *L, std::string_view text);   // "[id] text" on stdout
 

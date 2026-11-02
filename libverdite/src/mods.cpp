@@ -51,6 +51,11 @@ using Json = std::unique_ptr<cJSON, JsonDelete>;
 // Each mod's save table as JSON text, by mod id: the host's copy, kept beside the mods.
 using SaveTables = std::map<std::string, std::string, std::less<>>;
 
+// A replacement's bytes, shared so the file on disk can change without changing what is loaded.
+using AssetBytes = std::shared_ptr<const std::vector<std::uint8_t>>;
+// The replacements a mod makes, by disc path: from its assets/ folder, or from mod.assets.set.
+using AssetMap = std::map<std::string, AssetBytes, std::less<>>;
+
 // The event being raised on a mod: its values in, and read back out by run_event.
 struct RaisedEvent {
     const ModEvent *event = nullptr;
@@ -74,6 +79,7 @@ struct Mod {
     RaisedEvent raised;
     std::optional<std::pair<std::string, ModConfigValue>> config_write;   // for write_config_value
     Clock::time_point host_started;
+    AssetMap assets;   // replacements for disc files, while the mod is loaded
     // The budget, spent by allocate and count_instructions during a call.
     std::size_t memory_bytes = 0;
     std::int64_t instructions_left = 0;
@@ -184,6 +190,22 @@ std::optional<std::string> read_file(const fs::path &path, std::uintmax_t max_by
     return std::move(text).str();
 }
 
+// The file's bytes, if it is a regular file no larger than max_bytes and reads whole.
+std::optional<std::vector<std::uint8_t>> read_bytes(const fs::path &path, std::uintmax_t max_bytes) {
+    std::error_code error;
+    if (!fs::is_regular_file(path, error))
+        return std::nullopt;
+    const std::uintmax_t size = fs::file_size(path, error);
+    if (error || size > max_bytes)
+        return std::nullopt;
+    std::ifstream file(path, std::ios::binary);
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    file.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!file || file.gcount() != static_cast<std::streamsize>(bytes.size()))
+        return std::nullopt;
+    return bytes;
+}
+
 // The path below the mod's folder that relative names, or none if it reaches outside the folder,
 // by "..", a root or a link.
 std::optional<fs::path> inside_mod(const Mod &mod, std::string_view relative) {
@@ -208,11 +230,29 @@ std::optional<fs::path> inside_mod(const Mod &mod, std::string_view relative) {
     return joined;
 }
 
-bool reloads_mod(const fs::path &path) {
-    std::string extension = path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
+std::string lowercase(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return extension == ".lua" || path.filename() == "mod.json";
+    return text;
+}
+
+bool reloads_mod(const fs::path &path) {
+    return lowercase(path.extension().string()) == ".lua" || path.filename() == "mod.json";
+}
+
+bool is_assets_name(const fs::path &name) {
+    return lowercase(name.string()) == "assets";
+}
+
+// Whether path, through links too, is below the mod's assets/ folder. Unsure counts as yes.
+bool below_assets(const Mod &mod, const fs::path &path) {
+    std::error_code root_error, path_error;
+    const fs::path root = fs::weakly_canonical(mod.dir, root_error);
+    const fs::path real = fs::weakly_canonical(path, path_error);
+    if (root_error || path_error)
+        return true;
+    const fs::path inside = real.lexically_relative(root);
+    return !inside.empty() && is_assets_name(*inside.begin());
 }
 
 std::string_view check_view(lua_State *L, int index) {
@@ -243,6 +283,107 @@ std::optional<std::string> load_mod_file(lua_State *L, std::string_view relative
         return message;
     }
     return std::nullopt;
+}
+
+// ---- assets: the files that replace disc files ----
+
+// A file as a replacement: its bytes, or why it may not replace its disc file.
+struct AssetLoad {
+    AssetBytes bytes;
+    std::string refusal;   // set when bytes is not
+};
+
+AssetLoad refused(std::string reason) {
+    return {nullptr, std::move(reason)};
+}
+
+const ModAssetKind *kind_of(const ModHostConfig &host, std::string_view disc_path) {
+    const auto found = std::find_if(host.asset_kinds.begin(), host.asset_kinds.end(),
+                                    [&](const ModAssetKind &kind) { return disc_path.ends_with(kind.suffix); });
+    return found == host.asset_kinds.end() ? nullptr : &*found;
+}
+
+// The disc file's size at disc_path, or nothing if the disc has no such file.
+std::optional<std::size_t> disc_size_of(const ModHostConfig &host, std::string_view disc_path) {
+    if (!host.disc_file_size)
+        return std::nullopt;
+    return host.disc_file_size(disc_path);
+}
+
+// Loads file as the replacement for disc_path, after every check: a regular file that is not a link,
+// a kind the game takes, a file on the disc no smaller than this one, and the kind's check.
+AssetLoad load_asset(const ModHostConfig &host, const fs::path &file, std::string_view disc_path) {
+    std::error_code error;
+    const fs::file_status status = fs::symlink_status(file, error);
+    if (error || !fs::exists(status))
+        return refused("cannot be read");
+    if (fs::is_symlink(status))
+        return refused("is a link; a mod's files are never followed");
+    if (!fs::is_regular_file(status))
+        return refused("is not a regular file");
+    const ModAssetKind *kind = kind_of(host, disc_path);
+    if (!kind)
+        return refused("is not a kind of file a mod may replace");
+    const auto disc_size = disc_size_of(host, disc_path);
+    if (!disc_size)
+        return refused("is not a file on the disc");
+    const std::uintmax_t size = fs::file_size(file, error);
+    if (error)
+        return refused("cannot be read");
+    if (size == 0)
+        return refused("is empty");
+    if (size > *disc_size)
+        return refused("is larger than the disc's file (" + std::to_string(size) + " > " +
+                       std::to_string(*disc_size) + " bytes)");
+    const auto text = read_file(file, *disc_size);
+    if (!text)
+        return refused("cannot be read");
+    std::vector<std::uint8_t> bytes(text->begin(), text->end());
+    if (!kind->check)
+        return refused("has no check in the game for " + std::string(kind->suffix) + " files");
+    if (auto reason = kind->check(bytes))
+        return refused(std::move(*reason));
+    return {std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes)), {}};
+}
+
+// Loads every file under dir/assets/ as the replacement for its path below assets/, into assets.
+// Nothing if there is no such folder; else the reason the mod fails, and assets is left as it was.
+std::optional<std::string> load_asset_folder(const ModHostConfig &host, const fs::path &dir, AssetMap &assets) {
+    const fs::path folder = dir / "assets";
+    std::error_code error;
+    const fs::file_status status = fs::symlink_status(folder, error);
+    if (error || !fs::exists(status))
+        return std::nullopt;
+    if (fs::is_symlink(status))
+        return "assets/ is a link; a mod's files are never followed";
+    if (!fs::is_directory(status))
+        return "assets is not a folder";
+    if (host.asset_kinds.empty())
+        return "assets/ holds replacements, and the game takes no kind of file to replace";
+    AssetMap loaded;
+    for (fs::recursive_directory_iterator it(folder, error), end; !error && it != end; it.increment(error)) {
+        if (fs::is_directory(it->symlink_status(error)))
+            continue;
+        const std::string disc_path = it->path().lexically_relative(folder).generic_string();
+        AssetLoad load = load_asset(host, it->path(), disc_path);
+        if (!load.refusal.empty())
+            return "assets/" + disc_path + " " + load.refusal;
+        loaded[disc_path] = std::move(load.bytes);
+    }
+    if (error)
+        return "cannot read assets/";
+    assets = std::move(loaded);
+    return std::nullopt;
+}
+
+// A mod with an assets/ folder may leave out main.lua. An entry its mod.json names must be there.
+bool script_left_out(const Mod &mod) {
+    std::error_code error;
+    if (mod.entry != "main.lua" || !fs::is_directory(mod.dir / "assets", error))
+        return false;
+    const auto path = inside_mod(mod, mod.entry);
+    const bool exists = path && fs::exists(*path, error);
+    return path && !error && !exists;
 }
 
 // ---- the host's own functions: the sandbox's replacements and mod.* ----
@@ -367,11 +508,15 @@ int fs_read(lua_State *L) {
 int fs_write(lua_State *L) {
     const std::string_view relative = check_view(L, 1);
     const std::string_view text = check_view(L, 2);
-    const auto path = inside_mod(mod_of_state(L), relative);
+    const Mod &mod = mod_of_state(L);
+    const auto path = inside_mod(mod, relative);
     if (!path)
         return fail_result(L, "outside the mod's folder");
     if (reloads_mod(*path))
         return fail_result(L, "a mod cannot write its .lua files or mod.json");
+    // A write there would change the mod's files, so it would reload, and on_load could write again.
+    if (below_assets(mod, *path))
+        return fail_result(L, "a mod cannot write under its assets/ folder");
     std::error_code error;
     fs::create_directories(path->parent_path(), error);
     std::ofstream file(*path, std::ios::binary | std::ios::trunc);
@@ -414,6 +559,29 @@ int fs_list(lua_State *L) {
     return 1;
 }
 
+// Protected: mod.assets.set(disc_path, file): file replaces disc_path from the game's next load of it.
+int assets_set(lua_State *L) {
+    Mod &mod = mod_of_state(L);
+    const std::string disc_path(check_view(L, 1));
+    const std::string_view relative = check_view(L, 2);
+    const auto file = inside_mod(mod, relative);
+    if (!file)
+        return luaL_error(L, "mod.assets.set: '%s' is outside the mod's folder", std::string(relative).c_str());
+    AssetLoad load = load_asset(*mod.host, *file, disc_path);
+    if (!load.refusal.empty())
+        return luaL_error(L, "mod.assets.set: '%s' %s", disc_path.c_str(), load.refusal.c_str());
+    mod.assets[disc_path] = std::move(load.bytes);
+    return 0;
+}
+
+int assets_clear(lua_State *L) {
+    Mod &mod = mod_of_state(L);
+    const auto found = mod.assets.find(check_view(L, 1));
+    if (found != mod.assets.end())
+        mod.assets.erase(found);
+    return 0;
+}
+
 const std::vector<ModTable> &host_tables() {
     static const std::vector<ModTable> tables = {
         {.path = "mod",
@@ -427,10 +595,18 @@ const std::vector<ModTable> &host_tables() {
          .doc = "Files in the mod's own folder; a path never reaches outside it.",
          .functions = {{"read", "fun(path: string): string?, string?", "The file's bytes, or nil and why.", fs_read},
                        {"write", "fun(path: string, text: string): boolean?, string?",
-                        "Writes the file, making its folders; not .lua files or mod.json.", fs_write},
+                        "Writes the file, making its folders; not .lua files, mod.json or assets/.", fs_write},
                        {"exists", "fun(path: string): boolean", "Whether the file or folder exists.", fs_exists},
                        {"list", "fun(path?: string): string[]?, string?",
                         "The names in a folder, sorted; folders end in /.", fs_list}},
+         .fields = {}},
+        {.path = "mod.assets",
+         .doc = "Disc files this mod replaces, by disc path (KF/B0/SND0.SEQ). The assets/ folder does the same.",
+         .functions = {{"set", "fun(disc_path: string, file: string)",
+                        "Replaces the disc file with the mod's file from the game's next load of it; a refusal is an error.",
+                        assets_set},
+                       {"clear", "fun(disc_path: string)",
+                        "No longer replaces the disc file, from the game's next load of it.", assets_clear}},
          .fields = {}},
     };
     return tables;
@@ -723,6 +899,8 @@ int open_mod(lua_State *L) {
     push_table_json(L, mod.config_json);
     lua_setglobal(L, "config");
     apply_save(L);
+    if (script_left_out(mod))
+        return 0;
     if (auto error = load_mod_file(L, mod.entry))
         return luaL_error(L, "%s", error->c_str());
     lua_call(L, 0, 0);
@@ -994,12 +1172,21 @@ struct Fingerprint {
     bool operator==(const Fingerprint &) const = default;
 };
 
-// The newest write over mod.json and the .lua files, and how many: adding or deleting one counts.
+// Whether a change to the entry reloads the mod: mod.json, a .lua file, or anything under assets/.
+bool counts_for_reload(const fs::path &dir, const fs::directory_entry &entry) {
+    std::error_code error;
+    if (entry.is_regular_file(error) && reloads_mod(entry.path()))
+        return true;
+    const fs::path inside = entry.path().lexically_relative(dir);
+    return !inside.empty() && is_assets_name(*inside.begin());
+}
+
+// The newest write over the files that reload the mod, and how many: adding or deleting one counts.
 Fingerprint fingerprint(const fs::path &dir) {
     Fingerprint print;
     std::error_code error;
     for (fs::recursive_directory_iterator it(dir, error), end; !error && it != end; it.increment(error)) {
-        if (!it->is_regular_file(error) || !reloads_mod(it->path()))
+        if (!counts_for_reload(dir, *it))
             continue;
         print.stamp = std::max(print.stamp, it->last_write_time(error));
         ++print.count;
@@ -1022,7 +1209,8 @@ private:
 bool is_mod_folder(const fs::directory_entry &entry) {
     std::error_code error;
     return entry.is_directory(error) &&
-           (fs::exists(entry.path() / "mod.json", error) || fs::exists(entry.path() / "main.lua", error));
+           (fs::exists(entry.path() / "mod.json", error) || fs::exists(entry.path() / "main.lua", error) ||
+            fs::is_directory(entry.path() / "assets", error));
 }
 
 } // namespace
@@ -1055,6 +1243,7 @@ struct ModHost::State {
     }
 
     void unload(Mod &mod) {
+        mod.assets.clear();   // the replacements go with the state: a reload, disable or failure drops them
         if (!mod.lua)
             return;
         if (mod.config_dirty)
@@ -1129,6 +1318,10 @@ struct ModHost::State {
         stop(mod);
         mod.error.clear();
         const auto began = Clock::now();
+        if (auto error = load_asset_folder(config, mod.dir, mod.assets)) {
+            fail(mod, *error);
+            return;
+        }
         mod.memory_bytes = 0;
         mod.lua.reset(lua_newstate(allocate, &mod));
         if (!mod.lua) {
@@ -1398,12 +1591,30 @@ std::size_t ModHost::running_count() const {
                       [this](const auto &mod) { return mod->lua != nullptr && !state_->held(*mod); }));
 }
 
+std::shared_ptr<const std::vector<std::uint8_t>> ModHost::asset_override(std::string_view disc_path) const {
+    AssetBytes replacement;
+    for (const auto &mod : state_->mods) {
+        if (!mod->lua || !mod->error.empty() || state_->held(*mod))
+            continue;
+        if (const auto found = mod->assets.find(disc_path); found != mod->assets.end())
+            replacement = found->second;
+    }
+    return replacement;
+}
+
 std::string ModHost::definitions() const {
     return make_definitions(state_->config);
 }
 
 std::string_view mod_id(lua_State *L) {
     return mod_of_state(L).id;
+}
+
+std::optional<std::vector<std::uint8_t>> mod_file_bytes(lua_State *L, std::string_view relative, std::size_t max_bytes) {
+    const auto path = inside_mod(mod_of_state(L), relative);
+    if (!path)
+        return std::nullopt;
+    return read_bytes(*path, max_bytes);
 }
 
 void mod_config_changed(lua_State *L) {

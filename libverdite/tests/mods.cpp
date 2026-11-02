@@ -11,9 +11,12 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -37,6 +40,17 @@ int changed(lua_State *L) {
 void get_value(lua_State *L) { lua_pushinteger(L, value); }
 void set_value(lua_State *L, int index) { value = luaL_checkinteger(L, index); }
 void get_fixed(lua_State *L) { lua_pushinteger(L, 7); }
+// The size of a file the mod may read, up to 16 bytes, by mod_file_bytes; nil for none.
+int file_size(lua_State *L) {
+    const char *relative = luaL_checkstring(L, 1);
+    const auto bytes = mod_file_bytes(L, relative, 16);
+    if (!bytes) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(bytes->size()));
+    return 1;
+}
 
 // The host the nested-raise test raises through, from inside a handler.
 ModHost *nested_host = nullptr;
@@ -46,15 +60,35 @@ int again(lua_State *) {
     return 0;
 }
 
+// The test game's replaceable files: a .TIM must begin with TIM, a .SEQ may hold anything.
+std::optional<std::string> check_tim(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() < 3 || bytes[0] != 'T' || bytes[1] != 'I' || bytes[2] != 'M')
+        return "is not a TIM: it must begin with TIM";
+    return std::nullopt;
+}
+std::optional<std::string> check_anything(std::span<const std::uint8_t>) { return std::nullopt; }
+
+const std::vector<ModAssetKind> &test_kinds() {
+    static const std::vector<ModAssetKind> kinds = {{.suffix = ".TIM", .check = check_tim},
+                                                    {.suffix = ".SEQ", .check = check_anything}};
+    return kinds;
+}
+
+std::string text_of(const std::shared_ptr<const std::vector<std::uint8_t>> &bytes) {
+    return bytes ? std::string(bytes->begin(), bytes->end()) : std::string("(none)");
+}
+
 // A mods folder of its own, and a host over it whose stored settings are a map.
 struct Mods {
     fs::path dir;
     std::map<std::string, ModStored, std::less<>> stored;
+    std::map<std::string, std::size_t, std::less<>> disc;   // the disc's files, by disc path
     std::unique_ptr<ModHost> host;
     int writes = 0;
     std::vector<std::string> unloaded_ids;   // each discard of a mod's Lua state, in order
 
-    explicit Mods(std::size_t memory_cap_bytes = 64u << 20, std::uint64_t instructions = 1'000'000) {
+    explicit Mods(std::size_t memory_cap_bytes = 64u << 20, std::uint64_t instructions = 1'000'000,
+                  std::vector<ModAssetKind> kinds = test_kinds()) {
         static int count;
         dir = fs::temp_directory_path() /
               ("verdite-mods-" + std::to_string(::getpid()) + "-" + std::to_string(++count));
@@ -70,7 +104,8 @@ struct Mods {
                        .doc = "The test's table.",
                        .functions = {{"note", "fun(text: string)", "Notes text.", note},
                                      {"changed", "fun()", "Marks config changed.", changed},
-                                     {"again", "fun()", "Raises on_test from inside a handler.", again}},
+                                     {"again", "fun()", "Raises on_test from inside a handler.", again},
+                                     {"size", "fun(path: string): integer?", "The size of a file, up to 16 bytes.", file_size}},
                        .fields = {{"value", "integer", "A number.", get_value, set_value},
                                   {"fixed", "integer", "Seven.", get_fixed, nullptr}}}};
         config.events = {{.name = "on_test",
@@ -91,6 +126,13 @@ struct Mods {
             ++writes;
         };
         config.unloaded = [this](std::string_view id) { unloaded_ids.emplace_back(id); };
+        config.asset_kinds = std::move(kinds);
+        config.disc_file_size = [this](std::string_view path) -> std::optional<std::size_t> {
+            const auto found = disc.find(path);
+            if (found == disc.end())
+                return std::nullopt;
+            return found->second;
+        };
         host = std::make_unique<ModHost>(std::move(config));
     }
     ~Mods() {
@@ -645,4 +687,317 @@ TEST_CASE("config_value reads what the mod set itself, and nothing for a missing
     CHECK_FALSE(mods.host->config_value("a", "deep"));
     CHECK_FALSE(mods.host->config_value("a", "none"));
     CHECK_FALSE(mods.host->config_value("missing", "zoom"));
+}
+
+TEST_CASE("an assets/ file replaces the disc file of its path while its mod runs") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "SEQ bytes");
+    mods.host->scan();
+    mods.host->enable("a");
+    REQUIRE(mods.info("a").state == ModState::Running);
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "SEQ bytes");
+    CHECK_FALSE(mods.host->asset_override("KF/B0/OTHER.SEQ"));
+    CHECK_FALSE(mods.host->asset_override("kf/b0/snd0.seq"));   // exact and case-sensitive
+}
+
+TEST_CASE("the last running mod in the listed order replaces the disc file") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "first");
+    mods.write("b/assets/KF/B0/SND0.SEQ", "second");
+    mods.host->scan();
+    mods.host->enable("a");
+    mods.host->enable("b");
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "second");
+    mods.host->disable("b");
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "first");
+}
+
+TEST_CASE("a held or failed mod replaces nothing, and a disabled mod replaces nothing") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "a");
+    mods.write("b/mod.json", R"({"enhancement": true})");
+    mods.write("b/assets/KF/B0/SND0.SEQ", "b");
+    mods.write("c/assets/KF/B0/SND0.SEQ", "c");
+    mods.write("c/assets/KF/B0/nope.SEQ", "x");   // not on the disc: c fails
+    mods.host->scan();
+    mods.host->enable("a");
+    mods.host->enable("b");
+    mods.host->enable("c");
+    REQUIRE(mods.info("c").state == ModState::Failed);
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "b");
+    mods.host->hold_enhancements();
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "a");
+    mods.host->disable("a");
+    CHECK_FALSE(mods.host->asset_override("KF/B0/SND0.SEQ"));
+    mods.host->release_enhancements();
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "b");
+}
+
+TEST_CASE("an assets/ file that fails its check fails the whole mod, and names the file") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.disc["KF/B0/SND1.TIM"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "fine");
+    mods.write("a/assets/KF/B0/SND1.TIM", "not a tim");
+    mods.host->scan();
+    mods.host->enable("a");
+    const ModInfo info = mods.info("a");
+    CHECK(info.state == ModState::Failed);
+    CHECK(info.error.find("assets/KF/B0/SND1.TIM") != std::string::npos);
+    CHECK(info.error.find("is not a TIM") != std::string::npos);
+    CHECK_FALSE(mods.host->asset_override("KF/B0/SND0.SEQ"));
+}
+
+TEST_CASE("an assets/ file that is refused fails its mod, and names the file") {
+    const std::string disc_name = "KF/B0/SND0.SEQ";
+    Mods mods;
+    mods.disc[disc_name] = 4;
+    SUBCASE("a suffix no asset kind takes") {
+        mods.disc["KF/readme.txt"] = 4;
+        mods.write("a/assets/KF/readme.txt", "text");
+        mods.host->scan();
+        mods.host->enable("a");
+        const ModInfo info = mods.info("a");
+        CHECK(info.state == ModState::Failed);
+        CHECK(info.error.find("assets/KF/readme.txt") != std::string::npos);
+        CHECK(info.error.find("is not a kind of file a mod may replace") != std::string::npos);
+    }
+    SUBCASE("a file not on the disc") {
+        mods.disc.clear();
+        mods.write("a/assets/KF/B0/SND0.SEQ", "sn");
+        mods.host->scan();
+        mods.host->enable("a");
+        CHECK(mods.info("a").state == ModState::Failed);
+        CHECK(mods.info("a").error.find("assets/KF/B0/SND0.SEQ is not a file on the disc") != std::string::npos);
+    }
+    SUBCASE("a file larger than the disc's") {
+        mods.write("a/assets/KF/B0/SND0.SEQ", "too large");
+        mods.host->scan();
+        mods.host->enable("a");
+        CHECK(mods.info("a").state == ModState::Failed);
+        CHECK(mods.info("a").error.find("assets/KF/B0/SND0.SEQ is larger than the disc's file (9 > 4 bytes)") !=
+              std::string::npos);
+    }
+    SUBCASE("a file a link") {
+        mods.write("outside.bin", "x");
+        fs::create_directories(mods.dir / "a" / "assets" / "KF" / "B0");
+        fs::create_symlink(mods.dir / "outside.bin", mods.dir / "a" / "assets" / "KF" / "B0" / "SND0.SEQ");
+        mods.host->scan();
+        mods.host->enable("a");
+        CHECK(mods.info("a").state == ModState::Failed);
+        CHECK(mods.info("a").error.find("assets/KF/B0/SND0.SEQ is a link") != std::string::npos);
+    }
+    SUBCASE("assets/ itself a link") {
+        mods.write("outside/KF/B0/SND0.SEQ", "sn");
+        fs::create_directories(mods.dir / "a");
+        fs::create_directory_symlink(mods.dir / "outside", mods.dir / "a" / "assets");
+        mods.host->scan();
+        mods.host->enable("a");
+        CHECK(mods.info("a").state == ModState::Failed);
+        CHECK(mods.info("a").error.find("assets/ is a link") != std::string::npos);
+        CHECK_FALSE(mods.host->asset_override(disc_name));
+    }
+}
+
+TEST_CASE("assets/ fails the mod when the game takes no kind of file") {
+    Mods mods(64u << 20, 1'000'000, {});
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "sn");
+    mods.host->scan();
+    mods.host->enable("a");
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("takes no kind of file") != std::string::npos);
+}
+
+TEST_CASE("a file exactly as large as the disc's file replaces it") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.TIM"] = 8;
+    mods.write("a/assets/KF/B0/SND0.TIM", "TIM12345");
+    mods.host->scan();
+    mods.host->enable("a");
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.TIM")) == "TIM12345");
+}
+
+TEST_CASE("a replacement stays as it was loaded until the mod is rescanned") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "before");
+    mods.host->scan();
+    mods.host->enable("a");
+    const auto held = mods.host->asset_override("KF/B0/SND0.SEQ");
+    mods.write("a/assets/KF/B0/SND0.SEQ", "after!");
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "before");
+    CHECK(text_of(held) == "before");
+    mods.host->scan();
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "after!");
+    CHECK(text_of(held) == "before");
+}
+
+TEST_CASE("adding, changing or removing an assets/ file reloads the mod") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.disc["KF/B0/SND1.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "one");
+    mods.host->scan();
+    mods.host->enable("a");
+    mods.write("a/assets/KF/B0/SND1.SEQ", "two");
+    mods.host->scan();
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND1.SEQ")) == "two");
+    mods.write("a/assets/KF/B0/SND1.SEQ", "three");
+    mods.host->scan();
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND1.SEQ")) == "three");
+    fs::remove(mods.dir / "a" / "assets" / "KF" / "B0" / "SND0.SEQ");
+    mods.host->scan();
+    CHECK_FALSE(mods.host->asset_override("KF/B0/SND0.SEQ"));
+}
+
+TEST_CASE("a mod with assets/ and no main.lua loads with no script, and a mod with neither does not") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("assets-only/assets/KF/B0/SND0.SEQ", "sn");
+    mods.write("plain/mod.json", "{}");
+    mods.host->scan();
+    mods.host->enable("assets-only");
+    mods.host->enable("plain");
+    CHECK(mods.info("assets-only").state == ModState::Running);
+    CHECK(mods.info("assets-only").error.empty());
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "sn");
+    CHECK(mods.info("plain").state == ModState::Failed);
+    CHECK(mods.info("plain").error.find("main.lua") != std::string::npos);
+}
+
+TEST_CASE("an empty assets/ file fails its mod, since the game cannot load one") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "");
+    mods.run("a", "");
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("assets/KF/B0/SND0.SEQ is empty") != std::string::npos);
+}
+
+TEST_CASE("a mod with assets/ whose mod.json names a missing entry fails") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "mine");
+    mods.write("a/mod.json", R"({"entry": "typo.lua"})");
+    mods.host->scan();
+    mods.host->enable("a");
+    CHECK(mods.info("a").state == ModState::Failed);
+}
+
+TEST_CASE("mod.assets.set replaces a disc file with the mod's file until the mod is discarded") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/replacement.SEQ", "mine");
+    mods.run("a", "function on_load() mod.assets.set('KF/B0/SND0.SEQ', 'replacement.SEQ') end");
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "mine");
+    mods.host->disable("a");
+    CHECK_FALSE(mods.host->asset_override("KF/B0/SND0.SEQ"));
+    mods.host->enable("a");
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "mine");
+}
+
+TEST_CASE("mod.assets.set raises an error with the reason for each refused file, and the mod goes on") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.disc["KF/B0/BIG.SEQ"] = 2;
+    mods.disc["KF/B0/BAD.TIM"] = 16;
+    mods.write("a/ok.SEQ", "fine");
+    mods.write("a/big.SEQ", "too big");
+    mods.write("a/bad.TIM", "nope");
+    fs::create_symlink(mods.dir / "a" / "ok.SEQ", mods.dir / "a" / "linked.SEQ");
+    mods.run("a", R"(
+        local function try(disc_path, file)
+            local ok, err = pcall(mod.assets.set, disc_path, file)
+            t.note(tostring(ok) .. ' ' .. tostring(err))
+        end
+        try('KF/B0/SND0.SEQ', 'ok.SEQ')
+        try('KF/x/none.SEQ', 'ok.SEQ')
+        try('KF/B0/BIG.SEQ', 'big.SEQ')
+        try('KF/B0/BAD.TIM', 'bad.TIM')
+        try('KF/B0/SND0.SEQ', 'linked.SEQ')
+        try('KF/B0/SND0.SEQ', 'missing.SEQ')
+    )");
+    CHECK(notes == std::vector<std::string>{
+                       "true nil",
+                       "false mod.assets.set: 'KF/x/none.SEQ' is not a file on the disc",
+                       "false mod.assets.set: 'KF/B0/BIG.SEQ' is larger than the disc's file (7 > 2 bytes)",
+                       "false mod.assets.set: 'KF/B0/BAD.TIM' is not a TIM: it must begin with TIM",
+                       "false mod.assets.set: 'KF/B0/SND0.SEQ' is a link; a mod's files are never followed",
+                       "false mod.assets.set: 'KF/B0/SND0.SEQ' cannot be read"});
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "fine");
+}
+
+TEST_CASE("an uncaught mod.assets.set error fails the mod") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/x.SEQ", "x");
+    mods.run("a", "function on_load() mod.assets.set('KF/none.SEQ', 'x.SEQ') end");
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("a").error.find("mod.assets.set") != std::string::npos);
+}
+
+TEST_CASE("mod.assets.set does not take a path outside the mod's folder") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("outside.SEQ", "secret");
+    mods.run("a", R"(
+        local ok, err = pcall(mod.assets.set, 'KF/B0/SND0.SEQ', '../outside.SEQ')
+        t.note(tostring(ok) .. ' ' .. tostring(err))
+    )");
+    CHECK(notes == std::vector<std::string>{"false mod.assets.set: '../outside.SEQ' is outside the mod's folder"});
+    CHECK_FALSE(mods.host->asset_override("KF/B0/SND0.SEQ"));
+}
+
+TEST_CASE("mod.assets.clear drops a replacement from assets/ until the next reload, and ignores a path not replaced") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.write("a/assets/KF/B0/SND0.SEQ", "from assets");
+    mods.write("a/main.lua", "function on_update() mod.assets.clear('KF/B0/SND0.SEQ') mod.assets.clear('KF/B0/NONE.SEQ') end");
+    mods.host->scan();
+    mods.host->enable("a");
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "from assets");
+    mods.host->call_each(ModCallback::Update);
+    CHECK_FALSE(mods.host->asset_override("KF/B0/SND0.SEQ"));
+    CHECK(mods.info("a").state == ModState::Running);
+    mods.host->reload_all();
+    CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "from assets");
+}
+
+TEST_CASE("mod.fs does not write under assets/, so the write cannot reload the mod") {
+    Mods mods;
+    mods.disc["KF/B0/SND0.SEQ"] = 16;
+    mods.run("a", R"(
+        local ok, why = mod.fs.write('assets/KF/B0/SND0.SEQ', 'x')
+        t.note(tostring(ok) .. ' ' .. why)
+        ok, why = mod.fs.write('./Assets/other.bin', 'x')
+        t.note(tostring(ok) .. ' ' .. why)
+    )");
+    CHECK(notes == std::vector<std::string>{"nil a mod cannot write under its assets/ folder",
+                                            "nil a mod cannot write under its assets/ folder"});
+    CHECK_FALSE(fs::exists(mods.dir / "a" / "assets"));
+}
+
+TEST_CASE("mod_file_bytes reads a file inside the mod's folder up to the cap, and nothing else") {
+    Mods mods;
+    mods.write("a/data/seed.bin", "12345678");
+    mods.write("a/big.bin", std::string(32, 'x'));
+    mods.write("outside/secret.bin", "secret");
+    fs::create_directories(mods.dir / "a");
+    fs::create_directory_symlink(mods.dir / "outside", mods.dir / "a" / "link");
+    mods.run("a", R"(
+        t.note(tostring(t.size("data/seed.bin")))
+        t.note(tostring(t.size("big.bin")))
+        t.note(tostring(t.size("missing.bin")))
+        t.note(tostring(t.size("data")))
+        t.note(tostring(t.size("../outside/secret.bin")))
+        t.note(tostring(t.size("link/secret.bin")))
+    )");
+    CHECK(notes == std::vector<std::string>{"8", "nil", "nil", "nil", "nil", "nil"});
 }
