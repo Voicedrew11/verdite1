@@ -596,6 +596,7 @@ def campaign(args, base_settings: dict) -> int:
 # and the earlier C# build beside this repo; local only, the corpus is gitignored).
 TARGETS = {
     "memory_card": ("a raw 128 KB memory card image", ["../verdite1/*.sav", "../verdite1/**/*.mcd", "../verdite1/**/*.mcr"]),
+    "wav": ("a WAV file a mod plays: PCM at 8 or 16 bits, 1 or 2 channels", []),
     "save_card": ("the game's 40960-byte save card, as the game file and the quick save",
                   ["fuzz/**/saves/BISLPS-00017KF*", "~/.local/share/Verdite/Verdite1/BISLPS-00017KF*"]),
     "disc_image": ("a disc image, plain or CHD", ["libverdite/tests/data/disc/*.bin", "libverdite/tests/data/disc/*.chd",

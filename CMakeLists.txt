@@ -304,7 +304,7 @@ add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp lib
   libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/fuzz.cpp libverdite/src/memory_card.cpp
   libverdite/src/menu_pointer.cpp libverdite/src/menu_settings.cpp libverdite/src/places.cpp libverdite/src/state_trace.cpp libverdite/src/stick.cpp
   libverdite/src/options.cpp libverdite/src/pickup_feed.cpp libverdite/src/setup.cpp libverdite/src/title_menu.cpp libverdite/src/touch.cpp
-  libverdite/src/message_sample.cpp libverdite/src/mods.cpp libverdite/src/raw.cpp)
+  libverdite/src/message_sample.cpp libverdite/src/mods.cpp libverdite/src/raw.cpp libverdite/src/wav.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
 target_link_libraries(verdite PUBLIC Threads::Threads lua54 PRIVATE cpptrace::cpptrace chdr-static cjson)
 if(WIN32)
@@ -320,7 +320,7 @@ if(doctest_FOUND)
     libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp libverdite/tests/fuzz.cpp libverdite/tests/memory_card.cpp
     libverdite/tests/menu_pointer.cpp libverdite/tests/menu_settings.cpp libverdite/tests/places.cpp libverdite/tests/state_trace.cpp libverdite/tests/stick.cpp
     libverdite/tests/options.cpp libverdite/tests/pickup_feed.cpp libverdite/tests/setup.cpp libverdite/tests/title_menu.cpp libverdite/tests/touch.cpp
-    libverdite/tests/message_sample.cpp libverdite/tests/mods.cpp libverdite/tests/raw.cpp)
+    libverdite/tests/message_sample.cpp libverdite/tests/mods.cpp libverdite/tests/raw.cpp libverdite/tests/wav.cpp)
   target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
   target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_DATA="${CMAKE_SOURCE_DIR}/libverdite/tests/data")
   target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -452,6 +452,8 @@ if(KF_LIBFUZZER)
   target_link_libraries(fuzz_memory_card PRIVATE verdite)
   add_executable(fuzz_disc_image libverdite/tests/fuzz/disc_image.cpp)
   target_link_libraries(fuzz_disc_image PRIVATE verdite)
+  add_executable(fuzz_wav libverdite/tests/fuzz/wav.cpp)
+  target_link_libraries(fuzz_wav PRIVATE verdite)
   add_executable(fuzz_codecs ${KF_DECOMP}/tests/fuzz_codecs.cpp)
   target_link_libraries(fuzz_codecs PRIVATE kf_support verdite SDL3::SDL3)
   add_executable(fuzz_save_card port/tests/fuzz/save_card.cpp ${KF_GAME_SOURCES})
@@ -465,7 +467,7 @@ if(KF_LIBFUZZER)
   target_link_libraries(fuzz_coop_message PRIVATE kf_frontend)
   add_executable(fuzz_coop_floor port/tests/fuzz/coop_floor.cpp ${KF_GAME_SOURCES})
   target_link_libraries(fuzz_coop_floor PRIVATE kf_host)
-  foreach(target fuzz_memory_card fuzz_disc_image fuzz_codecs fuzz_save_card fuzz_coop_message fuzz_coop_floor)
+  foreach(target fuzz_memory_card fuzz_disc_image fuzz_wav fuzz_codecs fuzz_save_card fuzz_coop_message fuzz_coop_floor)
     target_link_options(${target} PRIVATE -fsanitize=fuzzer)
   endforeach()
 endif()

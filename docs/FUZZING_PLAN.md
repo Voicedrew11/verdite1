@@ -319,7 +319,7 @@ becomes sanitizer and assertion reports), signatures from the crash report's nam
    outcome, by its message) and codec errors as findings (done); ~~the pointer invariants~~
    (done: `equipment`, `actors`, `effects`). Still to do: the generated enum table.
 3. ~~**libFuzzer targets** (§6)~~: `memory_card`, `save_card`, `disc_image` and the decomp's
-   `codecs` (done); online play's `coop_message`, `coop_floor` and `online_frames` (done). The PPF patcher is not one: it checks the Japanese files' hashes before
+   `codecs` (done); online play's `coop_message`, `coop_floor` and `online_frames` (done); `wav`, the WAV files a mod plays (done). The PPF patcher is not one: it checks the Japanese files' hashes before
    it parses, so it needs the disc. Settings and translations are still to do.
 4. **Differential**: ~~visual settings~~ (`--compare-setting`, done), ~~`--minimise`~~ (done);
    still to do: Classic against the unpatched decomp, the zero/pattern initialisation pair,
