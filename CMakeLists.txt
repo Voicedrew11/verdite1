@@ -265,7 +265,7 @@ add_custom_target(kf_raw_layer DEPENDS ${KF_RAW_OUT}/raw_layer.stamp)
 
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
   ${KF_RAW_OUT}/raw_layer.cpp)
 add_dependencies(kf_ext kf_raw_layer)
 set_source_files_properties(${KF_RAW_OUT}/raw_layer.cpp PROPERTIES GENERATED TRUE)
@@ -481,7 +481,10 @@ if(KF_LIBFUZZER)
   target_link_libraries(fuzz_coop_message PRIVATE kf_frontend)
   add_executable(fuzz_coop_floor port/tests/fuzz/coop_floor.cpp ${KF_GAME_SOURCES})
   target_link_libraries(fuzz_coop_floor PRIVATE kf_host)
-  foreach(target fuzz_memory_card fuzz_disc_image fuzz_wav fuzz_codecs fuzz_save_card fuzz_coop_message fuzz_coop_floor)
+  # What a mod's floor and a save's side file hold (docs/CONTENT_LAYER_PLAN.md).
+  add_executable(fuzz_mod_floor port/tests/fuzz/mod_floor.cpp port/ext/mod_floor_check.cpp port/ext/mod_assets.cpp port/ext/mod_content_save.cpp)
+  target_link_libraries(fuzz_mod_floor PRIVATE kf_frontend verdite)
+  foreach(target fuzz_memory_card fuzz_disc_image fuzz_wav fuzz_codecs fuzz_save_card fuzz_coop_message fuzz_coop_floor fuzz_mod_floor)
     target_link_options(${target} PRIVATE -fsanitize=fuzzer)
   endforeach()
 endif()
@@ -499,7 +502,7 @@ if(doctest_FOUND)
     port/tests/message_reading.cpp port/ext/message_reading.cpp
     port/tests/message_writer.cpp port/ext/message_writer.cpp
     port/tests/mod_play.cpp port/ext/mod_play.cpp port/tests/mod_rule_values.cpp port/ext/mod_rule_values.cpp
-    port/tests/mod_assets.cpp port/ext/mod_assets.cpp port/tests/mod_audio_mix.cpp port/ext/mod_audio_mix.cpp
+    port/tests/mod_assets.cpp port/ext/mod_assets.cpp port/tests/mod_content_save.cpp port/ext/mod_content_save.cpp port/tests/mod_floor_check.cpp port/ext/mod_floor_check.cpp port/tests/mod_audio_mix.cpp port/ext/mod_audio_mix.cpp
     port/tests/mod_scene_shapes.cpp port/ext/mod_scene_shapes.cpp port/tests/world_to_picture.cpp)
   target_link_libraries(kf_port_tests PRIVATE kf_frontend verdite doctest::doctest)
   target_compile_options(kf_port_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

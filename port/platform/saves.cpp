@@ -585,6 +585,39 @@ static std::string mods_name(SaveSlot slot) {
 }
 #endif
 
+#ifndef __EMSCRIPTEN__
+static std::string content_name(SaveSlot slot) {
+    std::string name = mods_name(slot);
+    name.replace(name.find(".mods.json"), std::string_view(".mods.json").size(), ".content");
+    return name;
+}
+#endif
+
+SaveFileResult save_content_read(SaveSlot slot, std::vector<u8> &data) {
+    data.clear();
+    if (!valid_slot(slot))
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    data.resize(save_content_capacity);
+    std::size_t size = 0;
+    const auto result = read_named(content_name(slot).c_str(), data.data(), data.size(), &size);
+    data.resize(result == SaveFileResult::Ok ? size : 0);
+    return result;
+#endif
+}
+
+SaveFileResult save_content_write(SaveSlot slot, std::span<const u8> data) {
+    if (!valid_slot(slot) || data.empty() || data.size() > save_content_capacity)
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    return write_named(content_name(slot).c_str(), data.data(), data.size(), Previous::Discard);
+#endif
+}
+
 SaveFileResult save_mods_read(SaveSlot slot, std::string &json) {
     json.clear();
     if (!valid_slot(slot))

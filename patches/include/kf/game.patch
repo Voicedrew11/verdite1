@@ -1,8 +1,26 @@
 diff --git a/include/kf/game/actor.h b/include/kf/game/actor.h
-index 30a2190fa2ba0398ad16f3967485a699f31abeca..280b95d632dac56a73a6f9bdf6c1d3676c67dd1f 100644
+index 30a2190fa2ba0398ad16f3967485a699f31abeca..67c8c377a3b226da703883ccf2366714b32beb30 100644
 --- a/include/kf/game/actor.h
 +++ b/include/kf/game/actor.h
-@@ -345,6 +345,19 @@ extern KfActorAction actor_try_select_ground_action(
+@@ -22,6 +22,8 @@ struct KfAnimationCacheRecord;
+ 
+ enum {
+     KF_ACTOR_DEFINITION_COUNT = 12,
++    // PC extension: rows a mod adds beside the disc's twelve; a placement's kind is 5 bits.
++    KF_ACTOR_DEFINITION_CAPACITY = 32,
+     KF_ACTOR_CAPACITY = 128
+ };
+ 
+@@ -226,7 +228,7 @@ typedef struct KfActorDefinition {
+ } KfActorDefinition;
+ 
+ typedef struct KfActorDefinitionTable {
+-    KfActorDefinition entries[KF_ACTOR_DEFINITION_COUNT];
++    KfActorDefinition entries[KF_ACTOR_DEFINITION_CAPACITY];
+ } KfActorDefinitionTable;
+ 
+ typedef struct KfActorActionProfile {
+@@ -345,6 +347,19 @@ extern KfActorAction actor_try_select_ground_action(
      KfActorAction action, s32 distance, u16 chance);
  extern KfActorAction actor_try_select_profiled_action(
      KfActorAction action, s32 distance, KfActorEffectCode effect_code, u16 chance);
@@ -102,7 +120,7 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..986ebd381692837ed6b2d0e45dda483f
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..7edb5385779a18dbbb62d2c12d8ad6d57c934e8e 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..6befed11d122f59d4e2779b6725c95922ddfe6ab 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
 @@ -8,6 +8,7 @@
@@ -164,6 +182,17 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..7edb5385779a18dbbb62d2c12d8ad6d5
  
  typedef struct KfMenuList {
      MenuPoint title_position;
+@@ -311,8 +324,8 @@ enum {
+ };
+ 
+ extern SVECTOR menu_item_preview_rotation;
+-extern std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_COUNT> item_buy_prices;
+-extern std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_COUNT> item_sell_prices;
++extern std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_ID_COUNT> item_buy_prices;
++extern std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_ID_COUNT> item_sell_prices;
+ enum class KfMenuModelAllocation : s32 {
+     KF_MENU_MODEL_RELEASED = 0,
+     KF_MENU_MODEL_ALLOCATED = 1
 @@ -329,7 +342,12 @@ extern void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position);
  extern void menu_blit_sprite_translucent(

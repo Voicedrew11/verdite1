@@ -211,6 +211,18 @@ Refusal check_tmd(Bytes bytes) {
 
 } // namespace
 
+std::optional<std::string> mod_tim_refusal(std::span<const std::uint8_t> bytes) {
+    return check_tim(bytes);
+}
+
+std::optional<std::string> mod_seq_refusal(std::span<const std::uint8_t> bytes) {
+    return check_seq(bytes);
+}
+
+std::optional<std::string> mod_tmd_refusal(std::span<const std::uint8_t> tmd) {
+    return tmd_refusal(tmd);
+}
+
 std::vector<verdite::ModAssetKind> mod_asset_kinds() {
     return {asset_kinds.begin(), asset_kinds.end()};
 }

@@ -160,7 +160,7 @@ index ad8c13abdfa2695a9bd474cc0c0817464b29af9e..4d4f49e2c95baade30ef1e327a3b3f1d
          definition->attack_components[KF_COMBAT_COMPONENT_CUTTING],
          definition->attack_components[KF_COMBAT_COMPONENT_STRIKING],
 diff --git a/src/game/actor_behavior.cpp b/src/game/actor_behavior.cpp
-index e88d8973767040536c3668beb2f4f80bc85f32f6..f8f441fc1b80e1af907e36c7a5ff7bdf02a32ddc 100644
+index e88d8973767040536c3668beb2f4f80bc85f32f6..6388ae8748c50038ff89b508398a0d8c4bee183c 100644
 --- a/src/game/actor_behavior.cpp
 +++ b/src/game/actor_behavior.cpp
 @@ -5,11 +5,16 @@
@@ -348,7 +348,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..f8f441fc1b80e1af907e36c7a5ff7bdf
 +        drops = true;
 +    }
 +
-+    const s16 game_item = drops && kf_enum_encode<u8>(drop_object) < KF_ITEM_COUNT ? kf_enum_encode<s16>(drop_object) : -1;
++    const s16 game_item = drops && kf_item_id_valid(kf_enum_encode<u8>(drop_object)) ? kf_enum_encode<s16>(drop_object) : -1;
 +    const kf::ActorDrop drop = kf::mods_actor_drops({actor_state.current_index, actor->definition_id, gold_amount, game_item});
 +    if (drop.gold != gold_amount) {
 +        actor_amend_gold_drop(gold_drop, drop.gold, &actor->position, y_offset);
@@ -425,7 +425,7 @@ index e88d8973767040536c3668beb2f4f80bc85f32f6..f8f441fc1b80e1af907e36c7a5ff7bdf
                  }
                  actor->action_progress = KF_ACTOR_PROGRESS_COMPLETE;
 diff --git a/src/game/actor_pool.cpp b/src/game/actor_pool.cpp
-index 7c6b4de806700422183551d2b4782dd3fa5eaf47..953aaeaafb88aa38e46153023ca5f95c9fa66554 100644
+index 7c6b4de806700422183551d2b4782dd3fa5eaf47..f1ece4089b4566f236ab1a6f98d801409d370cff 100644
 --- a/src/game/actor_pool.cpp
 +++ b/src/game/actor_pool.cpp
 @@ -4,20 +4,96 @@
@@ -525,7 +525,7 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..953aaeaafb88aa38e46153023ca5f95c
              actor_update_awareness();
              if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE) {
                  actor_update_current_action();
-@@ -25,6 +101,7 @@ void actor_pool_update(void)
+@@ -25,13 +101,14 @@ void actor_pool_update(void)
          }
      }
      actor_bind_current(NULL);
@@ -533,10 +533,29 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..953aaeaafb88aa38e46153023ca5f95c
  }
  
  void actor_pool_load_placements(KfResourceChunk chunk) try
-@@ -77,6 +154,7 @@ void actor_definitions_load(KfResourceChunk chunk)
-     if (chunk.size < sizeof actor_state.definitions)
+ {
+     std::array<KfActorPlacementData, KF_ACTOR_CAPACITY> decoded {};
+     const auto count = kf_actor_placements_decode({chunk.data, chunk.size},
+-            {KF_MAP_COLUMNS, KF_ACTOR_DEFINITION_COUNT, KF_MAP_TILE_SIZE}, decoded);
++            {KF_MAP_COLUMNS, KF_ACTOR_DEFINITION_CAPACITY, KF_MAP_TILE_SIZE}, decoded);
+     for (std::size_t i = 0; i < std::size(actor_state.actors); ++i) {
+         auto &actor = actor_state.actors[i];
+         if (i >= count) {
+@@ -74,9 +151,16 @@ void actor_definitions_load(KfResourceChunk chunk)
+     static_assert(sizeof(KfActorDefinition) == 152);
+     static_assert(offsetof(KfActorDefinition, third_attachment) == 0x34);
+     static_assert(offsetof(KfActorDefinition, action_animation_steps) == 0x3a);
+-    if (chunk.size < sizeof actor_state.definitions)
++    // PC extension: the disc's floors have twelve rows; a mod's floor up to the capacity. The rest are
++    // empty until a mod adds one to this floor, so no row outlives its floor's models.
++    const bool mod_floor = kf_floor_is_mod(kf_enum_encode<s32>(player_state.progress_state.current_floor));
++    const std::size_t rows = mod_floor ? std::min<std::size_t>(chunk.size / sizeof(KfActorDefinition), KF_ACTOR_DEFINITION_CAPACITY)
++                                       : KF_ACTOR_DEFINITION_COUNT;
++    if (chunk.size < rows * sizeof(KfActorDefinition))
          kf::host_fail("Truncated actor definitions.");
-     std::memcpy(&actor_state.definitions, chunk.data, sizeof actor_state.definitions);
+-    std::memcpy(&actor_state.definitions, chunk.data, sizeof actor_state.definitions);
++    actor_state.definitions = {};
++    std::memcpy(&actor_state.definitions, chunk.data, rows * sizeof(KfActorDefinition));
 +    kf::mods_rules_reapply(kf::RulesTable::ActorDefinitions);   // PC extension (mods): kf.rules
  }
  
@@ -556,7 +575,7 @@ index 67d7eb827a952ce4f4702b1b0352700c41271251..4312b77519e5e0a8cb6a30c4dd1c5a98
              animation_cache_release(record);
          }
 diff --git a/src/game/audio.cpp b/src/game/audio.cpp
-index 31f832db7b441760cf013f561eaf55ce8ee9842c..7864916d03aa436f28ec469df9db2c5635fedd55 100644
+index 31f832db7b441760cf013f561eaf55ce8ee9842c..128ed5174034b438f5c41030fbe5eaece99b36cc 100644
 --- a/src/game/audio.cpp
 +++ b/src/game/audio.cpp
 @@ -10,6 +10,8 @@
@@ -581,6 +600,15 @@ index 31f832db7b441760cf013f561eaf55ce8ee9842c..7864916d03aa436f28ec469df9db2c56
  
  void audio_initialize(void)
  {
+@@ -56,7 +64,7 @@ void audio_play_map_sequence(u8 sequence_index)
+     audio_stop_sequence_fade();
+     if (player_state.audio_music_enabled != KF_PLAYER_OPTION_OFF) {
+         path[sequence_number_offset] = sequence_index + '0';
+-        path[sequence_floor_offset] = kf_enum_encode<u8>(player_state.progress_state.current_floor) + '0';
++        path[sequence_floor_offset] = kf_floor_folder_char(player_state.progress_state.current_floor);
+         if (resource_file_load_into(audio_state.sequence_buffer, GAME_SEQUENCE_BUFFER_BYTES, path.data(), &sequence_size) == KF_RESOURCE_LOADED) {
+             audio_state.sequence = kf::sound_sequence_load(audio_state.sequence_buffer, sequence_size, audio_state.bank);
+             if (!audio_state.sequence)
 @@ -71,22 +79,27 @@ void audio_play_map_sequence(u8 sequence_index)
  void audio_stop_sequence_fade(void)
  {
@@ -631,7 +659,7 @@ index 31f832db7b441760cf013f561eaf55ce8ee9842c..7864916d03aa436f28ec469df9db2c56
      }
 diff --git a/src/game/automap_feed.cpp b/src/game/automap_feed.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a5ad45274cfa6ba796c7b871683230087898a016
+index 0000000000000000000000000000000000000000..0e04c2dcaa96750195a6a5d5cf347abf7100ce7c
 --- /dev/null
 +++ b/src/game/automap_feed.cpp
 @@ -0,0 +1,298 @@
@@ -918,7 +946,7 @@ index 0000000000000000000000000000000000000000..a5ad45274cfa6ba796c7b87168323008
 +        const bool placed = actor.slot_state != KF_ACTOR_SLOT_DYNAMIC && actor.slot_state != KF_ACTOR_SLOT_RESPAWNING;
 +        const KfObjectId drop = actor.death_drop_object_id;
 +        const bool carries = placed && drop != KF_MAP_OBJECT_DROP_DISABLED && drop != KF_OBJECT_NONE
-+            && kf_enum_encode<u8>(drop) < KF_ITEM_COUNT;
++            && kf_item_id_valid(kf_enum_encode<u8>(drop));
 +        const bool awake = actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
 +            && actor.action != KF_ACTOR_ACTION_DYING && actor.action != KF_ACTOR_ACTION_POST_DEATH;
 +        if (awake) {
@@ -1247,6 +1275,26 @@ index b0d8a7376e2d4a10cf30719994b0a16271c57cca..41f66c056bfcfdfc00d5d40ba83550e7
      effect_spawn_fire_wall(id, parent_effect->type, position, parent_effect->direction, branch_role);
  }
  
+diff --git a/src/game/entity_model_render.cpp b/src/game/entity_model_render.cpp
+index 261fb406467bcdfce4f7f13d5ccc5f2a3cb44c10..f513dd46d91910275dd4ce95729aeaf62ee387d4 100644
+--- a/src/game/entity_model_render.cpp
++++ b/src/game/entity_model_render.cpp
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <kf/platform/extra_items.h>
+ #include <kf/game/asset.h>
+ #include <kf/game/graphics.h>
+ #include <kf/game/render.h>
+@@ -74,7 +75,8 @@ void render_map_object(KfMapObject *object)
+     kf::matrix_multiply_rotation(game_graphics_runtime.render_state.light_matrix, model, light);
+     kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, model, model);
+ 
+-    id = object->object_id;
++    // PC extension: a mod's item shows the disc item it names (kf/platform/extra_items.h).
++    id = kf_enum_decode<KfObjectId>(kf::extra_item_model(kf_enum_encode<u8>(object->object_id)));
+     switch (map_object_state.definitions.entries[kf_enum_encode<u8>(object->object_id)].behavior_type) {
+     case KF_MAP_OBJECT_OP_LIFT_DOOR:
+     case KF_MAP_OBJECT_OP_03:
 diff --git a/src/game/entity_render.cpp b/src/game/entity_render.cpp
 index ccc0250bfd6282063c9bdbee7210ac982446c466..1fa884bcd9bae92ab386fcb43665c7d9eb7a1d3a 100644
 --- a/src/game/entity_render.cpp
@@ -1300,7 +1348,7 @@ index cffe39b2fd706bb1c1525895fad732a7e9efbc6c..cb285ad1d3aec90c3677459cc36be450
  
  s32 fixed6_ratio_step(s32 value, s32 span)
 diff --git a/src/game/game.cpp b/src/game/game.cpp
-index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..fb799f751b1c192ceb8d95df425d44aa336691c6 100644
+index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..d121e1ae1bfd1ce73cdc712b7ead8a6ba484a562 100644
 --- a/src/game/game.cpp
 +++ b/src/game/game.cpp
 @@ -6,22 +6,36 @@
@@ -1349,7 +1397,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..fb799f751b1c192ceb8d95df425d44aa
 +    if (const char *give = std::getenv("KF_TEST_GIVE")) {
 +        for (const char *cursor = give; *cursor;) {
 +            const int id = std::atoi(cursor);
-+            if (id >= 0 && id < KF_ITEM_COUNT)
++            if (kf_item_id_valid(id))
 +                item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][id]++;
 +            const char *comma = std::strchr(cursor, ',');
 +            if (!comma)
@@ -1555,14 +1603,15 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
  
  enum {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
-index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e0073890faf394 100644
+index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1bb7e9f7f 100644
 --- a/src/game/item.cpp
 +++ b/src/game/item.cpp
-@@ -10,9 +10,13 @@
+@@ -10,9 +10,14 @@
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
  #include <kf/lib/render_face.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/extra_items.h>
  #include <kf/platform/input.h>
 +#include <kf/platform/mod_events.h>
 +#include <kf/platform/menu_pointer.h>
@@ -1572,7 +1621,19 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
  #include <cstdio>
  #include <cstdlib>
  #include <cstring>
-@@ -173,10 +177,18 @@ static void menu_resources_decode(std::span<const u8> bytes, KfMenuResources &re
+@@ -31,9 +36,9 @@ enum {
+ 
+ static std::array<std::optional<KfMenuResources>, 2> menu_languages;
+ 
+-std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_COUNT> item_buy_prices;
++std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_ID_COUNT> item_buy_prices;
+ 
+-std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_COUNT> item_sell_prices;
++std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_ID_COUNT> item_sell_prices;
+ 
+ // STAT.DAT stores little-endian words and authored GPU templates. Only this
+ // loading boundary knows that layout; menus retain copied native descriptions.
+@@ -173,10 +178,18 @@ static void menu_resources_decode(std::span<const u8> bytes, KfMenuResources &re
      // label, moved into that removed row in the native menu description.
      auto &save_layout = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_SAVE)];
      save_layout.rows[KF_MENU_SAVE_RETURN_ROW].glyphs = save_layout.rows[stat_save_return_row].glyphs;
@@ -1591,7 +1652,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
      for (auto &row : resources.items)
          menu_data_glyphs(reader, &row);
      for (auto &row : resources.magic)
-@@ -211,6 +223,12 @@ const KfMenuResources &menu_resources()
+@@ -211,13 +224,21 @@ const KfMenuResources &menu_resources()
      return menu_languages[static_cast<std::size_t>(game_text_language())].value();
  }
  
@@ -1604,15 +1665,18 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
  void menu_resources_reload(void)
  {
      if (!menu_prepare_language(kf::game_language()))
-@@ -218,6 +236,7 @@ void menu_resources_reload(void)
+         kf::host_fail("Cannot load menu resources.");
      const auto &resources = menu_languages[static_cast<std::size_t>(kf::game_language())].value();
-     item_buy_prices = resources.buy_prices;
-     item_sell_prices = resources.sell_prices;
+-    item_buy_prices = resources.buy_prices;
+-    item_sell_prices = resources.sell_prices;
++    // PC extension: the disc's rows; a mod's items are priced by kf.content or kf.rules.
++    std::copy(resources.buy_prices.begin(), resources.buy_prices.end(), item_buy_prices.begin());
++    std::copy(resources.sell_prices.begin(), resources.sell_prices.end(), item_sell_prices.begin());
 +    kf::mods_rules_reapply(kf::RulesTable::ShopPrices);   // PC extension (mods): kf.rules
  }
  
  void item_load_database(void)
-@@ -297,6 +316,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
+@@ -297,6 +318,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1623,7 +1687,32 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
          }
          menu_draw_window(KF_MENU_WINDOW_SHOP, KF_SHOP_CHOICE_COUNT, cursor, confirm);
      }
-@@ -393,6 +416,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+@@ -305,8 +330,8 @@ void shop_menu_root(KfItemStockBank shop_bank)
+ void shop_menu_buy(KfItemStockBank shop_bank)
+ {
+     KfMenuList ctx;
+-    std::array<u8, KF_ITEM_COUNT> available;
+-    std::array<KfObjectId, KF_ITEM_COUNT> item_ids;
++    std::array<u8, KF_ITEM_ID_COUNT> available;
++    std::array<KfObjectId, KF_ITEM_ID_COUNT> item_ids;
+     s32 slot;
+     s32 found;
+     KfMenuConfirmState confirm = KF_MENU_CONFIRM_IDLE;
+@@ -333,6 +358,13 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+             found++;
+         }
+     }
++    for (const u8 mod_item : kf::extra_items_stocked(stock)) {   // PC extension
++        if (item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][mod_item] < KF_ITEM_STACK_CAPACITY) {
++            available[found] = stock[mod_item];
++            item_ids[found] = kf_enum_decode<KfObjectId>(mod_item);
++            found++;
++        }
++    }
+     ctx.entry_count = found;
+     ctx.visible_rows = MENU_SHOP_VISIBLE_ROWS;
+     ctx.entries = std::span<const KfObjectId>(item_ids).first(found);
+@@ -393,6 +425,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1631,7 +1720,18 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
          if (selection == kf_enum_encode<s32>(KF_ITEM_GOLD_CROSS))
              stock[kf_enum_encode<u8>(KF_ITEM_GOLD_CROSS)]--;
          player_state.gold -= item_buy_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
-@@ -422,6 +446,8 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+@@ -403,8 +436,8 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+ void shop_menu_sell(KfItemStockBank shop_bank)
+ {
+     KfMenuList ctx;
+-    std::array<u8, KF_ITEM_COUNT> available;
+-    std::array<KfObjectId, KF_ITEM_COUNT> item_ids;
++    std::array<u8, KF_ITEM_ID_COUNT> available;
++    std::array<KfObjectId, KF_ITEM_ID_COUNT> item_ids;
+     s32 slot;
+     s32 found;
+     KfMenuConfirmState confirm = KF_MENU_CONFIRM_IDLE;
+@@ -422,12 +455,19 @@ void shop_menu_sell(KfItemStockBank shop_bank)
              available[found] = stock[slot];
              if (player_item_is_equipped(kf_enum_decode<KfObjectId>(slot)))
                  available[found]--;
@@ -1640,7 +1740,18 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
              if (available[found] != 0) {
                  item_ids[found] = kf_enum_decode<KfObjectId>(slot);
                  found++;
-@@ -483,6 +509,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+             }
+         }
+     }
++    for (const u8 mod_item : kf::extra_items_stocked(stock)) {   // PC extension
++        available[found] = stock[mod_item];
++        item_ids[found] = kf_enum_decode<KfObjectId>(mod_item);
++        found++;
++    }
+     ctx.entry_count = found;
+     ctx.visible_rows = MENU_SHOP_VISIBLE_ROWS;
+     ctx.entries = std::span<const KfObjectId>(item_ids).first(found);
+@@ -483,6 +523,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1648,7 +1759,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..e87e15c15d9bb3e82b17aac715e00738
          stock[selection]--;
          player_state.gold += item_sell_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
      }
-@@ -561,13 +588,22 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
+@@ -561,13 +602,22 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
              } else {
                  result = KF_MENU_RESULT_STACK_FULL;
                  if (stock_count != KF_ITEM_STACK_CAPACITY) {
@@ -1730,7 +1841,7 @@ index ba8ad9601988b735d737b6c0e32c034a76a2ab79..2914c179a4969e2c9e9c828c101f1eb2
      event->dialogue.stage = stage;
      event->dialogue.page = KF_DIALOGUE_FIRST_PAGE;
 diff --git a/src/game/map_events.cpp b/src/game/map_events.cpp
-index c71d1f33020a17fdc28c290f146f11c52383e1c3..b815379b1c0674f879cf14039a1e0f7514c90e4f 100644
+index c71d1f33020a17fdc28c290f146f11c52383e1c3..f82b0051199a7f8d893a38625708ec2294e685a1 100644
 --- a/src/game/map_events.cpp
 +++ b/src/game/map_events.cpp
 @@ -6,6 +6,7 @@
@@ -1770,7 +1881,17 @@ index c71d1f33020a17fdc28c290f146f11c52383e1c3..b815379b1c0674f879cf14039a1e0f75
          switch (player_state.progress_state.current_floor) {
          case KF_FLOOR_FORCE_RELOAD:
              // This resource-load sentinel has no ambient floor script.
-@@ -261,6 +272,8 @@ void map_world_state_persist(void)
+@@ -172,8 +183,7 @@ void map_world_state_persist(void)
+     s32 i;
+     s32 active;
+ 
+-    out = map_runtime_state.world_state.floors[
+-        kf_enum_encode<u8>(player_state.progress_state.current_floor) - 1].records.data();
++    out = map_saved_floor(kf_enum_encode<u8>(player_state.progress_state.current_floor)).records.data();
+     u8 *const end = out + KF_MAP_SAVED_RECORD_BYTES;
+     map_saved_put(out, end, 1);
+ 
+@@ -261,6 +271,8 @@ void map_world_state_persist(void)
  
  void map_unload_floor(void)
  {
@@ -1779,24 +1900,77 @@ index c71d1f33020a17fdc28c290f146f11c52383e1c3..b815379b1c0674f879cf14039a1e0f75
      animation_cache_release_all();
      audio_close_vab(audio_state);
      map_world_state_persist();
-@@ -269,4 +282,5 @@ void map_unload_floor(void)
+@@ -269,4 +281,5 @@ void map_unload_floor(void)
  void map_events_reset_module_state(void)
  {
      kf::restore_initial_value<map_runtime_state>();
 +    map_event_in_conversation = NULL;
  }
 diff --git a/src/game/map_load.cpp b/src/game/map_load.cpp
-index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..b86478328a263b837550f67c43098954cb99d864 100644
+index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..0cad75c0e8a8217d7592d6fa4853cb5dc0482e6d 100644
 --- a/src/game/map_load.cpp
 +++ b/src/game/map_load.cpp
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,7 @@
  #include <kf/platform/prelude.h>
++#include <kf/platform/extra_items.h>
 +#include <kf/platform/coop.h>
 +#include <kf/platform/mod_events.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
  #include <kf/lib/map.h>
-@@ -190,7 +192,8 @@ void map_restore_floor_state(void)
+@@ -16,6 +19,18 @@ enum {
+     MAP_RESTORE_POSITION_RANDOM_BITS = 15
+ };
+ 
++std::array<KfMapSavedFloor, KF_FLOOR_MOD_COUNT> map_mod_floor_records;
++
++// PC extension: where a floor's saved records are: the card's five, or those beside it.
++KfMapSavedFloor &map_saved_floor(u8 floor)
++{
++    if (kf_floor_is_mod(floor))
++        return map_mod_floor_records[floor - KF_FLOOR_MOD_FIRST];
++    if (floor < 1 || floor > KF_MAP_SAVED_FLOOR_COUNT)
++        kf::host_fail("Invalid restored floor");
++    return map_runtime_state.world_state.floors[floor - 1];
++}
++
+ bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink &link)
+ {
+     switch (operation) {
+@@ -23,7 +38,7 @@ bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink
+     case KF_MAP_OBJECT_OP_ITEM_CONTAINER:
+         for (unsigned slot = 0; slot < KF_MAP_CONTAINER_ITEM_COUNT; ++slot) {
+             const auto item = map_container_item(link, operation, slot);
+-            if (item != KF_OBJECT_NONE && kf_enum_encode<u8>(item) >= KF_ITEM_COUNT)
++            if (item != KF_OBJECT_NONE && !kf_item_id_valid(kf_enum_encode<u8>(item)))
+                 return false;
+         }
+         return true;
+@@ -52,9 +67,7 @@ void map_restore_floor_state(void)
+     s32 index;
+ 
+     const auto floor = kf_enum_encode<u8>(player_state.progress_state.current_floor);
+-    if (floor < 1 || floor > KF_MAP_SAVED_FLOOR_COUNT)
+-        kf::host_fail("Invalid restored floor");
+-    in = map_runtime_state.world_state.floors[floor - 1].records.data();
++    in = map_saved_floor(floor).records.data();
+     if (*in++ == 1) {
+         event = map_runtime_state.events.data();
+         for (i = 0; i < KF_MAP_EVENT_CAPACITY; i++, event++) {
+@@ -147,9 +160,10 @@ void map_restore_floor_state(void)
+                 object->cell_z * KF_MAP_TILE_SIZE + ((kf::random_next() * KF_MAP_TILE_SIZE) >> MAP_RESTORE_POSITION_RANDOM_BITS);
+             object->position.vy =
+                 -(map_floor_height_grid.cells[object->cell_z][object->cell_x] * KF_MAP_HEIGHT_STEP);
+-            if (object->object_id < KF_MAP_DROP_TIP_ID_END) {
++            const auto lies_as = kf_enum_decode<KfObjectId>(kf::extra_item_model(kf_enum_encode<u8>(object->object_id)));
++            if (lies_as < KF_MAP_DROP_TIP_ID_END) {
+                 object->rotation.vx = KF_ANGLE_QUARTER_TURN;
+-            } else if (object->object_id < KF_MAP_DROP_SPIN_ID_END) {
++            } else if (lies_as < KF_MAP_DROP_SPIN_ID_END) {
+                 object->rotation.vx = 0;
+             }
+             object->rotation.vz = 0;
+@@ -190,7 +204,8 @@ void map_restore_floor_state(void)
          if (map_runtime_state.world_state.floor5.weapon_transformed == KF_MAP_SCRIPT_SET) {
              map_object_pool_clear_link(KF_MAP_LINK_WEAPON_TRANSFORM_DOORS);
          }
@@ -1806,7 +1980,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..b86478328a263b837550f67c43098954
              map_runtime_state.events[KF_FLOOR2_DEPARTING_EVENT].state = KF_MAP_EVENT_DISABLED;
          }
          break;
-@@ -256,6 +259,8 @@ void map_load_floor(void)
+@@ -256,6 +271,8 @@ void map_load_floor(void)
      map_refresh_dialogue_stages();
      render_prepare_actor_textures(player_state.progress_state.current_floor);
      game_graphics_runtime.hud_model_color_matrix = color_matrix_table[kf_enum_encode<s32>(KF_GAME_COLOR_WHITE)];
@@ -1816,10 +1990,26 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..b86478328a263b837550f67c43098954
  
  void map_load_floor_wrapper(void)
 diff --git a/src/game/map_object.cpp b/src/game/map_object.cpp
-index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb95372107 100644
+index c4fee7aad3fff0d855e5f329a125281e6bba88a7..a867493d3b51687744773498b194d6f79513e660 100644
 --- a/src/game/map_object.cpp
 +++ b/src/game/map_object.cpp
-@@ -138,6 +138,11 @@ KfMapObject *map_object_effect_pool_acquire(u16 first_index, u16 count, u16 sequ
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <kf/platform/extra_items.h>
+ #include <kf/game/audio.h>
+ #include <kf/game/game.h>
+ #include <kf/lib/map.h>
+@@ -66,6 +67,9 @@ std::array<SoundRef, KF_GAMEPLAY_SOUND_COUNT> gameplay_sound_refs = {
+ 
+ s32 map_object_pool_find_interaction_from(s32 start_index, s32 point_x, s32 point_z, s32 radius_padding)
+ {
++    // PC fix: the callers resume from the slot after a match, which is past the pool when the last slot matched.
++    if (start_index >= KF_MAP_OBJECT_CAPACITY)
++        return -1;
+     KfMapObject *object = &map_object_state.objects[start_index];
+     s16 index = start_index;
+     KfMapObjectDefinition *definition;
+@@ -138,6 +142,11 @@ KfMapObject *map_object_effect_pool_acquire(u16 first_index, u16 count, u16 sequ
          }
          object++;
      } while (--count != 0);
@@ -1831,7 +2021,25 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb
      return oldest;
  }
  
-@@ -176,7 +181,7 @@ void map_object_spawn_drop(KfMapObjectDropSource drop_source, KfObjectId object_
+@@ -163,12 +172,14 @@ void map_object_spawn_drop(KfMapObjectDropSource drop_source, KfObjectId object_
+     object->cell_z = object->position.vz / KF_MAP_TILE_SIZE;
+     object->rotation.vz = 0;
+     object->rotation.vx = 0;
+-    within_drop_range = object_id < KF_MAP_DROP_BOUNCE_ID_END;
++    // PC extension: a mod's item falls as the disc item it names.
++    const auto falls_as = kf_enum_decode<KfObjectId>(kf::extra_item_model(kf_enum_encode<u8>(object_id)));
++    within_drop_range = falls_as < KF_MAP_DROP_BOUNCE_ID_END;
+     object->rotation.vy = kf::random_next() >> KF_RANDOM_ANGLE_SHIFT;
+     object->action = KF_MAP_OBJECT_OP_NONE;
+-    if (object_id < KF_MAP_DROP_TIP_ID_END) {
++    if (falls_as < KF_MAP_DROP_TIP_ID_END) {
+         map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_FALL_AND_TIP);
+-    } else if (object_id < KF_MAP_DROP_SPIN_ID_END) {
++    } else if (falls_as < KF_MAP_DROP_SPIN_ID_END) {
+         map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_FALL_AND_SPIN);
+     } else if (within_drop_range) {
+         map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_BOUNCE);
+@@ -176,7 +187,7 @@ void map_object_spawn_drop(KfMapObjectDropSource drop_source, KfObjectId object_
      object->link.vertical_velocity = 0;
  }
  
@@ -1840,7 +2048,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb
  {
      KfMapObject *object;
      u16 *sequence;
-@@ -201,6 +206,7 @@ void map_object_spawn_gold_drop(u16 gold_amount, const VECTOR *position, s32 y_o
+@@ -201,6 +212,7 @@ void map_object_spawn_gold_drop(u16 gold_amount, const VECTOR *position, s32 y_o
      object->action = KF_MAP_OBJECT_OP_NONE;
      map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_BOUNCE);
      object->link.vertical_velocity = MAP_GOLD_DROP_INITIAL_VELOCITY_Y;
@@ -1848,7 +2056,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb
  }
  
  void map_object_pool_trigger_link(u8 link_id)
-@@ -216,6 +222,11 @@ void map_object_pool_trigger_link(u8 link_id)
+@@ -216,6 +228,11 @@ void map_object_pool_trigger_link(u8 link_id)
              }
              break;
          default:
@@ -1860,7 +2068,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb
              if (map_object_state.definitions.entries[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_TRIGGER_END
                  && !(object.link.link_id < KF_MAP_LINK_REUSABLE_FIRST) && object.link.link_id == link_id) {
                  map_object_start_action_if_idle(
-@@ -231,6 +242,10 @@ void map_object_pool_clear_link(u8 link_id)
+@@ -231,6 +248,10 @@ void map_object_pool_clear_link(u8 link_id)
      KfMapObjectDefinition *definitions = map_object_state.definitions.entries;
  
      for (auto &object : map_object_state.objects) {
@@ -1871,7 +2079,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb
          if ((definitions[kf_enum_encode<u8>(object.object_id)].behavior_type < KF_MAP_OBJECT_OP_LINK_CLEAR_LAST
               || definitions[kf_enum_encode<u8>(object.object_id)].behavior_type == KF_MAP_OBJECT_OP_LINK_CLEAR_LAST)
              && object.link.link_id == link_id) {
-@@ -256,6 +271,11 @@ void map_object_pool_update(void)
+@@ -256,6 +277,11 @@ void map_object_pool_update(void)
          if (object->action == KF_MAP_OBJECT_OP_NONE) {
              continue;
          }
@@ -1884,7 +2092,7 @@ index c4fee7aad3fff0d855e5f329a125281e6bba88a7..c5539011798f4d14f6f16be6b1af7bdb
          default:
              // Unlisted operations have no per-frame action here.
 diff --git a/src/game/map_object_pool.cpp b/src/game/map_object_pool.cpp
-index 29c748155b7804433f0616f9c71401d7c797e736..0d6ce28730948d9f1f570ebb93b15978753a821e 100644
+index 29c748155b7804433f0616f9c71401d7c797e736..3dbec15434f02cddb7bbae66f4fac94578b44f9b 100644
 --- a/src/game/map_object_pool.cpp
 +++ b/src/game/map_object_pool.cpp
 @@ -62,10 +62,20 @@ void map_apply_copy_region(KfMapCopyRegionId region_id)
@@ -1974,6 +2182,30 @@ index 29c748155b7804433f0616f9c71401d7c797e736..0d6ce28730948d9f1f570ebb93b15978
          case 0:
              point_x += KF_MAP_TILE_SIZE;
              break;
+@@ -165,9 +177,12 @@ void map_object_pool_clear(void)
+     map_object_state.gold_drop_sequence = 0;
+ }
+ 
+-void map_object_definitions_load(const KfMapObjectDefinitionTable *definitions)
++void map_object_definitions_load(const KfMapObjectDiscDefinitions *definitions)
+ {
+-    map_object_state.definitions = *definitions;
++    std::copy(std::begin(definitions->entries), std::end(definitions->entries), map_object_state.definitions.entries);
++    // PC extension: a mod's item lies on the ground as the disc's items do, with or without its mod.
++    std::fill(std::begin(map_object_state.definitions.entries) + KF_ITEM_MOD_FIRST, std::end(map_object_state.definitions.entries),
++        definitions->entries[kf_enum_encode<u8>(KF_ITEM_MEDICINAL_HERB)]);
+ }
+ 
+ static u8 map_object_effect_index(KfEffectRecord *effect)
+@@ -182,7 +197,7 @@ void map_object_pool_load(KfResourceChunk chunk) try
+ {
+     std::array<KfObjectPlacementData, KF_MAP_OBJECT_CAPACITY> decoded {};
+     const auto count = kf_object_placements_decode({chunk.data, chunk.size},
+-            {KF_MAP_COLUMNS, KF_MAP_OBJECT_DEFINITION_COUNT, KF_MAP_TILE_SIZE}, decoded);
++            {KF_MAP_COLUMNS, KF_MAP_OBJECT_ID_COUNT, KF_MAP_TILE_SIZE}, decoded);
+     KfMapObjectDefinition *definition;
+     const SVECTOR effect_direction{};
+     KfObjectId object_id;
 diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
 index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be289624de91 100644
 --- a/src/game/map_scripts.cpp
@@ -2092,7 +2324,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
  
              default:
 diff --git a/src/game/menu.cpp b/src/game/menu.cpp
-index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..9c60ad56a292d716b6ebee8a497f2a8764b41ab9 100644
+index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b93dfcfef 100644
 --- a/src/game/menu.cpp
 +++ b/src/game/menu.cpp
 @@ -2,7 +2,10 @@
@@ -2163,11 +2395,18 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..9c60ad56a292d716b6ebee8a497f2a87
  static std::optional<KfObjectId> menu_use_item_panel(void)
  {
      KfMenuList ctx;
-@@ -179,6 +204,14 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
+@@ -179,6 +204,21 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
              found++;
          }
      }
-+    // PC extension: the port's extra items, one each (kf/platform/extra_items.h).
++    // PC extension: the items of mods that are running, then the port's extra items, one each (kf/platform/extra_items.h).
++    for (const u8 extra : kf::extra_items_stocked(player_stock)) {
++        if (found >= static_cast<s32>(MENU_INVENTORY_ENTRY_CAPACITY))
++            break;
++        quantities[found] = player_stock[extra];
++        item_ids[found] = kf_enum_decode<KfObjectId>(extra);
++        found++;
++    }
 +    for (const u8 extra : kf::extra_items_offered()) {
 +        if (found >= static_cast<s32>(MENU_INVENTORY_ENTRY_CAPACITY))
 +            break;
@@ -2178,7 +2417,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..9c60ad56a292d716b6ebee8a497f2a87
      ctx.entry_count = found;
      ctx.entries = std::span<const KfObjectId>(item_ids).first(found);
      ctx.quantities = quantities;
-@@ -221,7 +254,16 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
+@@ -221,7 +261,16 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
                  return std::nullopt;
          } else if (kf::button_pressed(input, prev, kf::Button::Confirm)) {
              menu_play_input_sound(MENU_SOUND_CONFIRM);
@@ -2284,7 +2523,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3bb4ba4971 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1a616e489356807b329691fd7423083df6b2ffd9 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,16 @@
@@ -2345,7 +2584,27 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
  }
  
  static void menu_draw_backdrop_tile(s32 x, s32 y, bool flip_x, bool flip_y)
-@@ -176,6 +212,8 @@ void menu_drop_item_panel(void)
+@@ -156,8 +192,8 @@ void menu_status_panel(void)
+ void menu_drop_item_panel(void)
+ {
+     KfMenuList ctx;
+-    std::array<u8, KF_ITEM_COUNT> quantities;
+-    std::array<KfObjectId, KF_ITEM_COUNT> item_ids;
++    std::array<u8, KF_ITEM_ID_COUNT> quantities;
++    std::array<KfObjectId, KF_ITEM_ID_COUNT> item_ids;
+     s32 found;
+     s32 item_id;
+     KfMenuConfirmState confirm = KF_MENU_CONFIRM_IDLE;
+@@ -171,11 +207,16 @@ void menu_drop_item_panel(void)
+     found = 0;
+     item_id = 0;
+     auto &player_stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)];
+-    for (; item_id < KF_ITEM_COUNT; item_id++) {
++    for (; item_id < KF_ITEM_ID_COUNT; item_id++) {
++        // PC extension: past the disc's ids, the mod items with a row (none for a mod that is gone).
++        if (item_id >= KF_ITEM_COUNT && !kf::extra_item_named(item_id))
++            continue;
+         if (player_stock[item_id] != 0) {
              quantities[found] = player_stock[item_id];
              if (player_item_is_equipped(kf_enum_decode<KfObjectId>(item_id)))
                  quantities[found]--;
@@ -2354,7 +2613,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
              if (quantities[found] != 0) {
                  item_ids[found] = kf_enum_decode<KfObjectId>(item_id);
                  found++;
-@@ -266,6 +304,9 @@ KfMenuAction menu_system_panel(void)
+@@ -266,6 +307,9 @@ KfMenuAction menu_system_panel(void)
          case KF_MENU_SYSTEM_ACTION_QUIT:
              result = menu_two_option_prompt(
                  KF_MENU_WINDOW_SYSTEM, KF_MENU_SYSTEM_ROW_COUNT, cursor, {});
@@ -2364,7 +2623,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
              if (result == KF_MENU_RESULT_ACCEPTED) {
                  menu_load_texture(MENU_TEXTURE_POWER_OFF);
                  audio_stop_sequence_fade();
-@@ -313,6 +354,10 @@ KfMenuAction menu_system_panel(void)
+@@ -313,6 +357,10 @@ KfMenuAction menu_system_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2375,7 +2634,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
          }
  
          menu_frame_begin();
-@@ -415,6 +460,10 @@ KfMenuResult menu_save_panel(void)
+@@ -415,6 +463,10 @@ KfMenuResult menu_save_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2386,7 +2645,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
          }
  
          menu_frame_begin();
-@@ -518,6 +567,10 @@ KfMenuResult menu_load_panel(void)
+@@ -518,6 +570,10 @@ KfMenuResult menu_load_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2397,7 +2656,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
          }
  
          menu_frame_begin();
-@@ -630,11 +683,21 @@ void menu_config_panel(void)
+@@ -630,11 +686,21 @@ void menu_config_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2420,7 +2679,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
              menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1173,6 +1236,226 @@ enum {
+@@ -1173,6 +1239,237 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -2644,10 +2903,21 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
 +    return true;
 +}
 +
++// PC extension: an item's glyph row, empty for a mod's item, whose name is spelled instead.
++static MenuGlyphRow menu_item_glyphs(KfObjectId item_id)
++{
++    const auto index = kf_enum_encode<u8>(item_id);
++    if (index < KF_ITEM_COUNT)
++        return menu_resources().items[index];
++    MenuGlyphRow empty{};
++    empty.codes[0] = MENU_TEXT_END;
++    return empty;
++}
++
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1180,10 +1463,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1477,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -2666,29 +2936,31 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1196,7 +1484,8 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1195,8 +1497,9 @@ void menu_item_model_preview(KfObjectId item_id)
+ 
          text.position.x = MENU_ITEM_NAME_X;
          text.position.y = MENU_ITEM_PREVIEW_NAME_Y;
-         text.glyphs = menu_resources().items[kf_enum_encode<s32>(item_id)];
+-        text.glyphs = menu_resources().items[kf_enum_encode<s32>(item_id)];
 -        menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
++        text.glyphs = menu_item_glyphs(item_id);
 +        if (!menu_draw_extra_item_name(item_id, text.position))
 +            menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
  
          text.position.x = MENU_INVENTORY_QUANTITY_LABEL_X;
          text.glyphs.codes[0] = menu_glyphs::quantity[0];
-@@ -1206,7 +1495,10 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1206,7 +1509,10 @@ void menu_item_model_preview(KfObjectId item_id)
          menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
  
          text.position.x = MENU_INVENTORY_QUANTITY_VALUE_X;
 -        menu_format_number(item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<s32>(item_id)], MENU_ITEM_PREVIEW_QUANTITY_DIGITS, KF_FORMAT_PAD_SPACES, text.glyphs.codes);
 +        // PC extension: an extra item is not in the stock; the player holds one.
-+        const u8 held = kf::extra_item_is(kf_enum_encode<u8>(item_id)) ? 1
++        const u8 held = kf::extra_item_is(kf_enum_encode<u8>(item_id)) && kf_enum_encode<u8>(item_id) < KF_ITEM_MOD_FIRST ? 1
 +            : item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<s32>(item_id)];
 +        menu_format_number(held, MENU_ITEM_PREVIEW_QUANTITY_DIGITS, KF_FORMAT_PAD_SPACES, text.glyphs.codes);
          menu_draw_number(&menu_resources().assets.number_atlas, &text);
      }
  }
-@@ -1241,9 +1533,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1241,9 +1547,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -2705,17 +2977,19 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1256,7 +1552,8 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1255,8 +1565,9 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+ 
      text.position.x = MENU_ITEM_NAME_X;
      text.position.y = MENU_ITEM_PREVIEW_NAME_Y;
-     text.glyphs = menu_resources().items[kf_enum_encode<s32>(item_id)];
+-    text.glyphs = menu_resources().items[kf_enum_encode<s32>(item_id)];
 -    menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
++    text.glyphs = menu_item_glyphs(item_id);
 +    if (!menu_draw_extra_item_name(item_id, text.position))
 +        menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
  
      text.position.x = MENU_ITEM_DETAIL_PRICE_X;
      text.position.y += MENU_ITEM_PREVIEW_LINE_HEIGHT;
-@@ -1480,6 +1777,10 @@ static KfMenuResult menu_list_confirm_impl(
+@@ -1480,6 +1791,10 @@ static KfMenuResult menu_list_confirm_impl(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2726,7 +3000,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
          }
          draw_preview();
          menu_list_render(list);
-@@ -1546,6 +1847,10 @@ KfMenuResult menu_two_option_prompt(
+@@ -1546,6 +1861,10 @@ KfMenuResult menu_two_option_prompt(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2737,7 +3011,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
          }
  
          menu_frame_begin();
-@@ -1556,12 +1861,22 @@ KfMenuResult menu_two_option_prompt(
+@@ -1556,12 +1875,22 @@ KfMenuResult menu_two_option_prompt(
      }
  }
  
@@ -2760,7 +3034,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
      if (layout->title.position.x != 0) {
          menu_blit_sprite_translucent(
              &menu_resources().assets.row_background, &layout->title.position);
-@@ -1570,7 +1885,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1570,7 +1899,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
      if (row_count > 0) {
          row = 0;
          do {
@@ -2771,7 +3045,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
                  menu_blit_sprite_translucent(&menu_resources().assets.row_confirmed_background,
                      &layout->rows[row].position);
              } else {
-@@ -1587,6 +1904,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1587,6 +1918,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
                  text.position.x = CONFIG_OPTION_ON_X;
                  text.glyphs = menu_label(MenuLabel::LanguageName);
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
@@ -2784,7 +3058,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
              } else {
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &layout->rows[row]);
              }
-@@ -1622,6 +1945,7 @@ void menu_list_render(const KfMenuList *list)
+@@ -1622,6 +1959,7 @@ void menu_list_render(const KfMenuList *list)
      u32 tens;
      u32 ones;
  
@@ -2792,7 +3066,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
      const MenuGlyphString title{list->title_position,
          menu_resources().windows[kf_enum_encode<s32>(list->title_window)].rows[list->title_row].glyphs};
      if (list->title_position.x != 0) {
-@@ -1637,6 +1961,10 @@ void menu_list_render(const KfMenuList *list)
+@@ -1637,18 +1975,25 @@ void menu_list_render(const KfMenuList *list)
              text.position.x = list->list_x + MENU_LIST_TEXT_INSET;
              text.position.y = list->list_y + MENU_LIST_TEXT_INSET;
              text.position.y += row * MENU_LIST_ROW_HEIGHT;
@@ -2803,7 +3077,11 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
              const auto index = list->scroll_offset + row;
              text.glyphs = std::visit([index](auto entries) {
                  const auto id = entries[index];
-@@ -1647,8 +1975,11 @@ void menu_list_render(const KfMenuList *list)
+                 if constexpr (std::is_same_v<decltype(id), const KfObjectId>)
+                     return id == KF_OBJECT_NONE ? menu_label(MenuLabel::Unequip)
+-                        : menu_resources().items[kf_enum_encode<u8>(id)];
++                        : menu_item_glyphs(id);
+                 else
                      return id == KF_MAGIC_NONE ? menu_label(MenuLabel::Unequip)
                          : menu_resources().magic[kf_enum_encode<u8>(id)];
              }, list->entries);
@@ -2817,7 +3095,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
              if (!list->quantities.empty()) {
                  tens = list->quantities[index] / 10u;
                  ones = list->quantities[index] % 10u;
-@@ -1701,6 +2032,12 @@ enum {
+@@ -1701,6 +2046,12 @@ enum {
      MENU_PICKUP_BACKDROP_RIGHT_X = MENU_PICKUP_BACKDROP_LEFT_X + MENU_BACKDROP_COLUMN_STEP
  };
  
@@ -2830,7 +3108,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
  enum {
      MENU_FONT_COLUMNS = 16,
      MENU_FONT_CELL_WIDTH = 14,
-@@ -1716,6 +2053,16 @@ void menu_draw_two_option(
+@@ -1716,6 +2067,16 @@ void menu_draw_two_option(
      const MenuChoiceLabel *accept_label, const MenuChoiceLabel *decline_label,
      KfMenuConfirmChoice selected_choice, KfMenuConfirmState confirmation)
  {
@@ -2847,7 +3125,19 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
      if (selected_choice == KF_MENU_CHOICE_ACCEPT) {
          menu_blit_sprite(&menu_resources().assets.selection_cursor, &accept_label->position);
      } else {
-@@ -1791,6 +2138,26 @@ void menu_blit_sprite_translucent(
+@@ -1766,8 +2127,9 @@ void menu_draw_pickup_preview(KfObjectId item_id)
+ 
+     string.position.x = MENU_PICKUP_NAME_X;
+     string.position.y = MENU_ITEM_PREVIEW_NAME_Y;
+-    string.glyphs = menu_resources().items[kf_enum_encode<s32>(item_id)];
+-    menu_draw_string(&menu_resources().assets.glyph_atlas, &string);
++    string.glyphs = menu_item_glyphs(item_id);
++    if (!menu_draw_extra_item_name(item_id, string.position))   // PC extension
++        menu_draw_string(&menu_resources().assets.glyph_atlas, &string);
+ 
+     menu_draw_backdrop_tile(MENU_PICKUP_BACKDROP_LEFT_X, MENU_BACKDROP_TOP_Y, false, false);
+ 
+@@ -1791,6 +2153,26 @@ void menu_blit_sprite_translucent(
      menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
  }
  
@@ -2874,7 +3164,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..005562c8bc3f46ed33aeecb2cfefae3b
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2221,254 @@ void menu_draw_number(
+@@ -1854,10 +2236,254 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -4259,10 +4549,16 @@ index 0000000000000000000000000000000000000000..c79ba46ef27f4019645c8cd2582dd604
 +        online_player_draw_held(*weapon, body, held, placements[forearm_right]);
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
-index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec40264c9e 100644
+index 33680f578d7627d7bb43b29b77f58b843371198a..76af58e4816e1fc0175f6cd5d37a1ee5bce09893 100644
 --- a/src/game/player_core.cpp
 +++ b/src/game/player_core.cpp
-@@ -7,6 +7,9 @@
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <kf/platform/content.h>
+ #include <kf/game/audio.h>
+ #include <kf/game/collision.h>
+ #include <kf/game/game.h>
+@@ -7,6 +8,9 @@
  #include <kf/game/resources.h>
  #include <kf/lib/map_data.h>
  #include <kf/lib/null.h>
@@ -4272,7 +4568,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec
  
  #include <algorithm>
  #include <array>
-@@ -144,6 +147,7 @@ void player_begin_weapon_attack(void)
+@@ -144,6 +148,7 @@ void player_begin_weapon_attack(void)
          && player_state.equipped_weapon_id != KF_OBJECT_NONE) {
          player_state.weapon_attack_phase = 0;
          sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_WEAPON_ATTACK], KF_AUDIO_MAX_VOLUME);
@@ -4280,7 +4576,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec
          player_state.attack_charge_state.committed = player_state.attack_charge_state.current;
          if (player_state.attack_charge_state.current == KF_PLAYER_CHARGE_FULL) {
              player_state.weapon_attack_fully_charged = KF_WEAPON_ATTACK_FULL_CHARGE;
-@@ -226,6 +230,15 @@ void game_initialize_session(void)
+@@ -226,6 +231,15 @@ void game_initialize_session(void)
      player_state.compass_enabled = KF_PLAYER_OPTION_ON;
  }
  
@@ -4296,7 +4592,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec
  void player_get_floor_position(VECTOR &position)
  {
      position = {player_state.camera_position.vx, player_state.foot_height,
-@@ -304,6 +317,53 @@ s32 player_distance_to_point_in_cone(
+@@ -304,6 +318,53 @@ s32 player_distance_to_point_in_cone(
      return distance;
  }
  
@@ -4350,7 +4646,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec
  s32 player_distance_to_point(
      s32 point_x, s32 point_y, s32 point_z, s32 max_distance, s32 point_height)
  {
-@@ -314,6 +374,10 @@ s32 player_distance_to_point(
+@@ -314,6 +375,10 @@ s32 player_distance_to_point(
      s32 distance;
      s32 tolerance = point_height;
  
@@ -4361,7 +4657,7 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec
      dx = player_state.camera_position.vx - point_x;
      if (dx < -max_distance || max_distance < dx) {
          return KF_PROXIMITY_NONE;
-@@ -363,6 +427,21 @@ s32 player_move_horizontal(s32 heading, s32 distance)
+@@ -363,6 +428,21 @@ s32 player_move_horizontal(s32 heading, s32 distance)
      dx = (-kf::angle_sine(heading) * distance) >> KF_FIXED12_BITS;
      new_z = dz + player_state.camera_position.vz;
      new_x = dx + player_state.camera_position.vx;
@@ -4383,8 +4679,20 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..6f605f4c789d40d068d363c91a2b93ec
      for (;;) {
          const auto collision = collision_query_world(new_x, player_state.foot_height, new_z,
                  KF_COLLISION_PLAYER_RADIUS, KF_COLLISION_PLAYER_HEIGHT,
+@@ -584,7 +664,10 @@ void player_warp_to_floor_entry(void)
+     player_get_floor_position(position);
+     player_warp_shimmer(KF_WARP_SHIMMER_GROW_REMOVE, &position);
+     floor = player_state.progress_state.current_floor;
+-    entry = &floor_entry_cells[kf_enum_encode<u8>(floor) - 1];
++    // PC extension: a mod's floor names its own entrance (kf/platform/content.h).
++    const auto mod_entry = kf::mod_floor_entry(kf_enum_encode<u8>(floor));
++    const KfFloorEntryCell mod_cell = {mod_entry.x, mod_entry.z};
++    entry = kf_floor_is_mod(kf_enum_encode<s32>(floor)) ? &mod_cell : &floor_entry_cells[kf_enum_encode<u8>(floor) - 1];
+     player_state.previous_map_cell.x = entry->x;
+     player_state.previous_map_cell.z = entry->z;
+     player_state.camera_position.vx = player_state.previous_map_cell.x * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7bb71f1f99 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3b1824f84 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
 @@ -1,4 +1,8 @@
@@ -4396,6 +4704,15 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
+@@ -51,7 +55,7 @@ s32 player_death_saved_fog_near;
+ 
+ MATRIX player_death_saved_color_matrix;
+ 
+-std::array<std::array<u8, KF_ITEM_COUNT>, KF_ITEM_STOCK_BANK_COUNT> item_stock;
++std::array<std::array<u8, KF_ITEM_ID_COUNT>, KF_ITEM_STOCK_BANK_COUNT> item_stock;
+ 
+ void player_death_begin(void)
+ {
 @@ -59,12 +63,16 @@ void player_death_begin(void)
      player_state.death_camera_pitch_step = 0;
      player_state.death_visual_blend = 0;
@@ -4413,7 +4730,15 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
      player_state.experience = 0;
      player_state.progress_state.level = 1;
      player_state.progress_state.current_floor = KF_FLOOR_1;
-@@ -188,6 +196,10 @@ void player_adjust_hp(s32 delta)
+@@ -107,6 +115,7 @@ void game_state_initialize(void)
+     player_state.darkness_timer = KF_PLAYER_STATUS_TIMER_INACTIVE;
+     player_state.curse_timer = KF_PLAYER_STATUS_TIMER_INACTIVE;
+     map_runtime_state.world_state = {};
++    map_mod_floor_records = {};   // PC extension
+     item_stock = {};
+     item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_SHORT_SWORD)] = 1;
+     item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_MEDICINAL_HERB)] = 1;
+@@ -188,6 +197,10 @@ void player_adjust_hp(s32 delta)
  {
      s32 value = player_state.vitals.current_hp;
  
@@ -4424,7 +4749,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
      value += delta;
  
      if (value <= 0) {
-@@ -223,125 +235,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
+@@ -223,125 +236,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
      }
  }
  
@@ -4650,7 +4975,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
  }
  
  void player_increment_physical_power_training(void)
-@@ -412,6 +435,7 @@ void player_add_experience(s16 amount)
+@@ -412,6 +436,7 @@ void player_add_experience(s16 amount)
          player_state.base_magic = std::min<s32>(player_state.base_magic, KF_PLAYER_POWER_MAX);
          player_recalculate_combat_stats();
          notify_enqueue(KF_NOTIFICATION_LEVEL_UP);
@@ -4658,7 +4983,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
          sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_LEVEL_UP], KF_AUDIO_MAX_VOLUME);
      }
  }
-@@ -447,6 +471,11 @@ void player_apply_damage(
+@@ -447,6 +472,11 @@ void player_apply_damage(
      s32 loss;
      s32 remaining;
  
@@ -4670,7 +4995,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
      if ((status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
          player_state.curse_timer = KF_CURSE_DURATION_UPDATES;
          player_state.status_effect_flags |= KF_PLAYER_STATUS_CURSE;
-@@ -495,6 +524,14 @@ void player_apply_damage(
+@@ -495,6 +525,14 @@ void player_apply_damage(
      damage += KF_DAMAGE_SUBUNITS_PER_HP / 2;
      damage = (scale_q12 * (damage / KF_DAMAGE_SUBUNITS_PER_HP)) >> KF_FIXED12_BITS;
      loss = (multiplier_tenths * damage) / KF_PLAYER_DAMAGE_MULTIPLIER_ONE;
@@ -4685,7 +5010,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
      if (loss != 0) {
          remaining = player_state.vitals.current_hp - loss;
          remaining = std::max<s32>(remaining, 0);
-@@ -505,6 +542,28 @@ void player_apply_damage(
+@@ -505,6 +543,28 @@ void player_apply_damage(
      }
  }
  
@@ -4714,7 +5039,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..8e76b183fff0fcafdd02d20bf254da7b
  void player_apply_radial_damage(
      const VECTOR *origin,
      u32 radius,
-@@ -520,6 +579,9 @@ void player_apply_radial_damage(
+@@ -520,6 +580,9 @@ void player_apply_radial_damage(
      s32 distance;
      u16 attenuation;
  
@@ -5014,7 +5339,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..bb90957b0ddbfc75fcc56a3f69f86266
          }
          player_update_movement_input(input);
 diff --git a/src/game/player_use_item.cpp b/src/game/player_use_item.cpp
-index b4dc15cd178b02cc492d80830474a514ddb80702..0ced05e7677ccfcb745256433c8de6f22dd5b8c6 100644
+index b4dc15cd178b02cc492d80830474a514ddb80702..8d61ef4b311a0b9b411061663ff8278b042850e9 100644
 --- a/src/game/player_use_item.cpp
 +++ b/src/game/player_use_item.cpp
 @@ -1,8 +1,10 @@
@@ -5028,7 +5353,17 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..0ced05e7677ccfcb745256433c8de6f2
  
  #include <array>
  
-@@ -52,6 +54,9 @@ void map_event_show_person_image(const KfMapEvent *event)
+@@ -33,6 +35,9 @@ std::array<char, person_image_path_capacity> person_image_path_template = {"PRSN
+ 
+ void actor_show_info_image(const KfActor *actor)
+ {
++    // PC extension: the disc has no picture of a mod's monster.
++    if (kf_floor_is_mod(kf_enum_encode<s32>(player_state.progress_state.current_floor)) || actor->definition_id >= KF_ACTOR_DEFINITION_COUNT)
++        return;
+     render_frame(NULL, NULL);
+     render_frame(NULL, NULL);
+     enemy_info_image_path_template[3] = '0' + kf_enum_encode<u8>(player_state.progress_state.current_floor);
+@@ -52,6 +57,9 @@ void map_event_show_person_image(const KfMapEvent *event)
  
  void player_use_item(KfObjectId item_id)
  {
@@ -5038,7 +5373,7 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..0ced05e7677ccfcb745256433c8de6f2
      KfMapObject *object;
      KfActor *actor;
      KfMapEvent *event;
-@@ -102,8 +107,10 @@ void player_use_item(KfObjectId item_id)
+@@ -102,8 +110,10 @@ void player_use_item(KfObjectId item_id)
                      if (object->link.link_id == kf_enum_encode<u8>(item_id)) {
                          object->link.link_id = KF_MAP_LINK_NONE;
                          sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_KEY_UNLOCK], PLAYER_KEY_UNLOCK_VOLUME);
@@ -5049,7 +5384,7 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..0ced05e7677ccfcb745256433c8de6f2
                          }
                      } else {
                          notify_enqueue(KF_NOTIFICATION_KEY_DOES_NOT_FIT);
-@@ -113,6 +120,8 @@ void player_use_item(KfObjectId item_id)
+@@ -113,6 +123,8 @@ void player_use_item(KfObjectId item_id)
              }
              index++;
          }
@@ -5058,7 +5393,7 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..0ced05e7677ccfcb745256433c8de6f2
          break;
  
      case KF_ITEM_DRAGON_CHALICE:
-@@ -165,6 +174,7 @@ void player_use_item(KfObjectId item_id)
+@@ -165,6 +177,7 @@ void player_use_item(KfObjectId item_id)
              break;
          }
          sound_ref_play(audio_playback(), &gameplay_sound_refs[KF_GAMEPLAY_SOUND_HARP], KF_AUDIO_MAX_VOLUME);
@@ -5067,7 +5402,7 @@ index b4dc15cd178b02cc492d80830474a514ddb80702..0ced05e7677ccfcb745256433c8de6f2
          break;
      case KF_ITEM_MEDICINAL_HERB:
 diff --git a/src/game/player_warp.cpp b/src/game/player_warp.cpp
-index 41c80ebec46a78661150cba8971617f367a64dd6..9f22f7a4b96c020a04a3e0be636a183a73d6a22a 100644
+index 41c80ebec46a78661150cba8971617f367a64dd6..76811ae6f128bc8dacae2f73c1e773326fb5a271 100644
 --- a/src/game/player_warp.cpp
 +++ b/src/game/player_warp.cpp
 @@ -1,4 +1,5 @@
@@ -5084,6 +5419,16 @@ index 41c80ebec46a78661150cba8971617f367a64dd6..9f22f7a4b96c020a04a3e0be636a183a
          }
          for (s16 i = 0; i < KF_CYLINDER_TRANSITION_COUNT; ++i) {
              auto *effect = effects[i];
+@@ -119,7 +121,8 @@ void player_warp_change_floor(KfFloorId floor, KfMapVariant map_variant)
+     map_unload_floor();
+     player_state.progress_state.current_floor = floor;
+     player_state.map_variant = map_variant;
+-    if (player_state.progress_state.highest_floor < floor) {
++    // PC extension: a mod's floor is no further into the story, which the highest floor measures.
++    if (!kf_floor_is_mod(kf_enum_encode<s32>(floor)) && player_state.progress_state.highest_floor < floor) {
+         player_state.progress_state.highest_floor = floor;
+     }
+     map_load_floor();
 diff --git a/src/game/render.cpp b/src/game/render.cpp
 index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..98e50014ee530711f8e858d4fcd163dffbacabfc 100644
 --- a/src/game/render.cpp
@@ -5855,7 +6200,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632a414bd82ef9909f1ab0b2a2130c8b0e7914c 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..34927a04bf39f50ff09eaa85699c2da7b9d3b634 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -3,6 +3,8 @@
@@ -5904,6 +6249,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632a414bd82ef9909f1ab0b2a2130c8
      tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
  
 -    for (auto &object : map_object_state.objects) {
+-        if (object.object_id < KF_MAP_OBJECT_RENDER_ID_END
 +    // PC extension: tag each moving thing's faces, with what occupies its slot,
 +    // so frame smoothing can move it between updates (KF_RENDER_TAG_*).
 +    auto tag = [](int base, std::size_t index, u32 identity) {
@@ -5912,7 +6258,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632a414bd82ef9909f1ab0b2a2130c8
 +    };
 +    for (std::size_t i = 0; i < std::size(map_object_state.objects); ++i) {
 +        auto &object = map_object_state.objects[i];
-         if (object.object_id < KF_MAP_OBJECT_RENDER_ID_END
++        if ((object.object_id < KF_MAP_OBJECT_RENDER_ID_END || (kf_enum_encode<u8>(object.object_id) >= KF_ITEM_MOD_FIRST && object.object_id != KF_OBJECT_NONE))
              && render_cell_is_visible(object.cell_x, object.cell_z, origin)) {
 +            tag(KF_RENDER_TAG_MAP_OBJECTS, i, kf_enum_encode<u8>(object.object_id));
              render_map_object(&object);
@@ -6026,7 +6372,7 @@ index 55e9edcbc4495d8cc7075c10334d57e8863d727d..f02ffdf13e557f83b720bb2c9acc01d6
          kf::FaceShading::Flat, HUD_SPRITE_OT_DEPTH);
  }
 diff --git a/src/game/resource_file.cpp b/src/game/resource_file.cpp
-index a89ed01864d01ed77774c0159d4d4234cf179f4e..80fd4319e6c80be8a3273ce72395b4712e14f208 100644
+index a89ed01864d01ed77774c0159d4d4234cf179f4e..8d8e3c96ce3edee16b16d43a66b184ce2488891d 100644
 --- a/src/game/resource_file.cpp
 +++ b/src/game/resource_file.cpp
 @@ -1,6 +1,7 @@
@@ -6037,21 +6383,23 @@ index a89ed01864d01ed77774c0159d4d4234cf179f4e..80fd4319e6c80be8a3273ce72395b471
  
  #include <array>
  
-@@ -28,7 +29,11 @@ KfResourceLoadResult resource_file_load_item_model(u8 **destination, s32 index,
+@@ -28,7 +29,13 @@ KfResourceLoadResult resource_file_load_item_model(u8 **destination, s32 index,
  {
      *destination = NULL;
      *loaded_size = 0;
 -    if (index < 0 || index >= KF_ITEM_COUNT || !item_model_files[index].size)
-+    if (index < 0 || index >= KF_ITEM_COUNT)
++    if (index < 0 || index >= KF_ITEM_ID_COUNT)
 +        return KF_RESOURCE_LOAD_FAILED;
 +    // PC extension: an extra item shows the model of the disc item it stands for (kf/platform/extra_items.h).
 +    index = kf::extra_item_model(static_cast<u8>(index));
++    if (index >= KF_ITEM_COUNT)
++        return KF_RESOURCE_LOAD_FAILED;
 +    if (!item_model_files[index].size)
          return KF_RESOURCE_LOAD_FAILED;
      return resource_file_try_load_allocated(memory_arena, destination, item_model_files[index].path.data(), loaded_size);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..e77c8bba3da9334287113504cf66b562c7a7b419 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274630c4bd5 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
 @@ -2,6 +2,8 @@
@@ -6172,7 +6520,15 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..e77c8bba3da9334287113504cf66b562
  kf::Language game_text_language()
  {
      return displayed_language.value_or(kf::game_language());
-@@ -137,6 +213,7 @@ void common_resources_load(void)
+@@ -130,20 +206,21 @@ void common_resources_load(void)
+         resource_chunk_data<KfMagicTable>(resource_chunk_view(stream, resource_end)));
+     stream = resource_stream_next(stream, resource_end);
+     // The original copy includes the next chunk's header and 148 growth bytes.
+-    map_object_definitions_load(resource_chunk_data<KfMapObjectDefinitionTable>(
++    map_object_definitions_load(resource_chunk_data<KfMapObjectDiscDefinitions>(
+         resource_stream_tail(stream, resource_end), "COM/COM.DAT map-object table"));
+     stream = resource_stream_next(stream, resource_end);
+     const auto level_growth = resource_chunk_view(stream, resource_end);
      if (level_growth.size < sizeof player_level_growth_table)
          kf::host_fail("Truncated player level growth table");
      memcpy(player_level_growth_table.data(), level_growth.data, sizeof player_level_growth_table);
@@ -6180,17 +6536,26 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..e77c8bba3da9334287113504cf66b562
      memory_release_last(memory_arena);
      memory_arena.allocation.cursor = block + KF_RESOURCE_REUSE_PREFIX_BYTES;
  }
+ 
+ void map_resource_path_set_floor(KfFloorId floor)
+ {
+-    map_resource_path[1] = kf_enum_encode<s32>(floor) + '0';
++    map_resource_path[1] = kf_floor_folder_char(floor);
+ }
+ 
+ u8 *map_resource_load_file(const char *filename, std::size_t *loaded_size)
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0b79ff4a5 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff3ebf2dd3 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  #include <kf/platform/prelude.h>
++#include <kf/platform/content.h>
 +#include <kf/platform/coop.h>
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
-@@ -7,13 +8,17 @@
+@@ -7,13 +9,17 @@
  #include <kf/lib/null.h>
  #include <kf/lib/resource_file.h>
  #include <kf/platform/assets.h>
@@ -6208,7 +6573,12 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  
  namespace {
  constexpr int save_no_equipment_id = 255;
-@@ -58,11 +63,15 @@ struct SavedGameState {
+@@ -54,15 +60,19 @@ void screen_show_image_until_input(const char *path);
+ struct SavedGameState {
+     KfPlayerState player;
+     KfMapSavedWorld world;
+-    std::array<std::array<u8, KF_ITEM_COUNT>, KF_ITEM_STOCK_BANK_COUNT> stock;
++    std::array<std::array<u8, KF_ITEM_ID_COUNT>, KF_ITEM_STOCK_BANK_COUNT> stock;
      std::array<KfMagicLearningState, KF_MAGIC_RECORD_COUNT> learned;
  };
  enum class SaveCodecMode { Read, Write };
@@ -6224,7 +6594,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  };
  
  template <typename T, typename Wire>
-@@ -102,6 +111,37 @@ static void save_padding(SaveCodec &io, std::size_t count) {
+@@ -102,6 +112,37 @@ static void save_padding(SaveCodec &io, std::size_t count) {
      }
  }
  
@@ -6262,7 +6632,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  // Each floor slot starts with KF_MAP_SAVED_RECORDS_OFFSET script bytes.
  static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId floor) {
      std::size_t used = 0;
-@@ -131,8 +171,24 @@ static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId f
+@@ -131,8 +172,24 @@ static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId f
      save_padding(io, KF_MAP_SAVED_RECORDS_OFFSET - used);
  }
  
@@ -6289,7 +6659,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  #define SAVE_FIELD(type, name) save_field<type>(io, p.name)
  #define SAVE_BYTES(name) save_bytes(io, p.name)
      SAVE_FIELD(s32, experience);
-@@ -182,14 +238,23 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+@@ -182,14 +239,23 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
      SAVE_FIELD(u32, equipment_effect_ticks);
      SAVE_FIELD(u8, selected_magic_id);
      SAVE_BYTES(unknown_5d);
@@ -6313,7 +6683,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
      SAVE_FIELD(u8, equipped_head_armor_id);
      SAVE_FIELD(u8, equipped_body_armor_id);
      SAVE_FIELD(u8, equipped_shield_id);
-@@ -203,24 +268,25 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+@@ -203,24 +269,25 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
      SAVE_FIELD(s16, view_rotation_offset.vx);
      SAVE_FIELD(s16, view_rotation_offset.vy);
      SAVE_FIELD(s16, view_rotation_offset.vz);
@@ -6343,7 +6713,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
      SAVE_BYTES(unknown_ce);
      SAVE_FIELD(s16, view_bob_offset);
      SAVE_FIELD(u16, view_bob_phase);
-@@ -231,14 +297,33 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+@@ -231,14 +298,33 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
      SAVE_BYTES(unknown_df);
  #undef SAVE_FIELD
  #undef SAVE_BYTES
@@ -6367,7 +6737,8 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
 +    save_card_gap(io, card_world_offset - card_player_bytes);   // never written by the game
 +    save_world_fields(io, state.world);
      for (auto &stock : state.stock)
-         save_bytes(io, stock);
+-        save_bytes(io, stock);
++        save_bytes(io, std::span<u8>(stock).first(KF_ITEM_COUNT));   // PC extension: a mod's ids go beside the card
      for (auto &learned : state.learned)
          save_field<u8>(io, learned);
 +    if (io.layout != SaveLayout::Card)
@@ -6379,7 +6750,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  }
  
  static u32 save_checksum(const u8 *data, std::size_t size) {
-@@ -251,7 +336,9 @@ static u32 save_checksum(const u8 *data, std::size_t size) {
+@@ -251,7 +337,9 @@ static u32 save_checksum(const u8 *data, std::size_t size) {
      return ~crc;
  }
  
@@ -6390,7 +6761,21 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
      static_assert(sizeof(KfMapObjectLink) == 8, "Update the floor record boundary when the compact link representation changes");
      for (const auto &floor : world.floors) {
          if (floor.records[0] == 0)
-@@ -297,7 +384,7 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+@@ -275,10 +363,11 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+         const u8 *object_ids = floor.records.data() + position;
+         for (std::size_t i = 0; i < KF_MAP_OBJECT_CAPACITY; ++i) {
+             const auto id = floor.records[position++];
+-            if (id >= KF_MAP_OBJECT_DEFINITION_COUNT && id != kf_enum_encode<u8>(KF_OBJECT_NONE))
++            // PC extension: a mod's item may lie on a floor, with or without its mod.
++            if (id >= KF_MAP_OBJECT_DEFINITION_COUNT && id != kf_enum_encode<u8>(KF_OBJECT_NONE) && !kf_item_id_valid(id))
+                 return false;
+             if (id != kf_enum_encode<u8>(KF_OBJECT_NONE) && i >= KF_MAP_OBJECT_GOLD_DROP_FIRST) {
+-                if (i < KF_MAP_OBJECT_DEFINITION_DROP_FIRST ? id != kf_enum_encode<u8>(KF_ITEM_GOLD_COIN) : id >= KF_ITEM_COUNT)
++                if (i < KF_MAP_OBJECT_DEFINITION_DROP_FIRST ? id != kf_enum_encode<u8>(KF_ITEM_GOLD_COIN) : !kf_item_id_valid(id))
+                     return false;
+             }
+         }
+@@ -297,7 +386,7 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
                  return false;
              KfMapObjectLink link{};
              std::memcpy(&link, floor.records.data() + position + 1, sizeof link);
@@ -6399,7 +6784,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
                  return false;
          }
          for (std::size_t group = 0; group < 3; ++group) {
-@@ -311,6 +398,13 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+@@ -311,6 +400,13 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
      return true;
  }
  
@@ -6413,7 +6798,17 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  static bool save_state_valid(const SavedGameState &state) {
      const auto &p = state.player;
      const auto floor = kf_enum_encode<u8>(p.progress_state.current_floor);
-@@ -326,6 +420,11 @@ static bool save_state_valid(const SavedGameState &state) {
+@@ -318,7 +414,8 @@ static bool save_state_valid(const SavedGameState &state) {
+     const auto weapon = kf_enum_encode<u8>(p.equipped_weapon_id);
+     const auto magic = kf_enum_encode<u8>(p.selected_magic_id);
+     if (p.vitals.maximum_hp == 0 || p.vitals.maximum_mp == 0
+-            || floor < 1 || floor > KF_MAP_SAVED_FLOOR_COUNT || highest < 1 || highest > KF_MAP_SAVED_FLOOR_COUNT
++            || floor < 1 || (floor > KF_MAP_SAVED_FLOOR_COUNT && !kf::mod_floor_loadable(floor))   // PC extension: a mod's floor
++            || highest < 1 || highest > KF_MAP_SAVED_FLOOR_COUNT
+             || (weapon != save_no_equipment_id && weapon >= KF_WEAPON_RECORD_COUNT)
+             || (magic != save_no_equipment_id && magic >= KF_MAGIC_PLAYER_COUNT)
+             || p.camera_position.vx < 0 || p.camera_position.vx >= KF_MAP_COLUMNS * KF_MAP_TILE_SIZE
+@@ -326,6 +423,11 @@ static bool save_state_valid(const SavedGameState &state) {
              || p.motion_state.map_cell.x >= KF_MAP_COLUMNS
              || p.motion_state.map_cell.z >= KF_MAP_ROWS)
          return false;
@@ -6425,7 +6820,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
      const std::array<KfObjectId, 5> armor = {p.equipped_head_armor_id, p.equipped_body_armor_id,
          p.equipped_shield_id, p.equipped_arm_armor_id, p.equipped_leg_armor_id};
      for (const auto id : armor) {
-@@ -368,41 +467,145 @@ static void save_state_apply(const SavedGameState &state) {
+@@ -368,41 +470,145 @@ static void save_state_apply(const SavedGameState &state) {
      // The existing load-return path reloads the floor, weapon and selected magic.
  }
  
@@ -6597,7 +6992,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  }
  
  static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
-@@ -418,76 +621,256 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
+@@ -418,76 +624,256 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
  
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries) {
      summaries = {};
@@ -6786,7 +7181,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
 +
 +static void coop_world_fields(SaveCodec &io, SavedGameState &state) {
 +    save_world_fields(io, state.world);
-+    save_bytes(io, state.stock[kf_enum_encode<u8>(KF_ITEM_STOCK_FIRST_SHOP)]);
++    save_bytes(io, std::span<u8>(state.stock[kf_enum_encode<u8>(KF_ITEM_STOCK_FIRST_SHOP)]).first(KF_ITEM_COUNT));
 +    save_bytes(io, state.stock[kf_enum_encode<u8>(KF_ITEM_STOCK_SECOND_SHOP)]);
 +}
 +
@@ -6819,7 +7214,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
 +    SavedGameState state = save_live_state();
 +    if (!coop_decode(character, coop_character_fields, state) || !coop_decode(world, coop_world_fields, state))
 +        return false;
-+    state.stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)] = pack;
++    std::copy(pack.begin(), pack.end(), state.stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)].begin());
 +    state.player.gold = gold;
 +    if (!save_state_valid(state))
 +        return false;
@@ -6890,7 +7285,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
  void menu_play_input_sound(KfMenuSoundCue cue)
  {
      SoundRef sound;
-@@ -542,7 +925,7 @@ void screen_show_image_until_input(const char *path)
+@@ -542,7 +928,7 @@ void screen_show_image_until_input(const char *path)
      const auto alternate = comparison_image_read(path, game_graphics_runtime.display_state.asset_load_capacity);
      // Transparent glyph pixels need the original backdrop when replacing a page.
      kf::Image backdrop{};
@@ -6899,7 +7294,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
          kf::host_fail("Cannot capture the dialogue background.");
      bool showing_alternate = false;
      bool reported_unavailable = false;
-@@ -552,7 +935,7 @@ void screen_show_image_until_input(const char *path)
+@@ -552,7 +938,7 @@ void screen_show_image_until_input(const char *path)
          const bool compare = kf::host_action_held(kf::Action::compare_language);
          const bool show_alternate = compare && !alternate.empty();
          if (show_alternate != showing_alternate) {
@@ -6908,7 +7303,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..9645fc811e83d04a6da9d3adf90ec6f0
                  kf::host_fail("Cannot restore the dialogue background.");
              if (show_alternate)
                  tim_upload_images(alternate.data(), alternate.size());
-@@ -597,11 +980,13 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
+@@ -597,11 +983,13 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
          kf_enum_encode<s32>(character_id) % 10 + '0';
      talk_image_path_template[talk_stage_offset] = stage + '0';
      talk_image_path_template[talk_page_offset] = page + '0';

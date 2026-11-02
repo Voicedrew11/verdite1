@@ -33,7 +33,7 @@ namespace kf::ext {
 namespace {
 
 constexpr std::size_t table_count = 5;
-constexpr int first_floor = 1, last_floor = 5;
+constexpr int first_floor = 1, last_floor = KF_FLOOR_MOD_FIRST + KF_FLOOR_MOD_COUNT - 1;
 constexpr int last_growth_level = KF_PLAYER_LEVEL_GROWTH_COUNT; // level 1 is the table's first row
 constexpr int first_shop = kf_enum_encode<int>(KF_ITEM_STOCK_FIRST_SHOP);
 constexpr int last_shop = first_shop + KF_ITEM_SHOP_COUNT - 1;
@@ -42,7 +42,7 @@ constexpr int first_armour = kf_enum_encode<int>(KF_ITEM_IRON_MASK);
 constexpr int last_armour = kf_enum_encode<int>(KF_ITEM_FEATHER_BOOTS);
 constexpr std::int64_t stat_max = 999; // attack and defense, as the player's are held
 
-using Prices = std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_COUNT>;
+using Prices = std::array<std::array<u16, KF_ITEM_SHOP_COUNT>, KF_ITEM_ID_COUNT>;
 
 // The tables as the game loaded them, before any mod's values.
 struct Originals {
@@ -159,13 +159,13 @@ template <auto game, auto original> RuleField price_rule(std::string_view name) 
 // A definition's drop: -1 for none, which the game keeps as KF_OBJECT_NONE (or 99, disabled).
 std::int64_t drop_item_of(KfObjectId drop) {
     const auto id = kf_enum_encode<std::int64_t>(drop);
-    return id < KF_ITEM_COUNT ? id : -1;
+    return kf_item_id_valid(static_cast<s32>(id)) ? id : -1;
 }
 RuleField drop_item_rule() {
     return {
         "drop_item",
         -1,
-        KF_ITEM_COUNT - 1,
+        KF_ITEM_ID_COUNT - 1,
         [](const RuleKey &key, std::int64_t value) {
             actor_state.definitions.entries[kind_of(key)].action_parameters.drop_object =
                 value < 0 ? KF_OBJECT_NONE : kf_enum_decode<KfObjectId>(static_cast<u8>(value));
@@ -245,7 +245,7 @@ std::vector<RuleKey> monster_keys() {
     std::vector<RuleKey> keys;
     if (rules.originals.definitions_floor == 0)
         return keys;
-    for (int kind = 0; kind < KF_ACTOR_DEFINITION_COUNT; ++kind)
+    for (int kind = 0; kind < KF_ACTOR_DEFINITION_CAPACITY; ++kind)
         keys.push_back({RulesTable::ActorDefinitions, rules.originals.definitions_floor, kind});
     return keys;
 }
@@ -257,7 +257,8 @@ std::vector<RuleKey> level_keys() {
 }
 std::vector<RuleKey> price_keys() {
     std::vector<RuleKey> keys;
-    for (int item = 0; item < KF_ITEM_COUNT; ++item)
+    for (int item = 0; item < KF_ITEM_ID_COUNT; ++item)
+        if (kf_item_id_valid(item))
         for (int shop = first_shop; shop <= last_shop; ++shop)
             keys.push_back({RulesTable::ShopPrices, item, shop});
     return keys;
@@ -280,6 +281,9 @@ void capture_definitions() {
     const int floor = kf_enum_encode<int>(player_state.progress_state.current_floor);
     rules.originals.definitions = actor_state.definitions;
     rules.originals.definitions_floor = floor >= first_floor && floor <= last_floor ? floor : 0;
+}
+void capture_added_definition(int kind) {
+    rules.originals.definitions.entries[kind] = actor_state.definitions.entries[kind];
 }
 void capture_growth() {
     rules.originals.growth = player_level_growth_table;
@@ -420,13 +424,15 @@ int check_in(lua_State *L, int argument, const char *what, int min, int max) {
 RuleKey check_monster(lua_State *L) {
     const int floor = check_in(L, 1, "floor", first_floor, last_floor);
     return {RulesTable::ActorDefinitions, floor,
-            check_in(L, 2, "kind", 0, KF_ACTOR_DEFINITION_COUNT - 1)};
+            check_in(L, 2, "kind", 0, KF_ACTOR_DEFINITION_CAPACITY - 1)};
 }
 RuleKey check_level(lua_State *L) {
     return {RulesTable::LevelGrowth, check_in(L, 1, "level", 1, last_growth_level), 0};
 }
 RuleKey check_price(lua_State *L) {
-    const int item = check_in(L, 1, "item", 0, KF_ITEM_COUNT - 1);
+    const int item = check_in(L, 1, "item", 0, KF_ITEM_ID_COUNT - 1);
+    if (!kf_item_id_valid(item))
+        field_error(L, 1, lua_pushfstring(L, "item %d is not an item id (0 to 79, or a mod's from 160)", item));
     return {RulesTable::ShopPrices, item, check_in(L, 2, "shop", first_shop, last_shop)};
 }
 // A weapon's record or an armour's (not an accessory's, which has none).
@@ -446,6 +452,9 @@ int set_rule(lua_State *L, const RuleKey &key, int values_argument) {
     RuleFields fields = check_fields(L, values_argument, key.table);
     // The gold coin as a drop has no amount, so it would fall as a coin worth nothing.
     const auto drop = fields.find(drop_item_field);
+    if (key.table == RulesTable::ActorDefinitions && drop != fields.end() && drop->second != -1 &&
+        !kf_item_id_valid(static_cast<s32>(drop->second)))
+        field_error(L, values_argument, "drop_item is not an item id (0 to 79, or a mod's from 160)");
     if (key.table == RulesTable::ActorDefinitions && drop != fields.end() &&
         drop->second == kf_enum_encode<std::int64_t>(KF_ITEM_GOLD_COIN))
         field_error(L, values_argument, "drop_item 39 is the gold coin; set gold instead");
@@ -644,6 +653,10 @@ void rules_lay_originals() {
         return;
     rules.laid_order.reset();
     lay_all({});
+}
+
+void rules_definition_added(int kind) {
+    capture_added_definition(kind);
 }
 
 } // namespace kf::ext

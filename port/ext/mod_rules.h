@@ -13,6 +13,8 @@ namespace kf::ext {
 // The kf.rules table, for api_tables.
 verdite::ModTable rules_table();
 
+// A mod added this kind's row to the loaded floor: its numbers are now the game's own, for the rules.
+void rules_definition_added(int kind);
 // The mod's values come off (it unloaded, reloaded or failed).
 void rules_forget(std::string_view id);
 // Lays the values of these mods, in load order, over the originals; any other mod's values are

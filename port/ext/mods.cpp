@@ -47,6 +47,7 @@
 #include "mod_assets.h"
 #include "mod_audio.h"
 #include "mod_automap.h"
+#include "mod_content.h"
 #include "mod_draw.h"
 #include "mod_play.h"
 #include "mod_rules.h"
@@ -62,7 +63,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.15";
+constexpr const char *api_version = "0.16";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -212,8 +213,8 @@ std::optional<WarpRequest> warp_request;   // the last call wins
 
 KfFloorId check_floor(lua_State *L, int index) {
     const lua_Integer floor = luaL_checkinteger(L, index);
-    if (floor < 1 || floor > 5)
-        luaL_error(L, "floor %I is not 1 to 5", floor);
+    if (floor < 1 || (floor > KF_MAP_SAVED_FLOOR_COUNT && (floor > 255 || !mod_content_floor_offered(static_cast<std::uint8_t>(floor)))))
+        luaL_error(L, "floor %I is not 1 to 5, or a floor of a mod that is running", floor);
     return kf_enum_decode<KfFloorId>(static_cast<int>(floor));
 }
 
@@ -442,6 +443,7 @@ void forget_mod(std::string_view id) {
     forget_mod_play(id);
     mod_audio_forget(id);
     mod_scene_clear_mod(id);
+    mod_content_forget(id);
 }
 
 // Mods' sounds stop while mods are off (coop), and while a mod is held or not running.
@@ -471,7 +473,7 @@ void stop_shapes_of_inactive_mods() {
 // ---------- kf.actors: the monsters on the floor ----------
 // The kinds placed on the floor as it loaded: the models the floor's map loaded are the ones its
 // placements name, so these are the kinds kf.actors.spawn may make.
-std::array<bool, KF_ACTOR_DEFINITION_COUNT> kinds_on_floor{};
+std::array<bool, KF_ACTOR_DEFINITION_CAPACITY> kinds_on_floor{};
 
 void record_kinds_on_floor() {
     kinds_on_floor.fill(false);
@@ -656,6 +658,29 @@ int kf_actors_kinds(lua_State *L) {
     return 1;
 }
 
+// kf.content.monster: a new kind on this floor, a copy of one the floor has, sharing its model and clips.
+// Numbers change through kf.rules.set_monster. Rows go when the floor is next loaded.
+int kf_content_monster(lua_State *L) {
+    if (last_floor == 0)   // on_map_load comes before play: the floor's rows are there, and kinds_on_floor
+        return luaL_error(L, "kf.content.monster needs a floor loaded");
+    const lua_Integer base = luaL_checkinteger(L, 1);
+    if (base < 0 || base >= KF_ACTOR_DEFINITION_CAPACITY || !kinds_on_floor[static_cast<std::size_t>(base)])
+        return luaL_error(L, "kind %I is not on this floor", base);
+    auto &rows = actor_state.definitions.entries;
+    for (int kind = KF_ACTOR_DEFINITION_COUNT; kind < KF_ACTOR_DEFINITION_CAPACITY; ++kind) {
+        // The kinds this floor's placements use, and those a mod added since it loaded. Any other row is the disc's
+        // leftovers, or a mod's values kept for the kind's number (kf.rules), and no monster uses it.
+        if (kinds_on_floor[kind])
+            continue;
+        rows[kind] = rows[base];
+        kinds_on_floor[kind] = true;
+        rules_definition_added(kind);
+        lua_pushinteger(L, kind);
+        return 1;
+    }
+    return luaL_error(L, "this floor's %d monster kinds are all in use", static_cast<int>(KF_ACTOR_DEFINITION_CAPACITY));
+}
+
 int kf_actors_set_hp(lua_State *L) {
     check_floor_in_play(L);
     const std::size_t slot = check_listed_slot(L, 1);
@@ -713,7 +738,7 @@ int kf_actors_remove(lua_State *L) {
 int kf_actors_spawn(lua_State *L) {
     check_floor_in_play(L);
     const lua_Integer kind = luaL_checkinteger(L, 1);
-    if (kind < 0 || kind >= KF_ACTOR_DEFINITION_COUNT || !kinds_on_floor[static_cast<std::size_t>(kind)])
+    if (kind < 0 || kind >= KF_ACTOR_DEFINITION_CAPACITY || !kinds_on_floor[static_cast<std::size_t>(kind)])
         luaL_error(L, "kind %I is not on this floor", kind);
     const VECTOR position = check_open_position(L, 2);
     const auto yaw = optional_yaw(L, 4);
@@ -742,18 +767,28 @@ u8 &pack_count(u8 item) {
     return item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][item];
 }
 
-// An item the pack can name: 0 to 79 with a name in the menus.
+// An item's name: the disc's for 0 to 79, or the row of a mod's that is running; else none.
+const char *item_name_of(lua_Integer item) {
+    if (item < 0 || item >= KF_ITEM_ID_COUNT)
+        return nullptr;
+    if (item < KF_ITEM_COUNT)
+        return item_english_name(static_cast<u8>(item));
+    const ExtraItem *row = mod_content_item(static_cast<u8>(item));
+    return row ? row->english.data() : nullptr;
+}
+
+// An item the pack can name.
 u8 check_named_item(lua_State *L, int index) {
     const lua_Integer item = luaL_checkinteger(L, index);
-    if (item < 0 || item >= KF_ITEM_COUNT || !item_english_name(static_cast<u8>(item)))
-        luaL_error(L, "item %I is not a named item (0 to 79)", item);
+    if (!item_name_of(item))
+        luaL_error(L, "item %I is not a named item (0 to 79, or a mod's from 160)", item);
     return static_cast<u8>(item);
 }
 
 int kf_items_count(lua_State *L) {
     const lua_Integer item = luaL_checkinteger(L, 1);
-    if (item < 0 || item >= KF_ITEM_COUNT)
-        luaL_error(L, "item %I is not 0 to 79", item);
+    if (item < 0 || item > KF_ITEM_ID_COUNT || !kf_item_id_valid(static_cast<s32>(item)))
+        luaL_error(L, "item %I is not an item id (0 to 79, or a mod's from 160)", item);
     lua_pushinteger(L, pack_count(static_cast<u8>(item)));
     return 1;
 }
@@ -782,9 +817,20 @@ int kf_items_take(lua_State *L) {
     return 1;
 }
 
+// As a monster's drop falls: it can be picked up, and is saved with the floor.
+int kf_items_drop(lua_State *L) {
+    check_floor_in_play(L);
+    const u8 item = check_named_item(L, 1);
+    if (item == kf_enum_encode<u8>(KF_ITEM_GOLD_COIN))
+        return luaL_error(L, "item 39 is the gold coin, which has no amount");
+    const VECTOR position = check_open_position(L, 2);
+    map_object_spawn_drop(KF_MAP_OBJECT_DROP_FROM_PLACEMENT, kf_enum_decode<KfObjectId>(item), &position, 0);
+    return 0;
+}
+
 int kf_items_description(lua_State *L) {
     const lua_Integer item = luaL_checkinteger(L, 1);
-    const std::string text = item >= 0 && item < KF_ITEM_COUNT ? item_description(static_cast<u8>(item)) : std::string();
+    const std::string text = item >= 0 && item < KF_ITEM_ID_COUNT ? item_description(static_cast<u8>(item)) : std::string();
     if (text.empty())
         lua_pushnil(L);
     else
@@ -794,7 +840,7 @@ int kf_items_description(lua_State *L) {
 
 int kf_items_name(lua_State *L) {
     const lua_Integer item = luaL_checkinteger(L, 1);
-    const char *name = item >= 0 && item < KF_ITEM_COUNT ? item_english_name(static_cast<u8>(item)) : nullptr;
+    const char *name = item_name_of(item);
     if (name)
         lua_pushstring(L, name);
     else
@@ -1117,6 +1163,14 @@ verdite::ModTable ui_table() {
             .fields = {}};
 }
 
+std::vector<verdite::ModFunction> content_functions() {
+    auto functions = mod_content_functions();
+    functions.push_back({"monster", "fun(base: integer): integer",
+                         "Adds a monster kind to the loaded floor, a copy of a kind on it; its kind, for kf.actors and kf.rules. Gone at the next floor load.",
+                         kf_content_monster});
+    return functions;
+}
+
 std::vector<verdite::ModTable> api_tables() {
     using verdite::ModFunction;
     constexpr std::string_view view_type = "fun(): number, number, number, number";
@@ -1205,14 +1259,20 @@ std::vector<verdite::ModTable> api_tables() {
                "Spawns a kind placed on this floor at a world position; the slot, or nil when the pool is full.",
                kf_actors_spawn}},
          .fields = {}},
+        {.path = "kf.content",
+         .doc = "Things a mod adds beside the disc's: items and floors from load, monster kinds while a floor is loaded.",
+         .functions = content_functions(),
+         .fields = {}},
         {.path = "kf.items",
-         .doc = "The player's pack: stacks of 99 for each item id (0 to 79).",
+         .doc = "The player's pack: stacks of 99 for each item id (0 to 79, and a mod's from 160).",
          .functions =
              {ModFunction{"count", "fun(item: integer): integer", "How many of an item the pack holds.", kf_items_count},
               {"give", "fun(item: integer, n: integer): integer",
                "Adds n of a named item, up to a stack; the new count.", kf_items_give},
               {"take", "fun(item: integer, n: integer): integer", "Takes n of a named item, down to 0; the new count.",
                kf_items_take},
+              {"drop", "fun(item: integer, x: integer, z: integer)",
+               "Lays a named item at a world position in an open cell, falling as a monster's drop does.", kf_items_drop},
               {"name", "fun(item: integer): string?", "The item's English name, or nil for an id with none.",
                kf_items_name},
               {"description", "fun(item: integer): string?",
@@ -1283,7 +1343,7 @@ std::vector<verdite::ModEvent> event_table() {
                     integer_field("kind", "The actor's definition id."),
                     writable_field("gold", "The gold that falls; 0 for none.", 0, 65535),
                     writable_field("item", "The item that falls; -1 for none. 39, the gold coin, falls as none.", -1,
-                                   KF_ITEM_COUNT - 1)}},
+                                   KF_ITEM_ID_COUNT - 1)}},
         {.name = "on_level_up",
          .doc = "The player reached a new level.",
          .fields = {integer_field("level", "The new level.")}},
@@ -1291,6 +1351,10 @@ std::vector<verdite::ModEvent> event_table() {
          .doc = "The player takes an item from the ground or a container.",
          .fields = {integer_field("item", "The item id."),
                     writable_boolean_field("cancel", "true leaves the item where it lies.")}},
+        {.name = "on_use_item",
+         .doc = "The player chose a mod's item in the Use list.",
+         .fields = {integer_field("item", "The item id."),
+                    writable_boolean_field("used", "true closes the menus, as a used item does.")}},
         {.name = "on_map_load",
          .doc = "A floor's map was loaded.",
          .fields = {integer_field("floor", "1 to 5."),
@@ -1494,6 +1558,9 @@ void mods_shutdown() {
 }
 
 std::shared_ptr<const std::vector<std::uint8_t>> mod_asset_for_path(const char *path) {
+    // A floor a mod added is the game's to load for as long as a save or the player is on it.
+    if (auto floor_file = mod_content_floor_file(path))
+        return floor_file;
     if (!mods_active())
         return nullptr;
     return host->asset_override(path);
@@ -1719,7 +1786,7 @@ s16 mods_actor_killed(const ActorHit &hit, s16 experience) {
 
 // The gold coin as an item has no amount, so a mod's item 39 falls as none; the game's own is kept.
 ActorDrop mods_actor_drops(const ActorDrop &drop) {
-    if (!ext::mods_active() || !holds(drop.item, -1, KF_ITEM_COUNT - 1))
+    if (!ext::mods_active() || (drop.item != -1 && !kf_item_id_valid(drop.item)))
         return drop;
     std::array<verdite::ModEventValue, 4> values{std::int64_t{drop.actor_index}, std::int64_t{drop.definition_id},
                                                  std::int64_t{drop.gold}, std::int64_t{drop.item}};
@@ -1727,6 +1794,9 @@ ActorDrop mods_actor_drops(const ActorDrop &drop) {
     ActorDrop left = drop;
     left.gold = static_cast<u16>(std::get<std::int64_t>(values[2]));
     left.item = static_cast<s16>(std::get<std::int64_t>(values[3]));
+    // Ids 80 to 159 are the map's fittings, not items: a mod's choice of one falls as what the game chose.
+    if (left.item != -1 && !kf_item_id_valid(left.item))
+        left.item = drop.item;
     if (left.item == kf_enum_encode<s16>(KF_ITEM_GOLD_COIN) && left.item != drop.item)
         left.item = -1;
     return left;
@@ -1748,6 +1818,14 @@ bool mods_item_picked_up(u16 item) {
 
 // In coop last_floor keeps the single-player floor, so on_floor_change after leaving compares with
 // the floor the game was on before it, not a coop floor.
+bool mods_item_used(u16 item) {
+    if (!ext::mods_active())
+        return false;
+    std::array<verdite::ModEventValue, 2> values{std::int64_t{item}, false};
+    raise_event("on_use_item", values);
+    return std::get<bool>(values[1]);
+}
+
 void mods_floor_loaded(u8 floor, u8 map_variant) {
     ext::record_kinds_on_floor();   // the kinds this floor's placements use, for kf.actors
     if (ext::mods_paused())
@@ -1791,6 +1869,7 @@ void mods_new_game() {
 }
 
 void mods_game_saved(SaveSlot slot) {
+    ext::mod_content_save_write(slot);   // with or without mods: what they left in the stock is kept
     if (!ext::mods_active())
         return;
     const auto result = save_mods_write(slot, ext::host->save_tables());
@@ -1801,6 +1880,7 @@ void mods_game_saved(SaveSlot slot) {
 }
 
 void mods_game_loaded(SaveSlot slot) {
+    ext::mod_content_save_read(slot);
     if (!ext::mods_active())
         return;
     std::string json;

@@ -38,6 +38,8 @@ ActorDrop mods_actor_drops(const ActorDrop &drop);
 void mods_level_up(u8 level);
 // false: a mod cancelled the pickup, and the item stays where it lies.
 bool mods_item_picked_up(u16 item);
+// A mod's item chosen in the Use list; true when a handler says it was used, and the menus close.
+bool mods_item_used(u16 item);
 void mods_floor_loaded(u8 floor, u8 map_variant);
 void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page);
 // false: a mod cancelled the shop, which does not open.

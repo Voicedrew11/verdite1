@@ -49,6 +49,12 @@ inline constexpr std::size_t save_mods_capacity = 1 << 20;
 SaveFileResult save_mods_read(SaveSlot slot, std::string &json);
 SaveFileResult save_mods_write(SaveSlot slot, std::string_view json);
 
+// The stock of mods' items and the state of their floors, kept beside a slot (slot1.content ...;
+// port/ext/mod_content_save.h). Every platform with a save directory.
+inline constexpr std::size_t save_content_capacity = 1 << 17;
+SaveFileResult save_content_read(SaveSlot slot, std::vector<u8> &data);
+SaveFileResult save_content_write(SaveSlot slot, std::span<const u8> data);
+
 // PC extension data kept beside a slot (e.g. "slot1.kfs.map"). Desktop Windows only.
 SaveFileResult save_side_read(SaveSlot slot, const char *suffix, u8 *data, std::size_t capacity, std::size_t *size);
 SaveFileResult save_side_write(SaveSlot slot, const char *suffix, const u8 *data, std::size_t size);

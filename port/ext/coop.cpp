@@ -183,12 +183,16 @@ void host_roster() {
 
 // ---- the game's side ----
 
+// The disc's items only: mods are off in coop, and a mod's items stay where they lie in the stock.
 CoopItems game_pack() {
-    return item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)];
+    const auto &stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)];
+    CoopItems pack{};
+    std::copy_n(stock.begin(), pack.size(), pack.begin());
+    return pack;
 }
 
 void put_pack_in_game(const CoopItems &pack, std::uint32_t gold) {
-    item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)] = pack;
+    std::ranges::copy(pack, item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)].begin());
     player_state.gold = gold;
 }
 

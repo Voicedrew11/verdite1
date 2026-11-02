@@ -9,6 +9,7 @@
 #include <kf/platform/messages.h>
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,7 +18,13 @@ namespace kf {
 
 // The extra items the Use list offers now, in the table's order.
 std::vector<u8> extra_items_offered();
-// Whether id is an extra item's: its name and model are not the disc's.
+// The items of mods that are running a stock holds, in id order. A mod that is gone leaves its stock
+// held and unlisted until it comes back (docs/CONTENT_LAYER_PLAN.md).
+std::vector<u8> extra_items_stocked(std::span<const u8> stock);
+// Whether a mod's item id has a row now.
+bool extra_item_named(s32 id);
+// Whether id is an extra item's: its name and model are not the disc's. Every id for a mod's item is,
+// with or without a row.
 bool extra_item_is(u8 id);
 // Its name in language, as menu_spell spells it; empty for a disc item.
 std::string extra_item_name(u8 id, Language language);

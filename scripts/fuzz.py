@@ -213,7 +213,8 @@ def fuzz_env(args, run: Run, replay: Path | None = None) -> dict:
         env["KF_FUZZ_MACROS"] = "0"
     values = {"KF_FUZZ_AREA": args.area, "KF_FUZZ_MACRORATE": args.macro_rate, "KF_FUZZ_WEIGHTS": args.weights,
               "KF_FUZZ_SKIP": args.skip, "KF_FUZZ_GAME_SEED": args.game_seed, "KF_FUZZ_RAW": args.raw,
-              "KF_FUZZ_CALL": args.call, "KF_FUZZ_HOOK": args.hook}
+              "KF_FUZZ_CALL": args.call, "KF_FUZZ_HOOK": args.hook,
+              "KF_FUZZ_CONTENT": args.content}
     env.update({k: str(v) for k, v in values.items() if v is not None})
     if args.trace:
         env["KF_TRACE"] = str(run.dir / "trace.txt")
@@ -234,6 +235,9 @@ def prepare(args, run: Run, base_settings: dict) -> None:
     if args.corrupt_assets:
         corrupt_mod(args, run)
         settings[f"mods.{CORRUPT_MOD}"] = {"enabled": True}
+    if args.content is not None:
+        content_mod(args, run)
+        settings[f"mods.{CONTENT_MOD}"] = {"enabled": True}
     write_settings(run.dir, base_settings, settings)
 
 
@@ -297,6 +301,139 @@ def passing_mutant(rng: random.Random, helper: Path, disc_path: str, original: b
             if verdict == "ok":
                 return mutant, description
     return None
+
+
+# --- --content: a mod adding items, monster kinds and floors, its floors mutants of the disc's
+
+CONTENT_MOD = "fuzz-content"
+CONTENT_LUA = """
+-- Fuzzing only (scripts/fuzz.py --content). Every floor is tried, and those the game's check refuses are counted.
+local items, floors, kinds = {}, {}, {}
+local refused = 0
+local count = 0
+
+local function try_floor(i)
+    local entry = (ENTRIES)[i + 1]
+    local ok, result = pcall(kf.content.floor, {key = "f" .. i, folder = "floors/f" .. i, entry_x = entry[1], entry_z = entry[2]})
+    if ok then floors[#floors + 1] = result else refused = refused + 1; kf.log("refused", i, result) end
+end
+
+function on_load()
+    for i = 1, 6 do
+        items[i] = kf.content.item{key = "i" .. i, name = "FUZZ ITEM " .. i, description = "fuzz", model_item = (i * 7) % 39, buy = i, sell = i}
+    end
+    for i = 0, FLOORS - 1 do try_floor(i) end
+    kf.log("content floors accepted", #floors, "refused", refused)
+end
+
+function on_use_item(e)
+    kf.log("used", e.item)
+    kf.items.take(e.item, 1)
+    e.used = count % 2 == 0
+end
+
+function on_drop(e)
+    if count % 3 == 0 then e.item = items[(count % #items) + 1] end
+end
+
+function on_map_load(e)
+    kinds = {}
+    for base = 0, 3 do
+        local ok, kind = pcall(kf.content.monster, base)
+        if ok then
+            kinds[#kinds + 1] = kind
+            pcall(kf.rules.set_monster, e.floor, kind, {hp = 30 + base, drop_item = items[base + 1]})
+        end
+    end
+    kf.log("floor loaded", e.floor, "kinds added", #kinds)
+end
+
+local acts = 0
+
+local function act()
+    acts = acts + 1
+    local item = items[(acts % #items) + 1]
+    pcall(kf.items.give, item, 2)
+    if acts % 2 == 0 then pcall(kf.items.drop, item, kf.player.x, kf.player.z) end
+    if #kinds > 0 then
+        pcall(kf.actors.spawn, kinds[(acts % #kinds) + 1], kf.player.x, kf.player.z)
+    end
+    -- A warp takes longer than an act's gap, so these are far apart, or the world never gets to run.
+    if acts % 40 == 10 and #floors > 0 then
+        pcall(kf.warp, floors[(acts // 40 % #floors) + 1])
+    elseif acts % 40 == 30 then
+        pcall(kf.warp, (acts // 40 % 5) + 1)
+    end
+    if acts % 13 == 0 then kf.action_press("quick_save") end
+    if acts % 37 == 0 then kf.action_press("quick_load") end
+end
+
+function on_update()
+    count = count + 1
+    if count % 60 == 0 then act() end
+end
+"""
+# Where mutants may land, as (chunk of MIXA.DAT or MIXB.DAT): the data a floor's check reads.
+CONTENT_MIXA_CHUNKS = (0, 2, 3, 4, 5, 6)
+CONTENT_MIXB_CHUNKS = (0, 1, 3, 4)
+
+
+def file_chunks(data, count):
+    at, out = 0, []
+    for _ in range(count):
+        size = int.from_bytes(data[at:at + 4], "little")
+        out.append((at + 4, size))
+        at += 4 + size
+    return out
+
+
+def mutate_floor(rng: random.Random, folder: Path) -> str:
+    """A few changes inside one chunk of the floor's data, never changing a file's size."""
+    name, count, chosen = rng.choice((("MIXA.DAT", 8, CONTENT_MIXA_CHUNKS), ("MIXB.DAT", 5, CONTENT_MIXB_CHUNKS)))
+    data = bytearray((folder / name).read_bytes())
+    at, size = file_chunks(data, count)[rng.choice(chosen)]
+    if size == 0:
+        return "nothing"
+    changes = rng.randint(1, 6)
+    for _ in range(changes):
+        spot = at + rng.randrange(size)
+        if rng.random() < 0.5:
+            data[spot] = rng.randrange(256)
+        else:
+            data[spot] = rng.choice(WORD_VALUES) & 0xFF
+    (folder / name).write_bytes(data)
+    return f"{name}: {changes} byte(s) at {at}+{size}"
+
+
+def open_cell(folder: Path) -> tuple[int, int]:
+    data = (folder / "MIXA.DAT").read_bytes()
+    at, size = file_chunks(data, 8)[2]
+    grid = size // 5
+    side = int(grid ** 0.5)
+    collision = data[at + grid * 4:at + grid * 5]
+    index = next(i for i, kind in enumerate(collision) if kind == 1)
+    return index % side, index // side
+
+
+def content_mod(args, run: Run) -> None:
+    """The run's mod: one floor as the tool makes it, and --content mutants of it, chosen from the run's seed."""
+    rng = random.Random(run.seed * 1000003 + 0xF100F)
+    mod_dir = run.dir / USER_FOLDER / "mods" / CONTENT_MOD
+    tool = REPO / "tools" / "mod_floor_from_disc.py"
+    manifest, entries = [], []
+    for i in range(args.content + 1):
+        folder = mod_dir / "floors" / f"f{i}"
+        disc_floor = Path(args.data) / "KF" / f"B{rng.randint(1, 4)}"
+        subprocess.check_call([sys.executable, str(tool), str(disc_floor), str(folder)])
+        entries.append(open_cell(folder))
+        if i > 0:
+            manifest.append({"floor": i, "from": disc_floor.name, "change": mutate_floor(rng, folder)})
+    table = "{" + ", ".join(f"{{{x}, {z}}}" for x, z in entries) + "}"
+    lua = CONTENT_LUA.replace("ENTRIES", table).replace("FLOORS", str(args.content + 1))
+    (mod_dir / "main.lua").write_text(lua)
+    (mod_dir / "mod.json").write_text(json.dumps({"id": CONTENT_MOD, "name": "Content (fuzz)", "version": "1",
+                                                  "description": "Fuzzing only."}, indent=2))
+    (run.dir / "content.json").write_text(json.dumps(manifest, indent=2))
 
 
 def corrupt_mod(args, run: Run) -> None:
@@ -488,6 +625,8 @@ def rerun_command(args, run: Run) -> str:
         words += ["--hook", str(args.hook)]
     if args.corrupt_assets:
         words += ["--corrupt-assets", str(args.corrupt_assets)]
+    if args.content is not None:
+        words += ["--content", str(args.content)]
     for k, v in sorted(run.extra_env.items()):
         words += ["--env", f"{k}={v}"]
     for k, v in sorted(run.settings.items()):
@@ -745,6 +884,7 @@ TARGETS = {
     "coop_floor": ("the game state a room's players send, put into the game: snapshots (then run), writes, frames, "
                    "spells, records, a host's character and world", []),
     "online_frames": ("the service's frames, base64, records and the mesh's gossip", []),
+    "mod_floor": ("what a mod's floor and a save's side file hold: the floor check and the side file's decoder", []),
     "wav": ("a WAV file a mod plays: PCM at 8 or 16 bits, 1 or 2 channels", []),
 }
 FINDING_PREFIXES = ("crash-", "leak-", "timeout-", "oom-", "slow-unit-")
@@ -838,6 +978,9 @@ def main() -> int:
     g.add_argument("--hook", type=int, metavar="PER_10000",
                    help="answer every kf.hook point as a mod might: this many calls per 10000 have their arguments "
                         "changed or the function replaced; invariants are then off, so only crashes and fails are findings")
+    g.add_argument("--content", type=int, metavar="MUTANTS",
+                   help="a mod adds items, monster kinds and floors through kf.content, this many of its floors mutants of "
+                        "the disc's; invariants are then off, so only crashes and fails are findings")
     g.add_argument("--corrupt-assets", type=int, default=0, metavar="N",
                    help="each run's mod replaces N disc models (TMD) with mutants the game's check passes")
     g.add_argument("--area", help="start on floor 1-5, or random")

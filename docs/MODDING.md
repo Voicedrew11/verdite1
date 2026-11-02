@@ -112,10 +112,11 @@ The events are listed in `kf.d.lua` too.
 |---|---|---|
 | `on_damage` | `target` string, `"player"` or `"actor"`; `actor` integer, the actor's slot (-1 for the player); `kind` integer, the actor's definition id (-1 for the player); `amount` integer, writable 0 to 65535, the HP lost (0 for none); `by_player` boolean, the player made the blow (false for the player's own damage); `cause` string, `"blow"`, `"poison"` or `"equipment"` | the player or an actor loses HP. A `"blow"` is any hit that takes HP, including the pitfall's spikes (a poison hole only poisons, and its poison's ticks are `"poison"`); `"poison"` is the poisoned player's tick, 1 HP every 20 updates; `"equipment"` is worn armour's drain, 1 HP each time its interval comes round (of the armour, only the Blood Mask drains: every 30 updates). A fall deep enough to kill loses no HP: it raises only `on_death`. `amount` is the loss before `kf.play.invincible` ignores it. |
 | `on_kill` | `actor`, `kind`, `experience` integer, writable 0 to 32767 (the EXP the player gets; 0 unless the player made the kill, and writes are then ignored), `by_player` boolean | a blow kills an actor |
-| `on_drop` | `actor`, `kind`; `gold` integer, writable 0 to 65535 (0 for none); `item` integer, writable -1 to 79, the item that falls (-1 for none) | a dying actor reaches the point of its death animation where it drops (one with no death animation drops nothing), once per death, after the game's own rolls: `gold` and `item` are what the game would drop, and what the handlers leave is what falls. A placed monster's `item` is its placement's item (-1 when it has none), which always falls; a respawning monster's is its kind's item when the drop roll passed, -1 when it failed. An item set where the game dropped none falls as a kind's drop does. Item 39, the gold coin, falls as nothing: give gold with `gold`. The floor 5 boss and the transforming floor 4 monster drop nothing, so raise no event. |
+| `on_drop` | `actor`, `kind`; `gold` integer, writable 0 to 65535 (0 for none); `item` integer, writable -1, 0 to 79, or a mod's item, the item that falls (-1 for none; any other id leaves the game's own) | a dying actor reaches the point of its death animation where it drops (one with no death animation drops nothing), once per death, after the game's own rolls: `gold` and `item` are what the game would drop, and what the handlers leave is what falls. A placed monster's `item` is its placement's item (-1 when it has none), which always falls; a respawning monster's is its kind's item when the drop roll passed, -1 when it failed. An item set where the game dropped none falls as a kind's drop does. Item 39, the gold coin, falls as nothing: give gold with `gold`. The floor 5 boss and the transforming floor 4 monster drop nothing, so raise no event. |
 | `on_level_up` | `level` integer, the new level | the player reaches a level |
+| `on_use_item` | `item` integer, the item id; `used` boolean, writable, false | the player chose a mod's item in the Use list. `used` true closes the menus, as a used item does; false stays in the list. Taking it from the pack is the handler's. |
 | `on_item_pickup` | `item` integer, the item id; `cancel` boolean, writable | the player chooses to take an item from the ground or a container and has room for it, before it goes into the pack (`kf.items.count` does not count it yet). Cancelled, it is as if the player had chosen Cancel: the item stays where it lies and can be taken again. |
-| `on_map_load` | `floor` integer (1 to 5), `map_variant` integer | a floor's map loads, including a reload of the same floor |
+| `on_map_load` | `floor` integer (1 to 5, or a mod's), `map_variant` integer | a floor's map loads, including a reload of the same floor |
 | `on_floor_change` | `from` integer, `to` integer | the floor loaded differs from the last one loaded (`from` is 0 before any) |
 | `on_dialogue` | `floor`, `character`, `stage`, `page` integers | a dialogue page is shown |
 | `on_shop` | `bank` integer, the shop's stock bank; `cancel` boolean, writable | a shop is about to open, after the shopkeeper's dialogue. Cancelled, the shop does not open, and the shopkeeper goes back to standing. |
@@ -256,7 +257,7 @@ end
 | `kf.view_original()` | `x, y, w, h` of the original 320×240 area, centred in the picture |
 | `kf.player.<field>` | read/write player state (below) |
 | `kf.player_fields()` | list of field names |
-| `kf.warp(floor [, cell_x, cell_z [, yaw]])` | queued, see below |
+| `kf.warp(floor [, cell_x, cell_z [, yaw]])` | queued, see below; `floor` is 1 to 5, or a floor of a mod that is running |
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
@@ -343,13 +344,14 @@ if #kinds > 0 then kf.actors.spawn(kinds[1].kind, kf.player.x, kf.player.z + 400
 
 ### `kf.items`
 
-The player's pack: each item id from 0 to 79 holds up to a stack of 99.
+The player's pack: each item id, 0 to 79 and a mod's from 160 ([`kf.content`](#kfcontent)), holds up to a stack of 99.
 
 | call | returns |
 |---|---|
 | `kf.items.count(item)` | how many the pack holds |
 | `kf.items.give(item, n)` | adds `n` of a named item, up to a stack; the new count |
 | `kf.items.take(item, n)` | takes `n`, down to 0; the new count |
+| `kf.items.drop(item, x, z)` | lays a named item at a world position in an open cell, falling as a monster's drop does; not item 39, the gold coin |
 | `kf.items.name(item)` | the item's English name, or nil for an id with none |
 | `kf.items.description(item)` | what it does, as the item menu says in English (`"Heals 25 HP."`), or nil |
 
@@ -439,9 +441,9 @@ while the mods are paused in coop. Damage stays `on_damage`'s and drops
 
 | call | |
 |---|---|
-| `kf.rules.set_monster(floor, kind, values)` | a monster kind's numbers on a floor (1 to 5; `kind` 0 to 11, as `kf.actors` names it) |
+| `kf.rules.set_monster(floor, kind, values)` | a monster kind's numbers on a floor (1 to 5 or a mod's; `kind` 0 to 31, as `kf.actors` names it) |
 | `kf.rules.set_level(level, values)` | what reaching a level gives, 1 to 40 |
-| `kf.rules.set_price(item, shop, values)` | an item's prices (0 to 79) in a shop: its stock bank as `on_shop` reports it, 1 or 2 |
+| `kf.rules.set_price(item, shop, values)` | an item's prices (0 to 79, or a mod's) in a shop: its stock bank as `on_shop` reports it, 1 or 2 |
 | `kf.rules.set_regen(item, values)` | a weapon's (0 to 12) or armour's (13 to 38) intervals; accessories have none |
 | `kf.rules.clear()` | drops the calling mod's values |
 | `kf.rules.original_monster(floor, kind)` | the game's own numbers, shaped like `set_monster`'s values; nil unless that floor is the one loaded |
@@ -460,7 +462,7 @@ call. `kf.actors.kinds()` shows the numbers in play, rules laid; scale from
 | `hp` | 1–65535 | the HP a monster wakes with; one already awake keeps its HP |
 | `experience` | 0–32767 | the EXP the player's kill gives, before `on_kill` |
 | `gold` | 0–65535 | the gold it drops is a random amount below this |
-| `drop_item` | -1, 0–79 | the item a respawning monster drops when its roll passes (a placed one drops its placement's); -1 none. 39, the gold coin, is refused: set `gold` |
+| `drop_item` | -1, 0–79, a mod's | the item a respawning monster drops when its roll passes (a placed one drops its placement's); -1 none. 39, the gold coin, is refused: set `gold` |
 | `drop_chance` | 0–255 | the roll passes when a random 0–255 is at most this |
 | `attack = {cutting, striking, piercing}` | 0–999 | its blows' attack |
 | `defense = {cutting, striking, piercing, holy, fire}` | 0–999 | its defense against the player's blows and spells |
@@ -707,6 +709,71 @@ What a replacement leaves out of step (a door that never opens, a monster that n
 game that waits forever for what the function did) is the mod's to manage. What it could corrupt
 memory with is held back. See [HOOK_LAYER_PLAN.md](HOOK_LAYER_PLAN.md).
 
+### `kf.content`
+
+New things beside the disc's. Plan and limits: [CONTENT_LAYER_PLAN.md](CONTENT_LAYER_PLAN.md).
+
+| call | returns |
+|---|---|
+| `kf.content.item(row)` | the item's id, 160 or above |
+| `kf.content.monster(base)` | a new kind on the floor now loaded, a copy of `base` |
+| `kf.content.floor(row)` | the floor's number, 6 or above, for `kf.warp` |
+
+```lua
+local ring, crypt
+
+function on_load()
+    ring = kf.content.item{
+        key = "ember_ring",            -- the mod's own name for it; its id follows from this, from run to run
+        name = "EMBER RING",           -- capitals, digits, spaces and ' - . : what the menus can spell, 22 at most
+        japanese = "ひのゆびわ",         -- optional; the menus use name without it
+        description = "Warm to the touch.",
+        model_item = 48,               -- the disc item whose model it shows, in menus and on the ground, and falls as
+        buy = 500, sell = 250,         -- optional, in both shops; or kf.rules.set_price
+    }
+    crypt = kf.content.floor{key = "crypt", folder = "floors/crypt", entry_x = 14, entry_z = 1}
+end
+
+function on_use_item(e)
+    if e.item == ring then
+        kf.player.hp = kf.player.max_hp
+        kf.items.take(ring, 1)
+        e.used = true
+    end
+end
+
+function on_map_load(e)
+    local brute = kf.content.monster(0)                 -- again each load: a floor's kinds are that floor's
+    kf.rules.set_monster(e.floor, brute, {hp = 400, drop_item = ring})
+end
+```
+
+**Items.** A mod's item is listed in Use and Drop, can be bought and sold where a shop's stock bank holds it
+(`kf.raw.item_stock[1][id]`), is picked up, lies on floors and is saved. `model_item` is its model, so its
+look is a disc item's. There are 95 ids. Not yet: equipping one, and a model of its own.
+
+**Saves.** An id is kept for its `key` in `mods/.content_ids`, and never given to another key. A mod's items in a
+save stay when the mod is off, unlisted, and are there again when it is back; one on the ground shows as a Moonstone.
+A save's `slot1.content` beside the card holds them, so the card stays the PlayStation's own bytes for the disc's
+80 ids. The ids are this machine's: a save copied elsewhere with the same mods may name other items.
+
+**Monsters.** A kind shares its base's model and clips, so it needs no check of its own and looks like its base.
+Change its numbers with `kf.rules.set_monster`. A floor has 32 kinds, of which the disc's use the first 12. Kinds go
+at the next floor load, so add them in `on_map_load`, in the same order each time to keep their numbers.
+`kf.actors.spawn` makes them; a floor's own placements make the kinds its files hold.
+
+**Floors.** A floor is a folder of the mod's with the disc floor's four files: `MIX.TIM`, `MIXA.DAT`, `MIXB.DAT` and
+`SND0.SEQ`. `tools/mod_floor_from_disc.py KF/B1 mods/mine/floors/crypt` writes a start from one of the disc's (your
+own copy; never ship it). There is no editor yet. Each is checked when `kf.content.floor` is called, with the reason
+as the error, and held in memory; a file may be no larger than the disc's largest. The game has no way to get there
+but `kf.warp`, so a mod makes its own way in and out, say from `on_update` when the player stands on a cell.
+
+- It may hold 16 floors in all, and a floor may have no people, events, signs or inscriptions yet: their pictures and
+  pages are disc files. `kf.automap` reads floor 0 there, so the map stays dark, and the Truth Mirror shows nothing.
+- A floor's state is saved in the same side file. A save made on a mod's floor shows as damaged until its mod is back.
+- A floor whose files change between saves starts afresh, and it cannot change while the player stands on it.
+- None of this applies in coop, where mods are off and a mod's items and floors stay out of the room.
+
 ### `kf.audio`
 
 The game's sounds and music, and a mod's own WAV files.
@@ -838,7 +905,7 @@ from Lua reaches the game's memory unchecked, since mods come from strangers.
 | saves | a `save` table stored with each save slot, beside the game's own | |
 | other mods | `mods.get(id)` returns another mod's exported table; mods can raise their own events | |
 | functions | call any game function the decomp's headers declare; run a mod's code before, after or in place of one | arguments checked as raw writes are |
-| content | new items, monster kinds, floors: the game's fixed-size tables grown so a mod's rows fit beside the disc's | |
+| content | new items, monster kinds, floors (0.16, `kf.content`): the game's fixed-size tables grown so a mod's rows fit beside the disc's | |
 | raw | `kf.raw.<global>.<field>`: every named global and struct field in the decomp, typed and bounds-checked | unstable: follows the decomp's renames |
 
 ### What a mod cannot do
@@ -943,10 +1010,12 @@ mods are off in coop (decided 2026-10-31).
    in place of a game function. We compile the decomp, so the build can give
    each function a hook point; no patching at run time.~~ Done in 0.15 (2026-11-02):
    `kf.hook`, 270 hook points ([HOOK_LAYER_PLAN.md](HOOK_LAYER_PLAN.md)).
-10. Growing the game's tables for new content: more item ids than the disc's
-    80 (`port/ext/extra_items.cpp` fills unused ids today, it does not add
-    any), more monster kinds a floor, new floors, as patches that raise the
-    capacities and keep the disc's rows where the game expects them.
+10. ~~Growing the game's tables for new content: more item ids than the disc's
+    80, more monster kinds a floor, new floors, as patches that raise the
+    capacities and keep the disc's rows where the game expects them.~~ Done in 0.16
+    (2026-11-02): `kf.content`, 95 item ids, 32 kinds a floor, 16 floors
+    ([CONTENT_LAYER_PLAN.md](CONTENT_LAYER_PLAN.md)). Left for later: items to equip,
+    models of their own, and floors with people and signs.
 
 ### Open questions
 

@@ -952,7 +952,7 @@ std::optional<std::string> check_effects_and_events() {
 std::vector<verdite::FuzzInvariant> invariants() {
     // A raw write, a call or a hook breaks the game's own invariants by design, so under KF_FUZZ_RAW,
     // KF_FUZZ_CALL or KF_FUZZ_HOOK a violation is not a finding; crashes, sanitizer reports and host_fail still are.
-    if (raw_rate() > 0 || call_rate() > 0 || hook_rate() > 0)
+    if (raw_rate() > 0 || call_rate() > 0 || hook_rate() > 0 || std::getenv("KF_FUZZ_CONTENT"))
         return {};
     std::vector<verdite::FuzzInvariant> all = {
         {"vitals", check_vitals},       {"progress", check_progress}, {"position", check_position},
@@ -1271,7 +1271,7 @@ std::vector<std::string> notes() {
     std::vector<std::string> out;
     for (const char *name : {"KF_FUZZ_TICKS", "KF_FUZZ_MACROS", "KF_FUZZ_MACRORATE", "KF_FUZZ_WEIGHTS", "KF_FUZZ_AREA",
                              "KF_FUZZ_KIT", "KF_FUZZ_STRONG", "KF_FUZZ_GODMODE", "KF_FUZZ_LOAD", "KF_FUZZ_GAME_SEED",
-                             "KF_FUZZ_RAW", "KF_FUZZ_CALL", "KF_FUZZ_HOOK"})
+                             "KF_FUZZ_RAW", "KF_FUZZ_CALL", "KF_FUZZ_HOOK", "KF_FUZZ_CONTENT"})
         if (const char *value = env(name))
             out.push_back(std::string(name) + "=" + value);
     return out;

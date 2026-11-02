@@ -70,9 +70,9 @@ why = "A magic id: effect_state.magic.entries[id] with no check in player_select
 # --- Actor definitions: an index with no check.
 
 [fields."KfActor.definition_id"]
-range = [0, 11]
+range = [0, 31]
 read_only = "chooses the actor's model, and the clip the actor holds must be that model's: render_bind_instance_vertices (src/game/animation_cache.cpp) stops the game with host_fail on a clip past it, and a written id can do that"
-why = "An index into actor_state.definitions.entries (12 entries, KF_ACTOR_DEFINITION_COUNT) with no check in actor_initialize (src/game/actor.cpp), collision_query_world (src/game/collision.cpp) and render_actor (src/game/entity_model_render.cpp)."
+why = "An index into actor_state.definitions.entries (32 entries, KF_ACTOR_DEFINITION_CAPACITY) with no check in actor_initialize (src/game/actor.cpp), collision_query_world (src/game/collision.cpp) and render_actor (src/game/entity_model_render.cpp)."
 
 # --- The union the game reads both ways: both members are three s16 over the same six bytes.
 

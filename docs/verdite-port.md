@@ -341,6 +341,7 @@ python3 scripts/fuzz.py --preset fuzz --runs 12    # under ASan, UBSan and check
 python3 scripts/fuzz.py --targets --seconds 600    # the libFuzzer targets (fuzz preset)
 python3 scripts/fuzz.py --preset fuzz --call 6000  # random in-range calls through kf.call; invariants off, a frame reached in a call is a finding
 python3 scripts/fuzz.py --preset fuzz --hook 10   # answers every kf.hook point as a mod might: arguments changed, functions replaced; invariants off
+python3 scripts/fuzz.py --preset fuzz --content 6 # a mod adds items, kinds and floors, 6 of them mutants of the disc's; invariants off
 python3 scripts/fuzz.py --preset fuzz --raw 3000   # random in-range writes through kf.raw; invariants off
 ```
 

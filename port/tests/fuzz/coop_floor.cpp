@@ -91,8 +91,9 @@ void character_and_world(std::span<const std::uint8_t> changes) {
     const std::size_t half = changes.size() / 2;
     const auto character = changed(save_system_coop_character(), changes.first(half));
     const auto world = changed(save_system_coop_world(), changes.subspan(half));
-    (void)save_system_coop_apply(character, world, item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)],
-                                 player_state.gold);
+    std::array<u8, KF_ITEM_COUNT> pack{};
+    std::copy_n(item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)].begin(), pack.size(), pack.begin());
+    (void)save_system_coop_apply(character, world, pack, player_state.gold);
 }
 
 constexpr std::size_t seeded_actors = 8;
