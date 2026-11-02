@@ -789,7 +789,8 @@ mods are off in coop (decided 2026-10-31).
    the run and the map need to be mods.~~ Pressing and blocking done in 0.8
    (2026-11-01): `kf.action_hold`, `kf.action_press`, `kf.action_block`.
 8. Calling the game's functions: bindings generated from the same headers as
-   the raw layer, each argument checked against its type and range.
+   the raw layer, each argument checked against its type and range. Planned in
+   [CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md); not started.
 9. Hooking and replacing the game's functions: a mod's code before, after or
    in place of a game function. We compile the decomp, so the build can give
    each function a hook point; no patching at run time.
