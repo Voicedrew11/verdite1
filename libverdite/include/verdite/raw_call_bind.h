@@ -40,6 +40,7 @@ struct RawParamListing {
 struct RawFunctionListing {
     RawCallWhen when = RawCallWhen::BetweenUpdates;
     std::string_view doc;
+    RawCallCheck check = nullptr;
 };
 
 // Holds one call's checked arguments and takes its results. Only the templates below use it.
@@ -239,7 +240,8 @@ RawFunction raw_function(std::string_view name, const std::array<RawParamListing
             raw_detail::CrossingResult<typename Signature::Result>::may_be_nil,
             listing.when,
             listing.doc,
-            Crossing::invoke};
+            Crossing::invoke,
+            listing.check};
 }
 
 } // namespace verdite

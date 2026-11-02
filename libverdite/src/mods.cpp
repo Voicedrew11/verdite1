@@ -90,6 +90,8 @@ struct Mod {
     // state, so its state cannot close until the outermost returns.
     int calls_running = 0;
     bool in_between_updates = false;   // the outermost call is on_between_updates
+    bool in_frame_call = false;        // a call of it into the game is presenting frames
+    int *frame_calls = nullptr;        // the host's count of frame calls running, in any mod
     std::optional<std::string> stop_reason;   // failed inside a running call: stops when it returns
     std::unique_ptr<lua_State, StateClose> lua;   // last: closed before the counters above go
 };
@@ -1263,6 +1265,12 @@ bool is_mod_folder(const fs::directory_entry &entry) {
 
 } // namespace
 
+// What a frame call kept waiting, in the order it was asked for.
+struct Waiting {
+    enum class Kind : std::uint8_t { Enable, Disable, ReloadAll } kind;
+    std::string id;
+};
+
 struct ModHost::State {
     ModHostConfig config;
     Clock::time_point started = Clock::now();
@@ -1270,6 +1278,8 @@ struct ModHost::State {
     SaveTables saves;
     bool raising = false;   // set while a raise runs: a raise inside it is ignored
     bool enhancements_held = false;
+    int frame_calls = 0;    // frame calls running: unloading a mod waits until none is
+    std::vector<Waiting> waiting;
 
     bool held(const Mod &mod) const { return enhancements_held && mod.enhancement; }
 
@@ -1417,6 +1427,7 @@ struct ModHost::State {
         mod->dir = dir;
         mod->host = &config;
         mod->saves = &saves;
+        mod->frame_calls = &frame_calls;
         mod->host_started = started;
         mod->stamp = print.stamp;
         mod->file_count = print.count;
@@ -1449,6 +1460,45 @@ struct ModHost::State {
         print_line(mod.id, "changed on disk");
         if (mod.enabled && mod.error.empty())
             load(mod);
+    }
+
+    void enable(Mod &mod) {
+        if (mod.enabled)
+            return;
+        mod.enabled = true;
+        store(mod);
+        load(mod);
+    }
+
+    void disable(Mod &mod) {
+        if (!mod.enabled)
+            return;
+        mod.enabled = false;
+        stop(mod);
+        mod.error.clear();
+        store(mod);
+        print_line(mod.id, "disabled");
+    }
+
+    void reload_all() {
+        for (auto &mod : mods)
+            if (mod->enabled)
+                load(*mod);
+    }
+
+    // Does what a frame call kept waiting, once none is running and no callback is on the stack.
+    void apply_waiting() {
+        if (frame_calls > 0 || waiting.empty())
+            return;
+        for (const Waiting &request : std::exchange(waiting, {})) {
+            Mod *mod = find(request.id);
+            if (request.kind == Waiting::Kind::ReloadAll)
+                reload_all();
+            else if (mod && request.kind == Waiting::Kind::Enable)
+                enable(*mod);
+            else if (mod)
+                disable(*mod);
+        }
     }
 
     void remove_missing(const std::vector<fs::path> &found) {
@@ -1485,6 +1535,8 @@ ModHost::~ModHost() {
 }
 
 void ModHost::scan() {
+    if (state_->frame_calls > 0)
+        return;
     std::vector<fs::path> found;
     std::error_code error;
     for (fs::directory_iterator it(state_->config.mods_dir, error), end; !error && it != end; it.increment(error))
@@ -1509,37 +1561,42 @@ void ModHost::call_each(ModCallback callback) {
     for (auto &mod : state_->mods)
         if (!state_->held(*mod))
             state_->call(*mod, callback);
+    state_->apply_waiting();
 }
 
 void ModHost::call(std::string_view id, ModCallback callback) {
     if (Mod *mod = state_->find(id); mod && !state_->held(*mod))
         state_->call(*mod, callback);
+    state_->apply_waiting();
+}
+
+void ModHost::frame_passed() {
+    for (auto &mod : state_->mods)
+        if (mod->in_frame_call)
+            mod->instructions_left = static_cast<std::int64_t>(state_->config.instructions_per_call);
 }
 
 void ModHost::enable(std::string_view id) {
-    Mod *mod = state_->find(id);
-    if (!mod || mod->enabled)
-        return;
-    mod->enabled = true;
-    state_->store(*mod);
-    state_->load(*mod);
+    if (state_->frame_calls > 0) {
+        state_->waiting.push_back({Waiting::Kind::Enable, std::string(id)});
+    } else if (Mod *mod = state_->find(id)) {
+        state_->enable(*mod);
+    }
 }
 
 void ModHost::disable(std::string_view id) {
-    Mod *mod = state_->find(id);
-    if (!mod || !mod->enabled)
-        return;
-    mod->enabled = false;
-    state_->stop(*mod);
-    mod->error.clear();
-    state_->store(*mod);
-    print_line(mod->id, "disabled");
+    if (state_->frame_calls > 0) {
+        state_->waiting.push_back({Waiting::Kind::Disable, std::string(id)});
+    } else if (Mod *mod = state_->find(id)) {
+        state_->disable(*mod);
+    }
 }
 
 void ModHost::reload_all() {
-    for (auto &mod : state_->mods)
-        if (mod->enabled)
-            state_->load(*mod);
+    if (state_->frame_calls > 0)
+        state_->waiting.push_back({Waiting::Kind::ReloadAll, {}});
+    else
+        state_->reload_all();
 }
 
 void ModHost::hold_enhancements() { state_->enhancements_held = true; }
@@ -1692,6 +1749,24 @@ bool mod_may_change_game(lua_State *L) {
     const bool main_thread = lua_pushthread(L) == 1;
     lua_pop(L, 1);
     return main_thread;
+}
+
+ModFrameCall::ModFrameCall(lua_State *L, bool runs_frames) : L_(L), runs_frames_(runs_frames) {
+    if (!runs_frames_)
+        return;
+    Mod &mod = mod_of_state(L_);
+    budget_left_ = mod.instructions_left;
+    mod.in_frame_call = true;
+    ++*mod.frame_calls;
+}
+
+ModFrameCall::~ModFrameCall() {
+    if (!runs_frames_)
+        return;
+    Mod &mod = mod_of_state(L_);
+    mod.instructions_left = budget_left_;
+    mod.in_frame_call = false;
+    --*mod.frame_calls;
 }
 
 void mod_spend_instructions(lua_State *L, std::int64_t instructions) {

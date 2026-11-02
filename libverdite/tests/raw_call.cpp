@@ -42,6 +42,8 @@ std::int32_t hp = 0, last_scale = 0, calls = 0;
 Mode mode = Mode::Off;
 Vector position;
 ModHost *host_to_raise = nullptr;
+std::int32_t frames_run = 0;
+void (*during_frame)() = nullptr;
 
 void add_hp(std::int16_t delta) {
     hp += delta;
@@ -96,6 +98,20 @@ void raise_test() {
     std::array<ModEventValue, 1> values{std::int64_t{1}};
     host_to_raise->raise("on_test", values);
 }
+// A game function that presents frames: each runs the mods' on_update, as the game's frames do.
+void run_frames(std::int32_t count) {
+    frames_run = 0;
+    for (std::int32_t i = 0; i < count; ++i) {
+        host_to_raise->frame_passed();
+        host_to_raise->call_each(ModCallback::Update);
+        if (during_frame)
+            during_frame();
+        ++frames_run;
+    }
+}
+void add_then_subtract(std::int32_t first, std::int32_t second) {
+    hp += first - second;
+}
 std::array<std::int16_t, 2> pair_now() {
     return {3, 4};
 }
@@ -105,6 +121,10 @@ void take_pair(const std::array<std::int16_t, 2> &pair) {
 
 std::string_view actor_in_use(std::int64_t slot) {
     return actors[static_cast<std::size_t>(slot)].in_use ? std::string_view{} : "that actor's slot is free";
+}
+std::string_view first_is_larger(std::span<const RawValue> arguments) {
+    return std::get<std::int64_t>(arguments[0]) > std::get<std::int64_t>(arguments[1]) ? std::string_view{}
+                                                                                       : "first must be larger";
 }
 
 } // namespace call_game
@@ -170,6 +190,16 @@ RawFunctionListing with_doc(std::string_view doc) {
     listing.doc = doc;
     return listing;
 }
+RawFunctionListing runs_frames() {
+    RawFunctionListing listing;
+    listing.when = RawCallWhen::RunsFrames;
+    return listing;
+}
+RawFunctionListing with_check(RawCallCheck check) {
+    RawFunctionListing listing;
+    listing.check = check;
+    return listing;
+}
 
 int began = 0, ended = 0;
 
@@ -199,13 +229,17 @@ const RawCallLayer &test_layer() {
         raw_function<&call_game::raise_test>("raise_test", A0{}),
         raw_function<&call_game::pair_now>("pair_now", A0{}),
         raw_function<&call_game::take_pair>("take_pair", std::array{param("pair")}),
+        raw_function<&call_game::run_frames>("run_frames", std::array{param("count")}, runs_frames()),
+        raw_function<&call_game::add_then_subtract>("add_then_subtract", std::array{param("first"), param("second")},
+                                                    with_check(call_game::first_is_larger)),
     };
     static const RawCallLayer layer{"g.call",
                                     "The test's functions.",
                                     functions,
                                     100'000,
                                     [] { ++began; },
-                                    [] { ++ended; }};
+                                    [] { ++ended; },
+                                    400'000};
     return layer;
 }
 
@@ -214,6 +248,8 @@ void reset_game() {
     call_game::hp = call_game::last_scale = call_game::calls = 0;
     call_game::mode = call_game::Mode::Off;
     call_game::position = {};
+    call_game::frames_run = 0;
+    call_game::during_frame = nullptr;
     began = ended = 0;
 }
 
@@ -492,11 +528,109 @@ TEST_CASE("a call whose event handler errs stops the mod after the call, with th
     CHECK(ended == 1);
 }
 
+TEST_CASE("a function's own check sees its arguments together, before any game code runs") {
+    reset_game();
+    const std::array good{RawValue{std::int64_t{5}}, RawValue{std::int64_t{2}}};
+    CHECK(raw_call(test_layer(), "add_then_subtract", good).error.empty());
+    CHECK(call_game::hp == 3);
+    const std::array bad{RawValue{std::int64_t{2}}, RawValue{std::int64_t{5}}};
+    CHECK(has(raw_call(test_layer(), "add_then_subtract", bad).error, "first must be larger"));
+    CHECK(call_game::hp == 3);
+}
+
+TEST_CASE("a call that runs frames runs each mod's on_update, which cannot change the game") {
+    Mods mods;
+    mods.run("a", "function on_update() t.note('a') end\n"
+                  "function on_between_updates() g.call.run_frames(2) t.note('after') end");
+    mods.run("b", "function on_update() t.note('b') end");
+    mods.host->call_each(ModCallback::BetweenUpdates);
+    CHECK(notes == std::vector<std::string>{"a", "b", "a", "b", "after"});
+    CHECK(began == 0);   // the game's "no frame may be reached" is for other calls
+
+    mods.run("a", "function on_update() g.call.add_hp(1) end\n"
+                  "function on_between_updates() g.call.run_frames(1) end");
+    mods.host->call_each(ModCallback::BetweenUpdates);
+    CHECK(mods.host->mods().front().state == ModState::Failed);
+    CHECK(has(mods.host->mods().front().error, "only directly in on_between_updates"));
+    CHECK(call_game::hp == 0);
+}
+
+TEST_CASE("a call that runs frames is refused where one that changes the game is") {
+    Mods mods;
+    mods.run("a", "function on_update() g.call.run_frames(1) end");
+    mods.host->call_each(ModCallback::Update);
+    CHECK(mods.host->mods().front().state == ModState::Failed);
+    CHECK(call_game::frames_run == 0);
+}
+
+TEST_CASE("each frame gives a whole budget, and the callback's own comes back after the call") {
+    Mods mods;
+    // Each frame's on_update spends most of the 1,000,000: without the refill the third would fail.
+    mods.run("a", "function on_update() for i = 1, 150000 do end end\n"
+                  "function on_between_updates() g.call.run_frames(20) t.note('done') end");
+    mods.host->call_each(ModCallback::BetweenUpdates);
+    CHECK(mods.host->mods().front().state == ModState::Running);
+    CHECK(notes == std::vector<std::string>{"done"});
+
+    // The callback's own loop is not refilled: it is charged for each call and runs out.
+    mods.run("a", "function on_between_updates() while true do g.call.run_frames(1) end end");
+    mods.host->call_each(ModCallback::BetweenUpdates);
+    CHECK(mods.host->mods().front().state == ModState::Failed);
+    CHECK(has(mods.host->mods().front().error, "over its instruction budget"));
+    CHECK(call_game::frames_run == 1);
+}
+
+TEST_CASE("a mod that errs in its on_update during its call stops, and its frames go on") {
+    Mods mods;
+    mods.run("a", "function on_update() error('boom') end\n"
+                  "function on_between_updates() g.call.run_frames(3) t.note('after') end");
+    mods.host->call_each(ModCallback::BetweenUpdates);
+    CHECK(call_game::frames_run == 3);
+    CHECK(notes.empty());
+    const ModInfo info = mods.host->mods().front();
+    CHECK(info.state == ModState::Failed);
+    CHECK(has(info.error, "boom"));
+}
+
+TEST_CASE("a mod that fails in a frame of another's call stops at once") {
+    Mods mods;
+    mods.run("a", "function on_between_updates() g.call.run_frames(2) t.note('after') end");
+    mods.run("b", "function on_update() t.note('b') error('boom') end");
+    mods.host->call_each(ModCallback::BetweenUpdates);
+    CHECK(notes == std::vector<std::string>{"b", "after"});
+    CHECK(mods.host->mods()[0].state == ModState::Running);
+    CHECK(mods.host->mods()[1].state == ModState::Failed);
+}
+
+// During run_frames, asks the host for what the Mods panel and the scan can ask for.
+static ModHost *asked = nullptr;
+
+TEST_CASE("nothing unloads a mod during a call that runs frames, and what was asked happens after") {
+    Mods mods;
+    asked = mods.host.get();
+    mods.run("a", "function on_update() t.note('update') end\n"
+                  "function on_unload() t.note('unload') end\n"
+                  "function on_between_updates() g.call.run_frames(1) t.note('after') end");
+    call_game::during_frame = [] {
+        asked->disable("a");
+        asked->reload_all();
+        asked->scan();
+    };
+    fs::remove_all(mods.dir / "a");   // the scan would remove it, closing the state in use
+    mods.host->call_each(ModCallback::BetweenUpdates);
+    CHECK(notes == std::vector<std::string>{"update", "after", "unload"});
+    CHECK(mods.host->mods().front().state == ModState::Disabled);
+    CHECK_FALSE(mods.host->mods().front().enabled);
+    call_game::during_frame = nullptr;
+    asked = nullptr;
+}
+
 TEST_CASE("the definitions file lists each function with its parameters, results and when") {
     const std::string text = raw_call_definitions(test_layer());
     CHECK(has(text, "---The test's functions."));
     CHECK(has(text, "---Adds to the HP.\n---Only directly in on_between_updates.\n---@param delta integer (-50 to 50)\nfunction g.call.add_hp(delta) end"));
     CHECK(has(text, "---May be called anywhere.\n---@param value integer"));
+    CHECK(has(text, "---Only directly in on_between_updates. Runs frames until it is done.\n---@param count integer"));
     CHECK(has(text, "---@return integer\nfunction g.call.twice(value) end"));
     CHECK(has(text, "---@param a g.call.Vector\n---@param b g.call.Vector\n---@return g.call.Vector\nfunction g.call.sum_into(a, b) end"));
     CHECK(has(text, "---@return integer, g.call.Vector\nfunction g.call.double_in_place(value) end"));

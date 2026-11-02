@@ -22,6 +22,13 @@
 // thread, and not from an event handler raised inside it or inside a coroutine. Elsewhere game code
 // below us may be walking what the function changes. An AnyTime function may be called anywhere.
 // Each call charges RawCallLayer::instructions_per_call to the callback's budget.
+//
+// A RunsFrames function is called as a BetweenUpdates one is, and presents frames until it is done.
+// Each frame runs the mods' on_update and on_draw, the caller's own included, and they cannot call
+// anything that changes the game. Each frame also gives the caller a whole budget for them
+// (ModHost::frame_passed), and what was left of the callback's own comes back when the call returns.
+// Until the outermost such call ends, no mod is unloaded by the host's own hand: ModHost::scan does
+// nothing, and enable, disable and reload_all wait.
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -36,6 +43,7 @@ namespace verdite {
 enum class RawCallWhen : std::uint8_t {
     BetweenUpdates,   // changes state or raises events
     AnyTime,          // changes nothing and raises nothing: the listed file says so
+    RunsFrames,       // as BetweenUpdates, and presents frames: the listed file says it may
 };
 
 enum class RawParamRole : std::uint8_t {
@@ -47,6 +55,10 @@ enum class RawParamRole : std::uint8_t {
 // Why value will not do now, as a static string; empty if it will. For what a range cannot say: a
 // slot in use, a cell on the loaded floor. Runs after the type's and limits' checks.
 using RawArgumentCheck = std::string_view (*)(std::int64_t value);
+
+// The same for arguments that depend on each other, as a static string; empty if they will do. Gets
+// them flattened and converted, a pool's null as slot -1. Runs after every parameter's checks.
+using RawCallCheck = std::string_view (*)(std::span<const RawValue> arguments);
 
 struct RawParam {
     std::string_view name;                // the decomp's
@@ -69,6 +81,7 @@ struct RawFunction {
     RawCallWhen when = RawCallWhen::BetweenUpdates;
     std::string_view doc;
     void (*invoke)(RawCallSite &site) = nullptr;   // the arguments are already checked
+    RawCallCheck check = nullptr;
 };
 
 // The game's whole layer. The tables it views are static and outlive the host.
@@ -77,9 +90,12 @@ struct RawCallLayer {
     std::string_view doc;                     // for the definitions file: what it does not promise
     std::span<const RawFunction> functions;
     std::int64_t instructions_per_call = 0;   // charged to the callback's budget for each call
-    // Around each game function, so a game's own checks can see a call running. Either may be null.
+    // Around each game function but a RunsFrames one, so a game can see a call that must not reach
+    // a frame. Either may be null.
     void (*call_began)() = nullptr;
     void (*call_ended)() = nullptr;
+    // Charged instead for a RunsFrames call, whose frames have their own budget: this bounds a loop.
+    std::int64_t instructions_per_frame_call = 0;
 };
 
 // What a call gave back, or why it never ran. Struct and array values are flattened: every leaf in

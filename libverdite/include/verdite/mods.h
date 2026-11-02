@@ -171,14 +171,18 @@ public:
     ModHost &operator=(const ModHost &) = delete;
 
     // Finds new, changed and removed mod folders and (re)loads enabled ones. The game paces it
-    // (twice a second); a new folder is listed disabled.
+    // (twice a second); a new folder is listed disabled. Does nothing during a call that runs frames.
     void scan();
     // Calls the callback in every running mod, in the listed order. A mod that errs, goes over its
     // budget or its memory cap is stopped and Failed; the others go on.
     void call_each(ModCallback callback);
     // The same for one mod (Settings, from the panel).
     void call(std::string_view id, ModCallback callback);
+    // The game presented a frame. A mod inside a call that runs frames (verdite/raw_call.h) gets a
+    // whole budget for its next ones.
+    void frame_passed();
 
+    // During a call that runs frames these wait for it to end, as a mod's state is in use.
     void enable(std::string_view id);
     void disable(std::string_view id);
     void reload_all();   // every enabled mod, as if its files changed

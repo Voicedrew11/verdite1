@@ -184,15 +184,16 @@ void load_leaves(const RawType &type, const void *place, std::vector<RawValue> &
     }
 }
 
-// Tells the game a call is running, whichever way it ends.
+// Tells the game a call that must not reach a frame is running, whichever way it ends.
 class GameCallScope {
 public:
-    explicit GameCallScope(const RawCallLayer &layer) : layer_(layer) {
-        if (layer_.call_began)
+    GameCallScope(const RawCallLayer &layer, const RawFunction &function)
+        : layer_(layer), told_(function.when != RawCallWhen::RunsFrames) {
+        if (told_ && layer_.call_began)
             layer_.call_began();
     }
     ~GameCallScope() {
-        if (layer_.call_ended)
+        if (told_ && layer_.call_ended)
             layer_.call_ended();
     }
     GameCallScope(const GameCallScope &) = delete;
@@ -200,6 +201,7 @@ public:
 
 private:
     const RawCallLayer &layer_;
+    bool told_;
 };
 
 RawCallResult call_function(const RawCallLayer &layer, const RawFunction &function,
@@ -209,8 +211,15 @@ RawCallResult call_function(const RawCallLayer &layer, const RawFunction &functi
     result.error = check.run();
     if (!result.error.empty())
         return result;
+    if (function.check) {
+        const std::string_view why = function.check(check.converted());
+        if (!why.empty()) {
+            result.error = std::string(function.name) + ": " + std::string(why);
+            return result;
+        }
+    }
     RawCallSite site(function, check.converted(), result.values);
-    const GameCallScope scope(layer);
+    const GameCallScope scope(layer, function);
     function.invoke(site);
     return result;
 }
@@ -314,11 +323,12 @@ const RawCallLayer &layer_of(lua_State *L) {
 int run_function(lua_State *L) {
     const RawCallLayer &layer = layer_of(L);
     const RawFunction &function = layer.functions[static_cast<std::size_t>(lua_tointeger(L, lua_upvalueindex(2)))];
-    if (function.when == RawCallWhen::BetweenUpdates && !mod_may_change_game(L))
+    const bool runs_frames = function.when == RawCallWhen::RunsFrames;
+    if (function.when != RawCallWhen::AnyTime && !mod_may_change_game(L))
         raw_lua_fail(L, std::string(function.name) +
                             " may be called only directly in on_between_updates, on the mod's main "
                             "thread: elsewhere the game may be walking what it changes");
-    mod_spend_instructions(L, layer.instructions_per_call);
+    mod_spend_instructions(L, runs_frames ? layer.instructions_per_frame_call : layer.instructions_per_call);
     const auto wanted = static_cast<int>(std::ranges::count_if(function.params, takes_argument));
     const int given = lua_gettop(L);
     if (given != wanted)
@@ -329,7 +339,10 @@ int run_function(lua_State *L) {
     for (const RawParam &param : function.params)
         if (takes_argument(param))
             flatten_from_lua(L, ++index, *param.type, function, param, arguments);
-    const RawCallResult result = call_function(layer, function, arguments);
+    const RawCallResult result = [&] {
+        const ModFrameCall frames(L, runs_frames);
+        return call_function(layer, function, arguments);
+    }();
     if (!result.error.empty())
         raw_lua_fail(L, result.error);
     return push_results(L, function, result.values);
@@ -364,6 +377,8 @@ void append_function(std::string &out, const RawFunction &function, const std::s
         raw_append_doc(out, function.doc);
     if (function.when == RawCallWhen::AnyTime)
         out += "---May be called anywhere.\n";
+    else if (function.when == RawCallWhen::RunsFrames)
+        out += "---Only directly in on_between_updates. Runs frames until it is done.\n";
     else
         out += "---Only directly in on_between_updates.\n";
     for (const RawParam &param : function.params) {
