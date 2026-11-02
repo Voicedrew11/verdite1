@@ -8,7 +8,8 @@
 #   any_time_headers       a header whose functions change nothing and raise nothing
 #   [pools.Struct]         a struct kept in a pool crosses as its slot: pool (the array), check (optional)
 #   [subjects.Struct]      what a function using a current Struct is bound by: binder (a class of
-#                          call_checks.h, alive around the call), check (a function of call_checks.h)
+#                          call_checks.h, alive around the call), check (a function of call_checks.h),
+#                          current (the global a hook point reads it from)
 #   [functions.name]       any_time, why (the doc),
 #                          allowed (why this is safe, though a held header or the audit holds it back:
 #                          something the audit found running frames then runs as RunsFrames),
@@ -48,10 +49,12 @@ pool = "game_graphics_runtime.floor_items"
 [subjects.KfActor]
 binder = "KfBoundActor"
 check = "kf_call_actor_in_use"
+current = "actor_state.current"
 
 [subjects.KfEffectRecord]
 binder = "KfBoundEffect"
 check = "kf_call_effect_in_use"
+current = "effect_state.current_record"
 
 [held]
 map_unload_floor = "frees the floor the world update goes on to walk"

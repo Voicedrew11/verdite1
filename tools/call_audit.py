@@ -96,12 +96,17 @@ def scan_source(argv, source, include_root):
 
 def read_graph(commands, decomp_src):
     src_prefix = os.path.join(decomp_src, "src") + os.sep
+    # The build compiles the hook layer's copies (tools/hook_layer.py); the audit reads the sources.
+    routed_prefix = os.path.join(os.path.dirname(decomp_src), "hook_src") + os.sep
     include_root = os.path.join(decomp_src, "include", "kf") + os.sep
     jobs = []
     for entry in commands:
-        if entry["file"].startswith(src_prefix):
+        source = entry["file"]
+        if source.startswith(routed_prefix):
+            source = os.path.join(decomp_src, source[len(routed_prefix):])
+        if source.startswith(src_prefix):
             compiler, flags = raw_layer._compile_flags(raw_layer._command_tokens(entry))
-            jobs.append(([compiler, *flags], entry["file"]))
+            jobs.append(([compiler, *flags], source))
     if not jobs:
         raise raw_layer.ConfigError(f"no sources under {src_prefix} in the compile commands")
     graph = {}

@@ -22,7 +22,7 @@ LAYER_PATH = "kf.call"
 TOP_LEVEL_KEYS = ("instructions_per_call", "instructions_per_frame_call", "any_time_headers", "held_headers",
                   "held", "pools", "subjects", "functions")
 FUNCTION_KEYS = ("any_time", "why", "params", "allowed", "subject", "check")
-SUBJECT_KEYS = ("binder", "check")
+SUBJECT_KEYS = ("binder", "check", "current")
 PARAM_KEYS = ("range", "role", "check", "nil", "why")
 POOL_KEYS = ("pool", "check")
 ROLES = {"in": "In", "out": "Out", "inout": "InOut"}

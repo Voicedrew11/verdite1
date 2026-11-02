@@ -541,6 +541,20 @@ index 7c6b4de806700422183551d2b4782dd3fa5eaf47..953aaeaafb88aa38e46153023ca5f95c
  }
  
  
+diff --git a/src/game/animation_cache.cpp b/src/game/animation_cache.cpp
+index 67d7eb827a952ce4f4702b1b0352700c41271251..4312b77519e5e0a8cb6a30c4dd1c5a98f9ddd6ad 100644
+--- a/src/game/animation_cache.cpp
++++ b/src/game/animation_cache.cpp
+@@ -90,7 +90,8 @@ bool render_bind_instance_vertices(
+     asset_registry_select(asset_index);
+     const auto &animation = game_graphics_runtime.asset_animations[asset_index];
+ 
+-    if (animation.clips.empty()) {
++    // PC extension: no clip, from an action a definition has none for (a mod can start one): as no animation.
++    if (animation.clips.empty() || clip_index == KF_ANIMATION_CLIP_NONE) {
+         if (record != NULL) {
+             animation_cache_release(record);
+         }
 diff --git a/src/game/audio.cpp b/src/game/audio.cpp
 index 31f832db7b441760cf013f561eaf55ce8ee9842c..7864916d03aa436f28ec469df9db2c5635fedd55 100644
 --- a/src/game/audio.cpp

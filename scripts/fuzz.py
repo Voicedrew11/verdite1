@@ -213,7 +213,7 @@ def fuzz_env(args, run: Run, replay: Path | None = None) -> dict:
         env["KF_FUZZ_MACROS"] = "0"
     values = {"KF_FUZZ_AREA": args.area, "KF_FUZZ_MACRORATE": args.macro_rate, "KF_FUZZ_WEIGHTS": args.weights,
               "KF_FUZZ_SKIP": args.skip, "KF_FUZZ_GAME_SEED": args.game_seed, "KF_FUZZ_RAW": args.raw,
-              "KF_FUZZ_CALL": args.call}
+              "KF_FUZZ_CALL": args.call, "KF_FUZZ_HOOK": args.hook}
     env.update({k: str(v) for k, v in values.items() if v is not None})
     if args.trace:
         env["KF_TRACE"] = str(run.dir / "trace.txt")
@@ -484,6 +484,8 @@ def rerun_command(args, run: Run) -> str:
         words += ["--raw", str(args.raw)]
     if args.call:
         words += ["--call", str(args.call)]
+    if args.hook:
+        words += ["--hook", str(args.hook)]
     if args.corrupt_assets:
         words += ["--corrupt-assets", str(args.corrupt_assets)]
     for k, v in sorted(run.extra_env.items()):
@@ -833,6 +835,9 @@ def main() -> int:
     g.add_argument("--call", type=int, metavar="PER_10000",
                    help="calls to random functions of kf.call, this many per 10000 updates; invariants are then off, "
                         "so only crashes and fails are findings")
+    g.add_argument("--hook", type=int, metavar="PER_10000",
+                   help="answer every kf.hook point as a mod might: this many calls per 10000 have their arguments "
+                        "changed or the function replaced; invariants are then off, so only crashes and fails are findings")
     g.add_argument("--corrupt-assets", type=int, default=0, metavar="N",
                    help="each run's mod replaces N disc models (TMD) with mutants the game's check passes")
     g.add_argument("--area", help="start on floor 1-5, or random")

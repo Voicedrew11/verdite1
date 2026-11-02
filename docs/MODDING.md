@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.14, what ships today. Where it is going, API 1.0, is
+This page documents API 0.15, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -630,6 +630,83 @@ the world is using; what replaces the game or returns to the world loop (`player
 a raw buffer; and any pointer to a struct not yet read to confirm it is one struct and
 not an array. See [CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md).
 
+### `kf.hook`
+
+A mod's code before, after or in place of a game function, whoever calls it: the game
+itself, a table of functions, another mod. Its names follow the decomp's as `kf.call`'s do,
+and it promises nothing.
+
+```lua
+-- Twice the experience from everything.
+kf.hook.before.player_add_experience(function(amount)
+    return amount * 2
+end)
+
+-- Log every level's load.
+kf.hook.after.map_load_floor(function(floor, variant)
+    mod.log("floor " .. floor)
+end)
+
+-- A monster that never notices the player, unless its slot is even. It takes the current
+-- actor's slot first, as kf.call does.
+kf.hook.replace.actor_update_awareness(function(original, subject)
+    if subject % 2 == 0 then original(subject) end
+end)
+```
+
+Each takes a handler, or `nil` to remove this mod's. A mod has one handler of each kind on
+a function, and may set them at any time; they go when the mod unloads.
+
+| | the handler gets | the handler returns |
+|---|---|---|
+| `kf.hook.before.<f>` | what `kf.call.<f>` takes | nothing, or all of those to change them |
+| `kf.hook.after.<f>` | what `kf.call.<f>` returns, then what `<f>` was given | ignored |
+| `kf.hook.replace.<f>` | `original`, then what `kf.call.<f>` takes | what `kf.call.<f>` returns |
+
+`original(...)` runs the next mod's replacement or the game's own function, as often as
+the handler likes, and only while the handler runs and not in a coroutine. What a function
+fills through a pointer is one of its returns, and a table.
+
+**How far each can go.** `kf.d.lua` lists what each function has.
+
+- **Every function whose signature crosses** can be watched, 270 of them, including what
+  `kf.call` holds back: the world update, loading a floor, cutscenes.
+- **Those `kf.call` can call** may have their arguments changed, since each argument's range
+  has been read: 134 of them. A changed value is checked as a `kf.call` argument is.
+- **Those whose return a caller can take from a mod** may be replaced, 112 of them: functions
+  returning nothing, a bool, an enum or a pool's element. A function returning a plain number
+  needs a range read first, in `port/ext/hook_layer.toml`. Returning `nil` for a pool's element
+  is refused unless the file says its callers take it.
+
+A value the handler hands back unchanged always passes, even where the game's own is out of
+range. Math (`kf/lib/math.h`, `fixed_math.h`) has no hook points, nor do functions the headers
+define inline, private to a `.cpp`, overloaded, or in a namespace; the report says which.
+
+**Order.** Mods run in the listed order. `before` handlers run first to last, each seeing
+what the last left. Replacements nest with the first outermost. `after` handlers run last to
+first.
+
+**Inside a handler.** It runs inline, inside whatever the game is doing, as an event's does:
+it can read and write through `kf.raw` and the curated tables, and a `kf.call` that changes
+state is an error. To act on it, set a flag for the next `on_between_updates`.
+
+**When a mod errs** it stops, and the game goes on: with the next mod's replacement, or with
+the game's own function unless the failing mod already ran it, in which case what it returned
+stands. `pcall` does not save a mod from a handler's own bad values, which are a refused
+argument or result.
+
+**The budget.** A mod's handlers share one callback's budget per displayed frame, and each costs
+1,000 instructions, so a hook on a function called thousands of times a frame stops the mod and
+not the game. Handlers below one of the mod's own callbacks spend that callback's. A replacement
+running frames through `original` costs 1,000,000, and its frames have their own, as a `kf.call`'s do.
+
+**What is skipped.** A call the layer cannot describe runs the game's function with no hook: a
+null pointer to a struct, an object outside its pool, or a call off the game's thread.
+
+What a replacement leaves out of step (a door that never opens, a monster that never dies, a
+game that waits forever for what the function did) is the mod's to manage. What it could corrupt
+memory with is held back. See [HOOK_LAYER_PLAN.md](HOOK_LAYER_PLAN.md).
+
 ### `kf.audio`
 
 The game's sounds and music, and a mod's own WAV files.
@@ -862,9 +939,10 @@ mods are off in coop (decided 2026-10-31).
    that run frames and use a current object, its calls fuzzed clean
    ([CALL_LAYER_PLAN.md](CALL_LAYER_PLAN.md)). Left out: playing a cutscene during
    the world, which needs the world's sound and floor brought back after it.
-9. Hooking and replacing the game's functions: a mod's code before, after or
+9. ~~Hooking and replacing the game's functions: a mod's code before, after or
    in place of a game function. We compile the decomp, so the build can give
-   each function a hook point; no patching at run time.
+   each function a hook point; no patching at run time.~~ Done in 0.15 (2026-11-02):
+   `kf.hook`, 270 hook points ([HOOK_LAYER_PLAN.md](HOOK_LAYER_PLAN.md)).
 10. Growing the game's tables for new content: more item ids than the disc's
     80 (`port/ext/extra_items.cpp` fills unused ids today, it does not add
     any), more monster kinds a floor, new floors, as patches that raise the

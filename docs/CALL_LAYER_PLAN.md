@@ -238,6 +238,8 @@ end
 runs no `on_between_updates`, as it runs no `on_update`. It does not run at the title, in a menu or
 in a cutscene either; this was read from the code, not run.
 
+Hooks on these functions are the [hook layer](HOOK_LAYER_PLAN.md), which reuses this layer's descriptions.
+
 To widen it further: 38 functions wait only on a role in the listed file, which needs someone to read
 each and confirm its pointer is to one struct.
 

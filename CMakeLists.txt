@@ -154,7 +154,14 @@ file(GLOB KF_GAME_SOURCES CONFIGURE_DEPENDS
   ${KF_SRC}/src/game/*.cpp ${KF_SRC}/src/cutscene/*.cpp ${KF_SRC}/src/lib/*.cpp)
 list(REMOVE_ITEM KF_GAME_SOURCES ${KF_SRC}/src/lib/fixed_math.cpp ${KF_SRC}/src/lib/random.cpp
   ${KF_SRC}/src/lib/resource_decode.cpp)
-set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES
+# The hook layer (docs/HOOK_LAYER_PLAN.md) compiles a copy of each, with its hook points' definitions
+# renamed. tools/raw_layer.py writes them; #line keeps messages pointing into decomp_src/.
+set(KF_HOOK_SRC ${CMAKE_BINARY_DIR}/hook_src)
+list(JOIN KF_GAME_SOURCES "\n" KF_GAME_SOURCES_TEXT)
+file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/generated/game_sources.txt CONTENT "@KF_GAME_SOURCES_TEXT@\n" @ONLY)
+set(KF_DECLARED_GAME_SOURCES ${KF_GAME_SOURCES})
+list(TRANSFORM KF_GAME_SOURCES REPLACE "^${KF_SRC}/" "${KF_HOOK_SRC}/")
+set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES GENERATED TRUE
   COMPILE_OPTIONS "-Wall;-Wextra;-fwrapv;-fno-strict-aliasing")
 
 add_library(kf_support STATIC port/platform/files.cpp port/platform/disc.cpp port/platform/assets.cpp
@@ -240,13 +247,17 @@ file(GLOB_RECURSE KF_RAW_HEADERS CONFIGURE_DEPENDS ${KF_SRC}/include/kf/*.h)
 find_program(KF_HOST_CLANG NAMES clang++ REQUIRED)
 set(KF_RAW_OUT ${CMAKE_BINARY_DIR}/generated)
 add_custom_command(OUTPUT ${KF_RAW_OUT}/raw_layer.stamp
-  BYPRODUCTS ${KF_RAW_OUT}/raw_layer.cpp ${KF_RAW_OUT}/raw_layer_report.txt
+  BYPRODUCTS ${KF_RAW_OUT}/raw_layer.cpp ${KF_RAW_OUT}/raw_layer_report.txt ${KF_GAME_SOURCES}
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/raw_layer.py --clang ${KF_HOST_CLANG}
     --compile-commands ${CMAKE_BINARY_DIR}/compile_commands.json --decomp-src ${KF_SRC}
     --listed ${CMAKE_SOURCE_DIR}/port/ext/raw_layer.toml --calls-listed ${CMAKE_SOURCE_DIR}/port/ext/call_layer.toml
-    --calls-audit ${CMAKE_SOURCE_DIR}/port/ext/call_layer_audit.toml --out ${KF_RAW_OUT}
+    --calls-audit ${CMAKE_SOURCE_DIR}/port/ext/call_layer_audit.toml
+    --hooks-listed ${CMAKE_SOURCE_DIR}/port/ext/hook_layer.toml
+    --game-sources ${KF_RAW_OUT}/game_sources.txt --hook-src ${KF_HOOK_SRC} --out ${KF_RAW_OUT}
   COMMAND ${CMAKE_COMMAND} -E touch ${KF_RAW_OUT}/raw_layer.stamp
   DEPENDS ${CMAKE_SOURCE_DIR}/tools/raw_layer.py ${CMAKE_SOURCE_DIR}/tools/call_layer.py
+    ${CMAKE_SOURCE_DIR}/tools/hook_layer.py ${CMAKE_SOURCE_DIR}/port/ext/hook_layer.toml
+    ${KF_RAW_OUT}/game_sources.txt ${KF_DECLARED_GAME_SOURCES}
     ${CMAKE_SOURCE_DIR}/port/ext/raw_layer.toml ${CMAKE_SOURCE_DIR}/port/ext/call_layer.toml
     ${CMAKE_SOURCE_DIR}/port/ext/call_layer_audit.toml ${KF_RAW_HEADERS}
   COMMENT "Generating the raw layer" VERBATIM)

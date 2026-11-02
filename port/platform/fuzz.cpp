@@ -728,6 +728,102 @@ int call_rate() {
     return static_cast<int>(std::clamp(env_number("KF_FUZZ_CALL", 0), 0L, 10000L));
 }
 
+// --- hooks (KF_FUZZ_HOOK): the fuzzer answers every hook point in a mod's place. Each call crosses the
+// layer, and in this many per 10000 what a mod could do happens: arguments changed where the reach
+// allows, or the function replaced, with results in their limits, running the game's own or not. A
+// function's first calls are acted on far more often, or the few hot ones would take every action. A
+// decision is a note, so a crash's log names the last ones; the numbers come from the run's seed.
+
+int hook_rate() {
+    return static_cast<int>(std::clamp(env_number("KF_FUZZ_HOOK", 0), 0L, 10000L));
+}
+
+// Fills values with one value for each parameter, in range; false when one has none that will do.
+bool hook_values(std::string_view name, std::span<const verdite::RawParam> params, verdite::FuzzRandom &random,
+                 std::vector<verdite::RawValue> &values) {
+    std::string line(name);
+    for (const verdite::RawParam &param : params)
+        if (param.role != verdite::RawParamRole::Out &&
+            !call_value(*param.type, param.limits.range.value_or(raw_full_range), param, random, line))
+            return false;
+    auto parsed = call_arguments(line);
+    if (!parsed)
+        return false;
+    values = std::move(*parsed);
+    return true;
+}
+
+// What a replacement must return, as parameters to draw values for.
+std::vector<verdite::RawParam> hook_result_params(const verdite::RawHookPoint &point) {
+    std::vector<verdite::RawParam> params;
+    if (point.returned.type)
+        params.push_back(point.returned);
+    for (verdite::RawParam param : point.function.params) {
+        if (param.role == verdite::RawParamRole::In)
+            continue;
+        param.role = verdite::RawParamRole::In;
+        params.push_back(param);
+    }
+    return params;
+}
+
+verdite::RawCallResult hook_change_arguments(verdite::RawHookCall &call, verdite::FuzzRandom &random) {
+    const verdite::RawFunction &function = call.point().function;
+    std::vector<verdite::RawValue> arguments;
+    if (hook_values(function.name, function.params, random, arguments) && call.check_arguments(arguments).error.empty()) {
+        verdite::fuzz_note("hook-arguments " + std::string(function.name));
+        return call.call_game(arguments);
+    }
+    return call.call_game(call.given());
+}
+
+verdite::RawCallResult hook_replace(verdite::RawHookCall &call, verdite::FuzzRandom &random) {
+    const verdite::RawFunction &function = call.point().function;
+    if (random.chance(2500))
+        (void)call.call_game(call.given());   // the game's own runs, then its results are overridden
+    std::vector<verdite::RawValue> results;
+    const auto params = hook_result_params(call.point());
+    if (hook_values(function.name, params, random, results)) {
+        auto checked = call.check_results(results);
+        if (checked.error.empty()) {
+            verdite::fuzz_note("hook-replace " + std::string(function.name));
+            return checked;
+        }
+    }
+    return call.call_game(call.given());
+}
+
+// Whether to act on this call of the function, its calls_seen'th.
+bool hook_acts(verdite::FuzzRandom &random, std::uint64_t calls_seen) {
+    const std::uint64_t decaying = 10000 / (1 + calls_seen / 4);
+    return random.below(10000) < std::max<std::uint64_t>(decaying, static_cast<std::uint64_t>(hook_rate()));
+}
+
+std::optional<verdite::RawCallResult> hook_fire(void *context, verdite::RawHookCall &call) {
+    auto &random = *static_cast<verdite::FuzzRandom *>(context);
+    static std::vector<std::uint64_t> calls_seen(kf_hook_layer().points.size());
+    if (!fuzz.active || !hook_acts(random, calls_seen[call.index()]++))
+        return call.call_game(call.given());
+    switch (call.point().reach) {
+    case verdite::RawHookReach::Watch:
+        return call.call_game(call.given());
+    case verdite::RawHookReach::ChangeArguments:
+        return hook_change_arguments(call, random);
+    case verdite::RawHookReach::Replace:
+        return random.chance(5000) ? hook_replace(call, random) : hook_change_arguments(call, random);
+    }
+    return std::nullopt;
+}
+
+// Takes the hook points from the mod host, once it has them.
+void hook_install() {
+    static verdite::FuzzRandom random(fuzz.options.seed ^ 0x400Cull);
+    const verdite::RawHookLayer &layer = kf_hook_layer();
+    *layer.dispatch = {hook_fire, &random};
+    for (auto &active : layer.active)
+        active.store(true, std::memory_order_relaxed);
+}
+
 std::vector<verdite::FuzzMacro> macros() {
     return {
         {"warp", 4, choose_warp, run_warp, settle_after_change},
@@ -854,9 +950,9 @@ std::optional<std::string> check_effects_and_events() {
 }
 
 std::vector<verdite::FuzzInvariant> invariants() {
-    // A raw write or a call breaks the game's own invariants by design, so under KF_FUZZ_RAW or
-    // KF_FUZZ_CALL a violation is not a finding; crashes, sanitizer reports and host_fail still are.
-    if (raw_rate() > 0 || call_rate() > 0)
+    // A raw write, a call or a hook breaks the game's own invariants by design, so under KF_FUZZ_RAW,
+    // KF_FUZZ_CALL or KF_FUZZ_HOOK a violation is not a finding; crashes, sanitizer reports and host_fail still are.
+    if (raw_rate() > 0 || call_rate() > 0 || hook_rate() > 0)
         return {};
     std::vector<verdite::FuzzInvariant> all = {
         {"vitals", check_vitals},       {"progress", check_progress}, {"position", check_position},
@@ -1175,7 +1271,7 @@ std::vector<std::string> notes() {
     std::vector<std::string> out;
     for (const char *name : {"KF_FUZZ_TICKS", "KF_FUZZ_MACROS", "KF_FUZZ_MACRORATE", "KF_FUZZ_WEIGHTS", "KF_FUZZ_AREA",
                              "KF_FUZZ_KIT", "KF_FUZZ_STRONG", "KF_FUZZ_GODMODE", "KF_FUZZ_LOAD", "KF_FUZZ_GAME_SEED",
-                             "KF_FUZZ_RAW", "KF_FUZZ_CALL"})
+                             "KF_FUZZ_RAW", "KF_FUZZ_CALL", "KF_FUZZ_HOOK"})
         if (const char *value = env(name))
             out.push_back(std::string(name) + "=" + value);
     return out;
@@ -1344,6 +1440,12 @@ void fuzz_between_updates() {
         hand_floor_over();
     if (!fuzz.active)
         return;
+    static const bool hooks_installed = [] {
+        if (hook_rate() > 0)
+            hook_install();
+        return true;
+    }();
+    (void)hooks_installed;
     watch_player();
     note_coverage();
     verdite::fuzz_between_updates(host_clock_tick());

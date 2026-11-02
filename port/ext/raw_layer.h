@@ -5,6 +5,7 @@
 // headers and port/ext/raw_layer.toml; nothing here is written by hand except this interface.
 #include "verdite/raw.h"
 #include "verdite/raw_call.h"
+#include "verdite/raw_hook.h"
 
 #include <string_view>
 
@@ -20,5 +21,11 @@ inline constexpr std::string_view kf_call_doc =
 
 // The layer at kf.call (docs/CALL_LAYER_PLAN.md), from the same generated source.
 const verdite::RawCallLayer &kf_call_layer();
+
+inline constexpr std::string_view kf_hook_doc =
+    R"(The hook layer: a mod's code before, after or in place of the game's functions, whoever calls them. The names are the decomp's and follow its renames: nothing here is stable. A handler runs inside whatever the game is doing, so it may not make a kf.call that changes state. What a handler changes is checked as a kf.call's arguments are. What a replacement leaves out of step is the mod's to manage.)";
+
+// The layer at kf.hook (docs/HOOK_LAYER_PLAN.md), from the same generated source.
+const verdite::RawHookLayer &kf_hook_layer();
 
 #endif // KF_EXT_RAW_LAYER_H

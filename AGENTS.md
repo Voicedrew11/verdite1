@@ -14,7 +14,7 @@ Read `docs/verdite-port.md` first: the direction (every Verdite port becomes a
 decomp), the layout, build, the feature inventory and the order. Then, as the
 task needs: `docs/RENDERER_PLAN.md` (platforms, Vulkan, tiers, carrying the
 picture over), `docs/RUNTIME.md` (what is emulated, the 3DS budget, the
-frame-rate gap), `docs/ANDROID_PLAN.md` (the Android port; a draft), `docs/NETWORKING_PLAN.md` (online play; a draft), `docs/COOP_PLAN.md` (coop's model; a draft), `docs/PLAYER_MODEL.md` (the other players' knight model and its tools), `docs/RAW_LAYER_PLAN.md` (the modding API's raw layer: a handoff), `docs/CALL_LAYER_PLAN.md` (the modding API's calls into the game: a plan), `docs/FUZZING_PLAN.md` (the fuzzer: what is
+frame-rate gap), `docs/ANDROID_PLAN.md` (the Android port; a draft), `docs/NETWORKING_PLAN.md` (online play; a draft), `docs/COOP_PLAN.md` (coop's model; a draft), `docs/PLAYER_MODEL.md` (the other players' knight model and its tools), `docs/RAW_LAYER_PLAN.md` (the modding API's raw layer: a handoff), `docs/CALL_LAYER_PLAN.md` (the modding API's calls into the game: a plan), `docs/HOOK_LAYER_PLAN.md` (the modding API's hooks on the game's functions), `docs/FUZZING_PLAN.md` (the fuzzer: what is
 done and what comes next; running it is "Fuzzing" in `verdite-port.md`),
 `decomp/docs/port-notes.md` (the decomp's own notes).
 
@@ -29,6 +29,7 @@ done and what comes next; running it is "Fuzzing" in `verdite-port.md`),
   and commit `patches/`. The same path below `work/` as below `decomp_src/` is
   the file to edit.
 - Never hand-edit the files in `patches/`; `patches.py save` writes them.
+- The game is compiled from `build/<preset>/hook_src/`, a copy of `decomp_src/` with hookable functions renamed `kf_game_*` (`docs/HOOK_LAYER_PLAN.md`). It is generated, and `#line` keeps messages and debuggers on `decomp_src/`.
 - Move the pin with `python3 tools/patches.py upgrade <commit>`, then update
   the `rev` and `hash` in `flake.nix`. The decomp has no `symbol_addrs.txt`,
   so renames come up as conflicts or compile errors.

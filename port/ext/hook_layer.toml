@@ -1,0 +1,25 @@
+# The listed file of the hook layer (docs/HOOK_LAYER_PLAN.md), read by tools/raw_layer.py.
+#
+# Every function whose signature crosses has a hook point, less what is held here. How far each may
+# be hooked follows from the call layer's listed file; tools/hook_layer.py says how.
+#
+#   [held]                 function = why it has no hook point
+#   [held_headers]         a whole header = why
+#   [functions.name]       watch_only (why its arguments cannot change, though kf.call may call it),
+#                          no_replace (why a replacement is not safe, though its return would allow one),
+#                          returns_range ([min, max] a replacement may return), returns_check (a function
+#                          of call_checks.h), returns_nil (why callers take a null from a replacement of
+#                          what returns a pool's element), why (the doc)
+
+instructions_per_fire = 1000
+
+[held_headers]
+"kf/lib/math.h" = "runs many times a frame, and changes nothing a mod could want to see"
+"kf/lib/fixed_math.h" = "runs many times a frame, and changes nothing a mod could want to see"
+
+[held]
+menu_open_root = "returns a variant, which has no description"
+menu_root = "returns a variant, which has no description"
+
+[functions.map_saved_link_valid]
+watch_only = "the load ends the program when it says a saved link is bad: found by the fuzzer"

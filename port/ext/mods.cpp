@@ -62,7 +62,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.14";
+constexpr const char *api_version = "0.15";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -1469,6 +1469,7 @@ void mods_start() {
     config.events = event_table();
     config.raw = kf_raw_layer();
     config.calls = kf_call_layer();
+    config.hooks = kf_hook_layer();
     config.definitions_name = "kf.d.lua";
     config.read_stored = read_stored;
     config.write_stored = write_stored;
