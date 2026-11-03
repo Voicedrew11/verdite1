@@ -5,10 +5,9 @@
 --   kf.call     the reward, which must wait for on_between_updates
 --   kf.raw      the draught's healing
 --   exports     what other mods may ask, and mod.raise what they may hear
+--   "menu"      in mod.json: its settings in the game's own menus, read here from config
 local CRYPT_FOLDER = "floors/crypt"
-local BRUTES = 3
 local DRAUGHT_UPDATES = 900      -- a minute, at 15 updates a second
-local REWARD_EXPERIENCE = 200
 
 local draught, sigil, crypt      -- ids from kf.content
 local brute                      -- this floor's kind: a floor's kinds go when it does
@@ -64,7 +63,7 @@ local function rouse_brutes()
     local offsets = {{2, 0}, {-2, 0}, {0, 2}, {0, -2}, {2, 2}, {-2, 2}, {2, -2}, {-2, -2}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}
     brutes_left = 0
     for _, offset in ipairs(offsets) do
-        if brutes_left == BRUTES then break end
+        if brutes_left >= config.brutes then break end
         local cell_x, cell_z = p.cell_x + offset[1], p.cell_z + offset[2]
         if not kf.world.cell_blocked(cell_x, cell_z) and
            kf.actors.spawn(brute, p.x + offset[1] * cell_size, p.z + offset[2] * cell_size) then
@@ -125,7 +124,7 @@ function on_use_item(e)
 end
 
 kf.hook.before.player_add_experience(function(amount)
-    if draught_updates > 0 then
+    if draught_updates > 0 and config.doubling then
         return math.min(32767, amount * 2)
     end
 end)
@@ -143,8 +142,9 @@ end
 function on_between_updates()
     if reward_due then
         reward_due = false
-        kf.call.player_add_experience(REWARD_EXPERIENCE)
-        mod.log("the crypt is quiet: " .. REWARD_EXPERIENCE .. " experience")
+        local reward = math.tointeger(config.reward)
+        kf.call.player_add_experience(reward)
+        mod.log("the crypt is quiet: " .. reward .. " experience")
     end
 end
 

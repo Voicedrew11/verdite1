@@ -4,5 +4,11 @@
   "version": "1.0",
   "api_version": "1.0",
   "author": "Verdite",
-  "description": "A sigil that opens a crypt of brutes, and the draught they drop. Example of kf.content, kf.hook, kf.call, kf.raw and exports. The crypt needs a floor from your own disc: tools/mod_floor_from_disc.py KF/B1 mods/crypt/floors/crypt. Without it the sigil rouses brutes where you stand."
+  "description": "A sigil that opens a crypt of brutes, and the draught they drop. Example of kf.content, kf.hook, kf.call, kf.raw and exports. The crypt needs a floor from your own disc: tools/mod_floor_from_disc.py KF/B1 mods/crypt/floors/crypt. Without it the sigil rouses brutes where you stand.",
+  "menu": [
+    {"key": "brutes", "label": "BRUTES", "japanese": "モンスターのかず", "type": "number", "min": 1, "max": 8, "step": 1, "default": 3},
+    {"key": "doubling", "label": "DOUBLE EXP", "japanese": "EXP2ばい", "type": "toggle", "default": true},
+    {"key": "reward", "label": "REWARD", "japanese": "ほうび", "type": "choice", "default": 200,
+     "choices": [{"value": 200, "label": "200 EXP"}, {"value": 500, "label": "500 EXP"}]}
+  ]
 }

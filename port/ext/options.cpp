@@ -2,6 +2,7 @@
 // and Android's settings panel draw. A row's id is its settings.json path where
 // it has one. Each set stores, applies and marks the settings for saving.
 #include "internal.hpp"
+#include "mod_menu.h"
 #include <kf/platform/coop.h>
 #include <kf/platform/language.h>
 #include <kf/platform/language_runtime.h>
@@ -706,10 +707,18 @@ OptionPage interface_page() { return {"Interface", {interface_overlay(), interfa
 
 } // namespace
 
+static std::vector<verdite::OptionPage> all_pages() {
+    return {display_page(), audio_page(), controls_page(), gameplay_page(), language_page(), interface_page(),
+            mod_menu_options_page()};
+}
+
 verdite::OptionTable &options() {
-    static verdite::OptionTable table({display_page(), audio_page(), controls_page(), gameplay_page(), language_page(),
-                                       map_page(), interface_page()});
+    static verdite::OptionTable table(all_pages());
     return table;
+}
+
+void options_rebuild() {
+    options() = verdite::OptionTable(all_pages());
 }
 
 verdite::PlatformFeatures platform_features() {

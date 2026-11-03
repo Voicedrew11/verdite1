@@ -44,6 +44,7 @@ if [ -d data/en ]; then
     python3 scripts/smoke.py build/linux/verdite1
     python3 scripts/smoke.py build/linux/verdite1 --renderer vulkan
     python3 scripts/example_mod_crypt.py build/linux/verdite1
+    python3 scripts/mods_menu.py build/linux/verdite1
     python3 tools/api_surface.py build/linux/verdite1
 else
     echo "skipped: no data/en"
@@ -63,6 +64,7 @@ if [ -d data/en ]; then
     python3 scripts/smoke.py build/sanitize/verdite1
     python3 scripts/smoke.py build/sanitize/verdite1 --renderer vulkan
     python3 scripts/example_mod_crypt.py build/sanitize/verdite1
+    python3 scripts/mods_menu.py build/sanitize/verdite1
 else
     echo "skipped: no data/en"
 fi

@@ -66,17 +66,51 @@ extension, Neovim and others then complete names and flag mistakes.
 * The enabled flag and `config` are stored in `settings.json` next to the mods folder;
   `save` is stored with each save slot (below).
 
-## Mods in the settings
+## A mod's menu
 
-A mod the game ships can have rows in the settings, so Setup and the game's
-own menu switch it: `mods.<id>` is its enabled switch (`mods.run`, the Run key
-on the Controls page; `mods.map` on the Map page), and `mods.<id>.<key>` a
-boolean in its `config` (`mods.map.minimap`), set as the mod's own write would
-be. The rows show while the mod is in the mods folder.
+A mod can have its settings in the game's own menus, drawn in the menu font and stepped with a pad, by listing
+them in `mod.json`:
+
+```json
+"menu": [
+  {"key": "noclip", "label": "NOCLIP", "japanese": "かべぬけ", "type": "toggle", "default": false},
+  {"key": "speed", "label": "SPEED", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 1},
+  {"key": "mode", "label": "MODE", "type": "choice", "default": "a",
+   "choices": [{"value": "a", "label": "EASY"}, {"value": "b", "label": "HARD"}]}
+]
+```
+
+They show in three places: the title's **MODS** page (Confirm on the mod opens a page with its switch and these
+rows; a mod with no menu is switched by Confirm), a page of the pause menu's settings while the mod runs, and F1's
+settings. The agent channel names them `mods.<id>.<key>`.
+
+Each value lives in the mod's [`config`](#config) under `key`: before the script runs, a key with no value gets the
+row's `default`, so `config.speed` is never nil. The menus change the table while the mod runs, and there is no event
+for it, so read `config.speed` where you use it rather than copying it at load. A pause-menu change the player
+discards is set back the same way.
+
+`default` may be left out: off, `min`, or the first choice. A label is capitals and digits, as the menu font spells them
+(lower case is raised), at most 16 bytes, which reach the value's box; `japanese` is optional, at most 16 kana, and the Japanese menus use it. A menu has at most 32
+rows, a number at most 256 steps, a choice 2 to 16 values of one type. A mod.json breaking any of this fails the mod when it
+loads, and the error names the row. `on_settings` is still there for what a menu cannot do: buttons, readouts, ImGui.
+
+## Saves and the mods they were made with
+
+Every save keeps the list of mods running when it was made (id, name and version) beside it: `slot1.modlist.json` to
+`slot3.modlist.json`, `quick.modlist.json`, `aside.modlist.json`. CONTINUE shows how many a slot has. Loading a save
+whose mods differ from those running now asks first, naming each mod as **OFF NOW** (in the save, not running),
+**NEW** (running, not in the save) or **CHANGED** (another version):
+
+- CONTINUE goes to a page with LOAD ANYWAY and BACK, the cursor on BACK.
+- The pause menu's LOAD says so under the slots, and Confirm loads while Back does not.
+- F4's first press says so, and a second within five seconds loads.
+
+A save from before the list says nothing, and nothing is asked. A mod held by Classic mode counts as running. Getting
+back into a set-aside game after coop is not asked about: it is the player's own game returning.
 
 ## Coop
 
-Mods do not run in coop. While the coop world is in play every mod is paused:
+Mods do not run in coop. With a mod on, the title's COOP asks first, saying so (ENTER or BACK), and F1's Online window says it too. While the coop world is in play every mod is paused:
 no callbacks, no events, and `kf.play`, `kf.game` and `kf.rules` values are not
 applied, so the game plays as if no mod were set. The Mods panel says so and disables its
 switches and Reload all. The count in the overlay's status line reads 0. Leaving

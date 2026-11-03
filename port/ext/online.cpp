@@ -363,6 +363,8 @@ bool online_rooms(std::vector<verdite::TitleRoom> &rooms, verdite::RoomListState
 }
 
 void online_draw_panel() {
+    if (mods_loaded_count() > 0)
+        ImGui::TextWrapped("Your mods stay off while you are in a room.");
     if (online.session) {
         ImGui::Text("Room: %s", online.room.c_str());
         if (const std::string coop_line = coop_panel_line(); !coop_line.empty())

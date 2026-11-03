@@ -150,12 +150,14 @@ def main():
         mods = a.title()["rows"]
         check("MODS lists the mods with their switches", mods and {row["value"] for row in mods} <= {"ON", "OFF"}, mods)
         check("the first mod starts off", mods[0]["value"] == "OFF", mods)
+        a.tap("confirm")   # the first has a menu of its own, with its switch first
         a.tap("confirm")
-        mods = a.wait("the mod on", a.title, lambda t: t["rows"][0]["value"] != "OFF")["rows"]
-        check("Confirm switches a mod on", mods[0]["value"] == "ON", mods)
+        switch = a.wait("the mod on", a.title, lambda t: t["rows"][0]["value"] != "OFF")["rows"][0]
+        check("Confirm switches a mod on", switch["value"] == "ON", switch)
         a.tap("confirm")
-        mods = a.wait("the mod off", a.title, lambda t: t["rows"][0]["value"] == "OFF")["rows"]
-        check("Confirm switches it off again", mods[0]["value"] == "OFF", mods)
+        switch = a.wait("the mod off", a.title, lambda t: t["rows"][0]["value"] == "OFF")["rows"][0]
+        check("Confirm switches it off again", switch["value"] == "OFF", switch)
+        a.tap("back")
         a.tap("back")
 
         a.choose("COOP")

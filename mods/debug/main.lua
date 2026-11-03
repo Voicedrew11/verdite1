@@ -47,6 +47,7 @@ function on_load()
 end
 
 function on_update()
+  apply()   -- the game's menus change config directly
   if config.infinite_mp and kf.context() == "gameplay" and kf.player.mp < kf.player.max_mp then
     kf.player.mp = kf.player.max_mp
   end

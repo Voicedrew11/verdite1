@@ -4,6 +4,7 @@
 #include "internal.hpp"
 #include <cJSON.h>
 #include <imgui.h>
+#include <verdite/mod_saved.h>
 #include <verdite/mods.h>
 #include <algorithm>
 #include <array>
@@ -42,6 +43,7 @@
 #include <kf/platform/input.h>
 #include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
+#include <kf/platform/saves.h>
 #include "coop_party.h"
 #include "call_checks.h"
 #include "raw_layer.h"
@@ -50,6 +52,7 @@
 #include "mod_automap.h"
 #include "mod_content.h"
 #include "mod_draw.h"
+#include "mod_menu.h"
 #include "mod_play.h"
 #include "mod_rules.h"
 #include "mod_scene.h"
@@ -1578,6 +1581,7 @@ void mods_start() {
     kf::sound_set_extra_mix(mod_audio_mix_frame);
     host->scan();
     last_scan = SDL_GetTicks();
+    mod_menu_refresh_options();
 }
 
 void mods_shutdown() {
@@ -1655,6 +1659,7 @@ void mods_poll() {
     last_scan = SDL_GetTicks();
     host->scan();
     refresh_mod_play();
+    mod_menu_refresh_options();
 }
 
 void mods_frame(int context) {
@@ -1708,6 +1713,27 @@ int mods_loaded_count() {
 
 std::vector<verdite::ModInfo> mods_list() {
     return host ? host->mods() : std::vector<verdite::ModInfo>{};
+}
+
+// A held mod is running: Classic mode's switch is not a change of mods.
+std::vector<verdite::SavedMod> mods_running_list() {
+    std::vector<verdite::SavedMod> running;
+    for (const verdite::ModInfo &mod : mods_list())
+        if (mod.state == verdite::ModState::Running)
+            running.push_back({mod.id, mod.name, mod.version});
+    return running;
+}
+
+SaveModInfo mods_save_info(SaveSlot slot) {
+    std::string json;
+    if (!host || save_mod_list_read(slot, json) != SaveFileResult::Ok)
+        return {};
+    const auto saved = verdite::saved_mods_decode(json);
+    if (!saved) {
+        std::printf("[mods] slot %d's list of mods cannot be read\n", kf_enum_encode<int>(slot));
+        return {};
+    }
+    return {saved->size(), verdite::saved_mods_compare(*saved, mods_running_list())};
 }
 
 void mods_draw_panel() {
@@ -1885,6 +1911,29 @@ void mods_player_died() {
     raise_event("on_death", {});
 }
 
+std::vector<std::string> mods_save_warning(SaveSlot slot, Language language) {
+    if (ext::mods_save_info(slot).differences.empty())
+        return {};
+    if (language == Language::Japanese)
+        return {"べつのかいぞうのセーブです", "けってい ロード  もどる やめる"};
+    return {"THIS SAVE WAS MADE WITH OTHER MODS", "CONFIRM LOADS  BACK CANCELS"};
+}
+
+bool mods_quick_load_confirmed() {
+    static Uint64 warned_at_ms = 0;
+    constexpr Uint64 second_press_ms = 5000;
+    if (ext::mods_save_info(SaveSlot::Quick).differences.empty())
+        return true;
+    const Uint64 now_ms = SDL_GetTicks();
+    if (warned_at_ms != 0 && now_ms - warned_at_ms < second_press_ms) {
+        warned_at_ms = 0;
+        return true;
+    }
+    warned_at_ms = now_ms;
+    host_show_message("This quick save was made with other mods. Press quick load again to load it.");
+    return false;
+}
+
 void mods_new_game() {
     if (ext::mods_active())
         ext::host->load_save_tables("{}");
@@ -1897,6 +1946,9 @@ void mods_game_saved(SaveSlot slot) {
     const auto result = save_mods_write(slot, ext::host->save_tables());
     if (result != SaveFileResult::Ok && result != SaveFileResult::Unavailable)
         std::printf("[mods] cannot save the mods' save data (%d)\n", static_cast<int>(result));
+    const auto listed = save_mod_list_write(slot, verdite::saved_mods_encode(ext::mods_running_list()));
+    if (listed != SaveFileResult::Ok && listed != SaveFileResult::Unavailable)
+        std::printf("[mods] cannot save the list of mods (%d)\n", static_cast<int>(listed));
     std::array<verdite::ModEventValue, 1> values{kf_enum_encode<std::int64_t>(slot)};
     raise_event("on_save", values);
 }

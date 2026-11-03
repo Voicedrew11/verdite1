@@ -3,6 +3,8 @@
 #include <kf/platform/analog.h>
 #include "coop_profile.h"
 #include "online_pose.h"
+#include <kf/platform/saves.h>
+#include <verdite/mod_saved.h>
 #include <verdite/mods.h>
 #include <verdite/options.h>
 #include <verdite/pickup_feed.h>
@@ -121,6 +123,7 @@ void apply_render_settings();   // also on window resize
 // The settings as option rows (options.cpp): what the overlay's Settings window
 // and Android's settings panel draw.
 verdite::OptionTable &options();
+void options_rebuild();   // the table again, for rows that changed: invalidates every view of it
 verdite::PlatformFeatures platform_features();   // what this build's platform has
 
 // ---- the SETTINGS page in the game's menu (kf/platform/settings_page.h) ----
@@ -263,6 +266,13 @@ bool mods_take_mouse();           // kf.game.mouse: the cursor shows and the gam
 // A mod by id, as the menus switch it, and its config. Nothing changes while mods are off in coop.
 void mods_set_enabled(std::string_view id, bool enabled);
 std::vector<verdite::ModInfo> mods_list();   // the installed mods, for the title menu's MODS page
+// What a save's list of mods says now: how many it names, and how they differ from those running.
+// Nothing when the save does not say (a save from before the list).
+struct SaveModInfo {
+    std::size_t mods = 0;
+    std::vector<verdite::SavedModDifference> differences;
+};
+SaveModInfo mods_save_info(SaveSlot slot);
 std::optional<verdite::ModConfigValue> mods_config_value(std::string_view id, std::string_view key);
 void mods_set_config_value(std::string_view id, std::string_view key, const verdite::ModConfigValue &value);
 

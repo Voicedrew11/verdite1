@@ -509,11 +509,12 @@ top page is a line of words across the bottom of the picture, without boxes, ste
 Right (2026-11-02); the pages under it use the menu's boxes, cursor and font as the SETTINGS page does:
 
 - **CONTINUE** (first, and where the cursor starts, when a card slot is used): the three slots
-  with their floor and experience; the chosen one goes in at the game's first update.
+  with their floor and experience; the chosen one goes in at the game's first update. A save made with other mods asks first.
 - **NEW GAME**: the story scroll, then a new game, as a button at the logo was.
-- **MODS**: every installed mod with its switch (ON, OFF, ERROR or HELD), Confirm flipping it; a
-  mod's settings and error text stay in the F1 Mods window.
-- **COOP**: HOST (a new private world, whose 8-digit code is shown to read out before START; a new
+- **MODS**: every installed mod with its switch (ON, OFF, ERROR or HELD), Confirm flipping it, or opening its
+  page when it has a menu of its own (docs/MODDING.md, "A mod's menu"); `on_settings` and a mod's error text
+  stay in the F1 Mods window.
+- **COOP**, after a page saying mods stay off in there when one is on: HOST (a new private world, whose 8-digit code is shown to read out before START; a new
   public one; or a world this machine already keeps), JOIN BY CODE (a grid of digits, or the
   keyboard's), PUBLIC ROOMS (the service's list, kept up to date while shown: the host's name,
   floor and players; a full room is dimmed) and PROFILE ("The profile").

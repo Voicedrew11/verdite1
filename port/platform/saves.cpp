@@ -618,6 +618,41 @@ SaveFileResult save_content_write(SaveSlot slot, std::span<const u8> data) {
 #endif
 }
 
+#ifndef __EMSCRIPTEN__
+static std::string mod_list_name(SaveSlot slot) {
+    std::string name = mods_name(slot);
+    name.replace(name.find(".mods.json"), std::string_view(".mods.json").size(), ".modlist.json");
+    return name;
+}
+#endif
+
+SaveFileResult save_mod_list_read(SaveSlot slot, std::string &json) {
+    json.clear();
+    if (!valid_slot(slot))
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    std::vector<u8> data(save_mods_capacity);
+    std::size_t size = 0;
+    const auto result = read_named(mod_list_name(slot).c_str(), data.data(), data.size(), &size);
+    if (result == SaveFileResult::Ok)
+        json.assign(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(size));
+    return result;
+#endif
+}
+
+SaveFileResult save_mod_list_write(SaveSlot slot, std::string_view json) {
+    if (!valid_slot(slot) || json.empty() || json.size() > save_mods_capacity)
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    return write_named(mod_list_name(slot).c_str(), reinterpret_cast<const u8 *>(json.data()), json.size(),
+                       Previous::Discard);
+#endif
+}
+
 SaveFileResult save_mods_read(SaveSlot slot, std::string &json) {
     json.clear();
     if (!valid_slot(slot))

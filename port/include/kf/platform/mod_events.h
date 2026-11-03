@@ -4,7 +4,11 @@
 // thing happens, on the game's thread. The functions that return a value return what the mods left,
 // or their input when no mod handles the event (or no mod host runs, as in headless tests).
 #include <kf/lib/types.h>
+#include <kf/platform/language.h>
 #include <kf/platform/saves.h>
+
+#include <string>
+#include <vector>
 
 namespace kf {
 
@@ -52,6 +56,12 @@ void mods_new_game();
 void mods_game_saved(SaveSlot slot);
 // Reads the mods' save data beside the slot (none or unreadable: empty), then raises on_load_game.
 void mods_game_loaded(SaveSlot slot);
+// The lines to show before loading the slot when it was made with other mods than those running now,
+// in the menu font's spelling; empty when they agree, or the save does not say.
+std::vector<std::string> mods_save_warning(SaveSlot slot, Language language);
+// F4: true when the quick save may load. When its mods differ the first press says so and answers
+// false, and a second press soon after answers true.
+bool mods_quick_load_confirmed();
 
 // The tables kf.rules changes (docs/MODDING.md, "kf.rules").
 enum class RulesTable : u8 { ActorDefinitions, LevelGrowth, ShopPrices, WeaponRecords, ArmourRecords };

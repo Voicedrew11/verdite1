@@ -4,5 +4,13 @@
   "version": "1.0",
   "api_version": "1.0",
   "author": "Verdite",
-  "description": "Noclip, god mode, infinite MP, peaceful, speed and warps."
+  "description": "Noclip, god mode, infinite MP, peaceful, speed and warps.",
+  "menu": [
+    {"key": "noclip", "label": "NOCLIP", "japanese": "かべぬけ", "type": "toggle"},
+    {"key": "invincible", "label": "GOD MODE", "japanese": "むてき", "type": "toggle"},
+    {"key": "infinite_mp", "label": "INFINITE MP", "japanese": "MPむげん", "type": "toggle"},
+    {"key": "peaceful", "label": "PEACEFUL", "japanese": "てきがおそわない", "type": "toggle"},
+    {"key": "move_speed", "label": "MOVE SPEED", "japanese": "あるくはやさ", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 1},
+    {"key": "game_speed", "label": "GAME SPEED", "japanese": "ゲームのはやさ", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 1}
+  ]
 }

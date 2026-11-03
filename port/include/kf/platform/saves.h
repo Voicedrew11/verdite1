@@ -49,6 +49,11 @@ inline constexpr std::size_t save_mods_capacity = 1 << 20;
 SaveFileResult save_mods_read(SaveSlot slot, std::string &json);
 SaveFileResult save_mods_write(SaveSlot slot, std::string_view json);
 
+// Which mods a slot's save was made with, beside it (slot1.modlist.json ...; verdite/mod_saved.h), as
+// JSON text. Written with every save, so an empty list says "no mods"; a save with no file does not say.
+SaveFileResult save_mod_list_read(SaveSlot slot, std::string &json);
+SaveFileResult save_mod_list_write(SaveSlot slot, std::string_view json);
+
 // The stock of mods' items and the state of their floors, kept beside a slot (slot1.content ...;
 // port/ext/mod_content_save.h). Every platform with a save directory.
 inline constexpr std::size_t save_content_capacity = 1 << 17;
