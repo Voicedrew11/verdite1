@@ -13,7 +13,7 @@ struct LocalRef {
     JNIEnv *env;
     jobject object;
     ~LocalRef() {
-        if (object)
+        if (env && object)
             env->DeleteLocalRef(object);
     }
 };
@@ -28,7 +28,7 @@ std::optional<std::vector<u8>> patch_archive_download(const char *url, std::stri
     // Through the activity's class: FindClass on a thread not started by Java misses the app's
     // classes.
     const LocalRef type{env, env->GetObjectClass(activity.object)};
-    const jmethodID method = env->GetMethodID(static_cast<jclass>(type.object), "downloadFile",
+    jmethodID method = env->GetMethodID(static_cast<jclass>(type.object), "downloadFile",
                                               "(Ljava/lang/String;I)[B");
     const LocalRef address{env, method ? env->NewStringUTF(url) : nullptr};
     if (!address.object) {

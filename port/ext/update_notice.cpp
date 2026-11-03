@@ -84,6 +84,8 @@ void open_page() {
 
 // The tag as a player reads a version.
 std::string shown_version() {
+    if (!release)
+        return {};
     const std::string &tag = release->tag;
     return tag.starts_with('v') || tag.starts_with('V') ? tag.substr(1) : tag;
 }
@@ -175,7 +177,7 @@ void update_notice_poll() {
 bool update_notice_open() { return notice_open; }
 
 void update_notice_draw() {
-    if (!notice_open)
+    if (!notice_open || !release)
         return;
     const ImGuiViewport *screen = ImGui::GetMainViewport();
     const float width_px = ImGui::GetFontSize() * 26.0f;

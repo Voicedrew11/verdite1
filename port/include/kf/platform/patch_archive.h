@@ -14,7 +14,7 @@ namespace kf {
 // patch_unpack_libarchive.cpp). The caller checks what it gets: nothing here is trusted.
 
 // More than any patch archive or patch would be.
-inline constexpr std::size_t patch_file_limit = 64 * 1024 * 1024;
+inline constexpr std::size_t patch_file_limit = std::size_t{64} * 1024 * 1024;
 
 // The file at an https URL, up to patch_file_limit bytes. On Android, any thread but the UI's.
 std::optional<std::vector<u8>> patch_archive_download(const char *url, std::string *error);

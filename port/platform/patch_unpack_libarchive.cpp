@@ -28,7 +28,7 @@ bool names_a_patch(std::string_view path) {
 // disk. Empty when it cannot be read or is over the limit, whatever its header claims.
 std::vector<u8> read_entry(archive *reader) {
     std::vector<u8> bytes;
-    std::array<u8, 64 * 1024> chunk;
+    std::array<u8, std::size_t{64} * 1024> chunk;
     for (;;) {
         const la_ssize_t got = archive_read_data(reader, chunk.data(), chunk.size());
         if (got == 0)
