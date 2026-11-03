@@ -75,6 +75,8 @@ std::optional<Parent> parent_of(TitlePage page) {
     case TitlePage::NameEntry: return Parent{TitlePage::Profile, TitleRowKind::ProfileName};
     case TitlePage::Mods: return Parent{TitlePage::Top, TitleRowKind::Mods};
     case TitlePage::CoopWarning: return Parent{TitlePage::Top, TitleRowKind::Coop};
+    case TitlePage::CoopSettings: return Parent{TitlePage::Coop, TitleRowKind::CoopSettings};
+    case TitlePage::RoomSettings: return Parent{TitlePage::Host, TitleRowKind::RoomSettings};
     case TitlePage::Top:
     case TitlePage::Waiting:
     case TitlePage::LoadWarning:   // back() goes to the slot it asks about
@@ -192,6 +194,25 @@ void TitleMenu::move_sideways(int delta, std::size_t count) {
     move_in_grid(delta);
     step_profile(delta);
     step_mod_row(delta);
+    step_coop_setting(delta);
+}
+
+void TitleMenu::step_coop_setting(int delta) {
+    if (page_ != TitlePage::CoopSettings && page_ != TitlePage::RoomSettings)
+        return;
+    const auto rows = view().rows;
+    if (row_ >= rows.size() || !rows[row_].enabled)
+        return;
+    choice_ = TitleChoice{TitleAction::StepCoopSetting, row_, {}, page_ == TitlePage::RoomSettings, {}, delta};
+}
+
+void TitleMenu::set_coop_settings(std::vector<TitleModSetting> own, std::vector<TitleModSetting> room) {
+    coop_settings_ = std::move(own);
+    room_settings_ = std::move(room);
+}
+
+bool TitleMenu::shows_coop_settings() const {
+    return page_ == TitlePage::CoopSettings || page_ == TitlePage::RoomSettings;
 }
 
 void TitleMenu::move_in_grid(int delta) {
@@ -273,6 +294,9 @@ void TitleMenu::confirm() {
     case TitleRowKind::Mod: confirm_mod(*chosen.mod); break;
     case TitleRowKind::ModSwitch: flip_mod(*chosen.mod); break;
     case TitleRowKind::ModSetting: step_mod_row(1); break;
+    case TitleRowKind::CoopSetting: step_coop_setting(1); break;
+    case TitleRowKind::CoopSettings: go(TitlePage::CoopSettings, std::nullopt); break;
+    case TitleRowKind::RoomSettings: go(TitlePage::RoomSettings, std::nullopt); break;
     case TitleRowKind::Slot:
         if (chosen.save->mod_changes.empty()) {
             choice_ = TitleChoice{TitleAction::Continue, row_, {}, false, {}, 0};
@@ -469,6 +493,7 @@ TitleView TitleMenu::view() const {
         rows.push_back(row(TitleRowKind::JoinCode));
         rows.push_back(row(TitleRowKind::RoomList));
         rows.push_back(row(TitleRowKind::Profile));
+        rows.push_back(row(TitleRowKind::CoopSettings));
         break;
     case TitlePage::Host:
         rows.push_back(row(TitleRowKind::NewPrivateWorld));
@@ -477,6 +502,7 @@ TitleView TitleMenu::view() const {
             rows.push_back(row(TitleRowKind::KeptWorld));
             rows.back().world = &world;
         }
+        rows.push_back(row(TitleRowKind::RoomSettings));
         break;
     case TitlePage::HostCode: rows.push_back(row(TitleRowKind::Start)); break;
     case TitlePage::JoinCode:
@@ -531,6 +557,13 @@ TitleView TitleMenu::view() const {
                 rows.push_back(row(TitleRowKind::SaveMod, false));
                 rows.back().save_mod = &change;
             }
+        }
+        break;
+    case TitlePage::CoopSettings:
+    case TitlePage::RoomSettings:
+        for (const TitleModSetting &setting : page_ == TitlePage::RoomSettings ? room_settings_ : coop_settings_) {
+            rows.push_back(row(TitleRowKind::CoopSetting, setting.enabled));
+            rows.back().setting = &setting;
         }
         break;
     case TitlePage::CoopWarning:

@@ -120,13 +120,15 @@ enum class TitlePage : std::uint8_t {
     ModSettings,   // one mod: its switch, then its settings
     LoadWarning,   // LOAD ANYWAY, BACK (where the cursor starts), then how the mods differ, dimmed
     CoopWarning,   // ENTER, BACK: a mod is on, and mods do not run in coop
+    CoopSettings,  // the player's own co-op settings
+    RoomSettings,  // what a host chooses for its room, before hosting it
 };
 
 enum class TitleRowKind : std::uint8_t {
     Continue, NewGame, Coop, Mods,                 // Top
     Slot,                                          // Continue: save
-    Host, JoinCode, RoomList, Profile,             // Coop
-    NewPrivateWorld, NewPublicWorld, KeptWorld,    // Host: world
+    Host, JoinCode, RoomList, Profile, CoopSettings,   // Coop
+    NewPrivateWorld, NewPublicWorld, KeptWorld, RoomSettings,   // Host: world; RoomSettings after the worlds
     Start,                                         // HostCode
     Letter, Delete, Join,                          // JoinCode: letter
     Room,                                          // RoomList: room
@@ -134,6 +136,7 @@ enum class TitleRowKind : std::uint8_t {
     Done,                                          // NameEntry, after its letters and DELETE
     Mod,                                           // Mods: mod
     ModSwitch, ModSetting,                         // ModSettings: mod; setting. Left and Right step, as Confirm does
+    CoopSetting,                                   // CoopSettings, RoomSettings: setting. Left and Right step, as Confirm does
     LoadAnyway, SaveMod,                           // LoadWarning: save_mod is dimmed
     EnterCoop,                                     // CoopWarning
     GoBack,                                        // LoadWarning, CoopWarning
@@ -148,7 +151,7 @@ struct TitleRowView {
     const TitleWorld *world = nullptr;   // KeptWorld
     const TitleRoom *room = nullptr;     // Room
     const TitleMod *mod = nullptr;       // Mod, ModSwitch
-    const TitleModSetting *setting = nullptr;   // ModSetting
+    const TitleModSetting *setting = nullptr;   // ModSetting, CoopSetting
     const TitleSaveMod *save_mod = nullptr;     // SaveMod
 };
 
@@ -174,13 +177,14 @@ enum class TitleAction : std::uint8_t {
     EnableMod,    // code: the mod's id. The game answers with set_mods
     DisableMod,   // code: the mod's id
     StepModSetting,   // code: the mod's id; slot: the setting's index; delta. The game answers with set_mods
+    StepCoopSetting,  // listed: on RoomSettings, else CoopSettings; slot: the setting's index; delta. The game answers with set_coop_settings
 };
 
 struct TitleChoice {
     TitleAction action = TitleAction::NewGame;
     std::size_t slot = 0;
     std::string code;      // Host, Join, CancelJoin: the room; EnableMod, DisableMod, StepModSetting: the mod's id
-    bool listed = false;   // Host: a public room
+    bool listed = false;   // Host: a public room; StepCoopSetting: as above
     TitleProfile profile;
     int delta = 0;         // StepModSetting: -1 or 1
 };
@@ -217,6 +221,11 @@ public:
     // The saves as they are now, as what a save warns of follows the mods that are on.
     void set_saves(std::vector<TitleSave> saves);
 
+    // The co-op settings' rows as they are now, as the game spells them: the player's own, and the
+    // room's. The game keeps these current while their pages show.
+    void set_coop_settings(std::vector<TitleModSetting> own, std::vector<TitleModSetting> room);
+    bool shows_coop_settings() const;
+
     // What the player chose, once.
     std::optional<TitleChoice> take_choice();
     // The co-op choice being waited on worked: the menu is done.
@@ -234,6 +243,7 @@ private:
     void move_in_grid(int delta);
     void step_profile(int delta);
     void step_mod_row(int delta);
+    void step_coop_setting(int delta);
     void confirm_mod(const TitleMod &mod);
     void flip_mod(const TitleMod &mod);
     const TitleMod *shown_mod() const;
@@ -252,6 +262,7 @@ private:
     std::vector<TitleWorld> worlds_;
     std::vector<TitleRoom> rooms_;
     std::vector<TitleMod> mods_;
+    std::vector<TitleModSetting> coop_settings_, room_settings_;
     std::string settings_mod_;        // ModSettings: the mod's id
     std::size_t warned_slot_ = 0;     // LoadWarning: the slot it asks about
     RoomListState list_state_ = RoomListState::Connecting;

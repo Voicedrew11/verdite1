@@ -389,7 +389,7 @@ TEST_CASE("rows wrap, and Back returns to the row that led to the page") {
     go_to(menu, TitleRowKind::Coop);
     REQUIRE(menu.view().page == TitlePage::Coop);
     menu.press(TitleInput::Up);
-    CHECK(selected(menu) == TitleRowKind::Profile);
+    CHECK(selected(menu) == TitleRowKind::CoopSettings);
     menu.press(TitleInput::Back);
     CHECK(selected(menu) == TitleRowKind::Coop);
     menu.press(TitleInput::Confirm);
@@ -439,7 +439,7 @@ TEST_CASE("a kept world is hosted again under its code, listed when the code is 
     auto menu = open_menu(saves(false, false, false), {{"12345678", 3, 2}, {"PABCDEFG", 1, 1}});
     go_to(menu, TitleRowKind::Coop);
     go_to(menu, TitleRowKind::Host);
-    REQUIRE(menu.view().rows.size() == 4);
+    REQUIRE(menu.view().rows.size() == 5);
     CHECK(menu.view().rows[2].world->code == "12345678");
     menu.point(3);
     menu.press(TitleInput::Confirm);
@@ -671,4 +671,49 @@ TEST_CASE("set_saves changes what a save warns of") {
     menu.set_saves(saves(true, false, false));
     go_to(menu, TitleRowKind::Slot);
     CHECK(taken(menu).action == TitleAction::Continue);
+}
+
+TEST_CASE("the co-op settings are stepped on their own page, the room's under Host") {
+    TitleMenu menu(1);
+    menu.open({}, {}, {}, {});
+    menu.set_coop_settings({{"NAME BARS", "ALWAYS", true}, {"LOCKED", "X", false}}, {{"NEW PLAYERS", "ON", true}});
+    while (selected(menu) != TitleRowKind::Coop)
+        menu.press(TitleInput::Right);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::Coop);
+    CHECK_FALSE(menu.shows_coop_settings());
+    while (selected(menu) != TitleRowKind::CoopSettings)
+        menu.press(TitleInput::Down);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::CoopSettings);
+    CHECK(menu.shows_coop_settings());
+    CHECK(menu.view().rows.front().setting->label == "NAME BARS");
+
+    menu.press(TitleInput::Left);
+    auto choice = menu.take_choice();
+    REQUIRE(choice.has_value());
+    CHECK(choice.value_or(TitleChoice{}).action == TitleAction::StepCoopSetting);
+    CHECK_FALSE(choice.value_or(TitleChoice{}).listed);
+    CHECK(choice.value_or(TitleChoice{}).delta == -1);
+    menu.press(TitleInput::Down);
+    menu.press(TitleInput::Confirm);
+    CHECK_FALSE(menu.take_choice().has_value());   // dimmed
+
+    menu.press(TitleInput::Back);
+    CHECK(selected(menu) == TitleRowKind::CoopSettings);
+    while (selected(menu) != TitleRowKind::Host)
+        menu.press(TitleInput::Up);
+    menu.press(TitleInput::Confirm);
+    while (selected(menu) != TitleRowKind::RoomSettings)
+        menu.press(TitleInput::Down);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::RoomSettings);
+    menu.press(TitleInput::Confirm);
+    choice = menu.take_choice();
+    REQUIRE(choice.has_value());
+    CHECK(choice.value_or(TitleChoice{}).listed);
+    CHECK(choice.value_or(TitleChoice{}).slot == 0);
+    CHECK(choice.value_or(TitleChoice{}).delta == 1);
+    menu.press(TitleInput::Back);
+    CHECK(selected(menu) == TitleRowKind::RoomSettings);
 }
