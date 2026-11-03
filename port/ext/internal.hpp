@@ -1,6 +1,7 @@
 #pragma once
 #include <kf/ext/ext.h>
 #include <kf/platform/analog.h>
+#include <verdite/setup.h>
 #include "coop_profile.h"
 #include "online_pose.h"
 #include <kf/platform/saves.h>
@@ -140,10 +141,11 @@ std::string item_description(std::uint8_t id);
 void item_description_draw();
 
 // ---- the first-run setup (setup.cpp) ----
-bool setup_available();            // this platform has a screen for it
 void setup_begin(Overlay overlay); // at start: shown if due and drawn
 void setup_run();                  // from the start, again
 bool setup_open();
+bool setup_shows_game();           // open, and the game is seen behind it
+void setup_poll();                 // on every host poll: a native panel's controls in
 void setup_draw();                 // inside the ImGui frame (setup_json, setup_command: ext.h)
 
 // ---- Discord Rich Presence ----
@@ -251,6 +253,13 @@ void overlay_restyle();   // after the interface scale changes
 bool settings_panel_show();
 bool settings_panel_open();
 void settings_panel_poll();   // on every host poll: the panel's changes in, the new view out
+#ifdef __ANDROID__
+void android_call_activity(const char *method);   // a no-argument method of VerditeActivity
+#endif
+
+// ---- Android's setup panel (setup_panel.cpp; null elsewhere) ----
+verdite::SetupScreen *setup_panel_screen();
+std::vector<std::string> setup_panel_take_controls();   // the panel's taps, as Setup::command lines
 
 // ---- mods ----
 void mods_start();

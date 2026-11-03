@@ -549,27 +549,43 @@ font page, 2 pixels apart; kana 13 apart),
 
 ## The first-run setup
 
-Built 2026-10-26: Verdite2 and Verdite3's onboarding, carried over in C++. libverdite's
-`verdite/setup.h` holds the steps and what is staged; KF1's pages and the Dear ImGui screen are
-`port/ext/setup.cpp`.
+Built 2026-10-26 and redrawn 2026-11-03 after Verdite2's onboarding, in C++. libverdite's
+`verdite/setup.h` holds the steps and what is staged; KF1's pages are `port/ext/setup.cpp`, the
+Dear ImGui window `port/ext/setup_overlay.cpp`, and Android's Material views
+`android/.../SetupPanel.java` with `port/ext/setup_panel.cpp`.
 
-- **Welcome**: Original, Balanced, Modern and Custom. Each is a starting point: it fills the
-  pages, and the player walks every page to a summary before anything is set.
-- **Pages**: Display (suggested for the monitor), Picture, Controls, Turning, Gameplay. A group is
-  one row with a choice per tier; Picture, Controls and Gameplay offer "Set everything to".
+- **Welcome**: Original, Balanced and Modern as cards side by side, each with what it does and the
+  display it picks, and Custom under them. Each is a starting point: it fills the pages, and the
+  player walks every page to a summary before anything is set.
+- **Pages**: Display (window, resolution, aspect, frame rate; suggested for the monitor), Controls,
+  Presentation, Turning and difficulty, Gameplay. A group is one row with a choice per tier; Controls,
+  Presentation and Gameplay offer "Set everything to". A group the settings match no choice of offers
+  "Keep as is".
+- **Verdite2's rows KF1 has no setting for are left out**: Water, Motion (the frame rate covers it),
+  Sound, Rumble and gyro (the phone has Vibration in its place), Comparing gear, On death. There is no
+  run key or map in the setup: both were mods, and neither ships.
+- **Summary** ("Ready"): every answer, page by page, not only what changes.
 - **Presets write ordinary settings.** Finish sets each value through the option table, so all of
   it can be changed afterwards. Classic mode is not a preset: every preset turns it off.
-- **Shown** while `overlay.setup_seen` in settings.json is below the spec's version (1); Finish and
-  Skip write it, closing the window does not. Again from Settings > Interface > *Run setup again*.
-- **Each platform draws it its own way** (`SetupScreen`). The desktop's is Dear ImGui; Android has
-  none yet, so there it is neither shown nor marked seen. The agent channel's `setup` drives it
-  (`setup start`, `preset <id>`, `choose <group> <n>`, `tier <id>`, `option <id> <value>`, `next`,
-  `back`, `finish`, `skip`), and `scripts/smoke.py` walks it with Modern.
+- **Shown** while `overlay.setup_seen` in settings.json is below the spec's version (2); Finish and
+  Skip write it, closing the window does not. Again from Settings > Interface > *Run setup again*,
+  where Skip reads Cancel. Both set nothing.
+- **Each platform draws it its own way** (`SetupScreen`).
+  - The desktop's follows the window: below 44 lines of width the cards stack and labels sit over
+    their controls, and a short window scrolls. Left and right step a focused list or slider; Enter or
+    A selects; Escape or B goes back, never off the welcome; Page Down or Start goes on. The foot names
+    the device used last.
+  - Android's is laid out for a landscape phone's short screen: a fixed head and foot, a scrolling page,
+    chips in place of steppers (a list behind a button past four choices, as the resolution has) and
+    the summary in two columns. Back and B step back; Start goes on.
+- The agent channel's `setup` drives either (`setup start`, `preset <id>`, `choose <group> <n|keep>`,
+  `tier <id>`, `option <id> <value>`, `next`, `back`, `finish`, `skip`), and `scripts/smoke.py` walks it
+  with Modern.
 - At start, `[setup] check: N value(s), M problem(s)` holds the spec to the option table.
 
-What each tier picks is a first judgement, to be played: Balanced keeps 4:3-era pacing choices
-(no AO, no anti-aliasing, no minimap) and fixes what the hardware got wrong; Modern is the
-defaults. Dynamic lights, glow and shadows are not in it while Vulkan does not draw them.
+What each tier picks is a first judgement, to be played: Balanced keeps the original's lighting model
+on smoothed pixels, with no AO, torchlight or anti-aliasing, and its HUD in the 4:3 box; Modern is the
+defaults. Android's defaults are still to be measured on the phones (`ANDROID_PLAN.md`, B6).
 
 ## Automatic enemy turn
 

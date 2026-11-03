@@ -10,7 +10,7 @@
 //   welcome    a card per preset; choosing one fills every page from it
 //   pages      in the spec's order; each holds groups (one choice per tier)
 //              and plain options, both from the option table
-//   summary    every option that will change, from and to
+//   summary    every answer the pages now hold, page by page
 //
 // Nothing is applied until Finish, which sets each staged value through the
 // option table, so a preset only writes ordinary settings: every one of them
@@ -65,6 +65,10 @@ struct SetupGroup {
     std::vector<SetupChoice> choices;
 };
 
+// How a Choice row is drawn. A Slider's positions are the row's choices in order;
+// a Number row is a slider whatever this says.
+enum class SetupOptionLook : std::uint8_t { Stepper, Slider };
+
 // One option of the table, shown as the settings show it (a display's
 // resolution, the enemy turn speed, the language). The table's own state reads
 // the settings as they are, not as staged, so in the setup a row is always
@@ -74,6 +78,7 @@ struct SetupGroup {
 struct SetupOptionItem {
     std::string option;
     std::optional<SetupValue> shown_while;
+    SetupOptionLook look = SetupOptionLook::Stepper;
 };
 
 // A row of a page.
@@ -101,10 +106,21 @@ struct SetupPreset {
     std::string help;
     std::string tier;   // empty: Custom
     std::vector<SetupValue> values;
+    std::string summary;   // the display it picks, one dim line on its card; may be empty
+};
+
+// The words on the welcome. The game picks them when it builds the spec, so a
+// first run and a run from the settings can differ.
+struct SetupWelcome {
+    std::string title;
+    std::string text;
+    std::string prompt;   // over the cards
+    std::string skip_label;
 };
 
 struct SetupSpec {
     int version = 1;   // raise it to ask everyone again
+    SetupWelcome welcome;
     std::vector<SetupTier> tiers;
     std::vector<SetupPreset> presets;
     std::vector<SetupPage> pages;
@@ -120,16 +136,26 @@ enum class SetupStep : std::uint8_t { Welcome, Page, Summary };
 
 struct SetupGroupView {
     const SetupGroup *group;              // borrowed from the spec
-    std::optional<std::size_t> chosen;    // none: the settings match no choice ("Keep as is")
+    std::optional<std::size_t> chosen;    // none: "Keep as is"
+    bool keep_offered = false;            // the settings match no choice, so "Keep as is" is an answer
 };
 
-using SetupItemView = std::variant<SetupGroupView, OptionRowView>;   // an option's staged value
+struct SetupOptionView {
+    OptionRowView row;   // its staged value
+    SetupOptionLook look = SetupOptionLook::Stepper;
+};
 
-// An option Finish will change.
-struct SetupChange {
-    std::string_view option_label;
-    std::string from;   // as the settings show it: a choice's label, a formatted number, On/Off
-    std::string to;
+using SetupItemView = std::variant<SetupGroupView, SetupOptionView>;
+
+// One answer on the summary.
+struct SetupSummaryLine {
+    std::string_view label;
+    std::string value;   // a choice's label, "Keep as is", or as the settings show an option
+};
+
+struct SetupSummarySection {
+    std::string_view title;   // the page's
+    std::vector<SetupSummaryLine> lines;
 };
 
 // Pointers and views borrow from the spec and the option table.
@@ -138,20 +164,23 @@ struct SetupPageView {
     std::size_t page = 0;         // Page: which of the shown pages; Summary: their count
     std::size_t page_count = 0;   // pages shown on this platform
     const SetupPage *spec_page = nullptr;       // Page: title, text, id
+    const SetupWelcome *welcome = nullptr;      // Welcome
     std::vector<const SetupPreset *> presets;   // Welcome
     std::vector<SetupItemView> items;           // Page
     std::vector<const SetupTier *> tiers;       // Page offering "Set everything to"
     std::optional<std::size_t> page_tier;       // index into tiers: every group of the page is at it
-    std::vector<SetupChange> changes;           // Summary
+    std::vector<SetupSummarySection> summary;   // Summary
 };
 
 // A view as JSON, for a platform drawing in another language (Android's Java)
 // and the agent channel: {"step","page","pageCount","id","title","text",
-// "presets":[{"id","label","help"}],"items":[...],"tiers":[{"id","label",
-// "help"}],"pageTier","changes":[{"label","from","to"}]}, where step is
-// "welcome", "page" or "summary", pageTier an index or null, and an item is
-// {"type":"group","id","label","help","chosen","choices":[{"label","help",
-// "gpuCost"}]} or {"type":"option","row":<a row as options_json writes it>}.
+// "welcome":{"title","text","prompt","skipLabel"} or null,
+// "presets":[{"id","label","help","summary"}],"items":[...],"tiers":[{"id",
+// "label","help"}],"pageTier","summary":[{"title","lines":[{"label","value"}]}]},
+// where step is "welcome", "page" or "summary", pageTier an index or null, and
+// an item is {"type":"group","id","label","help","chosen","keepOffered",
+// "choices":[{"label","help","gpuCost"}]} or {"type":"option","look":"stepper"
+// or "slider","row":<a row as options_json writes it>}.
 std::string setup_json(const SetupPageView &view);
 
 // A platform's setup screen. show is called with every new state, the first
@@ -183,6 +212,7 @@ public:
     // does nothing and returns false.
     bool choose_preset(std::string_view preset);   // Welcome: fills the pages, goes to the first
     bool choose(std::string_view group, std::size_t choice);
+    bool keep(std::string_view group);             // back to the settings' own values, when keep_offered
     bool choose_page_tier(std::string_view tier);  // every group of this page
     bool set_option(std::string_view option, const OptionValue &value);   // checked as the table checks it
     bool next();      // to the next page, or the summary
@@ -193,7 +223,8 @@ public:
     bool skip();      // any step: sets nothing, marks seen, closes
 
     // A control as a line of text, for a platform across a queue and for the
-    // agent channel: "preset <id>", "choose <group> <index>", "tier <id>",
+    // agent channel: "preset <id>", "choose <group> <index>", "choose <group>
+    // keep", "tier <id>",
     // "option <id> <value as option_value_from_text reads it>", "next",
     // "back", "finish", "skip". False for anything else or what does not fit.
     bool command(std::string_view line);
@@ -210,8 +241,11 @@ private:
     bool item_shown(const SetupItem &item) const;       // and shows it now
     std::vector<const SetupPage *> shown_pages() const;
     const SetupGroup *group_on_page(std::string_view group) const;
+    template <typename Read>
+    std::optional<std::size_t> chosen_by(const SetupGroup &group, Read read) const;
     std::optional<std::size_t> chosen(const SetupGroup &group) const;
-    std::vector<SetupChange> changes() const;
+    std::optional<std::size_t> chosen_in_settings(const SetupGroup &group) const;
+    std::vector<SetupSummarySection> summary() const;
     void show() const;
     void close();
 

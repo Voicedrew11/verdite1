@@ -52,7 +52,8 @@ std::string index_json(std::optional<std::size_t> index) { return index ? std::t
 std::string group_json(const SetupGroupView &view) {
     const SetupGroup &group = *view.group;
     std::string out = "{\"type\":\"group\",\"id\":" + json_quote(group.id) + ",\"label\":" + json_quote(group.label) +
-                      ",\"help\":" + json_quote(group.help) + ",\"chosen\":" + index_json(view.chosen) + ",\"choices\":[";
+                      ",\"help\":" + json_quote(group.help) + ",\"chosen\":" + index_json(view.chosen) +
+                      ",\"keepOffered\":" + bool_json(view.keep_offered) + ",\"choices\":[";
     for (std::size_t i = 0; i < group.choices.size(); ++i) {
         const SetupChoice &choice = group.choices[i];
         out += std::string(i ? "," : "") + "{\"label\":" + json_quote(choice.label) + ",\"help\":" +
@@ -64,7 +65,16 @@ std::string group_json(const SetupGroupView &view) {
 std::string item_json(const SetupItemView &item) {
     if (const auto *group = std::get_if<SetupGroupView>(&item))
         return group_json(*group);
-    return "{\"type\":\"option\",\"row\":" + option_row_json(std::get<OptionRowView>(item)) + "}";
+    const auto &option = std::get<SetupOptionView>(item);
+    return std::string("{\"type\":\"option\",\"look\":\"") + (option.look == SetupOptionLook::Slider ? "slider" : "stepper") +
+           "\",\"row\":" + option_row_json(option.row) + "}";
+}
+
+std::string welcome_json(const SetupWelcome *welcome) {
+    if (!welcome)
+        return "null";
+    return "{\"title\":" + json_quote(welcome->title) + ",\"text\":" + json_quote(welcome->text) + ",\"prompt\":" +
+           json_quote(welcome->prompt) + ",\"skipLabel\":" + json_quote(welcome->skip_label) + "}";
 }
 
 template <typename T, typename Write>
@@ -85,9 +95,10 @@ std::string setup_json(const SetupPageView &view) {
                       "\",\"page\":" + std::to_string(view.page) + ",\"pageCount\":" + std::to_string(view.page_count) +
                       ",\"id\":" + json_quote(page ? page->id : "") + ",\"title\":" + json_quote(page ? page->title : "") +
                       ",\"text\":" + json_quote(page ? page->text : "");
+    out += ",\"welcome\":" + welcome_json(view.welcome);
     out += ",\"presets\":" + array_json(view.presets, [](const SetupPreset *preset) {
                return "{\"id\":" + json_quote(preset->id) + ",\"label\":" + json_quote(preset->label) +
-                      ",\"help\":" + json_quote(preset->help) + "}";
+                      ",\"help\":" + json_quote(preset->help) + ",\"summary\":" + json_quote(preset->summary) + "}";
            });
     out += ",\"items\":" + array_json(view.items, item_json);
     out += ",\"tiers\":" + array_json(view.tiers, [](const SetupTier *tier) {
@@ -95,9 +106,11 @@ std::string setup_json(const SetupPageView &view) {
                       ",\"help\":" + json_quote(tier->help) + "}";
            });
     out += ",\"pageTier\":" + index_json(view.page_tier);
-    out += ",\"changes\":" + array_json(view.changes, [](const SetupChange &change) {
-               return "{\"label\":" + json_quote(change.option_label) + ",\"from\":" + json_quote(change.from) +
-                      ",\"to\":" + json_quote(change.to) + "}";
+    out += ",\"summary\":" + array_json(view.summary, [](const SetupSummarySection &section) {
+               return "{\"title\":" + json_quote(section.title) + ",\"lines\":" +
+                      array_json(section.lines, [](const SetupSummaryLine &line) {
+                          return "{\"label\":" + json_quote(line.label) + ",\"value\":" + json_quote(line.value) + "}";
+                      }) + "}";
            });
     return out + "}";
 }
@@ -142,6 +155,21 @@ bool Setup::choose(std::string_view group, std::size_t choice) {
     if (!found || choice >= found->choices.size())
         return false;
     stage_choice(found->choices[choice]);
+    show();
+    return true;
+}
+
+bool Setup::keep(std::string_view group) {
+    if (!running() || step_ != SetupStep::Page)
+        return false;
+    const SetupGroup *found = group_on_page(group);
+    if (!found || chosen_in_settings(*found))
+        return false;
+    std::erase_if(staged_, [found](const SetupValue &staged) {
+        return std::ranges::any_of(found->choices, [&staged](const SetupChoice &choice) {
+            return std::ranges::find(choice.values, staged.option, &SetupValue::option) != choice.values.end();
+        });
+    });
     show();
     return true;
 }
@@ -247,6 +275,8 @@ bool Setup::command(std::string_view line) {
         return choose_page_tier(rest);
     if (verb == "choose") {
         const auto [group, index] = first_word(rest);
+        if (index == "keep")
+            return keep(group);
         const auto choice = parse_index(index);
         return choice && choose(group, *choice);
     }
@@ -268,12 +298,13 @@ SetupPageView Setup::view() const {
     view.page_count = pages.size();
     view.page = step_ == SetupStep::Summary ? pages.size() : page_;
     if (step_ == SetupStep::Welcome) {
+        view.welcome = &spec_.welcome;
         for (const SetupPreset &preset : spec_.presets)
             view.presets.push_back(&preset);
         return view;
     }
     if (step_ == SetupStep::Summary) {
-        view.changes = changes();
+        view.summary = summary();
         return view;
     }
     const SetupPage &page = *pages[page_];
@@ -283,12 +314,12 @@ SetupPageView Setup::view() const {
         if (!item_shown(item))
             continue;
         if (const auto *group = std::get_if<SetupGroup>(&item)) {
-            view.items.emplace_back(SetupGroupView{group, chosen(*group)});
+            view.items.emplace_back(SetupGroupView{group, chosen(*group), !chosen_in_settings(*group)});
             any_group = true;
             continue;
         }
-        const std::string &option = std::get<SetupOptionItem>(item).option;
-        view.items.emplace_back(OptionRowView{options_.find(option), value_now(option), OptionState{}});
+        const auto &plain = std::get<SetupOptionItem>(item);
+        view.items.emplace_back(SetupOptionView{{options_.find(plain.option), value_now(plain.option), OptionState{}}, plain.look});
     }
     if (page.tiers != SetupPageTiers::Offered || !any_group)
         return view;
@@ -371,8 +402,9 @@ const SetupGroup *Setup::group_on_page(std::string_view group) const {
     return nullptr;
 }
 
-// The first choice whose every value this platform can set is the value now.
-std::optional<std::size_t> Setup::chosen(const SetupGroup &group) const {
+// The first choice whose every value this platform can set reads as read gives it.
+template <typename Read>
+std::optional<std::size_t> Setup::chosen_by(const SetupGroup &group, Read read) const {
     for (std::size_t i = 0; i < group.choices.size(); ++i) {
         bool any = false, all = true;
         for (const SetupValue &value : group.choices[i].values) {
@@ -380,7 +412,7 @@ std::optional<std::size_t> Setup::chosen(const SetupGroup &group) const {
                 continue;
             any = true;
             const auto checked = options_.check(value.option, value.value);
-            all = all && checked && value_now(value.option) == *checked;
+            all = all && checked && read(value.option) == *checked;
         }
         if (any && all)
             return i;
@@ -388,16 +420,30 @@ std::optional<std::size_t> Setup::chosen(const SetupGroup &group) const {
     return std::nullopt;
 }
 
-std::vector<SetupChange> Setup::changes() const {
-    std::vector<SetupChange> out;
-    for (const SetupValue &value : staged_) {
-        const OptionRow *row = options_.find(value.option);
-        if (!row || !row->get)
-            continue;
-        const OptionValue now = row->get();
-        if (now == value.value)
-            continue;
-        out.push_back({row->label, option_value_label(*row, now), option_value_label(*row, value.value)});
+std::optional<std::size_t> Setup::chosen(const SetupGroup &group) const {
+    return chosen_by(group, [this](std::string_view option) { return value_now(option); });
+}
+
+std::optional<std::size_t> Setup::chosen_in_settings(const SetupGroup &group) const {
+    return chosen_by(group, [this](std::string_view option) { return options_.find(option)->get(); });
+}
+
+std::vector<SetupSummarySection> Setup::summary() const {
+    std::vector<SetupSummarySection> out;
+    for (const SetupPage *page : shown_pages()) {
+        SetupSummarySection section{page->title, {}};
+        for (const SetupItem &item : page->items) {
+            if (!item_shown(item))
+                continue;
+            if (const auto *group = std::get_if<SetupGroup>(&item)) {
+                const auto choice = chosen(*group);
+                section.lines.push_back({group->label, choice ? group->choices[*choice].label : "Keep as is"});
+                continue;
+            }
+            const OptionRow &row = *options_.find(std::get<SetupOptionItem>(item).option);
+            section.lines.push_back({row.label, option_value_label(row, value_now(row.id))});
+        }
+        out.push_back(std::move(section));
     }
     return out;
 }

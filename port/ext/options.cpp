@@ -200,7 +200,9 @@ OptionSection display_picture() {
                           "from the edges as in 4:3. Off: the HUD stays in its 4:3 box.",
                           s.hud_at_edges, apply_render_settings),
                    [] { return settings().aspect != "4:3"; }),
-        choice("display.resolution", "Resolution", "", s.resolution,
+        choice("display.resolution", "Resolution",
+               "How sharply the 3D picture is drawn, before it is fitted to the window. 1x is the PlayStation's.",
+               s.resolution,
                {{0, "Native (match window)"}, {1, "1x (320x240)"}, {2, "2x"}, {3, "3x"}, {4, "4x"}, {5, "5x"},
                 {6, "6x"}, {7, "7x"}, {8, "8x"}},
                apply_render_settings),
@@ -391,7 +393,7 @@ OptionSection controls_analog() {
         in_analog(number("analog.pitch_sensitivity", "Look up/down speed", "", a.pitch_sensitivity,
                          {0.1, 2.0, 0.05, "%.2fx"}, apply_control_settings)),
         in_analog(number("analog.move_sensitivity", "Walk speed",
-                         "1x at full deflection is the D-pad's speed (and running's while running).", a.move_sensitivity,
+                         "1x at full deflection is the D-pad's speed.", a.move_sensitivity,
                          {0.1, 1.0, 0.05, "%.2fx"}, apply_control_settings)),
         in_analog(number("analog.look_deadzone", "Look deadzone", "", a.look_deadzone, {0.0, 0.5, 0.01, "%.2f"},
                          apply_control_settings)),
@@ -429,10 +431,10 @@ OptionSection controls_analog() {
 
 OptionSection controls_bindings() {
     static constexpr std::pair<const char *, const char *> bindings[] = {
-        {"Move / strafe", "W A S D"}, {"Run", "Shift (hold or toggle)"}, {"Turn", "Left / Right arrows"},
+        {"Move / strafe", "W A S D"}, {"Turn", "Left / Right arrows"},
         {"Look", "Mouse, Page Up / Page Down"}, {"Attack", "Space, left mouse"}, {"Magic", "Q, right mouse"},
         {"Interact", "E, Enter"}, {"Menu", "Tab (opens and backs out)"}, {"Back", "Backspace, Tab, right mouse in menus"},
-        {"Quick save", "F2"}, {"Full map", "M"}, {"Quick load", "F4 (also on the title screen)"},
+        {"Quick save", "F2"}, {"Quick load", "F4 (also on the title screen)"},
         {"Pause", "P, Escape"}, {"Overlay", "F1"}, {"Fullscreen", "F11, Alt+Enter"}};
     OptionSection section{"Keyboard (rebinding is planned)", {}};
     for (const auto &[what, keys] : bindings)
@@ -461,7 +463,7 @@ OptionSection gameplay_classic() {
     OptionRow classic = toggle("gameplay.classic_mode", "Classic mode",
                                "Play King's Field as it originally shipped: 4:3 at 320x240, 20 fps, polygon wiggle, "
                                "texture warping, 15-bit colour with dithering, no added lighting or anti-aliasing, the "
-                               "original look range, no run key, no automap, equipment stats, quick save or bug fixes. "
+                               "original look range, no equipment stats, quick save or bug fixes. "
                                "Fullscreen, volume, controls, language and mods are unaffected.",
                                settings().classic, apply_classic);
     classic.state = [] {
@@ -651,11 +653,10 @@ OptionSection interface_overlay() {
                              {0.75, 2.5, 0.05, "%.2f"}, overlay_restyle);
     scale.settle = true;
     return {"", {
-        shown_if(action("overlay.run_setup", "Run setup again",
-                        "The first-run setup: presets, then a page per part of the game, then a summary before "
-                        "anything changes.",
-                        setup_run),
-                 setup_available),
+        action("overlay.run_setup", "Run setup again",
+               "The first-run setup: presets, then a page per part of the game, then a summary before anything "
+               "changes.",
+               setup_run),
         toggle("overlay.pause_when_open", "Pause the game while the overlay is open", "", s.pause_when_open, store_only),
         toggle("overlay.item_descriptions", "Item descriptions in the game's menus",
                "Under the item preview: what the item does, such as healing or an equipment effect.",

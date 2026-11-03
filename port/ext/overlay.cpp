@@ -376,7 +376,7 @@ bool pause_keeps_music() {
 }
 // Nothing of the game shows under Android's panel, so it is not redrawn.
 // A paused mod still gets on_draw, which is how it unpauses.
-bool redraw_while_paused() { return open || setup_open() || mods_pause_requested(); }
+bool redraw_while_paused() { return open || setup_shows_game() || mods_pause_requested(); }
 bool wants_cursor() { return covered() || mods_take_mouse(); }
 
 ViewRect game_view() {
@@ -492,6 +492,7 @@ void poll() {
     mods_poll();
     options_poll();
     settings_panel_poll();
+    setup_poll();
     online_poll();
     messages_poll();
     if (imgui) {

@@ -84,9 +84,9 @@ SetupSpec spec() {
     SetupSpec s;
     s.version = 2;
     s.tiers = {{"original", "Original", ""}, {"balanced", "Balanced", ""}, {"modern", "Modern", ""}};
-    s.presets = {{"original", "Original", "", "original", {}},
-                 {"modern", "Modern", "", "modern", {{"display.aspect", std::string("16:9")}}},
-                 {"custom", "Custom", "", "", {}}};
+    s.presets = {{"original", "Original", "", "original", {}, "4:3"},
+                 {"modern", "Modern", "", "modern", {{"display.aspect", std::string("16:9")}}, "16:9"},
+                 {"custom", "Custom", "", "", {}, ""}};
     SetupPage display{"display", "Display", "", {SetupOptionItem{"display.fullscreen", {}}, SetupOptionItem{"display.aspect", {}}}, {}};
     SetupGroup picture{"picture", "Picture", "", {
         choice("Rough", {"original"}, {{"display.smooth", false}}),
@@ -155,13 +155,10 @@ TEST_CASE("a preset stages its tier and its values, and Finish sets them") {
     const SetupPageView summary = run.setup.view();
     CHECK(summary.step == SetupStep::Summary);
     CHECK(summary.page == 3);
-    REQUIRE(summary.changes.size() == 5);
-    CHECK(summary.changes[0].option_label == "Smoothing");
-    CHECK(summary.changes[0].from == "Off");
-    CHECK(summary.changes[0].to == "On");
-    CHECK(summary.changes[2].option_label == "Strength");
-    CHECK(summary.changes[2].to == "150%");
-    CHECK(summary.changes[4].to == "Wide");
+    REQUIRE(summary.summary.size() == 3);
+    CHECK(summary.summary[0].title == "Display");
+    REQUIRE_FALSE(summary.summary[0].lines.empty());
+    CHECK(summary.summary[0].lines.back().value == "Wide");
     CHECK(run.setup.finish());
     // Strength is enabled only once the lights are on: a second pass sets it.
     CHECK(run.game.smooth);
@@ -218,7 +215,7 @@ TEST_CASE("an option shown while a value is staged follows it") {
     CHECK(enemies.spec_page->id == "enemies");
     REQUIRE(enemies.items.size() == 2);
     CHECK(run.setup.set_option("enemy.turn_speed", 2.1));
-    CHECK(std::get<double>(std::get<OptionRowView>(run.setup.view().items[1]).value) == 2.0);
+    CHECK(std::get<double>(std::get<SetupOptionView>(run.setup.view().items[1]).row.value) == 2.0);
     CHECK(run.setup.choose("turning", 1));
     enemies = run.setup.view();
     CHECK(enemies.items.size() == 1);
@@ -256,7 +253,7 @@ TEST_CASE("a phone never sees the rows it cannot use, nor stages their values") 
     CHECK(run.setup.choose_preset("modern"));
     const SetupPageView display = run.setup.view();
     REQUIRE(display.items.size() == 1);
-    CHECK(std::get<OptionRowView>(display.items[0]).row->id == "display.aspect");
+    CHECK(std::get<SetupOptionView>(display.items[0]).row.row->id == "display.aspect");
     CHECK_FALSE(run.setup.set_option("display.fullscreen", true));
 }
 
@@ -283,14 +280,49 @@ TEST_CASE("a view as JSON") {
     Run run;
     std::string json = setup_json(run.setup.view());
     CHECK(json.starts_with("{\"step\":\"welcome\",\"page\":0,\"pageCount\":3,\"id\":\"\""));
-    CHECK(json.find("{\"id\":\"custom\",\"label\":\"Custom\",\"help\":\"\"}") != std::string::npos);
+    CHECK(json.find("{\"id\":\"custom\",\"label\":\"Custom\",\"help\":\"\",\"summary\":\"\"}") != std::string::npos);
     CHECK(run.setup.command("preset original"));
     CHECK(run.setup.command("next"));
     json = setup_json(run.setup.view());
     CHECK(json.find("\"items\":[{\"type\":\"group\",\"id\":\"picture\",\"label\":\"Picture\",\"help\":\"\",\"chosen\":0,"
-                    "\"choices\":[{\"label\":\"Rough\",\"help\":\"\",\"gpuCost\":false}") != std::string::npos);
+                    "\"keepOffered\":false,\"choices\":[{\"label\":\"Rough\",\"help\":\"\",\"gpuCost\":false}") != std::string::npos);
     CHECK(json.find("\"pageTier\":0") != std::string::npos);
     CHECK(run.setup.command("back"));
     json = setup_json(run.setup.view());
-    CHECK(json.find("{\"type\":\"option\",\"row\":{\"id\":\"display.fullscreen\"") != std::string::npos);
+    CHECK(json.find("{\"type\":\"option\",\"look\":\"stepper\",\"row\":{\"id\":\"display.fullscreen\"") != std::string::npos);
+}
+
+TEST_CASE("the summary lists every answer, and a page's hidden rows stay out") {
+    Run run;
+    CHECK(run.setup.choose_preset("original"));
+    while (run.setup.view().step == SetupStep::Page)
+        CHECK(run.setup.next());
+    for (const SetupSummarySection &section : run.setup.view().summary)
+        CHECK_FALSE(section.lines.empty());
+    CHECK(setup_json(run.setup.view()).find("\"summary\":[{\"title\":\"Display\",\"lines\":[") != std::string::npos);
+}
+
+TEST_CASE("keep as is is offered only for settings matching no choice, and unstages the group") {
+    Run run;
+    run.game.lights = true;   // Plain has them off, Lit at strength 150: at 100 this is neither
+    CHECK(run.setup.choose_preset("modern"));
+    CHECK(run.setup.next());
+    const SetupGroupView staged = std::get<SetupGroupView>(run.setup.view().items[1]);
+    CHECK(staged.keep_offered);
+    CHECK(staged.chosen == 1u);
+    CHECK(run.setup.command("choose lighting keep"));
+    CHECK_FALSE(std::get<SetupGroupView>(run.setup.view().items[1]).chosen);
+    while (run.setup.view().step == SetupStep::Page)
+        CHECK(run.setup.next());
+    CHECK(run.setup.finish());
+    CHECK(run.game.lights);
+    CHECK(run.game.strength == 100);
+}
+
+TEST_CASE("keep as is is refused while the settings match a choice") {
+    Run run;
+    CHECK(run.setup.choose_preset("original"));
+    CHECK(run.setup.next());
+    CHECK_FALSE(std::get<SetupGroupView>(run.setup.view().items[0]).keep_offered);
+    CHECK_FALSE(run.setup.keep("picture"));
 }

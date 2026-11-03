@@ -29,26 +29,6 @@ struct Shared {
 Shared shared;
 std::string sent_json;   // game thread: the view the panel was last told about
 
-// Calls a no-argument method of the activity (VerditeActivity), which hands the work to its UI thread.
-void call_activity(const char *method) {
-    auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
-    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
-    if (!env || !activity) {
-        std::printf("[settings] no activity for %s: %s\n", method, SDL_GetError());
-        return;
-    }
-    jclass type = env->GetObjectClass(activity);
-    jmethodID id = env->GetMethodID(type, method, "()V");
-    if (id)
-        env->CallVoidMethod(activity, id);
-    if (env->ExceptionCheck()) {
-        env->ExceptionDescribe();
-        env->ExceptionClear();
-    }
-    env->DeleteLocalRef(type);
-    env->DeleteLocalRef(activity);
-}
-
 // Publishes the view if it changed; true when it did.
 bool publish_view() {
     std::string json = options_json();
@@ -72,13 +52,33 @@ std::string java_string(JNIEnv *env, jstring text) {
 }
 } // namespace
 
+// Hands the work to the activity's UI thread.
+void android_call_activity(const char *method) {
+    auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) {
+        std::printf("[settings] no activity for %s: %s\n", method, SDL_GetError());
+        return;
+    }
+    jclass type = env->GetObjectClass(activity);
+    jmethodID id = env->GetMethodID(type, method, "()V");
+    if (id)
+        env->CallVoidMethod(activity, id);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(type);
+    env->DeleteLocalRef(activity);
+}
+
 bool settings_panel_show() {
     publish_view();
     {
         std::lock_guard guard(shared.lock);
         shared.open = true;
     }
-    call_activity("showSettingsPanel");
+    android_call_activity("showSettingsPanel");
     return true;
 }
 
@@ -102,7 +102,7 @@ void settings_panel_poll() {
     if (overlay_asked)
         overlay_set_open(true);
     if (open && publish_view())
-        call_activity("onOptionsChanged");
+        android_call_activity("onOptionsChanged");
 }
 } // namespace kf::ext
 

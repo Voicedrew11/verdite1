@@ -390,7 +390,7 @@ void agent_start() {
         {"click", "click <x> <y> | click right - click a menu with the mouse", do_click},
         {"options", "options - the settings this platform shows, with their values, as JSON", do_options},
         {"option", "option <id> [value] - change a setting (true/false, a number, a choice's value), or press an action", do_option},
-        {"setup", "setup [start | preset <id> | choose <group> <n> | tier <id> | option <id> <value> | next | back | finish | skip] - drive the first-run setup; its view as JSON", do_setup},
+        {"setup", "setup [start | preset <id> | choose <group> <n|keep> | tier <id> | option <id> <value> | next | back | finish | skip] - drive the first-run setup; its view as JSON", do_setup},
         {"quit", "quit - exit the game", do_quit},
     });
 }
