@@ -135,6 +135,10 @@ def main():
         for path, lines in added_lines(patch.read_text(), game).items():
             jobs.append((path, lines, GAME_CHECKS))
 
+    # An Android source has no flags in a desktop build; `--build build/android-arm64` lints it.
+    android_build = "android" in build.name
+    jobs = [job for job in jobs if android_build or not job[0].endswith("_android.cpp")]
+
     failed = 0
     workers = os.cpu_count() or 4
     with concurrent.futures.ThreadPoolExecutor(workers) as pool:
