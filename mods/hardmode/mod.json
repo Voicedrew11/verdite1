@@ -2,6 +2,7 @@
   "id": "hardmode",
   "name": "Hard Mode",
   "version": "1.0",
+  "api_version": "1.0",
   "author": "Acranon",
   "description": "Monsters have more HP and shops charge more, by the factors in Settings. Example of kf.rules."
 }

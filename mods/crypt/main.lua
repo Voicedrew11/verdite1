@@ -66,8 +66,7 @@ local function rouse_brutes()
     for _, offset in ipairs(offsets) do
         if brutes_left == BRUTES then break end
         local cell_x, cell_z = p.cell_x + offset[1], p.cell_z + offset[2]
-        local on_map = cell_x >= 0 and cell_x < 100 and cell_z >= 0 and cell_z < 100
-        if on_map and not kf.world.cell_blocked(cell_x, cell_z) and
+        if not kf.world.cell_blocked(cell_x, cell_z) and
            kf.actors.spawn(brute, p.x + offset[1] * cell_size, p.z + offset[2] * cell_size) then
             brutes_left = brutes_left + 1
         end

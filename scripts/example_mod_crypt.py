@@ -33,7 +33,7 @@ function on_use_item(e) mod.log("used " .. e.item) end
 function on_drop(e) mod.log("drop " .. e.item) end
 function on_map_load(e) arrived = e.floor end
 
-local reported, test_due, test_done, given
+local reported, test_due, test_done
 
 -- Back on floor 1 after the crypt, a quick save and a quick load, some updates apart.
 local save_after, load_after, loaded
@@ -60,11 +60,6 @@ function on_update()
     if arrived and kf.context() == "gameplay" then
         mod.log("on floor " .. arrived .. " at cell " .. kf.player.cell_x .. " " .. kf.player.cell_z)
         arrived = nil
-    end
-    -- The drops lie where the brutes fell; walking to one is not what this tests.
-    if crypt.brutes_slain() == 3 and not given then
-        given = true
-        kf.items.give(DRAUGHT, 1)
     end
     local line = "count " .. kf.items.count(DRAUGHT) .. " sigil " .. kf.items.count(SIGIL) ..
                  " slain " .. crypt.brutes_slain() .. " burning " .. tostring(crypt.draught_burning())
@@ -189,6 +184,8 @@ def play(game):
     game.wait_for("the reward", lambda: game.state()["experience"] >= before + 200)
     game.wait_log(f"drop {DRAUGHT}")
 
+    # The drops lie where the brutes fell; walking to one is not what this tests.
+    game.command(f"give {DRAUGHT} 1")
     game.wait_log("count 1 sigil 1 slain 3 burning false")
     game.command("hurt 5")
     game.wait_for("the hurt", lambda: game.state()["hp"] < game.state()["maxHp"])

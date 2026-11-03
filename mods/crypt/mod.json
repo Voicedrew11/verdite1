@@ -2,6 +2,7 @@
   "id": "crypt",
   "name": "The Ember Crypt",
   "version": "1.0",
+  "api_version": "1.0",
   "author": "Verdite",
   "description": "A sigil that opens a crypt of brutes, and the draught they drop. Example of kf.content, kf.hook, kf.call, kf.raw and exports. The crypt needs a floor from your own disc: tools/mod_floor_from_disc.py KF/B1 mods/crypt/floors/crypt. Without it the sigil rouses brutes where you stand."
 }

@@ -2,6 +2,7 @@
   "id": "run",
   "name": "Run",
   "version": "1.0",
+  "api_version": "1.0",
   "author": "Verdite",
   "default_enabled": true,
   "enhancement": true,

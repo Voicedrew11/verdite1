@@ -2,6 +2,7 @@
   "id": "killcount",
   "name": "Kill Count",
   "version": "1.0",
+  "api_version": "1.0",
   "author": "Acranon",
   "description": "Counts the kills by the player in each save, and shows the total. Example of the on_kill event and the save table."
 }

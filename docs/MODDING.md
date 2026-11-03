@@ -4,8 +4,8 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.17, what ships today. Where it is going, API 1.0, is
-planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
+This page documents API 1.0. What it promises is under [Stability](#stability), and how it was
+reached under [API 1.0](#api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
 
@@ -28,6 +28,7 @@ mods/stathud/main.lua
   "name": "Stat HUD",
   "version": "1.0",
   "author": "you",
+  "api_version": "1.0",
   "description": "Shown in the Mods panel.",
   "entry": "main.lua"
 }
@@ -35,7 +36,8 @@ mods/stathud/main.lua
 
 Only `main.lua` is required, or an `assets/` folder
 ([Replacing disc files](#replacing-disc-files)); `id` defaults to the folder name and `entry` to
-`main.lua`. `"default_enabled": true` starts a mod enabled the first time the
+`main.lua`. `api_version` is the API the mod was written for: a mod asking for another major version,
+or a newer minor one, fails when it loads and says why; one that does not say always tries to run. `"default_enabled": true` starts a mod enabled the first time the
 game sees it (the run and the map ship this way); after that its switch is
 stored like any other. `"enhancement": true` marks a mod that changes the game
 from the original: Classic mode holds it, loaded but with no callback or event
@@ -320,7 +322,7 @@ end
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | the API's version: `"0.17"` |
+| `kf.api_version` | the API's version: `"1.0"` |
 
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
@@ -367,7 +369,7 @@ floor that turns out blocked once it loads falls back to the first open cell.
 | field | notes |
 |---|---|
 | `floor`, `map_variant` | read-only |
-| `cell_blocked(x, z)` | boolean |
+| `cell_blocked(x, z)` | boolean; true off the map, so a mod can look past the edge |
 | `floor1_passage_opened`, `floor1_revival_enabled`, `floor5_character_arrived`, `floor5_weapon_transformed`, `floor5_boss_encounter_started`, `floor5_boss_defeated` | story flags, booleans, read/write |
 | `floor3_revealed_pieces` | story flag, integer 0–4, read/write |
 
@@ -936,7 +938,7 @@ mods folder the first time it sees it, disabled unless it says
 `default_enabled`; `mods/.examples` lists those
 already offered, so an example you delete stays deleted.
 
-## The plan: API 1.0
+## API 1.0
 
 Decided 2026-10-23: mods stay Lua 5.4. It is small, interpreted (so it runs on
 the 3DS and the consoles that forbid a JIT), easy to sandbox, reloads on save,
@@ -958,18 +960,18 @@ from Lua reaches the game's memory unchecked, since mods come from strangers.
 |---|---|---|
 | player | stats (today), position, facing, map and floor, equipment, inventory, magic, status | read/write |
 | entities | the actors loaded on the map: kind, HP, position, state; spawn and remove | read/write |
-| world | the current map, its cells and walls, doors, chests, triggers, story flags, the automap | read/write |
+| world | the current map, its cells, story flags and the automap in the curated tables; doors, chests and triggers through `kf.raw` and `kf.call` | read/write |
 | game flow | pause, update rate (turbo, slow motion), warp, load a map, the screen shown (menu, shop, save point) | |
 | events | `on_damage`, `on_kill`, `on_item_pickup`, `on_floor_change`, `on_map_load`, `on_level_up`, `on_dialogue`, `on_shop`, `on_save`, `on_load_game`, `on_death` | a handler may cancel or change the event where the game allows |
 | rules | EXP to the next level, level-up gains, drops, shop prices, enemy stats, HP and MP regeneration (KF1 has no hit or dodge roll); damage through `on_damage` | values over the game's tables (today): each mod in load order may change a field |
 | input | the pad, keys and mouse in the game's own terms (actions, not keycodes); press and block actions | |
-| assets | textures, models, sounds, music, text | drop files in the mod's `assets/` under the disc's paths, or swap them from Lua at run time |
-| drawing | 2D over the picture (today), plus 3D in the world: lines, markers, text at a point, lights | |
+| assets | `.TIM` textures, `.TMD` models and `.SEQ` music | drop files in the mod's `assets/` under the disc's paths, or swap them from Lua at run time |
+| drawing | 2D over the picture, plus 3D in the world: lines, markers, text at a point | |
 | audio | play the game's sound effects and music, or the mod's own | |
 | saves | a `save` table stored with each save slot, beside the game's own | |
 | other mods | `mods.get(id)` reads another mod's `exports` and calls its functions, by copies; mods raise their own events (0.17) | |
 | functions | call any game function the decomp's headers declare; run a mod's code before, after or in place of one | arguments checked as raw writes are |
-| content | new items, monster kinds, floors (0.16, `kf.content`): the game's fixed-size tables grown so a mod's rows fit beside the disc's | |
+| content | new items, monster kinds, floors (`kf.content`): the game's fixed-size tables grown so a mod's rows fit beside the disc's. A floor starts as a copy of one of the player's own disc's | |
 | raw | `kf.raw.<global>.<field>`: every named global and struct field in the decomp, typed and bounds-checked | unstable: follows the decomp's renames |
 
 ### What a mod cannot do
@@ -1024,9 +1026,17 @@ example mods ship a `.luarc.json` pointing at it.
 
 ### Stability
 
-`kf.api_version` follows semver from 1.0, and `mod.json` names the API version
-it was written for. The curated layer keeps its names within a major version;
-`kf.raw` promises nothing, as the decomp renames freely.
+`kf.api_version` follows semver from 1.0.
+
+| | promise |
+|---|---|
+| `mod`, `mods`, `config`, `save`, `exports`, the callbacks and events, `ui`, and `kf` apart from the three below | Within a major version every name stays and keeps meaning what it does. New names raise the minor version. A name goes only in a new major version |
+| `kf.raw`, `kf.call`, `kf.hook` | Nothing: their names are the decomp's, and follow its renames |
+
+`mod.json`'s `api_version` is how a mod says what it needs ([Where mods live](#where-mods-live)). The limits
+of `kf.content` (95 items, 32 kinds a floor, 16 floors) may grow. `on_frame`, `kf.log` and `kf.save_config`, older
+names for `on_update`, `mod.log` and `mod.save_config`, are held like the rest. `docs/api_surface.txt` holds the stable
+names, and `tools/api_surface.py` in `scripts/check.sh` fails on one that goes or comes without that file changing.
 
 ### Online play
 
@@ -1083,6 +1093,11 @@ mods are off in coop (decided 2026-10-31).
 
 11. ~~Mods reaching each other, from the table above.~~ Done in 0.17 (2026-11-02):
     `exports`, `mods.get`, `mod.raise` and `mods.on`, by copies ([Other mods](#other-mods)).
+
+12. ~~Declare 1.0.~~ Done (2026-11-02): `mods/crypt` played the layers through, what it found is fixed, and the stable
+    names are held ([Stability](#stability)). After 1.0, none of which breaks a mod: a way to make a floor other than
+    copying the disc's, items to equip, models of an item's own, lights in the world, more kinds of file to replace, and
+    gameplay mods in coop.
 
 ### Open questions
 

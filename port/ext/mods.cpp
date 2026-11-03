@@ -64,7 +64,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.17";
+constexpr const char *api_version = "1.0";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -285,9 +285,11 @@ void push_world_map_variant(lua_State *L) {
     lua_pushinteger(L, kf_enum_encode<lua_Integer>(player_state.map_variant));
 }
 
+// Off the map counts as blocked, so a mod can look past the edge as kf.automap lets it.
 int world_cell_blocked(lua_State *L) {
-    const auto [x, z] = check_map_cell(L, 1);
-    lua_pushboolean(L, cell_is_blocked(x, z));
+    const lua_Integer x = luaL_checkinteger(L, 1), z = luaL_checkinteger(L, 2);
+    const bool on_map = x >= 0 && x < KF_MAP_COLUMNS && z >= 0 && z < KF_MAP_ROWS;
+    lua_pushboolean(L, !on_map || cell_is_blocked(static_cast<int>(x), static_cast<int>(z)));
     return 1;
 }
 

@@ -2,6 +2,7 @@
   "id": "quickheal",
   "name": "Quick Heal (cheat)",
   "version": "1.0",
+  "api_version": "1.0",
   "author": "Acranon",
   "description": "Press the chosen key in game to refill HP and MP. Example of kf.key_pressed and writing kf.player fields."
 }

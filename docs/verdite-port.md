@@ -457,7 +457,7 @@ branch point.
 | debug: noclip, god mode, infinite MP, peaceful, speed, warp | `Menu/`, `Warp.cs` | candidates for a Lua mod |
 | message text (dialogue pictures as glyph text) | `Text/` | may be moot if the decomp's English resources are text already |
 | crash reports, hang watchdog, focus pause | Verdite Core | crash reports done (2026-10-24, [CRASH_REPORTS.md](CRASH_REPORTS.md)): `verdite/crash.h` in libverdite, the stack named by a helper process with cpptrace, KF1's sections (player, the actor being updated, the last effect, settings), the last 64 events and copies of the saves from `port/platform/crash.cpp`. Not yet: hang watchdog, focus pause |
-| modding API (Verdite's C# runtime mods) | Verdite Core | kf1-enhanced has Lua API 0.1 (player stats, keys, ImGui); 1.0 is planned in [MODDING.md](MODDING.md#the-plan-api-10): whole game reachable, sandboxed, host in libverdite |
+| modding API (Verdite's C# runtime mods) | Verdite Core | done (2026-11-02): Lua API 1.0, [MODDING.md](MODDING.md#api-10): whole game reachable, sandboxed, host in libverdite |
 | state beacon + command channel (port 27901) | `AgentBeacon.cs`, `AgentServer.cs` | what lets an agent drive and measure the game |
 | fuzzer: seeded headless turbo play, invariants, report | `Fuzz.cs`, `scripts/fuzz.py` | done (2026-10-25, "Fuzzing" above): `verdite/fuzz.h` and `verdite/state_trace.h` in libverdite, KF1's tables in `port/platform/fuzz.cpp`, exact replay, a state trace, the `fuzz` preset and libFuzzer targets ([FUZZING_PLAN.md](FUZZING_PLAN.md)) |
 | frame profiler | Verdite Core | |

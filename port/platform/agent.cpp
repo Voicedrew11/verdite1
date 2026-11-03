@@ -174,8 +174,8 @@ std::string do_give(verdite::AgentArgs args) {
         return verdite::json_error("give <item> <count>");
     char *end_item = nullptr, *end_count = nullptr;
     const long item = std::strtol(args[0].c_str(), &end_item, 10), count = std::strtol(args[1].c_str(), &end_count, 10);
-    if (*end_item || *end_count || item < 0 || (item >= KF_ITEM_COUNT && item != 255) || count < -100000 || count > 100000)
-        return verdite::json_error("items are 0..79, or 255 for gold; counts -100000..100000");
+    if (*end_item || *end_count || (item != 255 && !kf_item_id_valid(static_cast<s32>(item))) || count < -100000 || count > 100000)
+        return verdite::json_error("items are 0..79 or a mod's, or 255 for gold; counts -100000..100000");
     give_request = std::array{item, count};
     return verdite::json_ok("give");
 }
