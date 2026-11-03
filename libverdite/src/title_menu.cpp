@@ -73,6 +73,7 @@ std::optional<Parent> parent_of(TitlePage page) {
     case TitlePage::RoomList: return Parent{TitlePage::Coop, TitleRowKind::RoomList};
     case TitlePage::Profile: return Parent{TitlePage::Coop, TitleRowKind::Profile};
     case TitlePage::NameEntry: return Parent{TitlePage::Profile, TitleRowKind::ProfileName};
+    case TitlePage::Mods: return Parent{TitlePage::Top, TitleRowKind::Mods};
     case TitlePage::Top:
     case TitlePage::Waiting: return std::nullopt;
     }
@@ -114,7 +115,9 @@ bool name_valid(std::string_view name) {
 
 TitleMenu::TitleMenu(std::uint64_t random_seed) : random_(random_seed) {}
 
-void TitleMenu::open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile) {
+void TitleMenu::open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile,
+                     std::vector<TitleMod> mods) {
+    mods_ = std::move(mods);
     saves_ = std::move(saves);
     worlds_ = std::move(worlds);
     profile_ = std::move(profile);
@@ -142,16 +145,16 @@ void TitleMenu::press(TitleInput input) {
     failure_.clear();
     const std::size_t count = view().rows.size();
     switch (input) {
-    case TitleInput::Up: move_vertically(-1, count); break;
-    case TitleInput::Down: move_vertically(1, count); break;
-    case TitleInput::Left:
-        move_in_grid(-1);
-        step_profile(-1);
+    case TitleInput::Up:
+        if (page_ != TitlePage::Top)
+            move_vertically(-1, count);
         break;
-    case TitleInput::Right:
-        move_in_grid(1);
-        step_profile(1);
+    case TitleInput::Down:
+        if (page_ != TitlePage::Top)
+            move_vertically(1, count);
         break;
+    case TitleInput::Left: move_sideways(-1, count); break;
+    case TitleInput::Right: move_sideways(1, count); break;
     case TitleInput::Confirm: confirm(); break;
     case TitleInput::Back: back(); break;
     }
@@ -175,6 +178,15 @@ void TitleMenu::move_vertically(int delta, std::size_t count) {
         return;
     }
     row_ = step_wrapping(row_, delta, count);
+}
+
+void TitleMenu::move_sideways(int delta, std::size_t count) {
+    if (page_ == TitlePage::Top) {
+        row_ = step_wrapping(row_, delta, count);
+        return;
+    }
+    move_in_grid(delta);
+    step_profile(delta);
 }
 
 void TitleMenu::move_in_grid(int delta) {
@@ -213,6 +225,11 @@ void TitleMenu::confirm() {
     case TitleRowKind::Continue: go(TitlePage::Continue, std::nullopt); break;
     case TitleRowKind::NewGame: choice_ = TitleChoice{TitleAction::NewGame, 0, {}, false, {}}; break;
     case TitleRowKind::Coop: go(TitlePage::Coop, std::nullopt); break;
+    case TitleRowKind::Mods: go(TitlePage::Mods, std::nullopt); break;
+    case TitleRowKind::Mod:
+        choice_ = TitleChoice{chosen.mod->state == TitleModState::Off ? TitleAction::EnableMod : TitleAction::DisableMod,
+                              0, chosen.mod->id, false, {}};
+        break;
     case TitleRowKind::Slot: choice_ = TitleChoice{TitleAction::Continue, row_, {}, false, {}}; break;
     case TitleRowKind::Host: go(TitlePage::Host, std::nullopt); break;
     case TitleRowKind::JoinCode:
@@ -326,6 +343,12 @@ bool TitleMenu::wants_room_list() const {
     return page_ == TitlePage::RoomList;
 }
 
+void TitleMenu::set_mods(std::vector<TitleMod> mods) {
+    mods_ = std::move(mods);
+    if (page_ == TitlePage::Mods)
+        row_ = std::min(row_, mods_.empty() ? std::size_t{0} : mods_.size() - 1);
+}
+
 std::optional<TitleChoice> TitleMenu::take_choice() {
     return std::exchange(choice_, std::nullopt);
 }
@@ -355,6 +378,7 @@ TitleView TitleMenu::view() const {
         rows.push_back(row(TitleRowKind::Continue, std::ranges::any_of(saves_, &TitleSave::used)));
         rows.push_back(row(TitleRowKind::NewGame));
         rows.push_back(row(TitleRowKind::Coop));
+        rows.push_back(row(TitleRowKind::Mods));
         break;
     case TitlePage::Continue:
         for (const TitleSave &save : saves_) {
@@ -403,6 +427,12 @@ TitleView TitleMenu::view() const {
         for (const TitleRoom &room : rooms_) {
             rows.push_back(row(TitleRowKind::Room, room.players < room.most));
             rows.back().room = &room;
+        }
+        break;
+    case TitlePage::Mods:
+        for (const TitleMod &mod : mods_) {
+            rows.push_back(row(TitleRowKind::Mod));
+            rows.back().mod = &mod;
         }
         break;
     case TitlePage::Waiting: break;

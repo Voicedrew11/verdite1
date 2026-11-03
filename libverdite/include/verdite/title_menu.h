@@ -1,8 +1,9 @@
 #ifndef VERDITE_TITLE_MENU_H
 #define VERDITE_TITLE_MENU_H
 // The title menu under a game's logo, and its co-op pages, stepped with a pad, a keyboard or a
-// pointer. The top page is CONTINUE (first, and where the cursor starts, when there is a save),
-// NEW GAME and CO-OP. CO-OP leads to hosting a world (a new private or public one, or one this
+// pointer. The top page is one line across: CONTINUE (first, and where the cursor starts, when
+// there is a save), NEW GAME, CO-OP and MODS. MODS lists the game's mods to switch on and off.
+// CO-OP leads to hosting a world (a new private or public one, or one this
 // machine keeps), joining a room by its code, the service's list of public rooms, and the
 // player's profile: the name, colour and helmet the others in a room see.
 //
@@ -75,8 +76,17 @@ struct TitleRoom {
 
 enum class RoomListState : std::uint8_t { Connecting, Listing, Failed };
 
+// A mod as MODS lists it. Failed and Held mods are switched on: Confirm switches them off.
+enum class TitleModState : std::uint8_t { Off, On, Failed, Held };
+
+struct TitleMod {
+    std::string id;     // the game's, handed back by the choice
+    std::string name;
+    TitleModState state = TitleModState::Off;
+};
+
 enum class TitlePage : std::uint8_t {
-    Top,        // CONTINUE, NEW GAME, CO-OP
+    Top,        // CONTINUE, NEW GAME, CO-OP, MODS: a line across
     Continue,   // the card slots
     Coop,       // HOST, JOIN BY CODE, ROOM LIST, PROFILE
     Host,       // NEW PRIVATE WORLD, NEW PUBLIC WORLD, then the kept worlds
@@ -86,10 +96,11 @@ enum class TitlePage : std::uint8_t {
     Waiting,    // joining; Back cancels
     Profile,    // NAME, COLOUR, HELMET
     NameEntry,  // the name typed so far, and a grid of name_letters with DELETE and DONE
+    Mods,       // the game's mods
 };
 
 enum class TitleRowKind : std::uint8_t {
-    Continue, NewGame, Coop,                       // Top
+    Continue, NewGame, Coop, Mods,                 // Top
     Slot,                                          // Continue: save
     Host, JoinCode, RoomList, Profile,             // Coop
     NewPrivateWorld, NewPublicWorld, KeptWorld,    // Host: world
@@ -98,6 +109,7 @@ enum class TitleRowKind : std::uint8_t {
     Room,                                          // RoomList: room
     ProfileName, ProfileColour, ProfileHelmet,     // Profile: Left and Right step colour and helmet
     Done,                                          // NameEntry, after its letters and DELETE
+    Mod,                                           // Mods: mod
 };
 
 struct TitleRowView {
@@ -108,6 +120,7 @@ struct TitleRowView {
     const TitleSave *save = nullptr;     // Slot
     const TitleWorld *world = nullptr;   // KeptWorld
     const TitleRoom *room = nullptr;     // Room
+    const TitleMod *mod = nullptr;       // Mod
 };
 
 struct TitleView {
@@ -129,12 +142,14 @@ enum class TitleAction : std::uint8_t {
     Join,         // code
     CancelJoin,   // Back on Waiting: leave the room
     Profile,      // profile: the player changed it; the game keeps it
+    EnableMod,    // code: the mod's id. The game answers with set_mods
+    DisableMod,   // code: the mod's id
 };
 
 struct TitleChoice {
     TitleAction action = TitleAction::NewGame;
     std::size_t slot = 0;
-    std::string code;
+    std::string code;      // Host, Join, CancelJoin: the room; EnableMod, DisableMod: the mod's id
     bool listed = false;   // Host: a public room
     TitleProfile profile;
 };
@@ -145,10 +160,12 @@ public:
     explicit TitleMenu(std::uint64_t random_seed);
 
     // Starts at the top page, on CONTINUE when a save is used, else on NEW GAME.
-    void open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile);
+    void open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile,
+              std::vector<TitleMod> mods);
 
-    // Up and Down pick a row (wrapping), Left and Right a column on the grid or a step of the
-    // colour or helmet (wrapping, chosen at once); Confirm takes the row, Back goes up a page (and
+    // On the top page Left and Right pick a row (wrapping) and Up and Down do nothing. Elsewhere Up
+    // and Down pick a row (wrapping), Left and Right a column on the grid or a step of the colour
+    // or helmet (wrapping, chosen at once). Confirm takes the row, Back goes up a page (and
     // on Top does nothing; on NameEntry it leaves the name as it was). DONE chooses the name.
     void press(TitleInput input);
     // A keyboard's digit on the join page, or letter or digit on the name page (lower case taken
@@ -161,6 +178,9 @@ public:
     // The service's latest list, while wants_room_list().
     void set_rooms(std::vector<TitleRoom> rooms, RoomListState state);
     bool wants_room_list() const;   // on RoomList: the game keeps the list open
+
+    // The mods as they are now, after a choice or when they change while MODS shows them.
+    void set_mods(std::vector<TitleMod> mods);
 
     // What the player chose, once.
     std::optional<TitleChoice> take_choice();
@@ -175,6 +195,7 @@ public:
 private:
     void go(TitlePage page, std::optional<TitleRowKind> on);
     void move_vertically(int delta, std::size_t count);
+    void move_sideways(int delta, std::size_t count);
     void move_in_grid(int delta);
     void step_profile(int delta);
     void choose_profile();
@@ -191,6 +212,7 @@ private:
     std::vector<TitleSave> saves_;
     std::vector<TitleWorld> worlds_;
     std::vector<TitleRoom> rooms_;
+    std::vector<TitleMod> mods_;
     RoomListState list_state_ = RoomListState::Connecting;
     std::string code_;
     std::string failure_;

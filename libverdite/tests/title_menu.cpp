@@ -40,7 +40,7 @@ TitleProfile profile() {
 
 TitleMenu open_menu(std::vector<TitleSave> slots = saves(false, false, false), std::vector<TitleWorld> worlds = {}) {
     TitleMenu menu(1234);
-    menu.open(std::move(slots), std::move(worlds), profile());
+    menu.open(std::move(slots), std::move(worlds), profile(), {{"one", "ONE", TitleModState::Off}, {"two", "TWO", TitleModState::On}, {"bad", "BAD", TitleModState::Failed}});
     return menu;
 }
 
@@ -108,11 +108,65 @@ TEST_CASE("CONTINUE lists the slots and refuses an empty one") {
     CHECK(choice.slot == 2);
 }
 
+TEST_CASE("the top page moves across and wraps, and Up and Down do nothing there") {
+    auto menu = open_menu();
+    CHECK(menu.view().rows.size() == 4);
+    menu.press(TitleInput::Up);
+    CHECK(selected(menu) == TitleRowKind::NewGame);
+    menu.press(TitleInput::Down);
+    CHECK(selected(menu) == TitleRowKind::NewGame);
+    menu.press(TitleInput::Right);
+    CHECK(selected(menu) == TitleRowKind::Coop);
+    menu.press(TitleInput::Right);
+    CHECK(selected(menu) == TitleRowKind::Mods);
+    menu.press(TitleInput::Right);
+    CHECK(selected(menu) == TitleRowKind::Continue);
+    menu.press(TitleInput::Left);
+    CHECK(selected(menu) == TitleRowKind::Mods);
+}
+
+TEST_CASE("MODS lists the mods, and Confirm asks for each one's switch the other way") {
+    auto menu = open_menu();
+    go_to(menu, TitleRowKind::Mods);
+    REQUIRE(menu.view().page == TitlePage::Mods);
+    REQUIRE(menu.view().rows.size() == 3);
+    CHECK(menu.view().rows[1].mod->name == "TWO");
+
+    menu.press(TitleInput::Confirm);
+    TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::EnableMod);
+    CHECK(choice.code == "one");
+
+    menu.set_mods({{"one", "ONE", TitleModState::On}, {"two", "TWO", TitleModState::On}, {"bad", "BAD", TitleModState::Failed}});
+    menu.press(TitleInput::Confirm);
+    CHECK(taken(menu).action == TitleAction::DisableMod);
+
+    menu.press(TitleInput::Up);
+    CHECK(menu.view().rows[2].selected);
+    menu.press(TitleInput::Confirm);
+    choice = taken(menu);
+    CHECK(choice.action == TitleAction::DisableMod);
+    CHECK(choice.code == "bad");
+
+    menu.set_mods({{"one", "ONE", TitleModState::On}});
+    CHECK(menu.view().rows[0].selected);
+    menu.set_mods({});
+    CHECK(menu.view().rows.empty());
+    menu.press(TitleInput::Confirm);
+    CHECK_FALSE(menu.take_choice());
+
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Top);
+    CHECK(selected(menu) == TitleRowKind::Mods);
+}
+
 TEST_CASE("rows wrap, and Back returns to the row that led to the page") {
     auto menu = open_menu();
+    go_to(menu, TitleRowKind::Coop);
+    REQUIRE(menu.view().page == TitlePage::Coop);
     menu.press(TitleInput::Up);
-    CHECK(selected(menu) == TitleRowKind::Continue);
-    menu.press(TitleInput::Up);
+    CHECK(selected(menu) == TitleRowKind::Profile);
+    menu.press(TitleInput::Back);
     CHECK(selected(menu) == TitleRowKind::Coop);
     menu.press(TitleInput::Confirm);
     CHECK(menu.view().page == TitlePage::Coop);
@@ -310,7 +364,7 @@ TEST_CASE("PROFILE shows the profile; Left and Right step the colour and helmet,
 
 TEST_CASE("a single helmet is dimmed and does not step") {
     TitleMenu menu(1);
-    menu.open({}, {}, {"A", 0, 8, 0, 1});
+    menu.open({}, {}, {"A", 0, 8, 0, 1}, {});
     go_to(menu, TitleRowKind::Coop);
     go_to(menu, TitleRowKind::Profile);
     menu.point(2);
