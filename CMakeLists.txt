@@ -430,6 +430,7 @@ target_compile_options(verdite1 PRIVATE -Wall -Wextra)
 if(NOT ANDROID)
   # The example mods beside the executable, where the game offers them to the user's mods folder.
   add_custom_command(TARGET verdite1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_FILE_DIR:verdite1>/mods
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/mods $<TARGET_FILE_DIR:verdite1>/mods
     VERBATIM)
 endif()

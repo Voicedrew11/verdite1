@@ -1,8 +1,0 @@
-{
-  "id": "stathud",
-  "name": "Stat HUD",
-  "version": "1.0",
-  "api_version": "1.0",
-  "author": "Acranon",
-  "description": "Shows HP, MP and gold as a small panel over the game. Position and contents are adjustable here."
-}

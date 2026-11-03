@@ -260,10 +260,7 @@ int mods_loaded_count();
 bool mods_pause_requested();      // kf.game.paused, combined over the running mods
 bool mods_pause_keeps_music();    // ...and every pausing mod keeps the music (kf.game.music_while_paused)
 bool mods_take_mouse();           // kf.game.mouse: the cursor shows and the game gets no mouse input
-// A mod by id, as the settings switch it (options.cpp's mod rows): in the mods folder, enabled,
-// and its config. Nothing changes while mods are off in coop.
-bool mods_has(std::string_view id);
-bool mods_enabled(std::string_view id);
+// A mod by id, as the menus switch it, and its config. Nothing changes while mods are off in coop.
 void mods_set_enabled(std::string_view id, bool enabled);
 std::vector<verdite::ModInfo> mods_list();   // the installed mods, for the title menu's MODS page
 std::optional<verdite::ModConfigValue> mods_config_value(std::string_view id, std::string_view key);

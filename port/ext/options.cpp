@@ -145,40 +145,6 @@ OptionRow enabled_if(OptionRow made, std::function<bool()> enabled) {
     return made;
 }
 
-// A mod's row: shown while the mod is in the mods folder, fixed while mods are off in coop.
-OptionState mod_row_state(const std::string &mod) {
-    OptionState state;
-    state.shown = mods_has(mod);
-    if (coop_world_in_play()) {
-        state.enabled = false;
-        state.note = "Mods are off in coop.";
-    }
-    return state;
-}
-
-// A mod switched on and off here as in the Mods panel ("mods.<id>").
-OptionRow mod_switch(const std::string &mod, std::string label, std::string help) {
-    OptionRow made = row("mods." + mod, OptionKind::Toggle, std::move(label), std::move(help));
-    made.get = [mod] { return OptionValue(mods_enabled(mod)); };
-    made.set = [mod](const OptionValue &v) { mods_set_enabled(mod, std::get<bool>(v)); };
-    made.state = [mod] { return mod_row_state(mod); };
-    return made;
-}
-
-// A boolean in a mod's config ("mods.<id>.<key>"), read as fallback until the mod has one.
-OptionRow mod_config_switch(const std::string &mod, const std::string &key, bool fallback, std::string label,
-                            std::string help) {
-    OptionRow made = row("mods." + mod + "." + key, OptionKind::Toggle, std::move(label), std::move(help));
-    made.get = [mod, key, fallback] {
-        const auto value = mods_config_value(mod, key);
-        const bool *flag = value ? std::get_if<bool>(&*value) : nullptr;
-        return OptionValue(flag ? *flag : fallback);
-    };
-    made.set = [mod, key](const OptionValue &v) { mods_set_config_value(mod, key, std::get<bool>(v)); };
-    made.state = [mod] { return mod_row_state(mod); };
-    return made;
-}
-
 bool not_classic() { return !settings().classic; }
 
 // Classic mode overrides the section's rows; they keep the player's values for later.
@@ -379,9 +345,6 @@ OptionPage audio_page() {
 OptionSection controls_movement() {
     Settings &s = settings();
     OptionSection movement = classic_locked({"", {
-        mod_switch("run", "Run key",
-                   "Shift, the left stick's click or the touch Run button runs (mods/run; its speed and "
-                   "whether a press switches running on and off are in the Mods panel)."),
         number("controls.look_limit", "Look up/down limit",
                "How far the camera can tilt up or down. The original game allows about 17 degrees.", s.look_limit,
                {17, 85, 1, "%.0f deg"}, apply_control_settings),
@@ -677,18 +640,6 @@ OptionSection language_setup() {
 }
 
 OptionPage language_page() { return {"Language", {OptionSection{"", {language_choice()}}, language_setup()}}; }
-
-// ---- Map ----
-
-OptionPage map_page() {
-    return {"Map", {classic_locked({"", {
-        classic_note("map"),
-        mod_switch("map", "Map",
-                   "A minimap of what you have seen, and the full floor map on M or the touch Map button (mods/map). "
-                   "Its look, the full map's pause and its cheats are in the Mods panel."),
-        shown_if(mod_config_switch("map", "minimap", true, "Show minimap", ""), [] { return mods_enabled("map"); }),
-    }})}};
-}
 
 // ---- Interface ----
 

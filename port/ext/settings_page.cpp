@@ -100,12 +100,10 @@ const std::vector<Page> &pages() {
             {"gameplay.enemy_turn_auto", {"ENEMY TURN", "てきのふりむき"},
              {{true, {"AUTO", "じどう"}}, {false, {"FIXED", "こてい"}}}, {}},
             {"gameplay.auto_use_keys", {"AUTO KEYS", "かぎのじどうしよう"}, {}, {}},
-            {"mods.map.minimap", {"MINIMAP", "ちいさなちず"}, {}, {}},
             {"audio.volume", {"VOLUME", "おとのおおきさ"}, {},
              {0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0}},
         }});
         made.push_back({"controls", {"CONTROLS", "そうさ"}, {
-            {"mods.run", {"RUN KEY", "はしる"}, {}, {}},
             {"controls.pad_layout", {"PAD BUTTONS", "ボタンはいち"},
              {{std::string("west"), {"WEST", "かいがい"}}, {std::string("jp"), {"JAPANESE", "にほん"}}}, {}},
             {"controls.menu_pointer", {"MOUSE IN MENUS", "マウスでえらぶ"}, {}, {}},

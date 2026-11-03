@@ -74,7 +74,7 @@ std::vector<SetupPreset> presets() {
          "even texels, the full frame rate, and the sticks.",
          "balanced", preset_values(aspect, 0, 0)},
         {"modern", "Modern",
-         "Everything Verdite adds: ambient occlusion, anti-aliasing, the minimap and the rest, at the frame rate of "
+         "Everything Verdite adds: ambient occlusion, anti-aliasing and the rest, at the frame rate of "
          "your display.",
          "modern", preset_values(aspect, 0, 0)},
         {"custom", "Custom", "Start from your settings as they are, and choose each page yourself.", "", {{"gameplay.classic_mode", false}}},
@@ -134,17 +134,12 @@ SetupPage picture_page() {
 }
 
 SetupPage controls_page() {
-    const SetupGroup running{"running", "Running", "", {
-        choice("No run key", "Walk at the original's one speed.", {"original"}, {{"mods.run", false}}),
-        choice("Run key", "Shift, or the left stick's click, runs at 1.6 times walking speed.", {"balanced", "modern"},
-               {{"mods.run", true}}),
-    }};
     const SetupGroup looking{"looking", "Looking up and down", "", {
         choice("The original's 17 degrees", "", {"original"}, {{"controls.look_limit", 17.0}}),
         choice("Up to 70 degrees", "Look at the ceiling and the floor at your feet.", {"balanced", "modern"},
                {{"controls.look_limit", 70.0}}),
     }};
-    return {"controls", "Controls", "", {running, looking}, SetupPageTiers::Offered};
+    return {"controls", "Controls", "", {looking}, SetupPageTiers::Offered};
 }
 
 SetupPage turning_page() {
@@ -183,12 +178,10 @@ SetupPage gameplay_page() {
                {{"gameplay.fix_ceiling_fall", true}, {"gameplay.fix_spatial_panning", true}}),
     }};
     const SetupGroup help{"help", "Help", "", {
-        choice("None", "Keys chosen from the item menu, no item descriptions, no minimap.", {"original"},
-               {{"gameplay.auto_use_keys", false}, {"overlay.item_descriptions", false}, {"mods.map.minimap", false}}),
-        choice("Light", "A carried key opens its lock; items say what they do. No minimap.", {"balanced"},
-               {{"gameplay.auto_use_keys", true}, {"overlay.item_descriptions", true}, {"mods.map.minimap", false}}),
-        choice("Full", "As Light, with a minimap of what you have seen.", {"modern"},
-               {{"gameplay.auto_use_keys", true}, {"overlay.item_descriptions", true}, {"mods.map.minimap", true}}),
+        choice("None", "Keys chosen from the item menu, no item descriptions.", {"original"},
+               {{"gameplay.auto_use_keys", false}, {"overlay.item_descriptions", false}}),
+        choice("Light", "A carried key opens its lock; items say what they do.", {"balanced", "modern"},
+               {{"gameplay.auto_use_keys", true}, {"overlay.item_descriptions", true}}),
     }};
     return {"gameplay", "Gameplay", "", {fixes, help}, SetupPageTiers::Offered};
 }

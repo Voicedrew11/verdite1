@@ -2,7 +2,7 @@
 #define KF_PLATFORM_AUTOMAP_H
 // PC extension: automap. The game publishes a snapshot of the current floor
 // once per update; the host tracks which cells the player has seen (per floor,
-// saved beside each save slot); mods read it through kf.automap, and mods/map draws the minimap
+// saved beside each save slot); mods read it through kf.automap and draw the minimap
 // and the full map from it.
 #include <kf/lib/types.h>
 #include <kf/platform/saves.h>

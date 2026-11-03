@@ -16,16 +16,16 @@ sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `~/.local/share/Verdite/Verdite1` on Linux.
 
 ```
-mods/stathud/mod.json
-mods/stathud/main.lua
+mods/mymod/mod.json
+mods/mymod/main.lua
 ```
 
 `mod.json`:
 
 ```json
 {
-  "id": "stathud",
-  "name": "Stat HUD",
+  "id": "mymod",
+  "name": "My Mod",
   "version": "1.0",
   "author": "you",
   "api_version": "1.0",
@@ -38,7 +38,7 @@ Only `main.lua` is required, or an `assets/` folder
 ([Replacing disc files](#replacing-disc-files)); `id` defaults to the folder name and `entry` to
 `main.lua`. `api_version` is the API the mod was written for: a mod asking for another major version,
 or a newer minor one, fails when it loads and says why; one that does not say always tries to run. `"default_enabled": true` starts a mod enabled the first time the
-game sees it (the run and the map ship this way); after that its switch is
+game sees it; after that its switch is
 stored like any other. `"enhancement": true` marks a mod that changes the game
 from the original: Classic mode holds it, loaded but with no callback or event
 until Classic mode is off, and the Mods panel says "off in Classic mode". A held
@@ -480,7 +480,7 @@ cheating.
 | `invincible` | boolean: HP losses are ignored, so no death |
 | `peaceful` | boolean: enemies never attack the player |
 | `move_speed`, `turn_speed` | number, 0.25–8 |
-| `top_speed` | number, 0.25–8: the walking speed limit, as a run raises it (`mods/run` sets 1.6). Not while slowed |
+| `top_speed` | number, 0.25–8: the walking speed limit, as a sprint or run would raise it (1.6 is the usual value). Not while slowed |
 
 Each mod's `kf.play` and `kf.game` values are its own; the game combines them.
 A switch is on when any mod turns it on, speeds multiply, and the product is
@@ -923,13 +923,8 @@ interface scale.
 
 ## Examples
 
-`mods/stathud` (HUD drawing + settings), `mods/quickheal` (hotkey + writing
-player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
-`mods/killcount` (`on_kill` and the `save` table), `mods/bestiary`
-(`kf.actors`, `kf.items`), `mods/hardmode` (`kf.rules`) and `mods/run`
-(`kf.action_pressed`, `kf.play.top_speed`: the run key, which the game no longer has
-itself) and `mods/map` (`kf.automap`, `kf.online`, the drawing calls, `kf.game.mouse`:
-the minimap and the full map on M) and `mods/crypt` (`kf.content`, `kf.hook`, `kf.call`,
+`mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and `mods/crypt`
+(`kf.content`, `kf.hook`, `kf.call`,
 `kf.raw`, `exports` and `mod.raise`: a sigil, a floor, a kind of monster and what it drops; the floor comes from
 your own disc by `tools/mod_floor_from_disc.py`, and without it the sigil rouses the monsters where you stand) in
 this repository. `scripts/example_mod_crypt.py` plays `mods/crypt` through. The

@@ -1448,7 +1448,30 @@ void write_offered_examples(const std::filesystem::path &list, const std::set<st
 
 // The example mods shipped beside the executable, each copied the first time it is seen; it starts
 // disabled unless its mod.json says default_enabled.
+// The examples no longer shipped. A player's copy, one the game put there, moves to mods_removed
+// beside the mods folder rather than being deleted, as the player may have changed it.
+constexpr std::array<const char *, 7> retired_examples{"bestiary", "hardmode", "killcount", "map",
+                                                       "quickheal", "run", "stathud"};
+
+void move_retired_examples() {
+    const auto offered = offered_examples(mods_dir() / ".examples");
+    for (const char *name : retired_examples) {
+        const auto copy = mods_dir() / name;
+        const auto kept = mods_dir().parent_path() / "mods_removed" / name;
+        std::error_code error;
+        if (!offered.contains(name) || !std::filesystem::is_directory(copy, error) || std::filesystem::exists(kept, error))
+            continue;
+        std::filesystem::create_directories(kept.parent_path(), error);
+        std::filesystem::rename(copy, kept, error);
+        if (error)
+            std::printf("[mods] cannot move the removed example %s: %s\n", name, error.message().c_str());
+        else
+            std::printf("[mods] moved the removed example %s to %s\n", name, kept.string().c_str());
+    }
+}
+
 void copy_example_mods() {
+    move_retired_examples();
     const char *base = SDL_GetBasePath();
     if (!base)
         return;
@@ -1604,20 +1627,6 @@ bool mods_pause_keeps_music() {
 
 bool mods_take_mouse() {
     return mods_active() && combined_play.takes_mouse;
-}
-
-bool mods_has(std::string_view id) {
-    if (!host)
-        return false;
-    const auto list = host->mods();
-    return std::ranges::any_of(list, [id](const verdite::ModInfo &mod) { return mod.id == id; });
-}
-
-bool mods_enabled(std::string_view id) {
-    if (!host)
-        return false;
-    const auto list = host->mods();
-    return std::ranges::any_of(list, [id](const verdite::ModInfo &mod) { return mod.id == id && mod.enabled; });
 }
 
 void mods_set_enabled(std::string_view id, bool enabled) {

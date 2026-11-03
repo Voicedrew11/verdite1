@@ -275,8 +275,8 @@ centred sticks move nothing.
 
 `KF_TEST_INPUT=<poll>:<action>:<polls>,...` holds an action from that read of the buttons for that
 many reads: `up`, `down`, `left`, `right`, `confirm`, `back`, `inventory`, and `run` and `map`
-(`full_map`), which only mods read. `0:run:100000000` holds run throughout; with `mods/run`
-enabled, checked 2026-10-31, the player walks 1.58 times as far in 1.5 seconds from the start.
+(`full_map`), which only mods read. `0:run:100000000` holds run throughout; checked 2026-10-31 with a run mod, since removed,
+the player walks 1.58 times as far in 1.5 seconds from the start.
 
 `KF_TEST_NO_PAUSE=1` keeps the game running while its window is unfocused, which it otherwise
 pauses: for two windows on one machine in an online room, so each shows the other moving.
