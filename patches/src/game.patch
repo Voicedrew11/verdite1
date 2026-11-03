@@ -4051,12 +4051,14 @@ index 0000000000000000000000000000000000000000..956c9b24c94764521ef82c869cca0a81
 +}
 diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..8da20c5b39285fdc4feacfadcf9e16db326e433e
+index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36c42f8f80
 --- /dev/null
 +++ b/src/game/message_render.cpp
-@@ -0,0 +1,98 @@
-+// PC extension (messages on the ground, docs/MESSAGES_PLAN.md): a message's mark is a flat, pale
-+// quad on the floor of its cell, a third of a cell across, drawn additively so it glows.
+@@ -0,0 +1,132 @@
++// PC extension (messages on the ground, docs/MESSAGES_PLAN.md): a message's mark is the signboard's
++// carved face, as the model has it (object 130, whose texture every floor has from COM/MIX.TIM),
++// laid flat on the floor of its cell in a colour no sign has, its writing read from where its writer
++// stood.
 +#include <kf/platform/prelude.h>
 +#include <kf/game/graphics.h>
 +#include <kf/game/render.h>
@@ -4067,13 +4069,40 @@ index 0000000000000000000000000000000000000000..8da20c5b39285fdc4feacfadcf9e16db
 +#include <kf/platform/mod_scene.h>
 +
 +#include <array>
++#include <cmath>
++#include <numbers>
 +
 +enum {
-+    MESSAGE_MARK_HALF_WIDTH = KF_MAP_TILE_SIZE / 6,  // a third of a cell across
-+    MESSAGE_MARK_LIFT = 8,                           // above the floor (up is -y), so it does not z-fight
++    MESSAGE_MARK_LIFT = 8,   // above the floor (up is -y), so it does not z-fight
++    MESSAGE_MARK_TEXTURE_PAGE = 0x8c,
++    MESSAGE_MARK_PALETTE = 0x79c0,
 +};
 +
-+static constexpr CVECTOR message_mark_colour = {200, 225, 255, 0};
++static constexpr CVECTOR message_mark_colour = {80, 230, 130, 0};
++static constexpr float message_mark_facing_steps = 256.0f;
++
++// The board's front in its model's units and texture: x to the reader's right, ahead away from them.
++struct MessageMarkCorner {
++    s16 x, ahead;
++    u8 u, v;
++};
++static constexpr std::array<MessageMarkCorner, 6> message_mark_corners = {{
++    {-340, 0, 4, 99},
++    {-240, 200, 12, 74},
++    {-240, -200, 12, 123},
++    {240, -200, 49, 123},
++    {240, 200, 49, 74},
++    {340, 0, 56, 99}}};
++
++// The board's faces, as indices into its corners, in strip order: its point, its middle, its point.
++struct MessageMarkFace {
++    kf::FaceShape shape;
++    std::array<u8, 4> corners;
++};
++static constexpr std::array<MessageMarkFace, 3> message_mark_faces = {{
++    {kf::FaceShape::Triangle, {0, 1, 2, 0}},
++    {kf::FaceShape::Quad, {1, 4, 2, 3}},
++    {kf::FaceShape::Triangle, {3, 4, 5, 0}}}};
 +
 +void render_message_mark(const kf::GroundMark &mark, const MATRIX *lights)
 +{
@@ -4083,7 +4112,7 @@ index 0000000000000000000000000000000000000000..8da20c5b39285fdc4feacfadcf9e16db
 +        cell_x * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER - view.view_position.vx,
 +        map_base_floor_height(cell_x, cell_z) - MESSAGE_MARK_LIFT - view.view_position.vy,
 +        cell_z * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER - view.view_position.vz}.narrowed();
-+    // The mark's corners lie along the world's axes, so the model turns with the view.
++    // The corners are turned in world axes, so the model turns with the view.
 +    MATRIX model;
 +    MATRIX identity;
 +    kf::matrix_set_rotation_xyz(SVECTOR{0, 0, 0, 0}, identity);
@@ -4094,34 +4123,39 @@ index 0000000000000000000000000000000000000000..8da20c5b39285fdc4feacfadcf9e16db
 +    const s32 otz = centre.depth >> KF_GTE_DEPTH_TO_OT_SHIFT;
 +    if (otz < KF_SCENE_MIN_OT_DEPTH)
 +        return;
-+    const std::array<SVECTOR, 4> offsets = {{
-+        {-MESSAGE_MARK_HALF_WIDTH, 0, -MESSAGE_MARK_HALF_WIDTH, 0},
-+        {MESSAGE_MARK_HALF_WIDTH, 0, -MESSAGE_MARK_HALF_WIDTH, 0},
-+        {-MESSAGE_MARK_HALF_WIDTH, 0, MESSAGE_MARK_HALF_WIDTH, 0},
-+        {MESSAGE_MARK_HALF_WIDTH, 0, MESSAGE_MARK_HALF_WIDTH, 0}}};
-+
-+    kf::DrawFace face {};
-+    face.shape = kf::FaceShape::Quad;
-+    face.casts_shadow = false;
-+    face.transparency = kf::FaceTransparency::Blend;
-+    face.material = {kf::SurfaceKind::Solid, {}, kf::BlendMode::add};
-+    for (unsigned i = 0; i < 4; ++i) {
-+        const auto corner = kf::render_project_point(model, view.projection, offsets[i]);
-+        face.vertices[i].x = kf::render_subpixel ? corner.fx : corner.x;
-+        face.vertices[i].y = kf::render_subpixel ? corner.fy : corner.y;
-+        face.vertices[i].w = kf::render_perspective ? corner.w : 0.0f;
-+        const bool world = !kf::render_camera_fixed && corner.cz > 0;
-+        face.vertices[i].cx = world ? corner.cx : 0.0f;
-+        face.vertices[i].cy = world ? corner.cy : 0.0f;
-+        face.vertices[i].cz = world ? corner.cz : 0.0f;
-+    }
 +    const SVECTOR up = {0, -KF_FIXED12_ONE, 0, 0};
 +    const kf::DepthCuedColor color = kf::render_light_normal_cued(view.lighting, *lights, up,
 +        message_mark_colour, centre.fog);
-+    render_face_submit(&face, {&color, 1}, kf::FaceShading::Flat, otz & KF_ORDERING_TABLE_INDEX_MASK);
++
++    // Yaw 0 looks along +z and grows towards -x (kf::AutomapSnapshot).
++    const float yaw = mark.facing * (2.0f * std::numbers::pi_v<float> / message_mark_facing_steps);
++    const float right_x = std::cos(yaw), right_z = std::sin(yaw);
++    const float ahead_x = -right_z, ahead_z = right_x;
++    for (const MessageMarkFace &board : message_mark_faces) {
++        kf::DrawFace face {};
++        face.shape = board.shape;
++        face.casts_shadow = false;
++        face.material = render_texture_material(MESSAGE_MARK_TEXTURE_PAGE, MESSAGE_MARK_PALETTE);
++        for (unsigned i = 0; i < static_cast<unsigned>(board.shape); ++i) {
++            const MessageMarkCorner &from = message_mark_corners[board.corners[i]];
++            const SVECTOR offset = {
++                static_cast<s16>(std::lround(from.x * right_x + from.ahead * ahead_x)), 0,
++                static_cast<s16>(std::lround(from.x * right_z + from.ahead * ahead_z)), 0};
++            const auto corner = kf::render_project_point(model, view.projection, offset);
++            face.vertices[i].x = kf::render_subpixel ? corner.fx : corner.x;
++            face.vertices[i].y = kf::render_subpixel ? corner.fy : corner.y;
++            face.vertices[i].w = kf::render_perspective ? corner.w : 0.0f;
++            const bool world = !kf::render_camera_fixed && corner.cz > 0;
++            face.vertices[i].cx = world ? corner.cx : 0.0f;
++            face.vertices[i].cy = world ? corner.cy : 0.0f;
++            face.vertices[i].cz = world ? corner.cz : 0.0f;
++            render_face_uv(&face, i, static_cast<u16>(from.u | (from.v << 8)));
++        }
++        render_face_submit(&face, {&color, 1}, kf::FaceShading::Flat, otz & KF_ORDERING_TABLE_INDEX_MASK);
++    }
 +}
 +
-+// PC extension (kf.scene): each shape a mod drew, as the message marks are drawn: a flat quad at its
++// PC extension (kf.scene): each shape a mod drew, as the message marks once were: a flat quad at its
 +// centre's depth, unlit and not fogged, casting no shadow. Smoothing reprojects its corners.
 +void render_mod_scene(void)
 +{

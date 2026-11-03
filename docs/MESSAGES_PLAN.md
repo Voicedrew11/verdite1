@@ -131,7 +131,8 @@ always shown to them and do not count.
 - **Writing**: the Message Stone, an item in Use Item while messages are on and a floor is entered,
   opens an in-game menu: it picks a template, then each blank's word (by kind, then the word),
   shows the result, and posts it on the player's cell.
-- **The mark and reading**: a patch draws a mark on the floor of each shown record's cell, and
+- **The mark and reading**: a patch draws a mark on the floor of each shown record's cell, the
+  signboard's carved face laid flat, tinted green and turned by the writer's facing, and
   the action button facing one opens it in the game's message box with "Good" and "Leave".
 - **Online off, or offline**: nothing is drawn or posted, and the Message Stone is not offered.
 
