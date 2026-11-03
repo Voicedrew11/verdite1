@@ -1507,3 +1507,40 @@ TEST_CASE("the definitions file lists exports and the other mods' calls") {
     CHECK(text.find("---@class mods") != std::string::npos);
     CHECK(text.find("---@field raise") != std::string::npos);
 }
+
+TEST_CASE("a mod.json's api_version must fit the game's: the same major, no newer a minor") {
+    const auto state_with = [](const std::string &wanted) {
+        Mods mods;   // its API is 9.9
+        mods.write("a/mod.json", R"({"api_version": ")" + wanted + R"("})");
+        mods.run("a", "t.note('ran')");
+        return std::pair{mods.info("a").state, mods.info("a").error};
+    };
+    CHECK(state_with("9.9").first == ModState::Running);
+    CHECK(state_with("9.0").first == ModState::Running);
+    CHECK(state_with("9").first == ModState::Running);
+    CHECK(state_with("9.9.4").first == ModState::Running);
+    CHECK_FALSE(noted("no such"));
+
+    const auto newer = state_with("9.10");
+    CHECK(newer.first == ModState::Failed);
+    CHECK(newer.second.find("written for API 9.10, and this game has 9.9") != std::string::npos);
+    CHECK(state_with("10.0").first == ModState::Failed);
+    CHECK(state_with("8.9").first == ModState::Failed);
+    for (const char *const bad : {"new", "1.x", "1.", ".1", "1.2x", "-1.0"}) {
+        INFO(bad);
+        const auto refused = state_with(bad);
+        CHECK(refused.first == ModState::Failed);
+        CHECK(refused.second.find("is not a version") != std::string::npos);
+    }
+}
+
+TEST_CASE("a mod refused for its api_version runs when mod.json is fixed, and one that says nothing runs") {
+    Mods mods;
+    mods.write("a/mod.json", R"({"api_version": "10.0"})");
+    mods.run("a", "t.note('ran')");
+    CHECK_FALSE(noted("ran"));
+    mods.write("a/mod.json", R"({"name": "A"})");
+    mods.host->scan();
+    CHECK(noted("ran"));
+    CHECK(mods.info("a").state == ModState::Running);
+}

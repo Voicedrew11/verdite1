@@ -10,7 +10,8 @@
 //
 // mod.json may also say "default_enabled": true, so a mod never stored before starts enabled (a mod
 // the game ships on), and "enhancement": true, for a mod the game holds while it plays as the
-// original did (hold_enhancements).
+// original did (hold_enhancements). It may say "api_version": "1.0", the API it was written for: a mod
+// asking for another major version, or a newer minor one, fails when it loads, and says why.
 //
 // The host gives every mod, beside the game's tables:
 //   mod.id, mod.log(...), mod.time() (seconds since the host started), mod.save_config(),

@@ -21,6 +21,7 @@
 #include <array>
 #include <cassert>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -30,6 +31,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -136,6 +138,7 @@ protected:
 struct Mod {
     fs::path dir;
     std::string id, name, version, author, description, entry = "main.lua";
+    std::string api_version;        // mod.json: the API it was written for; empty if it does not say
     bool default_enabled = false;   // mod.json: enabled when never stored
     bool enhancement = false;       // mod.json: held with the enhancements
     bool enabled = false;
@@ -1524,12 +1527,46 @@ std::string make_definitions(const ModHostConfig &config) {
 
 // ---- discovery ----
 
+struct ApiVersion {
+    unsigned major = 0, minor = 0;
+};
+
+// "1", "1.2" or "1.2.3"; what follows the minor says nothing about what a mod needs.
+std::optional<ApiVersion> parse_api_version(std::string_view text) {
+    ApiVersion version;
+    const char *const end = std::to_address(text.end());
+    const auto major = std::from_chars(std::to_address(text.begin()), end, version.major);
+    if (major.ec != std::errc{})
+        return std::nullopt;
+    if (major.ptr == end)
+        return version;
+    if (*major.ptr != '.')
+        return std::nullopt;
+    const auto minor = std::from_chars(major.ptr + 1, end, version.minor);
+    if (minor.ec != std::errc{} || (minor.ptr != end && *minor.ptr != '.'))
+        return std::nullopt;
+    return version;
+}
+
+// Why a mod written for wanted cannot run on the game's API, or nothing: the same major, no newer a minor.
+std::optional<std::string> api_refusal(std::string_view wanted, std::string_view game) {
+    const auto mod_version = parse_api_version(wanted);
+    if (!mod_version)
+        return "mod.json's api_version '" + std::string(wanted) + "' is not a version like 1.0";
+    const auto game_version = parse_api_version(game);
+    const bool fits = game_version && mod_version->major == game_version->major && mod_version->minor <= game_version->minor;
+    if (fits)
+        return std::nullopt;
+    return "written for API " + std::string(wanted) + ", and this game has " + std::string(game);
+}
+
 void read_manifest(Mod &mod) {
     const auto folder = mod.dir.filename().u8string();
     mod.id = mod.name = std::string(folder.begin(), folder.end());
     mod.version.clear();
     mod.author.clear();
     mod.description.clear();
+    mod.api_version.clear();
     mod.entry = "main.lua";
     std::error_code error;
     const fs::path manifest = mod.dir / "mod.json";
@@ -1553,6 +1590,7 @@ void read_manifest(Mod &mod) {
     read("author", mod.author);
     read("description", mod.description);
     read("entry", mod.entry);
+    read("api_version", mod.api_version);
     const auto flag = [&](const char *key) { return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json.get(), key)) != 0; };
     mod.default_enabled = flag("default_enabled");
     mod.enhancement = flag("enhancement");
@@ -1976,6 +2014,12 @@ struct ModHost::State final : ModPeers {
     void load(Mod &mod) {
         stop(mod);
         mod.error.clear();
+        if (!mod.api_version.empty()) {
+            if (auto refusal = api_refusal(mod.api_version, config.api_version)) {
+                fail(mod, *refusal);
+                return;
+            }
+        }
         const auto began = Clock::now();
         if (auto error = load_asset_folder(config, mod.dir, mod.assets)) {
             fail(mod, *error);
