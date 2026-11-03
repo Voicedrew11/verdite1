@@ -48,8 +48,6 @@ float read_float(const cJSON *object, const char *key, float fallback) {
 
 AnalogOptions read_analog(const cJSON *analog, AnalogOptions o) {
     o.enabled = read_bool(analog, "enabled", o.enabled);
-    o.look = read_bool(analog, "look", o.look);
-    o.move = read_bool(analog, "move", o.move);
     o.mode = read_string(analog, "sticks", o.mode == StickMode::Tank ? "tank" : "twin") == "tank" ? StickMode::Tank
                                                                                                    : StickMode::Twin;
     o.turn_sensitivity = read_float(analog, "turn_sensitivity", o.turn_sensitivity);
@@ -88,8 +86,6 @@ void write_value(cJSON *parent, const char *key, cJSON *value) {
 
 void write_analog(cJSON *analog, const AnalogOptions &o) {
     write_value(analog, "enabled", cJSON_CreateBool(o.enabled));
-    write_value(analog, "look", cJSON_CreateBool(o.look));
-    write_value(analog, "move", cJSON_CreateBool(o.move));
     write_value(analog, "sticks", cJSON_CreateString(o.mode == StickMode::Tank ? "tank" : "twin"));
     write_value(analog, "turn_sensitivity", cJSON_CreateNumber(o.turn_sensitivity));
     write_value(analog, "pitch_sensitivity", cJSON_CreateNumber(o.pitch_sensitivity));
@@ -148,10 +144,7 @@ void settings_load() {
     current.true_color = read_bool(display, "true_color", current.true_color);
     current.pixel_lighting = read_bool(display, "pixel_lighting", current.pixel_lighting);
     current.dynamic_lights = read_bool(display, "dynamic_lights", current.dynamic_lights);
-    current.light_strength = static_cast<int>(read_number(display, "light_strength", current.light_strength));
-    current.light_occlusion = read_bool(display, "light_occlusion", current.light_occlusion);
     current.ambient_occlusion = read_bool(display, "ambient_occlusion", current.ambient_occlusion);
-    current.ao_strength = static_cast<int>(read_number(display, "ao_strength", current.ao_strength));
     current.ao_quality = std::clamp(static_cast<int>(read_number(display, "ao_quality", current.ao_quality)), 0, 2);
     current.texture_filter = static_cast<int>(read_number(display, "texture_filter", current.texture_filter));
     current.mipmaps = read_bool(display, "mipmaps", current.mipmaps);
@@ -163,15 +156,12 @@ void settings_load() {
     current.antialiasing = static_cast<int>(read_number(display, "antialiasing", current.antialiasing));
     current.flame_glow = read_bool(display, "flame_glow", current.flame_glow);
     current.shadows = read_bool(display, "shadows", current.shadows);
-    current.shadow_strength = static_cast<int>(read_number(display, "shadow_strength", current.shadow_strength));
-    current.glow_strength = static_cast<int>(read_number(display, "glow_strength", current.glow_strength));
     current.frame_rate = static_cast<int>(read_number(display, "frame_rate", current.frame_rate));
     const cJSON *audio = cJSON_GetObjectItemCaseSensitive(document, "audio");
     current.volume = static_cast<int>(read_number(audio, "volume", current.volume));
     const cJSON *controls = cJSON_GetObjectItemCaseSensitive(document, "controls");
     current.look_limit = static_cast<int>(read_number(controls, "look_limit", current.look_limit));
     current.pad_layout = read_string(controls, "pad_layout", current.pad_layout);
-    current.menu_pointer = read_bool(controls, "menu_pointer", current.menu_pointer);
     current.touch_haptics = read_bool(controls, "touch_haptics", current.touch_haptics);
     current.analog = read_analog(cJSON_GetObjectItemCaseSensitive(document, "analog"), current.analog);
     const cJSON *gameplay = cJSON_GetObjectItemCaseSensitive(document, "gameplay");
@@ -181,7 +171,6 @@ void settings_load() {
     current.tick_rate = static_cast<int>(read_number(gameplay, "tick_rate", current.tick_rate));
     current.enemy_turn_auto = read_bool(gameplay, "enemy_turn_auto", current.enemy_turn_auto);
     current.enemy_turn = std::clamp(static_cast<float>(read_number(gameplay, "enemy_turn", current.enemy_turn)), 1.0f, 4.0f);
-    current.enemy_track = read_bool(gameplay, "enemy_track", current.enemy_track);
     current.fix_ceiling_fall = read_bool(gameplay, "fix_ceiling_fall", current.fix_ceiling_fall);
     current.fix_spatial_panning = read_bool(gameplay, "fix_spatial_panning", current.fix_spatial_panning);
     const cJSON *map = cJSON_GetObjectItemCaseSensitive(document, "map");
@@ -232,10 +221,7 @@ void settings_save() {
     write_value(display, "true_color", cJSON_CreateBool(current.true_color));
     write_value(display, "pixel_lighting", cJSON_CreateBool(current.pixel_lighting));
     write_value(display, "dynamic_lights", cJSON_CreateBool(current.dynamic_lights));
-    write_value(display, "light_strength", cJSON_CreateNumber(current.light_strength));
-    write_value(display, "light_occlusion", cJSON_CreateBool(current.light_occlusion));
     write_value(display, "ambient_occlusion", cJSON_CreateBool(current.ambient_occlusion));
-    write_value(display, "ao_strength", cJSON_CreateNumber(current.ao_strength));
     write_value(display, "ao_quality", cJSON_CreateNumber(current.ao_quality));
     write_value(display, "texture_filter", cJSON_CreateNumber(current.texture_filter));
     write_value(display, "mipmaps", cJSON_CreateBool(current.mipmaps));
@@ -246,15 +232,12 @@ void settings_save() {
     write_value(display, "antialiasing", cJSON_CreateNumber(current.antialiasing));
     write_value(display, "flame_glow", cJSON_CreateBool(current.flame_glow));
     write_value(display, "shadows", cJSON_CreateBool(current.shadows));
-    write_value(display, "shadow_strength", cJSON_CreateNumber(current.shadow_strength));
-    write_value(display, "glow_strength", cJSON_CreateNumber(current.glow_strength));
     write_value(display, "frame_rate", cJSON_CreateNumber(current.frame_rate));
     cJSON *audio = object_entry(document, "audio");
     write_value(audio, "volume", cJSON_CreateNumber(current.volume));
     cJSON *controls = object_entry(document, "controls");
     write_value(controls, "look_limit", cJSON_CreateNumber(current.look_limit));
     write_value(controls, "pad_layout", cJSON_CreateString(current.pad_layout.c_str()));
-    write_value(controls, "menu_pointer", cJSON_CreateBool(current.menu_pointer));
     write_value(controls, "touch_haptics", cJSON_CreateBool(current.touch_haptics));
     write_analog(object_entry(document, "analog"), current.analog);
     cJSON *gameplay = object_entry(document, "gameplay");
@@ -264,7 +247,6 @@ void settings_save() {
     write_value(gameplay, "tick_rate", cJSON_CreateNumber(current.tick_rate));
     write_value(gameplay, "enemy_turn_auto", cJSON_CreateBool(current.enemy_turn_auto));
     write_value(gameplay, "enemy_turn", cJSON_CreateNumber(current.enemy_turn));
-    write_value(gameplay, "enemy_track", cJSON_CreateBool(current.enemy_track));
     write_value(gameplay, "fix_ceiling_fall", cJSON_CreateBool(current.fix_ceiling_fall));
     write_value(gameplay, "fix_spatial_panning", cJSON_CreateBool(current.fix_spatial_panning));
     cJSON *map = object_entry(document, "map");
@@ -341,6 +323,8 @@ const Settings &effective_settings() {
 
 namespace {
 RenderTarget applied_target{render_width, 1};
+// The share of a light a shadow removes; the game's own lighting is untouched. The judged look.
+constexpr float shadow_strength = 0.7f;
 
 // The Display settings in the frontend's terms (frontend.h).
 PictureOptions picture_options(const Settings &e) {
@@ -352,12 +336,12 @@ PictureOptions picture_options(const Settings &e) {
     options.supersample = render_supersample;
     options.pixel_lighting = e.pixel_lighting;
     options.dynamic_lights = e.dynamic_lights;
-    options.light_strength = static_cast<float>(e.light_strength) / 100.0f;
-    options.light_occlusion = e.light_occlusion;
-    options.shadows = e.shadows ? static_cast<float>(e.shadow_strength) / 100.0f : 0.0f;
-    options.ambient_occlusion = e.ambient_occlusion ? static_cast<float>(e.ao_strength) / 100.0f : 0.0f;
+    options.light_strength = 1.0f;
+    options.light_occlusion = true;
+    options.shadows = e.shadows ? shadow_strength : 0.0f;
+    options.ambient_occlusion = e.ambient_occlusion ? 1.0f : 0.0f;
     options.occlusion_quality = static_cast<OcclusionQuality>(std::clamp(e.ao_quality, 0, 2));
-    options.glow = e.flame_glow ? static_cast<float>(e.glow_strength) / 100.0f : 0.0f;
+    options.glow = e.flame_glow ? 1.0f : 0.0f;
     options.fxaa = e.antialiasing == 1;
     options.mipmaps = e.mipmaps;
     options.anisotropy = e.anisotropy;
@@ -383,7 +367,7 @@ void apply_render_settings() {
     render_detailed_map = e.detailed_map;
     render_hud_at_edges = e.hud_at_edges;
     render_dynamic_lights = e.dynamic_lights;
-    render_light_occlusion = e.light_occlusion;
+    render_light_occlusion = true;
     render_supersample = e.antialiasing == 2 ? 2 : e.antialiasing == 3 ? 3 : 1;
     render_smoothing = e.frame_rate != 20;
     render_frame_limit = e.frame_rate == 20 ? 0 : e.frame_rate;
@@ -431,10 +415,9 @@ void apply_control_settings() {
     player_pitch_limit = std::max(191, degrees * 4096 / 360);
     fix_actor_ceiling_fall = e.fix_ceiling_fall;
     auto_use_keys = e.auto_keys;
-    host_set_enemy_turn({e.enemy_turn_auto ? EnemyTurnMode::Automatic : EnemyTurnMode::Fixed, e.enemy_turn, e.enemy_track,
+    host_set_enemy_turn({e.enemy_turn_auto ? EnemyTurnMode::Automatic : EnemyTurnMode::Fixed, e.enemy_turn,
                          stick_turn_reach(e.analog)});
     host_set_pad_layout(e.pad_layout == "jp" ? PadLayout::Japanese : PadLayout::West);
-    menu_pointer_enabled = e.menu_pointer;
     touch_button_haptics = e.touch_haptics;
     host_set_analog_options(e.analog);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.
@@ -456,7 +439,6 @@ void crash_write_settings(verdite::CrashWriter &out) {
     out.line("frame rate", s.frame_rate);
     out.line("enemy turn automatic", s.enemy_turn_auto);
     out.line("enemy turn percent", static_cast<std::int64_t>(s.enemy_turn * 100.0f));
-    out.line("enemy track", s.enemy_track);
     out.line("fix ceiling fall", s.fix_ceiling_fall);
     out.line("auto keys", s.auto_keys);
     out.line("aspect", s.aspect);

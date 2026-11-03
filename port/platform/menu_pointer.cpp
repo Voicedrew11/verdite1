@@ -67,7 +67,7 @@ std::optional<s32> host_menu_pointed_row(MenuWidget widget) {
 }
 
 void host_menu_pointer_event(SDL_Window *window, const SDL_Event &event) {
-    if (!menu_pointer_enabled || !window || SDL_GetWindowRelativeMouseMode(window))
+    if (!window || SDL_GetWindowRelativeMouseMode(window))
         return;
     switch (event.type) {
     case SDL_EVENT_MOUSE_MOTION:

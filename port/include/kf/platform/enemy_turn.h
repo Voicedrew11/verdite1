@@ -23,7 +23,6 @@ enum class TurnInput : u8 { Buttons, Stick, Pointer };
 struct EnemyTurnOptions {
     EnemyTurnMode mode = EnemyTurnMode::Automatic;
     float fixed_scale = 1.5f;     // Fixed
-    bool fixed_track = true;      // Fixed, above x1
     float stick_reach = 1.0f;     // Automatic: the stick's top turn, times the D-pad's
 };
 

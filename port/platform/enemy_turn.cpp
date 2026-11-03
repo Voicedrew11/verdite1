@@ -38,7 +38,7 @@ void apply() {
 EnemyTurn enemy_turn_for(const EnemyTurnOptions &options, TurnInput input) {
     if (options.mode == EnemyTurnMode::Fixed) {
         const float scale = std::clamp(options.fixed_scale, 1.0f, 4.0f);
-        return {scale, options.fixed_track && scale > 1.0f};
+        return {scale, scale > 1.0f};
     }
     float scale = 1.0f;
     if (input == TurnInput::Stick)

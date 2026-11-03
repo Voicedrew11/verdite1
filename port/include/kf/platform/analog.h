@@ -17,8 +17,6 @@ enum class StickMode : u8 { Twin, Tank };
 
 struct AnalogOptions {
     bool enabled = true;
-    bool look = true;           // the right stick turns and looks (twin)
-    bool move = true;           // the left stick walks
     StickMode mode = StickMode::Twin;
     float turn_sensitivity = 1.0f;   // 1: full deflection is the D-pad's rate
     float pitch_sensitivity = 1.0f;

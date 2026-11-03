@@ -36,10 +36,8 @@ TEST_CASE("fixed enemy turn is the setting, whatever turned") {
     EnemyTurnOptions options;
     options.mode = EnemyTurnMode::Fixed;
     options.fixed_scale = 1.5f;
-    options.fixed_track = false;
     CHECK(enemy_turn_for(options, TurnInput::Pointer).scale == 1.5f);
-    CHECK_FALSE(enemy_turn_for(options, TurnInput::Pointer).track);
-    options.fixed_track = true;
+    CHECK(enemy_turn_for(options, TurnInput::Pointer).track);
     options.fixed_scale = 1.0f;
     CHECK_FALSE(enemy_turn_for(options, TurnInput::Buttons).track);   // no tracking at x1
 }

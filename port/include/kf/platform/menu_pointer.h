@@ -27,10 +27,6 @@ bool host_menu_row(s32 row, s32 x, s32 y, s32 width, s32 height);
 // on screen taking input.
 std::optional<s32> host_menu_pointed_row(MenuWidget widget);
 
-// Settings: Controls > Mouse in menus (controls.menu_pointer). A finger points
-// either way: on a touch screen it is the only way through the menus.
-inline bool menu_pointer_enabled = true;
-
 // The host's side. Mouse events while a menu is up and the mouse is free; SDL's
 // mouse events made from touches are left to the touch controls.
 void host_menu_pointer_event(SDL_Window *window, const SDL_Event &event);

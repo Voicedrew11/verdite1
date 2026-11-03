@@ -69,15 +69,15 @@ Deflection deflection() {
     if (!o.enabled)
         return d;
     const RawSticks raw = host_gamepad_sticks();
-    if (o.move && o.mode == StickMode::Tank) {
+    if (o.mode == StickMode::Tank) {
         at(d, AnalogAxis::Forward) = -verdite::shape_axis(raw.left_y, {tank_deadzone, o.move_curve});
         at(d, AnalogAxis::Turn) = -verdite::shape_axis(raw.left_x, {tank_deadzone, tank_turn_curve});
-    } else if (o.move) {
+    } else {
         const auto left = verdite::shape_stick({raw.left_x, raw.left_y}, {o.move_deadzone, o.move_curve});
         at(d, AnalogAxis::Forward) = -left.y;
         at(d, AnalogAxis::Strafe) = left.x;
     }
-    if (o.look && o.mode == StickMode::Twin) {
+    if (o.mode == StickMode::Twin) {
         const auto right = verdite::shape_stick({raw.right_x, raw.right_y}, {o.look_deadzone, o.look_curve});
         at(d, AnalogAxis::Turn) = -right.x;
         at(d, AnalogAxis::Pitch) = right.y;
@@ -142,7 +142,7 @@ void host_set_analog_options(const AnalogOptions &options) {
     analog.options = o;
 }
 
-bool host_analog_owns_left_stick() { return analog.options.enabled && analog.options.move; }
+bool host_analog_owns_left_stick() { return analog.options.enabled; }
 
 std::optional<s32> host_analog_velocity(AnalogAxis axis, s32 velocity, AnalogRates rates) {
     Deflection d = deflection();

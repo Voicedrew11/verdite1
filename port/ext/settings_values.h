@@ -33,10 +33,7 @@ struct Settings {
     bool true_color = true;     // smooth colour: no 15-bit banding or dither
     bool pixel_lighting = true; // the game's lights per pixel on models
     bool dynamic_lights = true; // torches and fire/lightning spells light nearby surfaces
-    int light_strength = 100;   // percent
-    bool light_occlusion = true; // walls block dynamic light
     bool ambient_occlusion = true;
-    int ao_strength = 100;      // percent; 100 is Verdite's judged look
     int ao_quality = 1;         // 0 low, 1 medium, 2 high (OcclusionQuality)
     int texture_filter = 3;     // 0 nearest (original), 1 bilinear, 2 three-point, 3 sharp
     bool mipmaps = true;        // distant textures averaged instead of shimmering
@@ -47,20 +44,16 @@ struct Settings {
     int antialiasing = 1;       // 0 off, 1 FXAA, 2 4x SSAA, 3 9x SSAA
     bool flame_glow = true;
     bool shadows = true;
-    int shadow_strength = 70;   // percent of a light a shadow removes (game lighting untouched)
-    int glow_strength = 100;    // percent
     int frame_rate = 0;         // 20: original (no smoothing), 0: display refresh, -1: unlimited, else cap
     int tick_rate = 15;         // world updates a second: 12, 15, 20 (the gate's) or 30
     int look_limit = 70;        // degrees the camera may tilt up or down (original: 17)
     std::string pad_layout = "west";   // gamepad face buttons: "west" (the US game's) or "jp"
-    bool menu_pointer = true;   // point at and click the game's menus with the mouse
     bool touch_haptics = true;  // the on-screen buttons click the phone's vibrator
     AnalogOptions analog;       // the sticks, saved as "analog"
     std::string language = "en";   // game language when both are set up: "en" or "ja"
     bool auto_keys = true;          // interacting with a lock uses a carried key
     bool enemy_turn_auto = true;    // the enemy turn follows how fast the last input to turn can turn
     float enemy_turn = 1.5f;        // fixed: an enemy's turn toward the player, times its own (1: original)
-    bool enemy_track = true;        // fixed, above x1: a pursuing enemy re-aims at the player every update
     bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump
     bool fix_spatial_panning = true; // bug fix: flagged sounds get their panning adjustment
     float ui_scale = 1.0f;

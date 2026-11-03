@@ -68,7 +68,6 @@ VARY = {
     "gameplay.classic_mode": [None, True],
     "gameplay.tick_rate": [None, 15, 20],
     "gameplay.enemy_turn": [None, 1.0, 2.0, 4.0],
-    "gameplay.enemy_track": [None, False],
     "gameplay.fix_ceiling_fall": [None, False],
     "gameplay.fix_spatial_panning": [None, False],
     "gameplay.auto_use_keys": [None, True],
