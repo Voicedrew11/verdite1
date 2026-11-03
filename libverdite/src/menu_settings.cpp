@@ -12,7 +12,8 @@ namespace {
 bool platform_has(PlatformFeatures has, PlatformFeatures needs) { return (has & needs) == needs; }
 
 bool usable(const OptionRow &row) {
-    if (!row.get || !row.set)
+    const bool changeable = row.kind == OptionKind::Action ? static_cast<bool>(row.run) : row.get && row.set;
+    if (!changeable)
         return false;
     const OptionState state = row.state ? row.state() : OptionState{};
     return state.shown && state.enabled;
@@ -92,7 +93,7 @@ MenuSettings::MenuSettings(OptionTable &table, std::vector<MenuSettingsPage> pag
             if (!option || !platform_has(has, option->needs))
                 return true;
             row.stops = stops_of(*option, row.stops);
-            return row.stops.empty();
+            return option->kind != OptionKind::Action && row.stops.empty();
         });
         if (!page.rows.empty())
             pages_.push_back(std::move(page));
@@ -126,7 +127,16 @@ bool MenuSettings::step(int delta) {
         return false;
     const MenuSettingsRow &row = pages_[page_].rows[row_];
     const OptionRow *option = table_->find(row.option);
-    if (!option || !usable(*option) || row.stops.size() < 2)
+    if (!option || !usable(*option))
+        return false;
+    if (option->kind == OptionKind::Action) {
+        if (delta < 0)
+            return false;
+        // What it opens chooses settings of its own, so nothing is left staged under it.
+        put_back();
+        return table_->run(option->id);
+    }
+    if (row.stops.size() < 2)
         return false;
     const OptionValue before = option->get();
     OptionValue value = before;

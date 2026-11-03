@@ -11,8 +11,8 @@
 // changed option back to its value at open(). Between open() and either of
 // them, changed() says whether to ask the player before leaving.
 //
-// Rows the platform lacks a feature for are left out, and rows with fewer than
-// two stops, then empty pages. A row the table does not show now, or has
+// Rows the platform lacks a feature for are left out, and rows with no stops
+// (an action has none, and stays), then empty pages. A row the table does not show now, or has
 // disabled, stays in place, dimmed, so the rows do not move under the cursor.
 #include "verdite/options.h"
 
@@ -62,6 +62,8 @@ public:
     // Sets the selected row's value |delta| stops on, going round the ends;
     // a value between stops goes to the nearer stop on that side. False, with
     // nothing changed, for a disabled row or one with a single stop.
+    // On an action, a forward step puts back what is staged and presses it; a
+    // backward one is refused, so stepping left past a row never opens anything.
     bool step(int delta);
 
     // The cursor on a row of the current page, as a pointer chose it.

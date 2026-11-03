@@ -14,6 +14,7 @@ constexpr auto window = static_cast<PlatformFeatures>(PlatformFeature::Window);
 struct Game {
     bool fullscreen = false;
     bool lights = true;
+    int resets = 0;
     double strength = 100;
     double fps = 60;
     std::string aspect = "4:3";
@@ -55,7 +56,7 @@ OptionTable table_for(Game &game) {
     fps.get = [&] { return OptionValue(game.fps); };
     fps.set = [&](const OptionValue &v) { game.fps = std::get<double>(v); };
     OptionRow reset = row("display.reset", OptionKind::Action);
-    reset.run = [] {};
+    reset.run = [&] { ++game.resets; };
     return OptionTable({OptionPage{"Display", {OptionSection{"", {fullscreen, aspect, lights, strength, fps, reset}}}}});
 }
 
@@ -63,7 +64,7 @@ std::vector<MenuSettingsPage> pages() {
     return {
         MenuSettingsPage{"display", {{"display.fullscreen", {}}, {"display.aspect", {}}, {"display.fps", {30.0, 60.0, 144.0}}}},
         MenuSettingsPage{"lights", {{"display.lights", {}}, {"display.strength", {}}}},
-        MenuSettingsPage{"nothing", {{"display.reset", {}}, {"no.such.option", {}}}},
+        MenuSettingsPage{"nothing", {{"no.such.option", {}}}},
     };
 }
 
@@ -208,4 +209,25 @@ TEST_CASE("keep ends the visit with the changes, and open starts a new one") {
     CHECK(menu.view().page == "lights");   // the page last shown
     menu.put_back();                       // nothing staged in this visit
     CHECK_FALSE(game.lights);
+}
+
+TEST_CASE("an action row is pressed by a forward step, with what was staged put back") {
+    Game game;
+    OptionTable table = table_for(game);
+    MenuSettings menu(table, {MenuSettingsPage{"tools", {{"display.aspect", {}}, {"display.reset", {}}}}}, window);
+    menu.open();
+    CHECK(menu.step(1));
+    CHECK(game.aspect == "16:9");
+    menu.select_row(1);
+    const auto view = menu.view();
+    REQUIRE(view.rows.size() == 2);
+    CHECK(view.rows[1].enabled);
+    CHECK(std::get<std::string>(view.rows[1].value).empty());
+    CHECK_FALSE(menu.step(-1));
+    CHECK(game.resets == 0);
+    CHECK(game.aspect == "16:9");
+    CHECK(menu.step(1));
+    CHECK(game.resets == 1);
+    CHECK(game.aspect == "4:3");
+    CHECK_FALSE(menu.changed());
 }
