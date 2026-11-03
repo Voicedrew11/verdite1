@@ -53,21 +53,40 @@ struct Kf1Control {
 using verdite::TouchKind;
 constexpr Action no_action = Action::count;
 
+// How far down the game's HUD reaches, as a fraction of the height: the compass,
+// the lowest of it, ends at line 50 of 240 (hud_sprites). It moves sideways with
+// the aspect and "HUD at the screen edges" but never down, so below this is clear.
+constexpr float hud_bottom = 50.0f / 240;
+
+// Run and the map have no meaning in the game itself; these appear once a mod reads them.
+constexpr Kf1Control run_button = {TouchKind::Button, TouchShape::Button, "Run", Action::run, TouchCommand::None, Edge::Right, 0.50f, 0.58f, 0.08f, {}};
+constexpr Kf1Control map_button = {TouchKind::Button, TouchShape::Button, "Map", Action::full_map, TouchCommand::None, Edge::Right, 0.40f, 0.29f, 0.06f, {}};
+
+bool shown_only_for_mods(Action action) { return action == Action::run || action == Action::full_map; }
+
 // The first row that holds a point wins: buttons before the stick and the look area.
-constexpr std::array<Kf1Control, 10> walking_controls = {{
+constexpr std::array<Kf1Control, 9> walking_controls = {{
     {TouchKind::Button, TouchShape::Button, "Attack", Action::attack, TouchCommand::None, Edge::Right, 0.22f, 0.74f, 0.13f, {}},
-    {TouchKind::Button, TouchShape::Button, "Examine", Action::interact, TouchCommand::None, Edge::Right, 0.20f, 0.44f, 0.09f, {}},
+    {TouchKind::Button, TouchShape::Button, "Examine", Action::interact, TouchCommand::None, Edge::Right, 0.20f, 0.46f, 0.09f, {}},
     {TouchKind::Button, TouchShape::Button, "Magic", Action::magic, TouchCommand::None, Edge::Right, 0.50f, 0.84f, 0.09f, {}},
-    {TouchKind::Button, TouchShape::Button, "Run", Action::run, TouchCommand::None, Edge::Right, 0.50f, 0.58f, 0.08f, {}},
-    {TouchKind::Button, TouchShape::Button, "Menu", Action::inventory, TouchCommand::None, Edge::Right, 0.56f, 0.09f, 0.06f, {}},
-    {TouchKind::Button, TouchShape::Button, "Pause", Action::pause, TouchCommand::None, Edge::Right, 0.40f, 0.09f, 0.06f, {}},
-    {TouchKind::Button, TouchShape::Button, "Map", Action::full_map, TouchCommand::None, Edge::Right, 0.24f, 0.09f, 0.06f, {}},
-    {TouchKind::Button, TouchShape::Gear, nullptr, no_action, TouchCommand::Settings, Edge::Right, 0.08f, 0.09f, 0.06f, {}},
+    {TouchKind::Button, TouchShape::Button, "Menu", Action::inventory, TouchCommand::None, Edge::Right, 0.24f, 0.29f, 0.06f, {}},
+    {TouchKind::Button, TouchShape::Gear, nullptr, no_action, TouchCommand::Settings, Edge::Right, 0.08f, 0.29f, 0.06f, {}},
+    run_button,
+    map_button,
     {TouchKind::Stick, TouchShape::Stick, nullptr, no_action, TouchCommand::None, Edge::Left, 0.32f, 0.68f, 0.13f, {0, 0, 0.45f, 1}},
     {TouchKind::Drag, TouchShape::Button, nullptr, no_action, TouchCommand::None, Edge::Left, 0, 0, 0, {0.45f, 0, 0.55f, 1}},
 }};
+static_assert(std::ranges::all_of(walking_controls, [](const Kf1Control &control) {
+    return control.kind == TouchKind::Drag || control.y - control.radius >= hud_bottom;
+}), "a control is drawn over the HUD");
+
+// A stick centred no higher than this keeps it and its pushed thumb below the HUD,
+// wherever the finger landed: a push moves the thumb a radius, which adds half its own
+// size (touch_overlay.cpp). The finger still steers from where it landed.
+constexpr float stick_top_y = hud_bottom + 0.13f * 1.45f;
+
 // The full map is up: only its button, to close it.
-constexpr std::array<Kf1Control, 1> full_map_controls = {walking_controls[6]};
+constexpr std::array<Kf1Control, 1> full_map_controls = {map_button};
 constexpr std::array<Kf1Control, 1> tap_controls = {{
     {TouchKind::Tap, TouchShape::Button, nullptr, Action::confirm, TouchCommand::None, Edge::Left, 0, 0, 0, {0, 0, 1, 1}},
 }};
@@ -97,6 +116,8 @@ struct TouchScreen {
     Layout layout = Layout::None;
     SafeArea area;
     bool classic = false;
+    u32 actions_mods_read = 0;              // controls.h bits
+    u32 actions_laid_out = 0;
     std::vector<const Kf1Control *> rows;   // as laid out, in the controls' order
     std::vector<bool> held_before;
     std::optional<bool> wanted;             // the player is on the touch screen
@@ -157,16 +178,20 @@ verdite::TouchArea zone_of(const Kf1Control &control, const SafeArea &area) {
 }
 
 void lay_out(Layout layout, const SafeArea &area) {
-    if (layout == screen.layout && area == screen.area && classic_mode == screen.classic)
+    if (layout == screen.layout && area == screen.area && classic_mode == screen.classic &&
+        screen.actions_mods_read == screen.actions_laid_out)
         return;
     screen.layout = layout;
     screen.area = area;
     screen.classic = classic_mode;
+    screen.actions_laid_out = screen.actions_mods_read;
     screen.rows.clear();
     std::vector<verdite::TouchControl> controls;
     for (const Kf1Control &control : layout_controls(layout)) {
         if (control.action == Action::full_map && classic_mode)
             continue;   // no map in Classic mode
+        if (shown_only_for_mods(control.action) && !(screen.actions_mods_read & action_bit(control.action)))
+            continue;
         controls.push_back({static_cast<std::uint32_t>(screen.rows.size()), control.kind, zone_of(control, area),
                             control.radius});
         screen.rows.push_back(&control);
@@ -208,7 +233,7 @@ void show(const Kf1Control &control, const verdite::TouchState &state) {
     TouchShown shown{control.shape, control.label, 0, 0, control.radius * area.height_px, state.held, 0, 0};
     if (control.kind == TouchKind::Stick && state.held) {
         shown.x_px = area.x_px + state.centre_x * area.width_px;
-        shown.y_px = area.y_px + state.centre_y * area.height_px;
+        shown.y_px = area.y_px + std::max(state.centre_y, stick_top_y) * area.height_px;
     } else {
         shown.x_px = area.x_px + centre_x(control, area) * area.width_px;
         shown.y_px = area.y_px + control.y * area.height_px;
@@ -394,6 +419,8 @@ TouchActions host_touch_take_actions() {
 }
 
 u32 host_touch_held_actions() { return screen.held; }
+
+void host_touch_note_actions_read(u32 actions) { screen.actions_mods_read |= actions; }
 
 RawSticks host_touch_sticks() { return screen.sticks; }
 

@@ -373,6 +373,10 @@ the attack key. The holds and blocks of all mods add up, a hold wins over a
 block, and a mod's go when it unloads or fails, and in coop. A blocked
 `quick_save` or `quick_load` does nothing; a pressed one acts as the key does.
 
+On a touch screen, `run` and `full_map` have no button until a mod reads them with
+`kf.action_down` or `kf.action_pressed`, since the game itself gives them no meaning. The button
+then stays until the game exits.
+
 `kf.player` fields (integers): `hp max_hp mp max_mp gold experience next_level_experience
 level physical_power magic base_physical_power base_magic
 physical_power_training magic_training magic_charge status_flags

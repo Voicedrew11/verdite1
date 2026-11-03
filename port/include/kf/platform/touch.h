@@ -40,6 +40,9 @@ TouchLook host_touch_poll(SDL_Window *window, TouchCover cover);
 struct TouchActions { u32 held, pressed; };
 TouchActions host_touch_take_actions();
 u32 host_touch_held_actions();
+// A mod has read these actions (controls.h bits). Run and the map mean nothing
+// to the game itself, so their buttons appear only from then until the game exits.
+void host_touch_note_actions_read(u32 actions);
 // The move stick, -1..1, for the analog path beside the gamepad's left stick.
 RawSticks host_touch_sticks();
 TouchCommand host_touch_take_command();

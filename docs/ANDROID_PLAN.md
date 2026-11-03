@@ -310,6 +310,16 @@ the Pixel (it was locked):
 - Not yet: the other Controls > Touch options (opacity, size, left-handed), the overlay
   scaled for a phone, the long press for the overlay.
 
+Cleaned up 2026-11-03: Run, Map and Pause left the screen, and the buttons came down off the HUD.
+Run and Map do nothing in the game itself since those features became mods, and Pause repeats the
+phone's back button and the gear. Run and Map appear once a mod calls `kf.action_down` or
+`kf.action_pressed` on them, and stay until the game exits. The top row sat on the compass and the
+status icons, so Menu and the gear now sit under the compass. The HUD ends at line 50 of 240 whatever
+the aspect, and a `static_assert` in `touch.cpp` keeps every control below that. A stick
+started higher up is drawn lower than the finger, so it stays clear too. The exception is an aspect
+setting wider than the screen, whose bars at the top push the HUD down into the row (21:9 on a
+16:9 screen).
+
 Settings, 2026-10-26: ImGui was too hard to use by finger, so on Android the gear opens a native
 Material 3 panel in place of the overlay's windows. It fills the screen and the game is suspended
 under it, music included, whatever "Pause the game while the overlay is open" says (a sidebar over

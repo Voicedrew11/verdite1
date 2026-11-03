@@ -41,6 +41,7 @@
 #include <kf/platform/fuzz.h>
 #include <kf/platform/host.h>
 #include <kf/platform/input.h>
+#include <kf/platform/touch.h>
 #include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
 #include <kf/platform/saves.h>
@@ -1027,11 +1028,13 @@ u32 check_action(lua_State *L) {
 }
 int kf_action_down(lua_State *L) {
     const u32 bit = check_action(L);
+    host_touch_note_actions_read(bit);
     lua_pushboolean(L, !overlay_captures_input() && (callback_actions->now & bit) != 0);
     return 1;
 }
 int kf_action_pressed(lua_State *L) {
     const u32 bit = check_action(L);
+    host_touch_note_actions_read(bit);
     const ActionEdges &edges = *callback_actions;
     lua_pushboolean(L, !overlay_captures_input() && (edges.now & bit) != 0 && (edges.before & bit) == 0);
     return 1;
