@@ -1,14 +1,14 @@
 #include "record.h"
 
+#include "durable_file.h"
+
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
 #include <algorithm>
 #include <cerrno>
-#include <fcntl.h>
 #include <memory>
 #include <stdexcept>
-#include <unistd.h>
 #include <utility>
 
 namespace vo {
@@ -190,10 +190,10 @@ std::optional<Seed> create_seed(const std::string &path) {
     if (RAND_bytes(seed.data(), static_cast<int>(seed.size())) != 1)
         return std::nullopt;
     // O_EXCL: an existing file is never overwritten, even if it appeared since the open
-    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | vo::open_flags, 0600);
     if (fd < 0)
         return std::nullopt;
-    const bool written = write_all(fd, seed) && ::fsync(fd) == 0;
+    const bool written = write_all(fd, seed) && vo::sync_file(fd) == 0;
     const bool closed = ::close(fd) == 0;
     if (written && closed)
         return seed;
@@ -206,7 +206,7 @@ std::optional<Seed> create_seed(const std::string &path) {
 
 // The key at path: read when it exists, made there when it does not (ENOENT only).
 std::optional<Seed> seed_at(const std::string &path) {
-    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    const int fd = ::open(path.c_str(), O_RDONLY | vo::open_flags);
     if (fd >= 0)
         return read_seed(fd);
     if (errno != ENOENT)

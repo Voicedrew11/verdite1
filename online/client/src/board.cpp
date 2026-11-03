@@ -9,6 +9,7 @@
 
 #include "verdite_online.h"
 
+#include "durable_file.h"
 #include "floor_frames.h"
 #include "mesh.h"
 #include "record.h"
@@ -17,19 +18,19 @@
 #include <rtc/rtc.hpp>
 
 #include <cerrno>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
 #include <set>
+#include <system_error>
 #include <span>
 #include <string>
 #include <utility>
@@ -114,7 +115,7 @@ std::uint32_t random_seed() {
 
 // The serial in a file: 0 when there is no file yet, nothing when the file is not a number.
 std::optional<std::uint32_t> read_serial(const std::string &path) {
-    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    const int fd = ::open(path.c_str(), O_RDONLY | vo::open_flags);
     if (fd < 0)
         return errno == ENOENT ? std::optional<std::uint32_t>(0) : std::nullopt;
     std::array<char, serial_file_bytes> text{};
@@ -138,18 +139,21 @@ std::optional<std::uint32_t> read_serial(const std::string &path) {
 // serial or the one before, never a part.
 bool store_serial(const std::string &path, std::uint32_t serial) {
     const std::string temp = path + ".tmp";
-    const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | vo::open_flags, 0600);
     if (fd < 0)
         return false;
     const std::string text = std::to_string(serial) + "\n";
     const bool written = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
-    const bool synced = ::fsync(fd) == 0;
+    const bool synced = vo::sync_file(fd) == 0;
     const bool closed = ::close(fd) == 0;
     if (!written || !synced || !closed) {
         ::unlink(temp.c_str());
         return false;
     }
-    return ::rename(temp.c_str(), path.c_str()) == 0;
+    // std::filesystem's replaces the old file on Windows too, where ::rename refuses.
+    std::error_code renamed;
+    std::filesystem::rename(temp, path, renamed);
+    return !renamed;
 }
 
 vo_record to_vo_record(const Record &record, std::uint64_t id, std::uint32_t good, bool mine) {
