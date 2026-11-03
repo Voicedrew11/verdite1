@@ -341,6 +341,10 @@ int main(int argc, char **argv) {
     bool language_selected = false;
     kf::Language language = kf::Language::English;
     const char *dropped = nullptr;
+    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
+        std::printf("%s %s\n", kf::product_name, KF_VERSION);
+        return 0;
+    }
     if (argc == 4 && std::strcmp(argv[1], "--compare-traces") == 0)
         return kf::fuzz_compare_traces(argv[2], argv[3]);
     for (int i = 1; i < argc; ++i) {
@@ -380,7 +384,7 @@ int main(int argc, char **argv) {
             dropped = argv[i];
 #endif
         else {
-            std::fprintf(stderr, "Usage: verdite1 [--data DIRECTORY] [--data-ja DIRECTORY] [--data-en DIRECTORY] "
+            std::fprintf(stderr, "Usage: verdite1 [--version] [--data DIRECTORY] [--data-ja DIRECTORY] [--data-en DIRECTORY] "
                                  "[--language ja|en] [--english-patch FILE|download] "
                                  "[--disc IMAGE [--extract-to NEW_DIRECTORY] [--extract-only]] [--saves DIRECTORY] [--skip-intro] [--online-room ROOM] [--headless] [--turbo]\n"
                                  "       verdite1 --compare-traces TRACE TRACE\n");

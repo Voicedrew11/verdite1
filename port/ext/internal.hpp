@@ -89,6 +89,15 @@ void discord_stop();      // takes the presence down
 bool discord_forced();    // KF_DISCORD decides for this run
 bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
 
+// ---- telling the player about a new release (update_notice.cpp) ----
+void update_notice_start();   // asks GitHub on its own thread, in a build for players or by KF_UPDATE_CHECK=force
+void update_notice_poll();    // on every host poll: shows the notice once, at the title
+bool update_notice_open();    // its window covers the game
+void update_notice_draw();    // inside the ImGui frame
+void update_notice_draw_badge();           // inside the menu bar
+float update_notice_badge_width_px();      // 0 when there is no badge
+std::string update_notice_setting_note();  // what the setting's row says; empty when there is no release
+
 // ---- messages on the ground (messages_board.cpp, docs/MESSAGES_PLAN.md) ----
 void messages_poll();            // on every host poll: the floor's board, entered and left
 // The message stone (extra_items.cpp's row): offered while a floor is entered, and its menu, which

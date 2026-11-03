@@ -243,6 +243,10 @@ bool host_start() {
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
         SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     }
+    // The name a Wayland compositor matches to the desktop entry, for the icon.
+    SDL_SetHint(SDL_HINT_APP_ID, "verdite1");
+    if (!options.headless)
+        desktop_entry_install();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "%s\n", SDL_GetError());
         return false;

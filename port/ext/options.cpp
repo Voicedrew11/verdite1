@@ -665,6 +665,18 @@ OptionSection interface_overlay() {
     }};
 }
 
+OptionSection interface_updates() {
+    OptionRow check = toggle("overlay.update_check", "Check for updates at launch",
+                             "Asks GitHub for the latest release at most once a day. Nothing is downloaded.",
+                             settings().update_check, store_only);
+    check.state = [] {
+        OptionState state;
+        state.note = update_notice_setting_note();
+        return state;
+    };
+    return {"Updates", {check}};
+}
+
 OptionSection interface_discord() {
     Settings &s = settings();
     OptionRow presence = toggle("discord.enabled", "Discord Rich Presence",
@@ -701,9 +713,9 @@ OptionSection interface_online() {
     }};
 }
 
-OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_discord(), interface_online()}}; }
+OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_updates(), interface_discord(), interface_online()}}; }
 #else
-OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_discord()}}; }
+OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_updates(), interface_discord()}}; }
 #endif
 
 } // namespace

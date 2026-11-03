@@ -1,11 +1,13 @@
 // F1 overlay: menu bar with Settings, Mods and Console windows, drawn with Dear
 // ImGui over the game's frame. The game pauses while it is open (configurable).
+#include "build_info.h"
 #include "internal.hpp"
 #include <backends/imgui_impl_sdl3.h>
 #include <imgui.h>
 #include <imgui_internal.h>   // FindRenderedTextEnd
 #include <kf/platform/host.h>
 #include <kf/platform/language_runtime.h>
+#include <kf/platform/user_folder.h>
 #include <kf/renderer/frontend.h>
 #include <kf/renderer/renderer.h>
 #include <algorithm>
@@ -297,6 +299,7 @@ void draw_about_window() {
         ImGui::End();
         return;
     }
+    ImGui::Text("%s %s (%s)", product_name, KF_VERSION, KF_BUILD_COMMIT);
     ImGui::Text("King's Field (SLPS-00017) source port - PC extensions");
     ImGui::Separator();
     ImGui::BulletText("Source port: sushi-shi/kings-field-decomp (CC0)");
@@ -320,7 +323,12 @@ void draw_menu_bar() {
     char status[96];
     std::snprintf(status, sizeof status, "%d mod%s running   F1 to close%s", mods_loaded_count(),
                   mods_loaded_count() == 1 ? "" : "s", settings().pause_when_open ? "   (paused)" : "");
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16);
+    const float status_x = ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16;
+    if (const float badge_px = update_notice_badge_width_px(); badge_px > 0.0f) {
+        ImGui::SameLine(status_x - badge_px - ImGui::GetStyle().ItemSpacing.x);
+        update_notice_draw_badge();
+    }
+    ImGui::SameLine(status_x);
     ImGui::TextDisabled("%s", status);
     ImGui::EndMainMenuBar();
 }
@@ -361,13 +369,14 @@ void overlay_restyle() {
 }
 
 // The overlay's windows or Android's settings panel cover the game.
-static bool covered() { return open || settings_panel_open() || setup_open(); }
+static bool covered() { return open || settings_panel_open() || setup_open() || update_notice_open(); }
 
 bool overlay_open() { return covered(); }
 bool overlay_captures_input() { return covered(); }
 // Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
-    return settings_panel_open() || setup_open() || (open && settings().pause_when_open) || mods_pause_requested();
+    return settings_panel_open() || setup_open() || update_notice_open() || (open && settings().pause_when_open) ||
+           mods_pause_requested();
 }
 bool pause_keeps_music() {
     if (settings_panel_open() || (open && settings().pause_when_open))
@@ -376,7 +385,7 @@ bool pause_keeps_music() {
 }
 // Nothing of the game shows under Android's panel, so it is not redrawn.
 // A paused mod still gets on_draw, which is how it unpauses.
-bool redraw_while_paused() { return open || setup_shows_game() || mods_pause_requested(); }
+bool redraw_while_paused() { return open || setup_shows_game() || update_notice_open() || mods_pause_requested(); }
 bool wants_cursor() { return covered() || mods_take_mouse(); }
 
 ViewRect game_view() {
@@ -430,6 +439,8 @@ bool start(SDL_Window *handle, Overlay overlay) {
     apply_render_settings();
     std::printf("[overlay] ready - press F1 for settings, mods and console. User folder: %s\n",
                 user_dir().string().c_str());
+    std::printf("[overlay] %s %s (%s)\n", product_name, KF_VERSION, KF_BUILD_COMMIT);
+    update_notice_start();
     mods_start();
     discord_start();
     online_start();
@@ -493,6 +504,7 @@ void poll() {
     options_poll();
     settings_panel_poll();
     setup_poll();
+    update_notice_poll();
     online_poll();
     messages_poll();
     if (imgui) {
@@ -581,6 +593,7 @@ ImDrawData *build_overlay(int width, int height) {
             draw_about_window();
     }
     setup_draw();
+    update_notice_draw();
     ImGui::Render();
     return ImGui::GetDrawData();
 }

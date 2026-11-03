@@ -61,6 +61,7 @@ struct Settings {
     bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump
     bool fix_spatial_panning = true; // bug fix: flagged sounds get their panning adjustment
     bool item_descriptions = true;  // what an item does, in the game's item menus
+    bool update_check = true;   // asks GitHub for a new release at launch, at most once a day
     bool discord = true;        // Discord Rich Presence, while Discord is running
     bool discord_level = true;
     bool discord_location = true;   // floor and place

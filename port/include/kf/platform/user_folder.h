@@ -18,6 +18,11 @@ const std::filesystem::path &user_folder();
 // What the first user_folder() call copied, or why it could not, for the log once it is open
 // (the copy runs before kf.log exists). Empty when nothing was copied.
 const std::string &user_folder_note();
+
+// Run from an AppImage on Linux: puts the game in the desktop's menu, with its icon, in the player's
+// ~/.local/share, naming the file it runs from now. Does nothing elsewhere, with KF_ICON_INSTALL=0,
+// or when a packager wrote the entry. Not an error if it cannot.
+void desktop_entry_install();
 }
 
 #endif // KF_PLATFORM_USER_FOLDER_H

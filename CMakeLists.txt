@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
-project(kings_field VERSION 0.1.0 LANGUAGES C CXX)
+# The tag is the version (scripts/version.sh, docs/PACKAGING.md).
+execute_process(COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/scripts/version.sh OUTPUT_VARIABLE KF_RELEASE_VERSION
+  OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE KF_VERSION_FAILED)
+if(KF_VERSION_FAILED OR NOT KF_RELEASE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "scripts/version.sh said '${KF_RELEASE_VERSION}', not MAJOR.MINOR.PATCH")
+endif()
+project(kings_field VERSION ${KF_RELEASE_VERSION} LANGUAGES C CXX)
+# A build for players, from the packaging: it tells the player about new releases.
+option(KF_RELEASE "A build for players: asks GitHub for new releases" OFF)
 # Verdite1 on the decomp. The layout follows holyland:
 #   decomp/       sushi-shi's source port (our fork), a submodule pinned on `port`; never edited
 #   patches/      Verdite's edits to its game code, one diff per copied directory (tools/patches.py)
@@ -165,7 +173,7 @@ set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES GENERATED TRUE
   COMPILE_OPTIONS "-Wall;-Wextra;-fwrapv;-fno-strict-aliasing")
 
 add_library(kf_support STATIC port/platform/files.cpp port/platform/disc.cpp port/platform/assets.cpp
-  port/platform/user_folder.cpp port/platform/picked_file.cpp
+  port/platform/user_folder.cpp port/platform/desktop_entry.cpp port/platform/picked_file.cpp
   port/platform/language.cpp port/platform/translation.cpp port/platform/translation_ppf.cpp
   port/platform/controls.cpp port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
   ${KF_SRC}/src/lib/random.cpp ${KF_SRC}/src/lib/resource_decode.cpp)
@@ -282,14 +290,15 @@ add_custom_target(kf_raw_layer DEPENDS ${KF_RAW_OUT}/raw_layer.stamp)
 
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/setting_rows.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/setup_overlay.cpp port/ext/setup_panel.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_menu.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/setting_rows.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/setup_overlay.cpp port/ext/setup_panel.cpp port/ext/update_notice.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/coop_profile.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_menu.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
   ${KF_RAW_OUT}/raw_layer.cpp)
 add_dependencies(kf_ext kf_raw_layer)
 set_source_files_properties(${KF_RAW_OUT}/raw_layer.cpp PROPERTIES GENERATED TRUE)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI})
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
 target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite lua54 cjson)
-target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}"
+  KF_RELEASE=$<BOOL:${KF_RELEASE}>)
 target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CMAKE_SOURCE_DIR}/port/ext)
 if(KF_ONLINE)
   target_link_libraries(kf_ext PRIVATE verdite_online)
@@ -443,6 +452,7 @@ else()
   add_executable(verdite1 port/platform/entry.cpp ${KF_GAME_SOURCES})
 endif()
 target_link_libraries(verdite1 PRIVATE kf_host)
+target_compile_definitions(verdite1 PRIVATE KF_VERSION="${PROJECT_VERSION}")
 target_compile_options(verdite1 PRIVATE -Wall -Wextra)
 if(NOT ANDROID)
   # The example mods beside the executable, where the game offers them to the user's mods folder.
