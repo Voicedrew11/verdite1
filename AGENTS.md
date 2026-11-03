@@ -43,8 +43,11 @@ done and what comes next; running it is "Fuzzing" in `verdite-port.md`),
 ## Code quality
 
 - Write new C++ by `docs/code-style.md`; patches to game code follow the decomp's style.
-- Checks are needed only before a push to the remote, not before a commit or to call work done: run
-  `scripts/check.sh --base @{upstream}` then, so the lint covers every commit being pushed (`--quick`
+- **Checks run ONLY before a push to the remote. Never before a commit, a merge, or to call work done, and never in a plan
+  for work that is not being pushed.** That covers the fuzzer, the sanitizer builds, the lint and the smoke runs, not just
+  `check.sh`. It overrides any general rule to run checks before finishing, global instructions included. Until a push, build
+  and run what the task itself needs, and say plainly in the report that the checks did not run.
+- Before a push, run `scripts/check.sh --base @{upstream}`, so the lint covers every commit being pushed (`--quick`
   skips the sanitizer build). It builds, runs
   libverdite's tests, lints our code (`scripts/lint.py`: all of `libverdite/`, the changed lines
   of `port/`, the lines the patches add) and boots the game headless, plain and under ASan/UBSan.
