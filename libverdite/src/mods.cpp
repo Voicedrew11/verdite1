@@ -6,6 +6,7 @@
 #include <verdite/crash.h>
 #include <verdite/mods.h>
 
+#include "mod_value.h"
 #include "raw_call_lua.h"
 #include "raw_hook_lua.h"
 #include "raw_leaf.h"
@@ -27,6 +28,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -105,6 +107,32 @@ struct RaisedEvent {
     std::vector<ModEventValue> values;
 };
 
+// One crossing into another mod: what goes in, and what comes back in values.
+struct PeerCall {
+    std::string_view name;           // the exported name, or the subscription's key
+    std::string_view what;           // for the peer's error: "exports." or "event "
+    std::vector<ModValue> values;
+    bool is_function = false;        // a read found a function
+    bool no_function = false;        // a call found none
+};
+
+struct Mod;
+
+// What a mod's reach into other mods needs of the host.
+class ModPeers {
+public:
+    // A mod that may be reached: loaded, and not failed or held.
+    [[nodiscard]] virtual Mod *running_peer(std::string_view id) = 0;
+    [[nodiscard]] virtual std::span<const std::unique_ptr<Mod>> listed() const = 0;
+    virtual void fail(Mod &mod, const std::string &message) = 0;
+    virtual void keep_config(Mod &mod) = 0;   // saves a changed config once no call is running
+
+    int call_depth = 0;   // crossings now on the stack, in any mod
+
+protected:
+    ~ModPeers() = default;
+};
+
 struct Mod {
     fs::path dir;
     std::string id, name, version, author, description, entry = "main.lua";
@@ -141,6 +169,9 @@ struct Mod {
     HookRun *hook_run = nullptr;                // the handler about to be called
     std::int64_t hook_instructions_left = 0;    // what its hook handlers share until the next frame
     bool next_call_is_hook = false;             // the next outermost call spends that, not a fresh budget
+    ModPeers *peers = nullptr;
+    PeerCall *peer_call = nullptr;              // the crossing about to run in this mod
+    std::set<std::string, std::less<>> subscriptions;   // mods.on's, by subscription_key
     std::unique_ptr<lua_State, StateClose> lua;   // last: closed before the counters above go
 };
 
@@ -675,13 +706,261 @@ int assets_clear(lua_State *L) {
     return 0;
 }
 
+// ---- other mods ----
+
+// The registry's key of a mod's subscriptions: a table from subscription_key to a function.
+constexpr const char *subscriptions_key = "verdite.subscriptions";
+// Enough for mods that lean on each other, and well inside the C stack.
+constexpr int max_peer_call_depth = 16;
+constexpr std::int64_t instructions_per_peer_call = 1000;
+
+std::string subscription_key(std::string_view source, std::string_view event) {
+    std::string key(source);
+    key += '\0';
+    key += event;
+    return key;
+}
+
+// Whether one more call of a mod's code would nest too deep. A read runs none, so it always may.
+bool peer_calls_too_deep(lua_State *L) {
+    return mod_of_state(L).peers->call_depth >= max_peer_call_depth;
+}
+
+// A mod's own calls only: a finalizer in a closing state has no call running, and reaches nobody.
+Mod *reachable_peer(lua_State *L, std::string_view id) {
+    const Mod &caller = mod_of_state(L);
+    return caller.calls_running > 0 ? caller.peers->running_peer(id) : nullptr;
+}
+
+std::vector<ModValue> values_to_cross(lua_State *L, int first, int count) {
+    return mod_values_from_lua(L, first, count, mod_of_state(L).host->memory_cap_bytes);
+}
+
+// Pushes exports[name] from the mod's own globals, or nil. Raw: none of the mod's code runs.
+void push_exported(lua_State *L, std::string_view name) {
+    lua_pushglobaltable(L);
+    lua_pushliteral(L, "exports");
+    lua_rawget(L, -2);
+    lua_remove(L, -2);
+    if (lua_type(L, -1) != LUA_TTABLE) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        return;
+    }
+    lua_pushlstring(L, name.data(), name.size());
+    lua_rawget(L, -2);
+    lua_remove(L, -2);
+}
+
+// Protected, in the peer: the value of exports[name].
+int run_exported_read(lua_State *L) {
+    PeerCall &call = *mod_of_state(L).peer_call;
+    lua_settop(L, 0);
+    push_exported(L, call.name);
+    call.is_function = lua_type(L, 1) == LUA_TFUNCTION;
+    if (!call.is_function)
+        call.values = values_to_cross(L, 1, 1);
+    return 0;
+}
+
+// Protected, in the peer: exports[name](values), and what it returns into values.
+int run_exported_call(lua_State *L) {
+    PeerCall &call = *mod_of_state(L).peer_call;
+    lua_settop(L, 0);
+    push_exported(L, call.name);
+    call.no_function = lua_type(L, 1) != LUA_TFUNCTION;
+    if (call.no_function)
+        return 0;
+    luaL_checkstack(L, static_cast<int>(call.values.size()) + 1, "too many arguments from another mod");
+    for (const ModValue &value : call.values)
+        mod_value_push(L, value);
+    lua_call(L, static_cast<int>(call.values.size()), LUA_MULTRET);
+    call.values = values_to_cross(L, 1, lua_gettop(L));
+    return 0;
+}
+
+// Protected, in the subscriber: its handler of the subscription called with the event's table, which
+// is then copied back, so the next subscriber and the raiser see what it changed.
+int run_subscriber(lua_State *L) {
+    PeerCall &call = *mod_of_state(L).peer_call;
+    lua_settop(L, 0);
+    if (lua_getfield(L, LUA_REGISTRYINDEX, subscriptions_key) != LUA_TTABLE)
+        return 0;
+    lua_pushlstring(L, call.name.data(), call.name.size());
+    if (lua_rawget(L, 1) != LUA_TFUNCTION)
+        return 0;
+    mod_value_push(L, call.values.front());
+    lua_pushvalue(L, -1);
+    lua_insert(L, 2);   // the table stays below the call
+    lua_call(L, 1, 0);
+    call.values = values_to_cross(L, 2, 1);
+    return 0;
+}
+
+// Runs run in the peer. An idle peer has a budget of its own for this call, so it stops only if that
+// one call runs away; if it comes back, the caller is charged what it spent, so a caller that keeps
+// calling is the one that goes over. A peer already running spends the budget it has, which is charged
+// when its outermost call returns. An error stops the peer and is returned; the caller carries on.
+std::optional<std::string> run_on_peer(lua_State *L, Mod &peer, lua_CFunction run, PeerCall &call) {
+    ModPeers &peers = *mod_of_state(L).peers;
+    const bool idle = peer.calls_running == 0;
+    // Called directly from on_between_updates, the peer's function may change the game as the caller may.
+    const bool may_change = idle && mod_may_change_game(L);
+    PeerCall *const outer_call = std::exchange(peer.peer_call, &call);
+    const bool outer_between = std::exchange(peer.in_between_updates, may_change);
+    ++peers.call_depth;
+    auto error = run_protected(peer, run);
+    --peers.call_depth;
+    peer.in_between_updates = outer_between;
+    peer.peer_call = outer_call;
+    std::int64_t spent = instructions_per_peer_call;
+    if (error)
+        peers.fail(peer, std::string(call.what) + std::string(call.name) + ": " + *error);
+    else if (idle)
+        spent += std::max<std::int64_t>(0, static_cast<std::int64_t>(peer.host->instructions_per_call) - peer.instructions_left);
+    if (!error)
+        peers.keep_config(peer);
+    mod_spend_instructions(L, spent);
+    return error;
+}
+
+std::string_view upvalue_view(lua_State *L, int upvalue) {
+    std::size_t size = 0;
+    const char *text = lua_tolstring(L, lua_upvalueindex(upvalue), &size);
+    return {text, size};
+}
+
+// A function in a peer's exports: upvalues the peer's id and the function's name, looked up at each
+// call, so it works across the peer's reloads.
+int call_exported(lua_State *L) {
+    const std::string_view id = upvalue_view(L, 1);
+    PeerCall call{.name = upvalue_view(L, 2), .what = "exports.", .values = values_to_cross(L, 1, lua_gettop(L))};
+    Mod *peer = reachable_peer(L, id);
+    if (!peer)
+        return fail_result(L, "mod '" + std::string(id) + "' is not running");
+    if (peer_calls_too_deep(L))
+        return fail_result(L, "calls between mods are nested too deep");
+    if (auto error = run_on_peer(L, *peer, run_exported_call, call))
+        return fail_result(L, *error);
+    if (call.no_function)
+        return fail_result(L, "mod '" + std::string(id) + "' exports no function '" + std::string(call.name) + "'");
+    luaL_checkstack(L, static_cast<int>(call.values.size()), "too many values from another mod");
+    for (const ModValue &value : call.values)
+        mod_value_push(L, value);
+    return static_cast<int>(call.values.size());
+}
+
+// __index of mods.get's table, upvalue the peer's id. A peer gone, or a value of its that cannot
+// cross, reads as nil.
+int read_exported(lua_State *L) {
+    if (lua_type(L, 2) != LUA_TSTRING) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PeerCall call{.name = check_view(L, 2), .what = "exports.", .values = {}};
+    Mod *peer = reachable_peer(L, upvalue_view(L, 1));
+    if (!peer || run_on_peer(L, *peer, run_exported_read, call)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    if (call.is_function) {
+        lua_pushvalue(L, lua_upvalueindex(1));
+        lua_pushvalue(L, 2);
+        lua_pushcclosure(L, call_exported, 2);
+        return 1;
+    }
+    mod_value_push(L, call.values.front());
+    return 1;
+}
+
+int refuse_exported_write(lua_State *L) {
+    return luaL_error(L, "another mod's exports are read-only: call one of its functions");
+}
+
+int refuse_exported_pairs(lua_State *L) {
+    return luaL_error(L, "another mod's exports cannot be walked: read them by name, or export a function");
+}
+
+// mods.get(id): a table that reads the peer's exports, or nil if the peer is not running.
+int mods_get(lua_State *L) {
+    const std::string_view id = check_view(L, 1);
+    if (!reachable_peer(L, id)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_newtable(L);
+    lua_createtable(L, 0, 4);
+    lua_pushvalue(L, 1);
+    lua_pushcclosure(L, read_exported, 1);
+    lua_setfield(L, -2, "__index");
+    lua_pushcfunction(L, refuse_exported_write);
+    lua_setfield(L, -2, "__newindex");
+    lua_pushcfunction(L, refuse_exported_pairs);
+    lua_setfield(L, -2, "__pairs");
+    lua_pushliteral(L, "locked");
+    lua_setfield(L, -2, "__metatable");
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+// mods.on(source, event, handler): handler, or nil for none, gets source's mod.raise(event, ...).
+int mods_on(lua_State *L) {
+    Mod &mod = mod_of_state(L);
+    const std::string key = subscription_key(check_view(L, 1), check_view(L, 2));
+    if (!lua_isnil(L, 3))
+        luaL_checktype(L, 3, LUA_TFUNCTION);
+    if (mod.calls_running == 0)
+        return 0;   // a finalizer, as the state closes
+    if (lua_getfield(L, LUA_REGISTRYINDEX, subscriptions_key) != LUA_TTABLE) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, subscriptions_key);
+    }
+    lua_pushlstring(L, key.data(), key.size());
+    lua_pushvalue(L, 3);
+    lua_rawset(L, -3);
+    if (lua_isnil(L, 3))
+        mod.subscriptions.erase(key);
+    else
+        mod.subscriptions.insert(key);
+    return 0;
+}
+
+// mod.raise(event, [fields]): each subscriber in the listed order gets a copy of the fields as the one
+// before it left them; returns what the last left. A subscriber that errs is stopped and changes nothing.
+// Nested too deep, nobody hears it.
+int mod_raise(lua_State *L) {
+    const Mod &mod = mod_of_state(L);
+    const std::string key = subscription_key(mod.id, check_view(L, 1));
+    if (lua_isnoneornil(L, 2)) {
+        lua_settop(L, 1);
+        lua_newtable(L);
+    }
+    luaL_checktype(L, 2, LUA_TTABLE);
+    ModValue fields = std::move(values_to_cross(L, 2, 1).front());
+    for (const auto &listed : mod.peers->listed()) {
+        if (!listed->subscriptions.contains(key) || !reachable_peer(L, listed->id) || peer_calls_too_deep(L))
+            continue;
+        PeerCall call{.name = key, .what = "event ", .values = {}};
+        call.values.push_back(fields);
+        if (!run_on_peer(L, *listed, run_subscriber, call) && !call.values.empty())
+            fields = std::move(call.values.front());
+    }
+    mod_value_push(L, fields);
+    return 1;
+}
+
 const std::vector<ModTable> &host_tables() {
     static const std::vector<ModTable> tables = {
         {.path = "mod",
          .doc = "The mod itself: given by the host to every mod.",
          .functions = {{"log", "fun(...: any)", "Prints [id] and the values to the console.", mod_print},
                        {"time", "fun(): number", "Seconds since the game started.", mod_time},
-                       {"save_config", "fun()", "Saves config when the callback returns.", mod_save_config}},
+                       {"save_config", "fun()", "Saves config when the callback returns.", mod_save_config},
+                       {"raise", "fun(event: string, fields?: table): table",
+                        "Raises this mod's event in the mods subscribed by mods.on; returns the fields as they left them.",
+                        mod_raise}},
          .fields = {{"id", "string", "The mod's id, from mod.json or its folder.", mod_get_id, nullptr},
                     {"api_version", "string", "The game's API version.", mod_get_api_version, nullptr}}},
         {.path = "mod.fs",
@@ -700,6 +979,13 @@ const std::vector<ModTable> &host_tables() {
                         assets_set},
                        {"clear", "fun(disc_path: string)",
                         "No longer replaces the disc file, from the game's next load of it.", assets_clear}},
+         .fields = {}},
+        {.path = "mods",
+         .doc = "Other mods: what they export, and the events they raise. Values are copied across.",
+         .functions = {{"get", "fun(id: string): table<string, any>?",
+                        "A table reading the mod's exports; nil unless the mod is running.", mods_get},
+                       {"on", "fun(source: string, event: string, handler: (fun(fields: table))?)",
+                        "Calls handler when the source mod raises the event; nil removes it.", mods_on}},
          .fields = {}},
     };
     return tables;
@@ -996,6 +1282,8 @@ int open_mod(lua_State *L) {
     push_table_json(L, mod.config_json);
     lua_setglobal(L, "config");
     apply_save(L);
+    lua_newtable(L);
+    lua_setglobal(L, "exports");
     if (script_left_out(mod))
         return 0;
     if (auto error = load_mod_file(L, mod.entry))
@@ -1212,6 +1500,8 @@ std::string make_definitions(const ModHostConfig &config) {
            "---@type table<string, any>\nconfig = {}\n";
     out += "\n---A table kept per mod with each save slot: the same kinds of value as config.\n"
            "---@type table<string, any>\nsave = {}\n";
+    out += "\n---What other mods reach through mods.get: functions at the top level, and values that are copied.\n"
+           "---@type table<string, any>\nexports = {}\n";
     for (const CallbackName &name : callback_names) {
         out += "\n";
         write_doc(out, name.doc);
@@ -1324,7 +1614,7 @@ struct Waiting {
     std::string id;
 };
 
-struct ModHost::State {
+struct ModHost::State final : ModPeers {
     ModHostConfig config;
     Clock::time_point started = Clock::now();
     std::vector<std::unique_ptr<Mod>> mods;
@@ -1342,6 +1632,18 @@ struct ModHost::State {
         return found == mods.end() ? nullptr : found->get();
     }
 
+    Mod *running_peer(std::string_view id) override {
+        Mod *mod = find(id);
+        return mod && mod->lua && mod->error.empty() && !held(*mod) ? mod : nullptr;
+    }
+
+    [[nodiscard]] std::span<const std::unique_ptr<Mod>> listed() const override { return mods; }
+
+    void keep_config(Mod &mod) override {
+        if (mod.config_dirty && mod.calls_running == 0)
+            save_config(mod);
+    }
+
     void store(const Mod &mod) const {
         if (config.write_stored)
             config.write_stored(mod.id, ModStored{mod.enabled, mod.config_json});
@@ -1357,6 +1659,7 @@ struct ModHost::State {
     void unload(Mod &mod) {
         mod.stop_reason.reset();
         mod.assets.clear();   // the replacements go with the state: a reload, disable or failure drops them
+        mod.subscriptions.clear();
         clear_hooks(mod);
         if (!mod.lua)
             return;
@@ -1371,7 +1674,7 @@ struct ModHost::State {
             config.unloaded(mod.id);
     }
 
-    void fail(Mod &mod, const std::string &message) {
+    void fail(Mod &mod, const std::string &message) override {
         // Inside a call the state is in use below us: every instruction errs from here, so the call
         // ends as soon as the game code returns to it, and its caller fails the mod for good.
         if (mod.calls_running > 0) {
@@ -1716,6 +2019,7 @@ struct ModHost::State {
         mod->host = &config;
         mod->saves = &saves;
         mod->frame_calls = &frame_calls;
+        mod->peers = this;
         mod->hooks_changed = [this](std::size_t point) { sync_hook_point(point); };
         mod->host_started = started;
         mod->stamp = print.stamp;

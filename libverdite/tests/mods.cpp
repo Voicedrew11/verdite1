@@ -1115,3 +1115,395 @@ TEST_CASE("mod_file_bytes reads a file inside the mod's folder up to the cap, an
     )");
     CHECK(notes == std::vector<std::string>{"8", "nil", "nil", "nil", "nil", "nil"});
 }
+
+// ---- other mods: exports, mods.get, mod.raise, mods.on ----
+
+TEST_CASE("mods.get reads another mod's exports as copies") {
+    Mods mods;
+    mods.run("b", "exports.count = 3 exports.name = 'bee' exports.pi = 1.5 exports.on = true\n"
+                  "exports.list = {10, 20, nested = {deep = 'x'}}\n"
+                  "function on_update() t.note('b list ' .. exports.list[1]) end");
+    mods.run("a", "function on_update()\n"
+                  "  local b = mods.get('b')\n"
+                  "  t.note(b.count .. b.name .. b.pi .. tostring(b.on) .. tostring(b.none))\n"
+                  "  local list = b.list\n"
+                  "  t.note(list[2] .. list.nested.deep)\n"
+                  "  list[1] = 99\n"
+                  "  t.note(math.type(b.count))\n"
+                  "end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("3bee1.5truenil"));
+    CHECK(noted("20x"));
+    CHECK(noted("integer"));
+    mods.host->call("b", ModCallback::Update);
+    CHECK(noted("b list 10"));
+}
+
+TEST_CASE("mods.get's table calls a function with copies and gets all it returns") {
+    Mods mods;
+    mods.run("b", "function exports.add(x, y) return x + y, 'sum' end\n"
+                  "function exports.edit(list) list[1] = 2 return list end");
+    mods.run("a", "function on_update()\n"
+                  "  local sum, word = mods.get('b').add(2, 3)\n"
+                  "  t.note(sum .. word)\n"
+                  "  local mine = {1}\n"
+                  "  local theirs = mods.get('b').edit(mine)\n"
+                  "  t.note(mine[1] .. theirs[1])\n"
+                  "end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("5sum"));
+    CHECK(noted("12"));
+}
+
+TEST_CASE("mods.get is nil for a mod not running, and its table follows the mod through reloads") {
+    Mods mods;
+    mods.write("b/main.lua", "exports.n = 1 function exports.f() return 'one' end");
+    mods.host->scan();
+    mods.run("a", "function on_update()\n"
+                  "  t.note('unknown ' .. tostring(mods.get('nobody')))\n"
+                  "  if not kept then\n"
+                  "    t.note('off ' .. tostring(mods.get('b')))\n"
+                  "    return\n"
+                  "  end\n"
+                  "  local value, why = call()\n"
+                  "  t.note(tostring(kept.n) .. ' ' .. tostring(value) .. ' ' .. tostring(why))\n"
+                  "end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("unknown nil"));
+    CHECK(noted("off nil"));
+
+    mods.host->enable("b");
+    mods.write("a/main.lua", "kept = nil call = nil\n"
+                             "function on_update()\n"
+                             "  kept = kept or mods.get('b')\n"
+                             "  call = call or kept.f\n"
+                             "  local value, why = call()\n"
+                             "  t.note(tostring(kept.n) .. ' ' .. tostring(value) .. ' ' .. tostring(why))\n"
+                             "end");
+    mods.host->scan();
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("1 one nil"));
+
+    mods.write("b/main.lua", "exports.n = 2 function exports.f() return 'two' end");
+    mods.host->scan();
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("2 two nil"));
+
+    mods.host->disable("b");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("nil nil mod 'b' is not running"));
+    CHECK(mods.info("a").state == ModState::Running);
+}
+
+TEST_CASE("a mod's error in an exported function stops only that mod") {
+    Mods mods;
+    mods.run("b", "function exports.bad() error('broken') end");
+    mods.run("a", "function on_update()\n"
+                  "  local value, why = mods.get('b').bad()\n"
+                  "  t.note(tostring(value))\n"
+                  "  t.note(why:find('broken', 1, true) and 'said why' or 'silent')\n"
+                  "end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("nil"));
+    CHECK(noted("said why"));
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(mods.info("b").state == ModState::Failed);
+    CHECK(mods.info("b").error.find("exports.bad") != std::string::npos);
+}
+
+TEST_CASE("a function that runs away stops its own mod, and a caller that keeps calling stops the caller") {
+    SUBCASE("the function runs away") {
+        Mods mods(64u << 20, 1'000'000);
+        mods.run("b", "function exports.spin() while true do end end");
+        mods.run("a", "function on_update() local _, why = mods.get('b').spin() t.note(why and 'told' or 'not') end");
+        mods.host->call("a", ModCallback::Update);
+        CHECK(noted("told"));
+        CHECK(mods.info("a").state == ModState::Running);
+        CHECK(mods.info("b").state == ModState::Failed);
+    }
+    SUBCASE("the caller keeps calling") {
+        Mods mods(64u << 20, 1'000'000);
+        mods.run("b", "function exports.work() for i = 1, 20000 do end end");
+        mods.run("a", "function on_update() local b = mods.get('b') for i = 1, 100000 do b.work() end t.note('done') end");
+        mods.host->call("a", ModCallback::Update);
+        CHECK_FALSE(noted("done"));
+        CHECK(mods.info("a").state == ModState::Failed);
+        CHECK(mods.info("a").error.find("budget") != std::string::npos);
+        CHECK(mods.info("b").state == ModState::Running);
+    }
+}
+
+TEST_CASE("what cannot cross between mods is an error in the mod that holds it") {
+    Mods mods;
+    SUBCASE("a function as an argument stops the caller") {
+        mods.run("b", "function exports.take() t.note('reached') end");
+        mods.run("a", "function on_update() mods.get('b').take(print) end");
+        mods.host->call("a", ModCallback::Update);
+        CHECK_FALSE(noted("reached"));
+        CHECK(mods.info("a").state == ModState::Failed);
+        CHECK(mods.info("a").error.find("cannot cross") != std::string::npos);
+        CHECK(mods.info("b").state == ModState::Running);
+    }
+    SUBCASE("a table holding itself stops the caller, and pcall can catch it first") {
+        mods.run("b", "function exports.take() end");
+        mods.run("a", "function on_update()\n"
+                      "  local loop = {} loop.me = loop\n"
+                      "  t.note(tostring(pcall(mods.get('b').take, loop)))\n"
+                      "end");
+        mods.host->call("a", ModCallback::Update);
+        CHECK(noted("false"));
+        CHECK(mods.info("a").state == ModState::Running);
+    }
+    SUBCASE("a table as a key stops the caller") {
+        mods.run("b", "function exports.take() end");
+        mods.run("a", "function on_update() mods.get('b').take({[{}] = 1}) end");
+        mods.host->call("a", ModCallback::Update);
+        CHECK(mods.info("a").state == ModState::Failed);
+    }
+    SUBCASE("a function inside an exported table stops the exporter, and reads as nil") {
+        mods.run("b", "exports.bad = {inner = print}");
+        mods.run("a", "function on_update() t.note(tostring(mods.get('b').bad)) end");
+        mods.host->call("a", ModCallback::Update);
+        CHECK(noted("nil"));
+        CHECK(mods.info("a").state == ModState::Running);
+        CHECK(mods.info("b").state == ModState::Failed);
+    }
+    SUBCASE("a function returned stops the exporter") {
+        mods.run("b", "function exports.give() return print end");
+        mods.run("a", "function on_update() local v, why = mods.get('b').give() t.note(tostring(v)) end");
+        mods.host->call("a", ModCallback::Update);
+        CHECK(noted("nil"));
+        CHECK(mods.info("b").state == ModState::Failed);
+    }
+}
+
+TEST_CASE("a table reached many times over costs its copier's budget, and stops at the budget") {
+    Mods mods(64u << 20, 1'000'000);
+    mods.run("b", "function exports.take() t.note('reached') end");
+    mods.run("a", "function on_update()\n"
+                  "  local wide = {}\n"
+                  "  for level = 1, 12 do\n"
+                  "    local next_level = {}\n"
+                  "    for i = 1, 10 do next_level[i] = wide end\n"
+                  "    wide = next_level\n"
+                  "  end\n"
+                  "  mods.get('b').take(wide)\n"
+                  "end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK_FALSE(noted("reached"));
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("b").state == ModState::Running);
+}
+
+TEST_CASE("values over the memory cap do not cross, however many there are") {
+    Mods mods(1u << 20, 100'000'000);
+    mods.run("b", "local s = string.rep('x', 400000)\n"
+                  "function exports.give() return s, s, s end");
+    mods.run("a", "function on_update() local v, why = mods.get('b').give() t.note(tostring(v)) end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("nil"));
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(mods.info("b").state == ModState::Failed);
+    CHECK(mods.info("b").error.find("too large") != std::string::npos);
+}
+
+TEST_CASE("mods calling each other without end are told it is too deep, and both run on") {
+    Mods mods;
+    mods.run("a", "depth = 0 deepest = 0\n"
+                  "function exports.ping()\n"
+                  "  depth = depth + 1 deepest = math.max(deepest, depth)\n"
+                  "  local v, why = mods.get('b').pong()\n"
+                  "  depth = depth - 1\n"
+                  "  return v, why\n"
+                  "end\n"
+                  "function on_update()\n"
+                  "  local v, why = exports.ping()\n"
+                  "  t.note(why)\n"
+                  "  t.note('deepest ' .. deepest)\n"
+                  "end");
+    mods.run("b", "function exports.pong() return mods.get('a').ping() end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("calls between mods are nested too deep"));
+    CHECK(noted("deepest 9"));
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(mods.info("b").state == ModState::Running);
+}
+
+TEST_CASE("an error in a call that came back into the first mod stops it after it returns") {
+    Mods mods;
+    mods.run("a", "function exports.bad() error('inner') end\n"
+                  "function on_update() mods.get('b').back() t.note('after') end");
+    mods.run("b", "function exports.back() local _, why = mods.get('a').bad() t.note(why and 'b told' or 'b not') end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("b told"));
+    CHECK_FALSE(noted("after"));
+    CHECK(mods.info("a").state == ModState::Failed);
+    CHECK(mods.info("b").state == ModState::Running);
+}
+
+TEST_CASE("another mod's exports cannot be written or walked, but pcall may try") {
+    Mods mods;
+    mods.run("b", "exports.n = 1");
+    mods.run("a", "function on_update()\n"
+                  "  local b = mods.get('b')\n"
+                  "  t.note('write ' .. tostring(pcall(function() b.n = 2 end)))\n"
+                  "  t.note('walk ' .. tostring(pcall(function() for k in pairs(b) do end end)))\n"
+                  "  t.note('meta ' .. tostring(getmetatable(b)))\n"
+                  "  t.note('number key ' .. tostring(b[1]))\n"
+                  "  t.note('n ' .. b.n)\n"
+                  "end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("write false"));
+    CHECK(noted("walk false"));
+    CHECK(noted("meta locked"));
+    CHECK(noted("number key nil"));
+    CHECK(noted("n 1"));
+}
+
+TEST_CASE("exports that are not a table read as nothing") {
+    Mods mods;
+    mods.run("b", "exports = 5");
+    mods.run("a", "function on_update() local b = mods.get('b') t.note(tostring(b.x)) end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("nil"));
+    CHECK(mods.info("a").state == ModState::Running);
+}
+
+TEST_CASE("a mod held with the enhancements cannot be reached") {
+    Mods mods;
+    mods.write("b/mod.json", R"({"enhancement": true})");
+    mods.run("b", "exports.n = 1 mods.on('a', 'ping', function() t.note('b heard') end)");
+    mods.run("a", "function on_update() t.note(tostring(mods.get('b'))) mod.raise('ping') end");
+    mods.host->hold_enhancements();
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("nil"));
+    CHECK_FALSE(noted("b heard"));
+    mods.host->release_enhancements();
+    mods.host->call("a", ModCallback::Update);
+    CHECK(noted("b heard"));
+}
+
+TEST_CASE("a config a peer changes is saved when its call returns") {
+    Mods mods;
+    mods.run("b", "function exports.set() config.x = 7 mod.save_config() end");
+    mods.run("a", "function on_update() mods.get('b').set() end");
+    mods.host->call("a", ModCallback::Update);
+    CHECK(mods.stored.at("b").config_json.find('7') != std::string::npos);
+}
+
+TEST_CASE("a finalizer in a closing mod reaches nobody") {
+    Mods mods;
+    mods.run("b", "exports.n = 1 function exports.f() t.note('reached') end");
+    mods.run("a", "local b = mods.get('b')\n"
+                  "local f = b.f\n"
+                  "keep = setmetatable({}, {__gc = function()\n"
+                  "  t.note('finalizer ' .. tostring(mods.get('b')) .. tostring(b.n))\n"
+                  "  f()\n"
+                  "  t.note('raised ' .. type(mod.raise('x')))\n"
+                  "  mods.on('b', 'x', print)\n"
+                  "end})");
+    mods.host->disable("a");
+    CHECK(noted("finalizer nilnil"));
+    CHECK(noted("raised table"));
+    CHECK_FALSE(noted("reached"));
+    CHECK(mods.info("b").state == ModState::Running);
+}
+
+TEST_CASE("mod.raise reaches subscribers in order, each seeing what the last left, and returns it") {
+    Mods mods;
+    mods.run("sub1", "mods.on('src', 'hit', function(e) t.note('one ' .. e.amount) e.amount = e.amount + 1 e.list = {1, 2} end)");
+    mods.run("sub2", "mods.on('src', 'hit', function(e) t.note('two ' .. e.amount .. ' ' .. #e.list) e.amount = e.amount * 2 end)");
+    mods.run("sub3", "mods.on('other', 'hit', function(e) t.note('wrong source') end)\n"
+                     "mods.on('src', 'miss', function(e) t.note('wrong event') end)");
+    mods.run("src", "function on_update()\n"
+                    "  local mine = {amount = 1}\n"
+                    "  local out = mod.raise('hit', mine)\n"
+                    "  t.note('out ' .. out.amount .. ' mine ' .. mine.amount)\n"
+                    "  t.note('empty ' .. type(mod.raise('nobody')))\n"
+                    "end");
+    mods.host->call("src", ModCallback::Update);
+    CHECK(noted("one 1"));
+    CHECK(noted("two 2 2"));
+    CHECK(noted("out 4 mine 1"));
+    CHECK(noted("empty table"));
+    CHECK_FALSE(noted("wrong source"));
+    CHECK_FALSE(noted("wrong event"));
+}
+
+TEST_CASE("a subscriber that errs is stopped and changes nothing, and the others hear the event") {
+    Mods mods;
+    mods.run("sub1", "mods.on('src', 'hit', function(e) e.amount = 99 error('boom') end)");
+    mods.run("sub2", "mods.on('src', 'hit', function(e) t.note('two ' .. e.amount) end)");
+    mods.run("src", "function on_update() t.note('out ' .. mod.raise('hit', {amount = 1}).amount) end");
+    mods.host->call("src", ModCallback::Update);
+    CHECK(noted("two 1"));
+    CHECK(noted("out 1"));
+    CHECK(mods.info("sub1").state == ModState::Failed);
+    CHECK(mods.info("sub1").error.find("event ") != std::string::npos);
+    CHECK(mods.info("src").state == ModState::Running);
+}
+
+TEST_CASE("a subscription lasts through the raiser's reload, and goes with the subscriber's") {
+    Mods mods;
+    mods.run("sub", "count = 0\n"
+                    "mods.on('src', 'hit', function() t.note('heard') end)\n"
+                    "function exports.stop() mods.on('src', 'hit', nil) end");
+    mods.run("src", "function on_update() mod.raise('hit') end");
+    mods.host->call("src", ModCallback::Update);
+    CHECK(noted("heard"));
+
+    notes.clear();
+    mods.write("src/main.lua", "function on_update() mod.raise('hit') t.note('new src') end");
+    mods.host->scan();
+    mods.host->call("src", ModCallback::Update);
+    CHECK(noted("new src"));
+    CHECK(noted("heard"));
+
+    notes.clear();
+    mods.write("sub/main.lua", "t.note('new sub')");
+    mods.host->scan();
+    mods.host->call("src", ModCallback::Update);
+    CHECK(noted("new sub"));
+    CHECK_FALSE(noted("heard"));
+}
+
+TEST_CASE("mods.on with nil removes a subscription, and a handler must be a function") {
+    Mods mods;
+    mods.run("sub", "mods.on('src', 'hit', function() t.note('heard') end)\n"
+                    "function exports.stop() mods.on('src', 'hit', nil) end\n"
+                    "t.note(tostring(pcall(mods.on, 'src', 'hit', 5)))");
+    mods.run("src", "function on_update() mods.get('sub').stop() mod.raise('hit') end");
+    CHECK(noted("false"));
+    mods.host->call("src", ModCallback::Update);
+    CHECK_FALSE(noted("heard"));
+}
+
+TEST_CASE("a subscriber's spending is charged to the raiser") {
+    Mods mods(64u << 20, 1'000'000);
+    mods.run("sub", "mods.on('src', 'hit', function() for i = 1, 20000 do end end)");
+    mods.run("src", "function on_update() for i = 1, 100000 do mod.raise('hit') end t.note('done') end");
+    mods.host->call("src", ModCallback::Update);
+    CHECK_FALSE(noted("done"));
+    CHECK(mods.info("src").state == ModState::Failed);
+    CHECK(mods.info("sub").state == ModState::Running);
+}
+
+TEST_CASE("an event raised without end across mods is cut off at the depth, and everyone runs on") {
+    Mods mods;
+    mods.run("a", "mods.on('b', 'x', function() mod.raise('x') end) function exports.go() mod.raise('x') end");
+    mods.run("b", "mods.on('a', 'x', function() mod.raise('x') t.note('b back') end)");
+    mods.run("c", "function on_update() mods.get('a').go() t.note('c done') end");
+    mods.host->call("c", ModCallback::Update);
+    CHECK(noted("c done"));
+    CHECK(noted("b back"));
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(mods.info("b").state == ModState::Running);
+}
+
+TEST_CASE("the definitions file lists exports and the other mods' calls") {
+    Mods mods;
+    const std::string text = mods.host->definitions();
+    CHECK(text.find("exports = {}") != std::string::npos);
+    CHECK(text.find("---@class mods") != std::string::npos);
+    CHECK(text.find("---@field raise") != std::string::npos);
+}

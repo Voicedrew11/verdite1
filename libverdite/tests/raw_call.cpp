@@ -451,6 +451,27 @@ TEST_CASE("Lua's bad arguments stop the mod and name what was wrong") {
     says("g.call.take_pair({[0] = 1})", "missing a part");
 }
 
+TEST_CASE("another mod's function may change the game when called directly from on_between_updates") {
+    const auto peer = [](const std::string &caller, ModCallback callback) {
+        Mods mods;
+        mods.run("b", "function exports.heal() g.call.add_hp(1) end");
+        mods.run("a", caller);
+        mods.host->call("a", callback);
+        return mods.host->mods().back();
+    };
+    CHECK(peer("function on_between_updates() mods.get('b').heal() end", ModCallback::BetweenUpdates).state == ModState::Running);
+    CHECK(call_game::calls == 1);
+
+    const ModInfo from_update = peer("function on_update() mods.get('b').heal() end", ModCallback::Update);
+    CHECK(from_update.state == ModState::Failed);
+    CHECK(has(from_update.error, "only directly in on_between_updates"));
+    CHECK(call_game::calls == 0);
+    const ModInfo from_coroutine = peer("function on_between_updates() coroutine.wrap(function() mods.get('b').heal() end)() end",
+                                        ModCallback::BetweenUpdates);
+    CHECK(from_coroutine.state == ModState::Failed);
+    CHECK(call_game::calls == 0);
+}
+
 TEST_CASE("a call that changes the game runs only directly in on_between_updates") {
     const auto refused = [](const std::string &script, ModCallback callback) {
         Mods mods;

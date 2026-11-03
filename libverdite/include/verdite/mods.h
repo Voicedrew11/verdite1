@@ -23,6 +23,12 @@
 //   and may change the writable integers and booleans (ModHost::raise);
 //   mod.assets.set(disc_path, file) and mod.assets.clear(disc_path): the disc file disc_path is
 //   replaced by the mod's file, or no longer is, the next time the game loads it;
+//   exports, a table of what other mods may reach, and mods.get(id), which reads another mod's: its
+//   values are copied (numbers, booleans, strings, tables of them), and a function at its top level is
+//   called with copies, so nothing is shared between states. A peer that errs is stopped, and its
+//   caller gets nil and why; what a peer spends is charged to its caller;
+//   mod.raise(event, [fields]) and mods.on(source, event, handler), events of a mod's own, on which
+//   each subscriber may change the fields for the next and for the raiser;
 //   the standard library without io, os, package.loadlib, C modules, string.dump or bytecode, and
 //   with debug.traceback only; require, dofile and loadfile reach only the mod's folder.
 //

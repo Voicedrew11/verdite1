@@ -318,7 +318,7 @@ add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp lib
   libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/fuzz.cpp libverdite/src/memory_card.cpp
   libverdite/src/menu_pointer.cpp libverdite/src/menu_settings.cpp libverdite/src/places.cpp libverdite/src/state_trace.cpp libverdite/src/stick.cpp
   libverdite/src/options.cpp libverdite/src/pickup_feed.cpp libverdite/src/setup.cpp libverdite/src/title_menu.cpp libverdite/src/touch.cpp
-  libverdite/src/message_sample.cpp libverdite/src/content_ids.cpp libverdite/src/mods.cpp libverdite/src/raw.cpp libverdite/src/raw_call.cpp libverdite/src/raw_hook.cpp libverdite/src/raw_leaf.cpp libverdite/src/wav.cpp)
+  libverdite/src/message_sample.cpp libverdite/src/content_ids.cpp libverdite/src/mod_value.cpp libverdite/src/mods.cpp libverdite/src/raw.cpp libverdite/src/raw_call.cpp libverdite/src/raw_hook.cpp libverdite/src/raw_leaf.cpp libverdite/src/wav.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
 target_link_libraries(verdite PUBLIC Threads::Threads lua54 PRIVATE cpptrace::cpptrace chdr-static cjson)
 if(WIN32)
