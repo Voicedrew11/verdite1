@@ -165,7 +165,7 @@ set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES GENERATED TRUE
   COMPILE_OPTIONS "-Wall;-Wextra;-fwrapv;-fno-strict-aliasing")
 
 add_library(kf_support STATIC port/platform/files.cpp port/platform/disc.cpp port/platform/assets.cpp
-  port/platform/user_folder.cpp
+  port/platform/user_folder.cpp port/platform/picked_file.cpp
   port/platform/language.cpp port/platform/translation.cpp port/platform/translation_ppf.cpp
   port/platform/controls.cpp port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
   ${KF_SRC}/src/lib/random.cpp ${KF_SRC}/src/lib/resource_decode.cpp)

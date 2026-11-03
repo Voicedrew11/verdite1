@@ -1,6 +1,7 @@
 #include <kf/platform/disc.h>
 #include <kf/platform/files.h>
 #include <kf/platform/language_runtime.h>
+#include <kf/platform/picked_file.h>
 #include <kf/platform/translation.h>
 #include <kf/platform/translation_ppf.h>
 
@@ -374,8 +375,15 @@ void language_task_patch_file(const std::string &path) {
 void language_task_add_disc(const std::string &path) {
     run_task([path](std::string *message) {
         task_progress("Copying the game files from the disc image...");
+        const auto readable = picked_file_path(path);
+        if (readable.empty()) {
+            *message = "That file could not be read.";
+            return false;
+        }
         Language added;
-        return languages_add_disc(path.c_str(), &added, message);
+        const bool ok = languages_add_disc(readable.c_str(), &added, message);
+        picked_file_remove_copy();
+        return ok;
     });
 }
 

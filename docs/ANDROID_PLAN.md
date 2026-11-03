@@ -160,6 +160,9 @@ Progress 2026-10-25, none of it run on a device yet:
   English from the Japanese disc. Not yet run on a device. To try it there, build without the
   embedded delta (`cmake --preset android-arm64 -DKF_ENGLISH_PATCH=/nonexistent`), which is also
   how a release APK must be built; a release also carries libarchive's licence (E).
+- Settings' "Add Japanese disc" handed the picker's `content://` URI straight to the disc reader,
+  which opens paths, so it could only fail on a phone. It now copies the file first on the language
+  task's thread, as the first run does (`kf/platform/picked_file.h`). Not yet run on a device.
 - A4: `VerditeActivity` passes the intent extra `args` as the command line.
 
 First run on the Pixel, in this order:
