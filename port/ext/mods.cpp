@@ -63,7 +63,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "0.16";
+constexpr const char *api_version = "0.17";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.

@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 0.15, what ships today. Where it is going, API 1.0, is
+This page documents API 0.17, what ships today. Where it is going, API 1.0, is
 planned under [The plan](#the-plan-api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -152,6 +152,7 @@ Given by the host to every mod, in every game.
 | `mod.log(...)` | prints `[id] ...` to the console |
 | `mod.time()` | seconds since the game started |
 | `mod.save_config()` | saves `config` when the callback returns |
+| `mod.raise(event, [fields])` | raises an event of this mod's ([Other mods](#other-mods)); returns the fields as the subscribers left them |
 | `mod.fs.read(path)` | the file's bytes, or `nil, reason` |
 | `mod.fs.write(path, text)` | `true`, or `nil, reason`; makes the folders; not `.lua` files, `mod.json` or `assets/`, which would reload the mod |
 | `mod.fs.exists(path)` | boolean |
@@ -202,6 +203,64 @@ What cannot be replaced yet, and why:
   container of many things read in a fixed order, and the game trusts values in it.
 - **Larger textures, and PNG.** A `.TIM` lands in the PS1's 1024x512 texture store,
   so it is no sharper than the disc's. High-resolution textures are their own step.
+
+## Other mods
+
+Each mod has its own Lua state, so mods share no tables. They reach each other by copies, which is
+what keeps one mod's bug out of another's data.
+
+**Exports.** A mod puts what others may reach in the global `exports`; another reads it with
+`mods.get(id)`:
+
+```lua
+-- in the mod "bestiary"
+exports.version = 2
+function exports.kills(kind) return save.kills[kind] or 0 end
+
+-- in another mod
+local bestiary = mods.get("bestiary")
+if bestiary then
+  local kills, why = bestiary.kills(3)
+end
+```
+
+`mods.get(id)` is nil unless that mod is running; a mod that is disabled, failed, or held by Classic
+mode is not. Ask when you use it, not as your script starts: mods load one at a time, so the
+other may not have loaded yet. A table you keep stays good across the other mod's reloads, since
+each read and call looks the name up again. It cannot be written or walked with `pairs`; both are errors.
+
+- **A value** read from it is a copy: `nil`, booleans, numbers, strings, and tables of them. Changing the copy
+  changes nothing in the other mod, and a table reached twice arrives as two tables. A read of a mod gone is nil.
+- **A function** must be at the top level of `exports`. It gets copies of its arguments and returns copies.
+  If the mod is gone, has no such function, errs, or the calls nest over 16 deep, you get `nil` and the
+  reason instead of its results.
+- **What cannot cross** is an error in the mod holding it: a function, a coroutine, a table as a key, tables
+  nested over 16 deep (a table holding itself comes to this), or over the memory cap in all. So a function
+  passed as an argument stops the caller, and one left inside an exported table or returned stops the exporter.
+  To be called back, subscribe to an event.
+
+**Events.** A mod raises events of its own, and any mod may listen:
+
+```lua
+-- in the mod "arena"
+local out = mod.raise("wave_starts", { wave = 3, monsters = 10 })
+
+-- in another mod
+mods.on("arena", "wave_starts", function(e) e.monsters = e.monsters + 2 end)
+```
+
+Subscribers run in the listed order, each with a copy of the fields as the one before it left them,
+and `mod.raise` returns the last of these, as the game's own events let a handler change a
+field. `fields` may be left out; there is no check of what they hold, which is for the two mods to agree on.
+`mods.on(source, event, nil)` removes a handler. A subscription needs no running source, and lasts through
+its reloads; it goes with the subscriber's own state, so subscribe where your script runs. Raised while
+calls between mods are already 16 deep, an event reaches nobody.
+
+**Failure and budget.** An error stops the mod it happens in, not the one that called it, and an event's
+subscriber that errs leaves the fields as they were. The called mod has its own budget for an outermost call,
+so it stops only if that one call runs away; if it comes back, what it spent is charged to its caller, so a
+caller that keeps calling goes over its own. A function called directly from `on_between_updates` may run a `kf.call` that
+changes the game, as the caller could.
 
 ## `config`
 
@@ -903,7 +962,7 @@ from Lua reaches the game's memory unchecked, since mods come from strangers.
 | drawing | 2D over the picture (today), plus 3D in the world: lines, markers, text at a point, lights | |
 | audio | play the game's sound effects and music, or the mod's own | |
 | saves | a `save` table stored with each save slot, beside the game's own | |
-| other mods | `mods.get(id)` returns another mod's exported table; mods can raise their own events | |
+| other mods | `mods.get(id)` reads another mod's `exports` and calls its functions, by copies; mods raise their own events (0.17) | |
 | functions | call any game function the decomp's headers declare; run a mod's code before, after or in place of one | arguments checked as raw writes are |
 | content | new items, monster kinds, floors (0.16, `kf.content`): the game's fixed-size tables grown so a mod's rows fit beside the disc's | |
 | raw | `kf.raw.<global>.<field>`: every named global and struct field in the decomp, typed and bounds-checked | unstable: follows the decomp's renames |
@@ -1016,6 +1075,9 @@ mods are off in coop (decided 2026-10-31).
     (2026-11-02): `kf.content`, 95 item ids, 32 kinds a floor, 16 floors
     ([CONTENT_LAYER_PLAN.md](CONTENT_LAYER_PLAN.md)). Left for later: items to equip,
     models of their own, and floors with people and signs.
+
+11. ~~Mods reaching each other, from the table above.~~ Done in 0.17 (2026-11-02):
+    `exports`, `mods.get`, `mod.raise` and `mods.on`, by copies ([Other mods](#other-mods)).
 
 ### Open questions
 
