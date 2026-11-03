@@ -53,7 +53,21 @@ struct RawEnumValue {
     std::int64_t value = 0;
 };
 
-struct RawField;
+struct RawType;
+
+// What the listed file adds to a field or a global.
+struct RawLimits {
+    std::optional<RawRange> range;   // narrows every integer or enum it reaches: itself or its elements
+    std::string_view read_only;      // why it is read-only; empty: writable
+    std::string_view doc;
+};
+
+struct RawField {
+    std::string_view name;                    // the decomp's, or the listed file's alias
+    const RawType *type = nullptr;
+    void *(*member)(void *parent) = nullptr;  // a member access, generated as a lambda
+    RawLimits limits;
+};
 
 // A type as the game declares it. Made by raw_bind.h's templates from the C++ type, never by
 // hand, so its load, store and element_at always match the memory they are given.
@@ -68,20 +82,6 @@ struct RawType {
     RawValue (*load)(const void *place) = nullptr;                 // every kind but Struct, Array
     void (*store)(void *place, const RawValue &value) = nullptr;   // the value already checked
     void *(*element_at)(void *array, std::size_t index) = nullptr;   // Array; index already checked
-};
-
-// What the listed file adds to a field or a global.
-struct RawLimits {
-    std::optional<RawRange> range;   // narrows every integer or enum it reaches: itself or its elements
-    std::string_view read_only;      // why it is read-only; empty: writable
-    std::string_view doc;
-};
-
-struct RawField {
-    std::string_view name;                    // the decomp's, or the listed file's alias
-    const RawType *type = nullptr;
-    void *(*member)(void *parent) = nullptr;  // a member access, generated as a lambda
-    RawLimits limits;
 };
 
 struct RawGlobal {
