@@ -366,7 +366,8 @@ touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has un
 ### E. Release
 
 - A signed release APK built by CI (the key in the repository's secrets), on the
-  GitHub release beside the AppImage and the Windows build.
+  GitHub release beside the AppImage and the Windows build: done, [PACKAGING.md](PACKAGING.md),
+  which also has the update dialog. It carries libarchive's licence in `assets/licenses`.
 - `scripts/check.sh` builds the `android-arm64` preset when the Android shell
   is present. The sanitizer runs stay on the desktop, where the same game and
   port code is covered. HWASan on a device is later, if a bug calls for it.

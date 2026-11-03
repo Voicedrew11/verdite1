@@ -1,0 +1,41 @@
+# Every push: that the game builds with no disc anywhere, that its libraries' tests pass, and that
+# the version has one source. Boot and sanitizer runs need a disc; they are scripts/check.sh's.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  no-disc-build:
+    runs-on: ubuntu-latest
+    steps:
+      # Every tag, since the version is the newest one HEAD contains.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Assert no disc data in the repository
+        run: |
+          test ! -e data || { echo "data/ exists in CI"; exit 1; }
+          found="$(git ls-files | grep -iE '\.(bin|cue|iso|img|chd|ppf|kfs|kfdelta)$' | grep -v '^libverdite/tests/data/disc/' || true)"
+          test -z "$found" || { echo "disc data is tracked:"; echo "$found"; exit 1; }
+
+      - name: Build
+        run: |
+          nix develop -c cmake --preset linux
+          nix develop -c cmake --build --preset linux
+
+      - name: Test
+        run: nix develop -c ctest --preset linux --output-on-failure
+
+      # The version is the tag: a literal in CMakeLists.txt or build.gradle would be a second source.
+      - name: Assert the build carries the version
+        run: |
+          want="Verdite1 $(scripts/version.sh)"
+          got="$(build/linux/verdite1 --version)"
+          echo "$got"
+          test "$got" = "$want" || { echo "expected $want"; exit 1; }

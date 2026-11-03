@@ -220,19 +220,10 @@ that fails its own CRC in chdman and libchdr alike (`tools/make_disc_fixtures.py
 sizes); such a CHD fails `chdman verify` too. For the 3DS, libchdr's `CHDR_LOWRAM_TARGET` is to be
 measured once a build runs there.
 
-## Linux release (AppImage)
+## Releases
 
-`scripts/package-linux.sh VERSION` builds `dist/Verdite1-vVERSION-x86_64.AppImage`
-in podman (or docker) from `packaging/appimage/`. The nix build cannot ship: it
-links against the store's glibc. The image is Ubuntu 22.04 (glibc 2.35, the
-oldest the AppImage runs on) with clang 21 from apt.llvm.org and, built from
-pinned releases, SDL3 (the Windows build's version), the Vulkan libraries and
-cpptrace at the nix shell's versions, and a static bsdtar. The AppImage carries
-`libSDL3.so.0`, the C++ runtime linked in, and bsdtar on `PATH` for the English
-patch's `.rar` (GNU tar cannot read it); the Vulkan loader and drivers are the
-host's. No English delta is embedded. The repository is mounted at its own path
-with git's common directory beside it, because a worktree's `.git` files name
-them absolutely. `scripts/smoke.py dist/<AppImage>` boots it like the nix build.
+The packages (AppImage, Windows zip and installer, APK), the tag as the version, cutting a release,
+previews and the update notice are in [PACKAGING.md](PACKAGING.md).
 
 ## Driving the game
 

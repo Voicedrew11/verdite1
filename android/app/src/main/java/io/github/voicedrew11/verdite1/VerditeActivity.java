@@ -1,10 +1,17 @@
 package io.github.voicedrew11.verdite1;
 
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.net.Uri;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.util.Log;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
+
+import androidx.appcompat.view.ContextThemeWrapper;
+
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.libsdl.app.SDLActivity;
 
@@ -48,6 +55,28 @@ public class VerditeActivity extends SDLActivity {
                 settings = new SettingsPanel(this, mLayout, () -> mSurface.requestFocus());
             settings.show();
         });
+    }
+
+    static native void nativeUpdateSkip();
+
+    // From the game thread (port/ext/update_notice.cpp): a new release, told once, at the title.
+    public void showUpdateNotice(String available, String running, String pageUrl) {
+        runOnUiThread(() -> new MaterialAlertDialogBuilder(new ContextThemeWrapper(this, R.style.Theme_Verdite_Settings))
+                .setTitle("Update available")
+                .setMessage(available + "\n" + running)
+                .setPositiveButton("Download page", (dialog, which) -> openPage(pageUrl))
+                .setNegativeButton("Skip this version", (dialog, which) -> nativeUpdateSkip())
+                .setNeutralButton("Later", null)
+                .setOnDismissListener(dialog -> mSurface.requestFocus())
+                .show());
+    }
+
+    private void openPage(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (ActivityNotFoundException e) {
+            Log.w("Verdite1", "no browser for " + url + ": " + e);
+        }
     }
 
     // From the game thread: the settings' values or rows changed.

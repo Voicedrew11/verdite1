@@ -8,7 +8,7 @@ lighting, an automap, quick saves, a settings overlay and Lua mods.
 Project page, updates and bug reports:
   https://github.com/Voicedrew11/verdite1
 
-This is a pre-release. Please attach kf.log (see below) to bug reports.
+Please attach kf.log (see below) to bug reports.
 
 
 WHAT YOU NEED
@@ -22,12 +22,22 @@ Use a .cue + .bin pair (single track), an .iso or a .chd. No game files are
 included.
 
 
+UPDATES
+-------
+The game tells you on the title screen when a new version is out, and opens its
+download page if you ask. Nothing is downloaded by itself. It asks GitHub at most
+once a day; turn that off in F1 > Settings > Interface. To update, run the new
+installer, or replace the .AppImage or the unpacked folder. Your saves stay.
+
+
 FIRST LAUNCH
 ------------
 Put your disc image (.cue + .bin, .iso or .chd) in the same folder as the game
 (verdite1.exe, or the .AppImage on Linux) and start it, or start it and
 choose the image when asked. The game copies its files into a "data" folder
 there, once (into the user folder below if the game's folder is read-only).
+An installed copy keeps it in its install folder, by default
+%LOCALAPPDATA%\Programs\Verdite1.
 The image itself is not changed. On Windows you can also drop the .cue onto
 verdite1.exe. On Linux, make the .AppImage executable first.
 

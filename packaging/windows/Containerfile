@@ -1,0 +1,53 @@
+# The Windows release's build environment (scripts/package-windows.sh): llvm-mingw, a cross compiler,
+# so the package is built and can be tried on Linux. The libraries are at the AppImage's versions.
+FROM docker.io/library/ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git file python3 python3-pip make perl xz-utils zip clang-14 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir cmake==3.31.6 ninja==1.11.1.4 \
+    && git config --global --add safe.directory '*'
+RUN mkdir -p /opt/llvm-mingw && curl -fsSL \
+      https://github.com/mstorsjo/llvm-mingw/releases/download/20251104/llvm-mingw-20251104-ucrt-ubuntu-22.04-x86_64.tar.xz \
+    | tar -xJ -C /opt/llvm-mingw --strip-components=1
+ENV PATH=/opt/llvm-mingw/bin:/opt/deps/bin:$PATH
+COPY toolchain.cmake /opt/toolchain.cmake
+WORKDIR /src
+
+# cmake_win NAME URL [CMAKE ARGS...]: cross-builds a source tarball into /opt/win-deps.
+RUN printf '%s\n' '#!/bin/sh' 'set -eu' 'name=$1 url=$2; shift 2' \
+      'mkdir -p /src/$name && curl -fsSL "$url" | tar -xz -C /src/$name --strip-components=1' \
+      'cmake -S /src/$name -B /src/$name/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/opt/toolchain.cmake -DCMAKE_INSTALL_PREFIX=/opt/win-deps "$@"' \
+      'cmake --build /src/$name/build && cmake --install /src/$name/build && rm -rf /src/$name' \
+      > /usr/local/bin/cmake_win && chmod +x /usr/local/bin/cmake_win
+
+# glslangValidator runs here, on the build machine.
+RUN mkdir -p /src/glslang && curl -fsSL https://github.com/KhronosGroup/glslang/archive/refs/tags/16.2.0.tar.gz \
+      | tar -xz -C /src/glslang --strip-components=1 \
+    && CC=clang-14 CXX=clang++-14 cmake -S /src/glslang -B /src/glslang/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/deps -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=ON \
+    && cmake --build /src/glslang/build && cmake --install /src/glslang/build && rm -rf /src/glslang
+
+RUN mkdir -p /opt/win-deps && curl -fsSL \
+      https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-devel-3.4.16-mingw.tar.gz \
+    | tar -xz -C /opt/win-deps --strip-components=2 --wildcards 'SDL3-3.4.16/x86_64-w64-mingw32/*' \
+    && curl -fsSL -o /opt/win-deps/SDL3-LICENSE.txt \
+      https://raw.githubusercontent.com/libsdl-org/SDL/release-3.4.16/LICENSE.txt
+RUN cmake_win vulkan-headers https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.341.tar.gz
+RUN cmake_win volk https://github.com/zeux/volk/archive/refs/tags/vulkan-sdk-1.4.341.0.tar.gz -DVOLK_INSTALL=ON
+RUN cmake_win vma https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.3.0.tar.gz
+RUN cmake_win vk-bootstrap https://github.com/charles-lunarg/vk-bootstrap/archive/refs/tags/v1.4.341.tar.gz \
+      -DVK_BOOTSTRAP_TEST=OFF -DVK_BOOTSTRAP_INSTALL=ON
+RUN cmake_win cpptrace https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v1.0.4.tar.gz
+# DTLS and wss:// for online play.
+RUN mkdir -p /src/openssl && curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz \
+      | tar -xz -C /src/openssl --strip-components=1 && cd /src/openssl \
+    && ./Configure mingw64 no-shared no-tests no-docs --cross-compile-prefix=x86_64-w64-mingw32- \
+      --prefix=/opt/win-deps --libdir=lib CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib RC=windres \
+    && make -j"$(nproc)" build_libs && make install_dev && cd / && rm -rf /src/openssl
+# libdatachannel's source with its submodules (libjuice, usrsctp, plog), which the game's build compiles.
+RUN git clone --depth 1 --branch v0.24.1 --recurse-submodules --shallow-submodules \
+      https://github.com/paullouisageneau/libdatachannel.git /opt/libdatachannel
+ENV KF_LIBDATACHANNEL_SOURCE=/opt/libdatachannel
+# tools/raw_layer.py needs tomllib; 22.04's own python3 is 3.10.
+RUN apt-get update && apt-get install -y --no-install-recommends python3.11 && rm -rf /var/lib/apt/lists/*

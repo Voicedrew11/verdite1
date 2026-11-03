@@ -1,16 +1,17 @@
 # The Linux release's build environment (scripts/package-linux.sh). Ubuntu 22.04's glibc (2.35) is
 # the oldest the AppImage runs on; everything newer than the distribution has is built here from a
 # pinned release: SDL3 (the Windows build's version), the Vulkan libraries (the nix shell's
-# versions), cpptrace, and a static bsdtar for the English patch's .rar.
+# versions), cpptrace, a static bsdtar for the English patch's .rar, and libdatachannel's source for online play.
 FROM docker.io/library/ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl gnupg git file python3 python3-pip pkg-config make libstdc++-12-dev \
+      ca-certificates curl gnupg git file python3 python3.11 python3-pip pkg-config make libstdc++-12-dev libssl-dev \
       libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
       libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libdrm-dev libgbm-dev \
       libpulse-dev libasound2-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --no-cache-dir cmake==3.31.6 ninja==1.11.1.4
+    && pip3 install --no-cache-dir cmake==3.31.6 ninja==1.11.1.4 \
+    && git config --global --add safe.directory '*'
 # clang 21, the nix shell's: 22.04's own clang is too old for the code's C++20.
 RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" \
@@ -44,6 +45,12 @@ RUN cmake_install libarchive https://github.com/libarchive/libarchive/releases/d
       -DENABLE_EXPAT=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LibGCC=OFF -DENABLE_CNG=OFF \
       -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_ACL=OFF -DENABLE_XATTR=OFF -DENABLE_ICONV=OFF \
       -DENABLE_TAR_SHARED=OFF -DBUILD_SHARED_LIBS=OFF
+
+# Its source with its submodules (libjuice, usrsctp, plog), which the game's build compiles; the
+# flake pins the same tag.
+RUN git clone --depth 1 --branch v0.24.1 --recurse-submodules --shallow-submodules \
+      https://github.com/paullouisageneau/libdatachannel.git /opt/libdatachannel
+ENV KF_LIBDATACHANNEL_SOURCE=/opt/libdatachannel
 
 RUN curl -fsSL -o /usr/local/bin/appimagetool \
       https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \

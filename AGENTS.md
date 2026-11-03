@@ -16,6 +16,7 @@ task needs: `docs/RENDERER_PLAN.md` (platforms, Vulkan, tiers, carrying the
 picture over), `docs/RUNTIME.md` (what is emulated, the 3DS budget, the
 frame-rate gap), `docs/ANDROID_PLAN.md` (the Android port; a draft), `docs/NETWORKING_PLAN.md` (online play; a draft), `docs/COOP_PLAN.md` (coop's model; a draft), `docs/PLAYER_MODEL.md` (the other players' knight model and its tools), `docs/RAW_LAYER_PLAN.md` (the modding API's raw layer: a handoff), `docs/CALL_LAYER_PLAN.md` (the modding API's calls into the game: a plan), `docs/HOOK_LAYER_PLAN.md` (the modding API's hooks on the game's functions), `docs/CONTENT_LAYER_PLAN.md` (the modding API's new items, monster kinds and floors), `docs/FUZZING_PLAN.md` (the fuzzer: what is
 done and what comes next; running it is "Fuzzing" in `verdite-port.md`),
+`docs/PACKAGING.md` (the packages, releases, previews and the update notice),
 `decomp/docs/port-notes.md` (the decomp's own notes).
 
 ## The decomp is read-only

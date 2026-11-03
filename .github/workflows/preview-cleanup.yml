@@ -1,0 +1,22 @@
+# A published release supersedes the preview, so the rolling `preview`
+# prerelease (release.yml's preview job) and its tag go once one is. On
+# publishing, not on the draft release.yml opens: the preview stays up until the
+# release is live.
+name: preview-cleanup
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  delete-preview:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.prerelease }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: gh release delete preview --cleanup-tag --yes || echo "no preview prerelease to delete"

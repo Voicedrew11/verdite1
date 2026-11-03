@@ -8,15 +8,17 @@ repo=$1
 version=$2
 build=/out/build
 appdir=/out/AppDir
-name="Verdite1-v$version-x86_64.AppImage"
+name="Verdite1-$version-x86_64.AppImage"
 
 # Release: line tables only, so a crash report names the stack. The C++ runtime is linked in, so
 # the game needs only glibc and the libraries every desktop has. No English delta is embedded:
-# builds that carry it are never distributed.
+# builds that carry it are never distributed. libstdc++ 12's stable_sort calls a function clang 21
+# calls deprecated, which is the header's matter, not the code's.
 cmake -S "$repo" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/deps \
-  -DKF_ENGLISH_PATCH=/nonexistent -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -fuse-ld=lld-21" \
+  -DCMAKE_CXX_FLAGS=-Wno-error=deprecated-declarations \
+  -DKF_RELEASE=ON -DPython3_EXECUTABLE=/usr/bin/python3.11 -DKF_HOST_CLANG=clang++-21 -DKF_ENGLISH_PATCH=/nonexistent -DOPENSSL_USE_STATIC_LIBS=ON -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -fuse-ld=lld-21" \
   -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib'
-cmake --build "$build" --target verdite1
+cmake --build "$build" --target verdite1 -- -k 0
 
 rm -rf "$appdir"
 cmake --install "$build" --prefix "$appdir/usr"
@@ -26,7 +28,8 @@ cp /opt/deps/bin/bsdtar "$appdir/usr/bin/"
 # The example mods are copied from beside the executable on the first launch.
 cp -r "$repo/mods" "$appdir/usr/bin/mods"
 cp "$repo/packaging/appimage/AppRun" "$appdir/AppRun"
-cp "$repo/packaging/appimage/verdite1.desktop" "$repo/packaging/appimage/verdite1.svg" "$appdir/"
+{ cat "$repo/packaging/appimage/verdite1.desktop"; echo "X-AppImage-Version=$version"; } > "$appdir/verdite1.desktop"
+cp "$repo/packaging/appimage/verdite1.svg" "$appdir/"
 doc="$appdir/usr/share/doc/verdite1"
 cp "$repo/docs/release/README.txt" "$repo/docs/MODDING.md" "$doc/"
 cp "$repo/LICENSE" "$doc/licenses/Verdite1-MIT.txt"
@@ -36,10 +39,14 @@ cp "$repo/third_party/cjson/LICENSE" "$doc/licenses/cJSON.txt"
 cp "$repo/third_party/libchdr/LICENSE.txt" "$doc/licenses/libchdr.txt"
 cp "$repo/third_party/libchdr/deps/zstd-1.5.7/LICENSE" "$doc/licenses/zstd.txt"
 cp /opt/deps/share/licenses/SDL3/LICENSE.txt "$doc/licenses/SDL3.txt"
+cp /opt/libdatachannel/LICENSE "$doc/licenses/libdatachannel.txt"
+cp /opt/libdatachannel/deps/libjuice/LICENSE "$doc/licenses/libjuice.txt"
+cp /opt/libdatachannel/deps/usrsctp/LICENSE.md "$doc/licenses/usrsctp.txt"
+cp /opt/libdatachannel/deps/plog/LICENSE "$doc/licenses/plog.txt"
 chmod +x "$appdir/AppRun"
 
 # Nothing from the build image but glibc and the system's own libraries may be needed.
-if LD_LIBRARY_PATH= ldd "$appdir/usr/bin/verdite1" | grep -E 'not found|/opt/deps|libstdc\+\+|libgcc_s'; then
+if LD_LIBRARY_PATH= ldd "$appdir/usr/bin/verdite1" | grep -E 'not found|/opt/deps|libstdc\+\+|libgcc_s|libssl|libcrypto'; then
   echo "verdite1 links a library the AppImage does not carry" >&2
   exit 1
 fi

@@ -1,0 +1,199 @@
+# Builds the packages: the AppImage and the Windows zip in containers, the Windows installer from the
+# zip, the APK in nix. Game data never enters CI: the packages hold the game's code and ask the player
+# for their own disc. A `v*` tag opens a draft release; started by hand with preview=true
+# (scripts/prerelease.sh), the build replaces the rolling `preview` prerelease. See docs/PACKAGING.md.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: 'Publish the build as the rolling "preview" prerelease (scripts/prerelease.sh)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # The tag is the version. A tag that is not MAJOR.MINOR.PATCH could never be announced, so it is
+  # refused here; a run by hand is the newest tag's number and its commit.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+            echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH"; exit 1; }
+          else
+            version="$(scripts/version.sh)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Package
+        run: scripts/package-linux.sh "${{ needs.version.outputs.version }}"
+      - name: Assert it carries the version
+        run: |
+          app="dist/Verdite1-${{ needs.version.outputs.version }}-x86_64.AppImage"
+          chmod +x "$app"
+          got="$(APPIMAGE_EXTRACT_AND_RUN=1 "$app" --version)"
+          echo "$got"
+          test "$got" = "Verdite1 ${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdite1-linux
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Package
+        run: scripts/package-windows.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdite1-windows-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+  # iscc runs on Windows; the runner image has Inno Setup, and the script installs it if not.
+  windows-installer:
+    needs: [version, windows]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: verdite1-windows-zip
+          path: dist
+      - name: Make the installer
+        shell: pwsh
+        run: ./packaging/windows/make-installer.ps1 -Version "${{ needs.version.outputs.version }}"
+      - name: Try it, silently, and uninstall
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path dist\*setup.exe).Path
+          Start-Process $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$env:RUNNER_TEMP\v1" -Wait
+          $got = & "$env:RUNNER_TEMP\v1\verdite1.exe" --version | Out-String
+          Write-Host $got
+          if ($got.Trim() -ne "Verdite1 ${{ needs.version.outputs.version }}") { throw "the installed game says '$got'" }
+          Start-Process "$env:RUNNER_TEMP\v1\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdite1-windows-installer
+          path: dist/*setup.exe
+          if-no-files-found: error
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - uses: cachix/install-nix-action@v31
+      - name: Package
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KF_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "the ANDROID_KEYSTORE_BASE64 secret is not set: scripts/android-release-key.sh"; exit 1; }
+          export KF_ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KF_ANDROID_KEYSTORE"
+          scripts/package-android.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdite1-android
+          path: dist/*.apk
+          if-no-files-found: error
+
+  release:
+    needs: [linux, windows, windows-installer, android]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: true
+          name: Verdite1 ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            **Verdite1 ships no game data.** You need your own dump of King's Field (Japan, `SLPS-00017`) as a `.cue` / `.bin` pair, an `.iso` or a `.chd`.
+
+            - **Windows:** `...-setup.exe` installs it (no administrator needed), or unpack the `.zip` anywhere.
+            - **Linux:** make the `.AppImage` executable and run it. It adds itself to your desktop's menu.
+            - **Android:** install the `.apk` (arm64, Android 10 or later).
+
+            The game asks for your disc on first launch, and offers to add the English translation to a Japanese disc. It tells you when a new version is out.
+
+  # One prerelease under the tag `preview`, a build handed to testers, replaced whole on every run, so
+  # its links never change. Each package is zipped with the PREVIEW_PASSWORD secret (AES-256). A
+  # prerelease is never GitHub's "latest", so the update check never announces it, and the tag is no
+  # version and starts no workflow. preview-cleanup.yml deletes it when a release is published.
+  preview:
+    needs: [linux, windows, windows-installer, android]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.preview
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PREVIEW_PASSWORD: ${{ secrets.PREVIEW_PASSWORD }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Zip each package with the password
+        run: |
+          test -n "$PREVIEW_PASSWORD" || { echo "the PREVIEW_PASSWORD secret is not set"; exit 1; }
+          command -v 7z >/dev/null || { sudo apt-get update && sudo apt-get install -y p7zip-full; }
+          sha="${GITHUB_SHA::9}"
+          mkdir -p out stage/linux stage/setup stage/win stage/android
+          cp dist/*.AppImage "stage/linux/Verdite1-preview-$sha-x86_64.AppImage"
+          chmod +x stage/linux/*.AppImage
+          cp dist/*setup.exe "stage/setup/Verdite1-preview-$sha-win-x64-setup.exe"
+          unzip -q dist/*-win-x64.zip -d stage/win
+          cp dist/*.apk "stage/android/Verdite1-preview-$sha-android-arm64.apk"
+          (cd stage/linux && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-linux-x86_64.zip . >/dev/null)
+          (cd stage/setup && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-win-x64-setup.zip . >/dev/null)
+          (cd stage/win && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-win-x64.zip . >/dev/null)
+          (cd stage/android && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-android-arm64.zip . >/dev/null)
+          for f in out/*.zip; do 7z t "-p$PREVIEW_PASSWORD" "$f" >/dev/null; done
+          ls -la out
+      - name: Replace the preview prerelease
+        run: |
+          cat > notes.md <<'NOTES'
+          **Preview builds are password protected.** Join the [Verdite Project Discord](https://discord.gg/R4EKCs8RWH) for access.
+
+          **Always back up your saves before installing a preview build!** They are `BISLPS-00017KF` and `BISLPS-00017KF.quick`, in `%APPDATA%\Verdite\Verdite1` on Windows and `~/.local/share/Verdite/Verdite1` on Linux.
+          NOTES
+          gh release delete preview --cleanup-tag --yes 2>/dev/null || true
+          gh release create preview out/*.zip --target "$GITHUB_SHA" --prerelease \
+            --title "Verdite1 preview (${GITHUB_SHA::9})" --notes-file notes.md

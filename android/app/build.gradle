@@ -7,6 +7,16 @@ def sdlSource = System.getenv('KF_SDL3_SOURCE')
 if (sdlSource == null)
     throw new GradleException('KF_SDL3_SOURCE is not set: build in nix develop .#android')
 
+// The tag is the version (scripts/version.sh). A phone installs an update only with a higher code.
+def releaseVersion = providers.exec {
+    commandLine 'sh', "${rootDir}/../scripts/version.sh"
+}.standardOutput.asText.get().trim()
+def versionParts = releaseVersion.tokenize('.').collect { it as int }
+def releaseVersionCode = Math.max(1, versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2])
+
+// The release key, from the environment (scripts/package-android.sh); without it, no signed release.
+def releaseKeystore = System.getenv('KF_ANDROID_KEYSTORE')
+
 android {
     namespace = 'io.github.voicedrew11.verdite1'
     compileSdk = 35
@@ -16,17 +26,34 @@ android {
         applicationId = 'io.github.voicedrew11.verdite1'
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = '0.1.0'
+        versionCode = releaseVersionCode
+        versionName = releaseVersion
     }
     sourceSets.main {
         java.srcDirs += "${sdlSource}/android-project/app/src/main/java"
         // Each preset's build leaves jni/<abi>/: libmain.so, libSDL3.so, libc++_shared.so.
-        jniLibs.srcDirs = ['../../build/android-arm64/jni', '../../build/android-x86_64/jni']
+        // The release takes only its own (KF_ANDROID_JNI_DIR, scripts/package-android.sh).
+        def jniDir = System.getenv('KF_ANDROID_JNI_DIR')
+        jniLibs.srcDirs = jniDir ? [jniDir] : ['../../build/android-arm64/jni', '../../build/android-x86_64/jni']
+        def assetsDir = System.getenv('KF_ANDROID_ASSETS_DIR')
+        if (assetsDir)
+            assets.srcDirs += assetsDir
+    }
+    signingConfigs {
+        if (releaseKeystore) {
+            release {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv('KF_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias = 'verdite1'
+                keyPassword = System.getenv('KF_ANDROID_KEYSTORE_PASSWORD')
+            }
+        }
     }
     buildTypes {
         release {
             minifyEnabled = false
+            if (releaseKeystore)
+                signingConfig = signingConfigs.release
         }
     }
     lint {
