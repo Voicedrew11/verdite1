@@ -199,6 +199,7 @@ void settings_load() {
     current.discord_exp = read_bool(discord, "exp", current.discord_exp);
     const cJSON *online = cJSON_GetObjectItemCaseSensitive(document, "online");
     current.online_messages = read_bool(online, "messages", current.online_messages);
+    settings_tidy(current);
 }
 
 void settings_mark_dirty() {
@@ -362,7 +363,7 @@ PictureOptions picture_options(const Settings &e) {
     options.anisotropy = e.anisotropy;
     options.fog = static_cast<FogMode>(std::clamp(e.fog, 0, 2));
     options.enhanced_depth = static_cast<float>(e.enhanced_distance * KF_MAP_TILE_SIZE);
-    options.vsync = current.vsync;
+    options.vsync = current.vsync && e.frame_rate != frame_rate_unlimited;
     return options;
 }
 } // namespace

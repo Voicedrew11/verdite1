@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <utility>
 
@@ -106,6 +107,36 @@ OptionRow choice(std::string id, std::string label, std::string help, Field &fie
     return made;
 }
 
+// Several saved settings as one choice (setting_rows.h). Choices are values a choice row holds as
+// itself or as a number, as choice() above.
+template <typename Choice>
+OptionRow combined(std::string id, std::string label, std::string help, std::vector<std::pair<Choice, std::string>> choices,
+                   Choice (*read)(const Settings &), void (*write)(Settings &, Choice), Apply apply) {
+    OptionRow made = row(std::move(id), OptionKind::Choice, std::move(label), std::move(help));
+    for (auto &[value, name] : choices)
+        made.choices.push_back(OptionChoice{as_value(value), std::move(name)});
+    made.get = [read] { return as_value(read(settings())); };
+    made.set = [write, apply](const OptionValue &v) {
+        if constexpr (std::is_enum_v<Choice> || std::is_same_v<Choice, int>)
+            write(settings(), static_cast<Choice>(std::get<double>(v)));
+        else
+            write(settings(), std::get<Choice>(v));
+        settings_changed(apply);
+    };
+    return made;
+}
+
+OptionRow combined_toggle(std::string id, std::string label, std::string help, bool (*read)(const Settings &),
+                          void (*write)(Settings &, bool), Apply apply) {
+    OptionRow made = row(std::move(id), OptionKind::Toggle, std::move(label), std::move(help));
+    made.get = [read] { return OptionValue(read(settings())); };
+    made.set = [write, apply](const OptionValue &v) {
+        write(settings(), std::get<bool>(v));
+        settings_changed(apply);
+    };
+    return made;
+}
+
 OptionRow status(std::string id, std::string label, std::function<std::string()> text) {
     OptionRow made = row(std::move(id), OptionKind::Status, std::move(label), {});
     made.get = [text = std::move(text)] { return OptionValue(text()); };
@@ -148,6 +179,12 @@ OptionRow enabled_if(OptionRow made, std::function<bool()> enabled) {
 
 bool not_classic() { return !settings().classic; }
 
+// VSync follows the frame rate: Unlimited turns it off.
+void apply_frame_rate() {
+    apply_render_settings();
+    apply_display_settings();
+}
+
 // Classic mode overrides the section's rows; they keep the player's values for later.
 OptionSection classic_locked(OptionSection section) {
     for (OptionRow &each : section.rows)
@@ -172,7 +209,10 @@ OptionSection display_window() {
     return {"", {
         needs(toggle("display.fullscreen", "Fullscreen", "Also Alt+Enter or F11.", s.fullscreen, apply_display_settings),
               PlatformFeature::Window),
-        needs(toggle("display.vsync", "VSync", "", s.vsync, apply_display_settings), PlatformFeature::Window),
+        needs(enabled_if(toggle("display.vsync", "VSync", "Unlimited frame rate turns it off.", s.vsync,
+                                apply_display_settings),
+                         [] { return settings().frame_rate != frame_rate_unlimited; }),
+              PlatformFeature::Window),
         toggle("display.show_fps", "Show FPS", "", s.show_fps, store_only),
     }};
 }
@@ -188,8 +228,8 @@ OptionSection display_picture() {
                "The game still updates at its tick rate (Gameplay, 15 a second by default); extra frames are drawn "
                "between updates, so the view trails by one update (67 ms at 15).",
                s.frame_rate, {{20, "One per update (original)"}, {0, "Match display refresh"}, {60, "60 fps"},
-                              {120, "120 fps"}, {144, "144 fps"}, {165, "165 fps"}, {240, "240 fps"}, {-1, "Unlimited"}},
-               apply_render_settings),
+                              {120, "120 fps"}, {144, "144 fps"}, {165, "165 fps"}, {240, "240 fps"}, {frame_rate_unlimited, "Unlimited"}},
+               apply_frame_rate),
         choice<std::string>("display.aspect", "Aspect ratio",
                             "Wider aspects show more of the world to each side. Menus stay in the centre.", s.aspect,
                             {{"4:3", "4:3 (original)"}, {"16:9", "16:9"}, {"16:10", "16:10"}, {"21:9", "21:9"},
@@ -210,50 +250,32 @@ OptionSection display_picture() {
     }});
 }
 
-OptionRow wiggle_row() {
-    OptionRow made = row("display.wiggle", OptionKind::Toggle, "Polygon wiggle (original PS1 look)",
-                         "On: corners snap to the 320x240 grid and textures warp, as on the PlayStation. Off: smooth, "
-                         "stable polygons. The two parts are below.");
-    made.get = [] { return OptionValue(!settings().subpixel && !settings().perspective); };
-    made.set = [](const OptionValue &v) {
-        settings().subpixel = settings().perspective = !std::get<bool>(v);
-        settings_changed(apply_render_settings);
-    };
-    return made;
-}
-
-OptionSection display_playstation_look() {
+OptionSection display_look() {
     Settings &s = settings();
-    return classic_locked({"PlayStation look", {
-        wiggle_row(),
-        toggle("display.subpixel", "Sub-pixel vertices",
-               "Keeps corners between pixels instead of snapping them to the 320x240 grid. Removes most of the "
-               "jitter as the camera moves.",
-               s.subpixel, apply_render_settings),
-        toggle("display.perspective", "Perspective-correct textures",
-               "Stops textures bending and swimming across large polygons. Off reproduces the PlayStation's affine "
-               "texture mapping.",
-               s.perspective, apply_render_settings),
-        toggle("display.true_color", "Smooth colours",
+    return classic_locked({"Picture", {
+        combined_toggle("display.wiggle", "Polygon wiggle",
+                        "On: corners snap to the 320x240 grid and textures warp (affine mapping), as on the PlayStation. "
+                        "Off: sub-pixel vertices and perspective-correct textures.",
+                        wiggle, set_wiggle, apply_render_settings),
+        toggle("display.true_color", "True colour",
                "Full colour precision: smooth gradients in shadows and fog. Off: the PlayStation's 15-bit colour "
                "and its dither pattern.",
                s.true_color, apply_render_settings),
-        choice("display.texture_filter", "Texture filtering",
+        choice("display.texture_filter", "Texture filter",
                "Textures on walls, floors and models. Sharp keeps the original blocky texels, all drawn the same "
                "size. The HUD and menus stay pixel-sharp.",
                s.texture_filter,
-               {{0, "Nearest (original)"}, {1, "Bilinear (smooth)"}, {2, "3-point (N64 style)"}, {3, "Sharp (even texels)"}},
+               {{0, "Nearest (original)"}, {1, "Bilinear"}, {2, "3-point (N64 style)"}, {3, "Sharp (even texels)"}},
                apply_render_settings),
-        toggle("display.mipmaps", "Mipmaps", "Distant textures are averaged instead of shimmering as you move.",
-               s.mipmaps, apply_render_settings),
-        toggle("display.detailed_map", "Detailed distant walls",
+        combined<int>("display.aniso", "Anisotropic filtering",
+                      "Off: distant textures shimmer, as on the PlayStation. Trilinear: mipmaps. 2x to 16x: anisotropic "
+                      "samples over the mipmaps, sharp on floors and walls at a slant. Not with 3-point.",
+                      {{0, "Off"}, {1, "Trilinear"}, {2, "2x"}, {4, "4x"}, {8, "8x"}, {16, "16x"}}, aniso_choice,
+                      set_aniso_choice, apply_render_settings),
+        toggle("display.detailed_map", "Detailed map",
                "Draws every map cell with its close-up model. The PlayStation used coarse models past the nearest "
                "cells, so wall textures changed as you walked up.",
                s.detailed_map, apply_render_settings),
-        choice("display.anisotropy", "Anisotropic filtering",
-               "Keeps floors and walls seen at a slant sharp into the distance. Needs mipmaps; not with 3-point "
-               "filtering.",
-               s.anisotropy, {{1, "Off"}, {2, "2x"}, {4, "4x"}, {8, "8x"}, {16, "16x"}}, apply_render_settings),
         choice("display.fog", "Fog",
                "Where the darkness that swallows distant walls is measured. Corners: blended across each polygon, as "
                "on the PlayStation. Per pixel: smooth on large floors and walls; by distance it also stays put as "
@@ -267,12 +289,9 @@ OptionSection display_playstation_look() {
         choice("display.antialiasing", "Anti-aliasing",
                "Smooths jagged polygon edges. FXAA is nearly free and leaves the HUD sharp. SSAA renders 4 or 9 "
                "times the pixels and averages them: cleanest, but costly.",
-               s.antialiasing, {{0, "Off"}, {1, "FXAA (fast)"}, {2, "4x SSAA (sharp, heavier)"}, {3, "9x SSAA (best, heavy)"}},
-               apply_render_settings),
+               s.antialiasing, {{0, "Off"}, {1, "FXAA"}, {2, "4x SSAA"}, {3, "9x SSAA"}}, apply_render_settings),
     }});
 }
-
-bool lights_on() { return settings().dynamic_lights; }
 
 OptionSection display_lighting() {
     Settings &s = settings();
@@ -281,44 +300,22 @@ OptionSection display_lighting() {
                "The game's own lights worked out at every pixel of a model, not blended from its corners: smooth "
                "shading over curved creatures, and light that turns with them between game updates.",
                s.pixel_lighting, apply_render_settings),
-        toggle("display.dynamic_lights", "Dynamic lighting",
-               "Torches cast flickering light on nearby walls and floors, and fire and lightning spells light up "
-               "what they pass.",
-               s.dynamic_lights, apply_render_settings),
-        shown_if(number("display.light_strength", "Light strength", "", s.light_strength, {0, 200, 1, "%.0f%%"},
-                        apply_render_settings),
-                 lights_on),
-        shown_if(toggle("display.light_occlusion", "Walls block light",
-                        "Stops torchlight reaching through solid walls into the next room. Doors and diagonal walls "
-                        "do not block it yet.",
-                        s.light_occlusion, apply_render_settings),
-                 lights_on),
-        shown_if(toggle("display.flame_glow", "Flame glow",
-                        "A soft halo around torch flames and fire or lightning spells. Hidden when something is in "
-                        "front of the flame.",
-                        s.flame_glow, apply_render_settings),
-                 lights_on),
-        shown_if(number("display.glow_strength", "Glow strength", "", s.glow_strength, {0, 200, 1, "%.0f%%"},
-                        apply_render_settings),
-                 [] { return settings().dynamic_lights && settings().flame_glow; }),
-        shown_if(toggle("display.shadows", "Shadows",
-                        "The four nearest lights cast shadows. Shadows only remove the added torchlight, so nothing "
-                        "gets darker than in the original game.",
-                        s.shadows, apply_render_settings),
-                 lights_on),
-        shown_if(number("display.shadow_strength", "Shadow strength", "", s.shadow_strength, {0, 100, 1, "%.0f%%"},
-                        apply_render_settings),
-                 [] { return settings().dynamic_lights && settings().shadows; }),
-        toggle("display.ambient_occlusion", "Ambient occlusion",
-               "Soft shadowing in corners, where walls meet floors and under ledges.", s.ambient_occlusion,
-               apply_render_settings),
-        shown_if(number("display.ao_strength", "Occlusion strength", "", s.ao_strength, {0, 200, 1, "%.0f%%"},
-                        apply_render_settings),
-                 [] { return settings().ambient_occlusion; }),
-        shown_if(choice("display.ao_quality", "Occlusion quality",
-                        "Low measures at the game's own pixels, Medium at twice that, High at the full resolution.",
-                        s.ao_quality, {{0, "Low"}, {1, "Medium"}, {2, "High"}}, apply_render_settings),
-                 [] { return settings().ambient_occlusion; }),
+        combined<DynamicLight>("display.dynamic_light", "Dynamic lights",
+                               "Torches cast flickering light on nearby walls and floors, stopped by solid walls, and "
+                               "fire and lightning spells light up what they pass. Shadows: the four nearest lights cast "
+                               "them; they only remove the added light, so nothing gets darker than in the original.",
+                               {{DynamicLight::Off, "Off"}, {DynamicLight::On, "On"}, {DynamicLight::Shadows, "On, with shadows"}},
+                               dynamic_light, set_dynamic_light, apply_render_settings),
+        enabled_if(toggle("display.flame_glow", "Flame glow",
+                          "A soft halo around torch flames and fire or lightning spells. Hidden when something is in "
+                          "front of the flame.",
+                          s.flame_glow, apply_render_settings),
+                   [] { return settings().dynamic_lights; }),
+        combined<AoChoice>("display.ao", "Ambient occlusion",
+                           "Soft shadowing in corners, where walls meet floors and under ledges. Low measures at the "
+                           "game's own pixels, Medium at twice that, High at the full resolution.",
+                           {{AoChoice::Off, "Off"}, {AoChoice::Low, "Low"}, {AoChoice::Medium, "Medium"}, {AoChoice::High, "High"}},
+                           ao_choice, set_ao_choice, apply_render_settings),
     }});
 }
 
@@ -333,7 +330,7 @@ OptionSection display_accuracy() {
 
 OptionPage display_page() {
     return {"Display", {OptionSection{"", {classic_note("display")}}, display_window(), display_picture(),
-                        display_playstation_look(), display_lighting(), display_accuracy()}};
+                        display_look(), display_lighting(), display_accuracy()}};
 }
 
 // ---- Audio ----
@@ -361,40 +358,63 @@ OptionSection controls_movement() {
                             s.pad_layout, {{"west", "West (US King's Field)"}, {"jp", "Japanese (this disc's)"}},
                             apply_control_settings),
         PlatformFeature::Gamepad));
-    movement.rows.push_back(needs(
-        toggle("controls.menu_pointer", "Mouse in menus",
-               "Point at a menu item to select it and click to choose it. Right click, or a click away from the menu, "
-               "backs out; the wheel moves the selection. On a touch screen a finger always does this.",
-               s.menu_pointer, apply_control_settings),
-        PlatformFeature::Mouse));
     return movement;
+}
+
+bool analog_on() { return settings().analog.enabled; }
+bool twin_stick() { return analog_on() && settings().analog.mode == StickMode::Twin; }
+
+OptionSection gamepad_section(OptionSection section) {
+    section = classic_locked(std::move(section));
+    for (OptionRow &each : section.rows)
+        each = needs(std::move(each), PlatformFeature::Gamepad);
+    return section;
 }
 
 OptionSection controls_analog() {
     AnalogOptions &a = settings().analog;
-    auto analog_on = [] { return settings().analog.enabled; };
-    auto in_analog = [analog_on](OptionRow made) { return enabled_if(std::move(made), analog_on); };
-    auto acceleration_on = [] { return settings().analog.enabled && settings().analog.look_acceleration; };
-    OptionSection section = classic_locked({"Analog sticks", {
-        toggle("analog.enabled", "Analog sticks",
-               "Walk, turn and look with the gamepad's sticks, at up to the D-pad's speed. Off, the left stick works "
-               "as the D-pad.",
-               a.enabled, apply_control_settings),
-        in_analog(choice("analog.sticks", "Sticks",
-                         "Twin stick: the left stick walks and strafes, the right turns and looks. One stick: the left "
-                         "stick walks and turns; L1 and R1 strafe.",
-                         a.mode, {{StickMode::Twin, "Twin stick"}, {StickMode::Tank, "One stick (tank)"}},
-                         apply_control_settings)),
-        in_analog(toggle("analog.move", "Left stick moves", "", a.move, apply_control_settings)),
-        enabled_if(toggle("analog.look", "Right stick turns and looks", "", a.look, apply_control_settings),
-                   [] { return settings().analog.enabled && settings().analog.mode != StickMode::Tank; }),
+    std::vector<std::pair<double, std::string>> sens;
+    for (const double stop : stick_sens_stops) {
+        char text[16];
+        std::snprintf(text, sizeof text, "%.2fx", stop);
+        sens.emplace_back(stop, text);
+    }
+    return gamepad_section({"Sticks", {
+        combined<ControlStyle>("analog.style", "Controls",
+                               "D-pad: as the PlayStation had; the left stick works as the D-pad. 3D: tank controls, the "
+                               "left stick walks and turns; L1 and R1 strafe. 2D: twin stick, the left stick walks and "
+                               "strafes, the right turns and looks. 2D accel: holding the right stick near the edge turns "
+                               "faster over time, and enemies turn to match.",
+                               {{ControlStyle::DPad, "D-pad"}, {ControlStyle::Tank, "3D (tank)"}, {ControlStyle::Twin, "2D (twin stick)"},
+                                {ControlStyle::TwinAccelerated, "2D with acceleration"}},
+                               control_style, set_control_style, apply_control_settings),
+        enabled_if(combined<double>("analog.stick_sens", "Stick sensitivity", "Turn and look speed together; Fine tuning sets them apart. 1x at full deflection is the D-pad's rate.",
+                                    std::move(sens), stick_sens, set_stick_sens, apply_control_settings),
+                   analog_on),
+        enabled_if(toggle("analog.invert_pitch", "Invert camera", "Push up to look down, as a flight stick.", a.invert_pitch,
+                          apply_control_settings),
+                   twin_stick),
+    }});
+}
+
+OptionSection controls_fine_tuning() {
+    AnalogOptions &a = settings().analog;
+    auto in_analog = [](OptionRow made) { return enabled_if(std::move(made), analog_on); };
+    auto acceleration_on = [] { return twin_stick() && settings().analog.look_acceleration; };
+    return gamepad_section({"Fine tuning", {
         in_analog(number("analog.turn_sensitivity", "Turn speed", "", a.turn_sensitivity, {0.1, 2.0, 0.05, "%.2fx"},
                          apply_control_settings)),
         in_analog(number("analog.pitch_sensitivity", "Look up/down speed", "", a.pitch_sensitivity,
                          {0.1, 2.0, 0.05, "%.2fx"}, apply_control_settings)),
-        in_analog(number("analog.move_sensitivity", "Walk speed",
-                         "1x at full deflection is the D-pad's speed.", a.move_sensitivity,
+        in_analog(number("analog.move_sensitivity", "Walk speed", "1x at full deflection is the D-pad's speed.", a.move_sensitivity,
                          {0.1, 1.0, 0.05, "%.2fx"}, apply_control_settings)),
+        enabled_if(combined<LookResponse>("analog.look_response", "Look response",
+                                          "Eased: the view speeds up and slows down by the game's own step, as with the D-pad. "
+                                          "Stops dead: eases in, stops on release. Direct: follows the stick.",
+                                          {{LookResponse::Eased, "Eased (original)"}, {LookResponse::StopsDead, "Stops dead"},
+                                           {LookResponse::Direct, "Direct"}},
+                                          look_response, set_look_response, apply_control_settings),
+                   twin_stick),
         in_analog(number("analog.look_deadzone", "Look deadzone", "", a.look_deadzone, {0.0, 0.5, 0.01, "%.2f"},
                          apply_control_settings)),
         in_analog(number("analog.move_deadzone", "Move deadzone", "", a.move_deadzone, {0.0, 0.5, 0.01, "%.2f"},
@@ -404,15 +424,6 @@ OptionSection controls_analog() {
                          {0.5, 3.0, 0.05, "%.2f"}, apply_control_settings)),
         in_analog(number("analog.move_curve", "Move curve", "", a.move_curve, {0.5, 3.0, 0.05, "%.2f"},
                          apply_control_settings)),
-        in_analog(toggle("analog.ease", "Ease the look in and out",
-                         "The view speeds up and slows down by the game's own step, as with the D-pad. Off, it follows "
-                         "the stick directly.",
-                         a.ease, apply_control_settings)),
-        in_analog(toggle("analog.instant_stop", "Stop the look on release", "", a.instant_stop, apply_control_settings)),
-        in_analog(toggle("analog.look_acceleration", "Look acceleration",
-                         "Holding the right stick near the edge turns faster over time. Off by default: the fights are "
-                         "built on how fast the player can turn.",
-                         a.look_acceleration, apply_control_settings)),
         enabled_if(number("analog.acceleration_max", "Acceleration up to", "", a.acceleration_max,
                           {1.0, 4.0, 0.1, "%.1fx"}, apply_control_settings),
                    acceleration_on),
@@ -420,13 +431,9 @@ OptionSection controls_analog() {
                           {0.1, 2.0, 0.05, "%.2f s"}, apply_control_settings),
                    acceleration_on),
         in_analog(toggle("analog.invert_turn", "Invert turn", "", a.invert_turn, apply_control_settings)),
-        in_analog(toggle("analog.invert_pitch", "Invert look up/down", "", a.invert_pitch, apply_control_settings)),
         in_analog(toggle("analog.invert_strafe", "Invert strafe", "", a.invert_strafe, apply_control_settings)),
         in_analog(toggle("analog.invert_forward", "Invert walk", "", a.invert_forward, apply_control_settings)),
     }});
-    for (OptionRow &each : section.rows)
-        each = needs(std::move(each), PlatformFeature::Gamepad);
-    return section;
 }
 
 OptionSection controls_bindings() {
@@ -454,7 +461,7 @@ OptionSection controls_touch() {
 }
 
 OptionPage controls_page() {
-    return {"Controls", {controls_movement(), controls_touch(), controls_analog(), controls_bindings()}};
+    return {"Controls", {controls_movement(), controls_touch(), controls_analog(), controls_fine_tuning(), controls_bindings()}};
 }
 
 // ---- Gameplay ----
@@ -494,39 +501,31 @@ OptionSection gameplay_world() {
 }
 
 OptionSection gameplay_enemies() {
-    Settings &s = settings();
+    std::vector<std::pair<double, std::string>> turns;
+    turns.emplace_back(enemy_turn_automatic, "Automatic");
+    turns.emplace_back(1.0, "x1 (original)");
+    for (double scale = 1.25; scale <= 4.0; scale += 0.25) {
+        char text[16];
+        std::snprintf(text, sizeof text, "x%.2f", scale);
+        turns.emplace_back(scale, text);
+    }
     return classic_locked({"Enemies", {
-        choice<bool>("gameplay.enemy_turn_auto", "Enemy turn speed",
-                     "How fast an enemy turns while it chases you or backs away from you; its wandering keeps the "
-                     "game's pace. The fights were built on the D-pad's turn. Automatic: enemies keep up with how "
-                     "fast you can turn with what you last turned with: the D-pad and keys as the original, a stick "
-                     "by its turn speed and acceleration, the mouse or a touch drag at x3, and above x1 they keep "
-                     "you in sight. Fixed: the speed below, whatever you play with.",
-                     s.enemy_turn_auto, {{true, "Automatic"}, {false, "Fixed"}}, apply_control_settings),
-        shown_if(number("gameplay.enemy_turn", "Fixed enemy turn speed", "x1 is the original game.", s.enemy_turn,
-                        {1.0, 4.0, 0.25, "%.2fx"}, apply_control_settings),
-                 [] { return !settings().enemy_turn_auto; }),
-        shown_if(enabled_if(toggle("gameplay.enemy_track", "Enemies keep you in sight",
-                                   "A chasing enemy aims at where you are every update. The original re-aimed on "
-                                   "about one update in eight, so it ran on at where you had been. Off at x1.",
-                                   s.enemy_track, apply_control_settings),
-                            [] { return settings().enemy_turn > 1.0f; }),
-                 [] { return !settings().enemy_turn_auto; }),
+        combined<double>("gameplay.enemy_turn_speed", "Enemy turn speed",
+                         "How fast an enemy turns while it chases you or backs away from you; its wandering keeps the "
+                         "game's pace. The fights were built on the D-pad's turn. Automatic: enemies keep up with how "
+                         "fast you can turn with what you last turned with: the D-pad and keys as the original, a stick "
+                         "by its turn speed and acceleration, the mouse or a touch drag at x3. Above x1 a chasing enemy "
+                         "also aims at where you are every update; the original re-aimed on about one update in eight.",
+                         std::move(turns), enemy_turn_choice, set_enemy_turn_choice, apply_control_settings),
     }});
 }
 
 OptionSection gameplay_fixes() {
-    Settings &s = settings();
-    return classic_locked({"Bug fixes", {
-        note("gameplay.fixes_note",
-             "Fixes for bugs in the original game. Turn them off to play exactly as on the PlayStation."),
-        toggle("gameplay.fix_ceiling_fall", "Enemies fall after hitting a ceiling mid-jump",
-               "The original meant jumping enemies that bump a low ceiling to drop back down, but the check never "
-               "matched, so they could be left hovering.",
-               s.fix_ceiling_fall, apply_control_settings),
-        toggle("gameplay.fix_spatial_panning", "Stereo panning for flagged sounds",
-               "Some floor 5 enemy sounds are marked for a panning volume adjustment that the original never applied.",
-               s.fix_spatial_panning, apply_control_settings),
+    return classic_locked({"", {
+        combined_toggle("gameplay.bug_fixes", "Bug fixes",
+                        "Fixes for bugs in the original game: jumping enemies that bump a low ceiling drop back down "
+                        "instead of hovering, and some floor 5 enemy sounds get the panning they were marked for.",
+                        bug_fixes, set_bug_fixes, apply_control_settings),
     }});
 }
 

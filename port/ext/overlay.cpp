@@ -118,7 +118,7 @@ void show_help(const verdite::OptionRow &row) {
 void draw_choice(const verdite::OptionRowView &view) {
     const verdite::OptionRow &row = *view.row;
     const auto current = std::ranges::find(row.choices, view.value, &verdite::OptionChoice::value);
-    const char *preview = current != row.choices.end() ? current->label.c_str() : "";
+    const char *preview = current != row.choices.end() ? current->label.c_str() : "Custom";
     if (!ImGui::BeginCombo(row.label.c_str(), preview))
         return;
     for (const auto &choice : row.choices)

@@ -1,0 +1,77 @@
+#pragma once
+// What settings.json holds, as plain data. No SDL and no game, so its logic can be tested alone.
+#include <kf/platform/analog.h>
+#include <string>
+
+namespace kf::ext {
+#ifdef __ANDROID__
+// A phone: the whole screen, with no status or navigation bar over the picture.
+inline constexpr bool default_fullscreen = true;
+inline constexpr const char *default_aspect = "window";
+#else
+inline constexpr bool default_fullscreen = false;
+inline constexpr const char *default_aspect = "4:3";
+#endif
+
+inline constexpr int frame_rate_unlimited = -1;
+
+struct Settings {
+    // Classic mode: play as originally shipped. Every enhancement below is
+    // overridden (see effective_settings) while the player's values are kept.
+    bool classic = false;
+    bool fullscreen = default_fullscreen;
+    bool vsync = false;
+    bool pause_when_open = false;
+    bool show_fps = false;
+    int volume = 100;           // percent
+    std::string aspect = default_aspect; // "4:3", "16:9", "16:10", "21:9" or "window"
+    bool hud_at_edges = true;   // in widescreen, the HUD at the picture's edges, not in its 4:3 box
+    int resolution = 0;         // 0: native (match the window), else whole multiple of 320x240
+    bool subpixel = true;       // smooth vertex positions (less polygon jitter)
+    bool perspective = true;    // perspective-correct textures (no warping)
+    bool depth_buffer = false;  // experimental: fixes polygons showing through walls
+    bool true_color = true;     // smooth colour: no 15-bit banding or dither
+    bool pixel_lighting = true; // the game's lights per pixel on models
+    bool dynamic_lights = true; // torches and fire/lightning spells light nearby surfaces
+    int light_strength = 100;   // percent
+    bool light_occlusion = true; // walls block dynamic light
+    bool ambient_occlusion = true;
+    int ao_strength = 100;      // percent; 100 is Verdite's judged look
+    int ao_quality = 1;         // 0 low, 1 medium, 2 high (OcclusionQuality)
+    int texture_filter = 3;     // 0 nearest (original), 1 bilinear, 2 three-point, 3 sharp
+    bool mipmaps = true;        // distant textures averaged instead of shimmering
+    bool detailed_map = true;   // distant map cells keep their detailed meshes
+    int anisotropy = 16;        // 1 (off), 2, 4, 8 or 16 samples along slanted textures
+    int enhanced_distance = 0;  // cells past which the picture is the game's own; 0: everywhere
+    int fog = 2;                // 0 at the corners (original), 1 per pixel by depth, 2 by distance (FogMode)
+    int antialiasing = 1;       // 0 off, 1 FXAA, 2 4x SSAA, 3 9x SSAA
+    bool flame_glow = true;
+    bool shadows = true;
+    int shadow_strength = 70;   // percent of a light a shadow removes (game lighting untouched)
+    int glow_strength = 100;    // percent
+    int frame_rate = 0;         // 20: original (no smoothing), 0: display refresh, -1: unlimited, else cap
+    int tick_rate = 15;         // world updates a second: 12, 15, 20 (the gate's) or 30
+    int look_limit = 70;        // degrees the camera may tilt up or down (original: 17)
+    std::string pad_layout = "west";   // gamepad face buttons: "west" (the US game's) or "jp"
+    bool menu_pointer = true;   // point at and click the game's menus with the mouse
+    bool touch_haptics = true;  // the on-screen buttons click the phone's vibrator
+    AnalogOptions analog;       // the sticks, saved as "analog"
+    std::string language = "en";   // game language when both are set up: "en" or "ja"
+    bool auto_keys = true;          // interacting with a lock uses a carried key
+    bool enemy_turn_auto = true;    // the enemy turn follows how fast the last input to turn can turn
+    float enemy_turn = 1.5f;        // fixed: an enemy's turn toward the player, times its own (1: original)
+    bool enemy_track = true;        // fixed, above x1: a pursuing enemy re-aims at the player every update
+    bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump
+    bool fix_spatial_panning = true; // bug fix: flagged sounds get their panning adjustment
+    float ui_scale = 1.0f;
+    bool item_descriptions = true;  // what an item does, in the game's item menus
+    std::string ui_font;        // empty: first available system font
+    bool discord = true;        // Discord Rich Presence, while Discord is running
+    bool discord_level = true;
+    bool discord_location = true;   // floor and place
+    bool discord_vitals = true;     // HP and MP
+    bool discord_exp = true;        // EXP to the next level
+    bool online_messages = false;   // messages on the ground: opt-in, as online play is
+    int setup_seen = 0;             // the first-run setup's version last finished or skipped
+};
+} // namespace kf::ext

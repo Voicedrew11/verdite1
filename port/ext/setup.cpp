@@ -81,11 +81,9 @@ std::string aspect_name(const std::string &aspect) { return aspect == "window" ?
 std::vector<SetupPreset> presets() {
     const std::string aspect = suggested_aspect();
     const std::string wide_summary = aspect_name(aspect) + " / Native resolution / Display refresh";
-    std::vector<SetupValue> original = preset_values("4:3", 1, 20);
-    original.push_back({"gameplay.enemy_turn", 1.0});
     return {
         {"original", "Original", "The game as the PlayStation ran it: its picture and its D-pad controls.", "original",
-         std::move(original), "4:3 / 320x240 / One frame per update"},
+         preset_values("4:3", 1, 20), "4:3 / 320x240 / One frame per update"},
         {"balanced", "Balanced",
          "The PlayStation's look and feel with its rendering artifacts (texture warping, vertex jitter) corrected, "
          "and analog controls.",
@@ -117,12 +115,6 @@ constexpr const char *tiers_intro =
     "keeps that look and feel with steady polygons and smooth colour. Modern adds the port's enhancements.";
 
 SetupPage controls_page() {
-    const SetupGroup movement{"movement", "Movement", "", {
-        choice("D-pad only", "The D-pad only, as the PlayStation had. The analog sticks work as the D-pad.", {"original"},
-               {{"analog.enabled", false}}),
-        choice("Analog sticks", "The analog sticks are on. How they turn you is chosen on the turning page.",
-               {"balanced", "modern"}, {{"analog.enabled", true}}),
-    }};
     const SetupGroup looking{"looking", "Looking up and down", "", {
         choice("17 degrees", "The original's limit on tilting the view.", {"original"}, {{"controls.look_limit", 17.0}}),
         choice("Up to 70 degrees", "Look at the ceiling and at the floor at your feet.", {"balanced", "modern"},
@@ -133,7 +125,7 @@ SetupPage controls_page() {
         choice("On button press", "A short click under your finger as an on-screen button goes down.", {"balanced", "modern"},
                {{"controls.touch_haptics", true}}),
     }};
-    return {"controls", "Controls", tiers_intro, {movement, looking, vibration}, SetupPageTiers::Offered};
+    return {"controls", "Controls", tiers_intro, {looking, vibration}, SetupPageTiers::Offered};
 }
 
 SetupPage presentation_page() {
@@ -142,41 +134,35 @@ SetupPage presentation_page() {
                "As the PlayStation drew it: textures warp, polygons wobble on the 320x240 grid, 15-bit colour with "
                "dither, unfiltered textures, coarse distant walls.",
                {"original"},
-               {{"display.subpixel", false}, {"display.perspective", false}, {"display.true_color", false},
-                {"display.texture_filter", 0.0}, {"display.mipmaps", false}, {"display.anisotropy", 1.0},
-                {"display.detailed_map", false}}),
+               {{"display.wiggle", true}, {"display.true_color", false}, {"display.texture_filter", 0.0},
+                {"display.aniso", 0.0}, {"display.detailed_map", false}}),
         choice("Steady, sharp pixels",
                "Perspective-correct textures, polygons placed between pixels and full colour with no dither. The "
                "original texels stay sharp, drawn evenly, with mipmaps and 16x anisotropic filtering.",
                {"balanced", "modern"},
-               {{"display.subpixel", true}, {"display.perspective", true}, {"display.true_color", true},
-                {"display.texture_filter", 3.0}, {"display.mipmaps", true}, {"display.anisotropy", 16.0},
-                {"display.detailed_map", true}}),
+               {{"display.wiggle", false}, {"display.true_color", true}, {"display.texture_filter", 3.0},
+                {"display.aniso", 16.0}, {"display.detailed_map", true}}),
         choice("Smooth and filtered",
                "As steady, sharp pixels, with the texels blended into each other (bilinear) instead of kept sharp.", {},
-               {{"display.subpixel", true}, {"display.perspective", true}, {"display.true_color", true},
-                {"display.texture_filter", 1.0}, {"display.mipmaps", true}, {"display.anisotropy", 16.0},
-                {"display.detailed_map", true}}),
+               {{"display.wiggle", false}, {"display.true_color", true}, {"display.texture_filter", 1.0},
+                {"display.aniso", 16.0}, {"display.detailed_map", true}}),
     }};
     const SetupGroup lighting{"lighting", "Lighting and fog", "", {
         choice("Corner lighting",
                "Light and fog worked out at each polygon's corners, as the console did. No ambient occlusion, no light "
                "from torches or spells.",
                {"original"},
-               {{"display.pixel_lighting", false}, {"display.ambient_occlusion", false},
-                {"display.dynamic_lights", false}, {"display.fog", 0.0}}),
+               {{"display.pixel_lighting", false}, {"display.ao", 0.0}, {"display.dynamic_light", 0.0}, {"display.fog", 0.0}}),
         choice("Smooth lighting and fog",
                "Per-pixel lighting, and fog by distance from the eye. No ambient occlusion, no light from torches or "
                "spells.",
                {"balanced"},
-               {{"display.pixel_lighting", true}, {"display.ambient_occlusion", false},
-                {"display.dynamic_lights", false}, {"display.fog", 2.0}}),
+               {{"display.pixel_lighting", true}, {"display.ao", 0.0}, {"display.dynamic_light", 0.0}, {"display.fog", 2.0}}),
         costly(choice("Smooth, with soft shadows",
                       "Per-pixel lighting and fog, plus ambient occlusion, and torches and spells that light and shadow "
                       "their surroundings.",
                       {"modern"},
-                      {{"display.pixel_lighting", true}, {"display.ambient_occlusion", true},
-                       {"display.dynamic_lights", true}, {"display.fog", 2.0}})),
+                      {{"display.pixel_lighting", true}, {"display.ao", 2.0}, {"display.dynamic_light", 2.0}, {"display.fog", 2.0}})),
     }};
     const SetupGroup edges{"edges", "Edges", "", {
         choice("Jagged", "No anti-aliasing.", {"original", "balanced"}, {{"display.antialiasing", 0.0}}),
@@ -196,23 +182,28 @@ SetupPage presentation_page() {
 
 SetupPage turning_page() {
     const SetupGroup sticks{"sticks", "Controls", "", {
+        choice("D-pad only", "The D-pad only, as the PlayStation had. The analog sticks work as the D-pad.", {"original"},
+               {{"analog.style", 0.0}}),
         choice("Tank controls (3D)", "One stick walks and turns, as the D-pad does; L1 and R1 strafe. You turn at the original rate.",
-               {"original"}, {{"analog.sticks", 1.0}}),
+               {}, {{"analog.style", 1.0}}),
         choice("Twin stick (2D)",
                "The left stick walks and strafes, the right stick turns and looks, at the D-pad's rate. You turn at the "
                "original rate.",
-               {"balanced", "modern"}, {{"analog.sticks", 0.0}, {"analog.look_acceleration", false}}),
+               {"balanced", "modern"}, {{"analog.style", 2.0}}),
         choice("Twin stick (2D) with acceleration",
                "As twin stick, but holding the right stick out speeds the turn up to 2.2 times.", {},
-               {{"analog.sticks", 0.0}, {"analog.look_acceleration", true}}),
+               {{"analog.style", 3.0}}),
     }};
     const SetupGroup enemies{"enemy_turn", "Enemy turn speed", "", {
-        choice("Fixed", "Enemies turn at the speed below, whatever you play with. x1 is the original.", {"original"},
-               {{"gameplay.enemy_turn_auto", false}}),
         choice("Automatic",
                "Enemies keep up with how fast you can turn: as the original with the D-pad, keys or a stick at its "
                "speed, faster with acceleration, three times as fast with the mouse or a touch drag.",
-               {"balanced", "modern"}, {{"gameplay.enemy_turn_auto", true}}),
+               {"balanced", "modern"}, {{"gameplay.enemy_turn_speed", 0.0}}),
+        choice("x1 (original)", "Enemies turn as on the PlayStation, whatever you play with.", {"original"},
+               {{"gameplay.enemy_turn_speed", 1.0}}),
+        choice("x1.5", "Half as fast again, whatever you play with.", {}, {{"gameplay.enemy_turn_speed", 1.5}}),
+        choice("x2", "Twice as fast, whatever you play with.", {}, {{"gameplay.enemy_turn_speed", 2.0}}),
+        choice("x3", "Three times as fast, whatever you play with.", {}, {{"gameplay.enemy_turn_speed", 3.0}}),
     }};
     return {"turning", "Turning and difficulty",
             "King's Field's fights are balanced around how fast you turn. On the PlayStation you turned at one fixed "
@@ -221,9 +212,7 @@ SetupPage turning_page() {
             "turns as fast as you move it. A creature at its original pace can then be circled forever without landing "
             "a hit.\n\n"
             "The answer is to let creatures turn faster when they turn toward you; their wandering keeps the game's pace.",
-            {sticks, enemies,
-             SetupOptionItem{"gameplay.enemy_turn", SetupValue{"gameplay.enemy_turn_auto", false},
-                             verdite::SetupOptionLook::Stepper}},
+            {sticks, enemies},
             SetupPageTiers::Hidden};
 }
 
@@ -242,9 +231,9 @@ SetupPage gameplay_page() {
     const SetupGroup fixes{"fixes", "Bug fixes", "", {
         choice("As released",
                "Jumping enemies can be left hovering under a low ceiling, and some floor 5 enemy sounds miss their panning.",
-               {"original"}, {{"gameplay.fix_ceiling_fall", false}, {"gameplay.fix_spatial_panning", false}}),
+               {"original"}, {{"gameplay.bug_fixes", false}}),
         choice("Fixed", "Jumping enemies drop back down after hitting a ceiling, and those floor 5 sounds pan as meant.",
-               {"balanced", "modern"}, {{"gameplay.fix_ceiling_fall", true}, {"gameplay.fix_spatial_panning", true}}),
+               {"balanced", "modern"}, {{"gameplay.bug_fixes", true}}),
     }};
     return {"gameplay", "Gameplay", tiers_intro, {keys, descriptions, fixes}, SetupPageTiers::Offered};
 }
@@ -333,6 +322,7 @@ verdite::SetupScreen &screen() {
 void setup_begin(Overlay overlay) {
     state.drawn = overlay == Overlay::Drawn;
     check_spec(kf1_spec());
+    settings_page_check();
     if (state.drawn && verdite::setup_due(kf1_spec(), settings().setup_seen))
         setup_run();
 }

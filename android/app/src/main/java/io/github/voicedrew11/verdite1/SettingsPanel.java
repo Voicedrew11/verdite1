@@ -397,7 +397,7 @@ final class SettingsPanel {
             texts.show(row);
             layout.setEnabled(row.getBoolean("enabled"));
             String value = valueText(row.get("value"));
-            chosen.setText("");
+            chosen.setText("Custom");
             for (int i = 0; i < choices.length(); i++)
                 if (valueText(choices.getJSONObject(i).get("value")).equals(value))
                     chosen.setText(choices.getJSONObject(i).getString("label"));
