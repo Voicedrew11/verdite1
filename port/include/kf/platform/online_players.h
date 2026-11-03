@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace kf {
@@ -27,7 +28,14 @@ struct OnlinePlayer {
     bool eyes;          // this player, down, sees through theirs: their knight is not drawn here
     u8 colour;          // the player's profile (port/ext/coop_profile.h): an index of the colours
     u8 helmet;          // and of the helmets, each below its count
+    std::string name;   // and their name, in what menu_spell spells
 };
+
+// Whether a name bar shows above the other players (kf/platform/online_name_bar.h): this player's choice.
+enum class OnlineNameBars : u8 { Off, InSight, Always };   // Always: through walls too
+OnlineNameBars online_name_bars();
+// The game drew a name bar, counted for the agent channel's tests.
+void online_name_bar_drawn();
 
 // Whether the world keeps running while this player is held in a menu or a scripted loop: in a
 // room (docs/COOP_PLAN.md), or with KF_TEST_WORLD_RUNS_WHILE_HELD=1 for tests without one.

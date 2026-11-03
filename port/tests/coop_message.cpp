@@ -252,3 +252,21 @@ TEST_CASE("a save request off the map, or a wipe of life 0, is refused") {
     CHECK_FALSE(coop_message_decode(encoded(CoopWipe{0, welcome()})));
     CHECK_FALSE(coop_message_decode(encoded(CoopWiped{0})));
 }
+
+TEST_CASE("the room's rules and a guest turned away are sent as they are") {
+    CHECK(round_trip(CoopRules{30, 10}) == CoopRules{30, 10});
+    CHECK(round_trip(CoopTurnedAway{CoopTurnedAwayWhy::SentAway}).why == CoopTurnedAwayWhy::SentAway);
+    CHECK(round_trip(CoopTurnedAway{CoopTurnedAwayWhy::RoomClosed}).why == CoopTurnedAwayWhy::RoomClosed);
+}
+
+TEST_CASE("a rule outside its choices, or an unknown reason, is not a message") {
+    auto rules = encoded(CoopRules{15, 30});
+    rules[rules.size() - 2] = 16;   // tick rate
+    CHECK_FALSE(coop_message_decode(rules).has_value());
+    rules = encoded(CoopRules{15, 30});
+    rules.back() = 0;               // revive wait
+    CHECK_FALSE(coop_message_decode(rules).has_value());
+    auto away = encoded(CoopTurnedAway{CoopTurnedAwayWhy::SentAway});
+    away.back() = 2;
+    CHECK_FALSE(coop_message_decode(away).has_value());
+}

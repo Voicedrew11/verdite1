@@ -529,6 +529,8 @@ apart, each label in a row box and its value centred in an option box at X 180, 
   | GAMEPLAY | CLASSIC MODE, TICK RATE, ENEMY TURN, AUTO KEYS, ITEM TEXT, BUG FIXES |
   | CONTROLS | CONTROLS, PAD BUTTONS, INVERT CAMERA, STICK SENS |
   | SOUND | VOLUME |
+  | MULTIPLAYER | NAME BARS, PARTY FEED, MESSAGES ([COOP_PLAN.md](COOP_PLAN.md), "Multiplayer settings") |
+  | YOUR ROOM (only a host, in a room) | TICK RATE, NEW PLAYERS, REVIVE WAIT, its guests to send away |
 - **One row per decision.** `port/ext/setting_rows.h` reads and writes several saved keys as one
   choice, for the page, the overlay and Android alike: ANISO (mipmaps, anisotropy), AO (on, quality),
   DYNAMIC LIGHT (lights, shadows), CONTROLS (analog, stick mode, acceleration), ENEMY TURN (auto, speed),

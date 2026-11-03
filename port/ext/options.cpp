@@ -200,6 +200,13 @@ OptionRow classic_note(const std::string &page) {
 void apply_classic() {
     apply_render_settings();
     apply_control_settings();
+    coop_room_settings_changed();
+}
+
+// A tick rate set by a host goes to the room.
+void apply_tick_rate() {
+    apply_control_settings();
+    coop_room_settings_changed();
 }
 
 // ---- Display ----
@@ -484,7 +491,7 @@ OptionSection gameplay_classic() {
 
 OptionSection gameplay_world() {
     Settings &s = settings();
-    return classic_locked({"", {
+    OptionSection section = classic_locked({"", {
         choice("gameplay.tick_rate", "Tick rate",
                "How often the world updates. The PlayStation's frame gate allows at most 20 a second, and the console "
                "fell below that wherever a scene took longer to draw; 15 stands for a typical rate on the console. "
@@ -492,12 +499,15 @@ OptionSection gameplay_world() {
                "with it; the music does not.",
                s.tick_rate, {{30, "30 a second (fast)"}, {20, "20 a second (the game's limit)"},
                              {15, "15 a second (default)"}, {12, "12 a second (slower)"}},
-               apply_control_settings),
+               apply_tick_rate),
         toggle("gameplay.auto_use_keys", "Use carried keys on locked doors and chests",
                "Interacting with a lock unlocks it (with the unlock sound) when you carry its key, instead of having "
                "to choose the key from the item menu.",
                s.auto_keys, apply_control_settings),
     }});
+    // In a room everyone runs at the host's speed.
+    section.rows.front() = enabled_if(std::move(section.rows.front()), [] { return !coop_follows_host(); });
+    return section;
 }
 
 OptionSection gameplay_enemies() {
@@ -702,10 +712,21 @@ OptionSection interface_discord() {
     return section;
 }
 
+OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_updates(), interface_discord()}}; }
+
+// ---- Multiplayer ----
+
 #if KF_ONLINE
-OptionSection interface_online() {
+OptionSection multiplayer_own() {
     Settings &s = settings();
-    return {"Online", {
+    return {"", {
+        choice("online.name_bars", "Name bars",
+               "The other players' names above their knights. Through walls is how Minecraft shows them; In sight "
+               "lets walls in front of a knight hide its name.",
+               s.name_bars, {{2, "Through walls"}, {1, "In sight"}, {0, "Off"}}, store_only),
+        toggle("online.pickup_feed", "Party's finds",
+               "The lines at the side of the picture saying who in the party found, bought, sold or used what.",
+               s.pickup_feed, store_only),
         toggle("online.messages", "Messages",
                "Messages other players left on the ground, and leaving your own (F1, Leave a message). "
                "Connects to the Verdite online service while you play.",
@@ -713,15 +734,49 @@ OptionSection interface_online() {
     }};
 }
 
-OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_updates(), interface_discord(), interface_online()}}; }
-#else
-OptionPage interface_page() { return {"Interface", {interface_overlay(), interface_updates(), interface_discord()}}; }
+OptionRow send_away_row(std::size_t slot) {
+    OptionRow made = action("online.send_away." + std::to_string(slot), "Send away guest " + std::to_string(slot + 1),
+                            "Sends this player out of your room for this session. Their character stays in the "
+                            "world, and what they wore goes back in the pack.",
+                            [slot] { coop_send_away(slot); });
+    made.state = [slot] {
+        OptionState state;
+        state.note = coop_guest_name(slot);
+        state.shown = !state.note.empty();
+        return state;
+    };
+    return made;
+}
+
+OptionSection multiplayer_host() {
+    Settings &s = settings();
+    OptionSection section{"Your room", {
+        toggle("online.room_open", "New players",
+               "Whether players new to this world may join. Someone who already has a character in it may always "
+               "come back.",
+               s.room_open, store_only),
+        choice("online.revive_wait_s", "Revive wait",
+               "The most a player who fell waits to come back beside another, even in the middle of a fight. They "
+               "come back sooner once that player is out of the fight.",
+               s.revive_wait_s, {{10, "10 seconds"}, {30, "30 seconds"}, {60, "60 seconds"}}, coop_room_settings_changed),
+    }};
+    for (std::size_t slot = 0; slot < coop_guest_slots; ++slot)
+        section.rows.push_back(send_away_row(slot));
+    for (OptionRow &each : section.rows)
+        each = shown_if(std::move(each), coop_hosting);
+    return section;
+}
+
+OptionPage multiplayer_page() { return {"Multiplayer", {multiplayer_own(), multiplayer_host()}}; }
 #endif
 
 } // namespace
 
 static std::vector<verdite::OptionPage> all_pages() {
     return {display_page(), audio_page(), controls_page(), gameplay_page(), language_page(), interface_page(),
+#if KF_ONLINE
+            multiplayer_page(),
+#endif
             mod_menu_options_page()};
 }
 

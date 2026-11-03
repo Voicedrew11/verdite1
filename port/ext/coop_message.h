@@ -184,10 +184,27 @@ struct CoopWiped {
     std::uint32_t life = 0;
 };
 
+// Host to each guest, on welcoming it and whenever they change: the room's rules, which every player
+// follows. tick_rate: world updates a second (coop_tick_rate_valid), the room's one speed, since
+// the game counts updates, not time. revive_wait_s: the most a down player waits to come back.
+struct CoopRules {
+    int tick_rate = 15;
+    int revive_wait_s = 30;
+    bool operator==(const CoopRules &) const = default;
+};
+constexpr bool coop_tick_rate_valid(int rate) { return rate == 12 || rate == 15 || rate == 20 || rate == 30; }
+constexpr bool coop_revive_wait_valid(int seconds) { return seconds == 10 || seconds == 30 || seconds == 60; }
+
+// Host to a guest: leave the room. New players are not being let in, or the host sent this one away.
+enum class CoopTurnedAwayWhy : std::uint8_t { RoomClosed, SentAway };
+struct CoopTurnedAway {
+    CoopTurnedAwayWhy why = CoopTurnedAwayWhy::RoomClosed;
+};
+
 using CoopMessage = std::variant<CoopHello, CoopWelcome, CoopCharacterUpdate, CoopAcknowledged, CoopPackRequest,
     CoopWearRequest, CoopPack, CoopFeedLine, CoopSaveRequest, CoopRoster, CoopFloorAt, CoopFloorOrders,
     CoopFloorRecord, CoopFloorSnapshot, CoopFloorTaken, CoopFloorWrites, CoopActorHit, CoopActorAim, CoopKill, CoopSwing, CoopPlayerHit,
-    CoopWipe, CoopWiped>;
+    CoopWipe, CoopWiped, CoopRules, CoopTurnedAway>;
 
 inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
 
@@ -195,7 +212,7 @@ inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
 std::optional<std::vector<std::uint8_t>> coop_message_encode(const CoopMessage &message);
 // Nothing when the bytes are not a message: the wrong version or kind, a length past the end or
 // bytes left over, an item, stack, floor or cell out of range, a name outside the font, a wipe's
-// life of 0.
+// life of 0, a rule outside its choices.
 std::optional<CoopMessage> coop_message_decode(std::span<const std::uint8_t> bytes);
 
 }

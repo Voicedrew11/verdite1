@@ -9,6 +9,7 @@
 #include <verdite/menu_settings.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -102,6 +103,11 @@ std::vector<OptionValue> stick_sens_page_stops() {
     return {ext::stick_sens_stops.begin(), ext::stick_sens_stops.end()};
 }
 
+Row tick_rate_row() {
+    return {"gameplay.tick_rate", {"TICK RATE", "せかいのはやさ"},
+            {{30.0, {"30", "30"}}, {20.0, {"20", "20"}}, {15.0, {"15", "15"}}, {12.0, {"12", "12"}}}, {}};
+}
+
 const std::vector<Page> &pages() {
     static const std::vector<Page> table = [] {
         std::vector<Page> made;
@@ -145,8 +151,7 @@ const std::vector<Page> &pages() {
         }});
         made.push_back({"gameplay", {"GAMEPLAY", "ゲーム"}, {
             {"gameplay.classic_mode", {"CLASSIC MODE", "オリジナルのまま"}, {}, {}},
-            {"gameplay.tick_rate", {"TICK RATE", "せかいのはやさ"},
-             {{30.0, {"30", "30"}}, {20.0, {"20", "20"}}, {15.0, {"15", "15"}}, {12.0, {"12", "12"}}}, {}},
+            tick_rate_row(),
             {"gameplay.enemy_turn_speed", {"ENEMY TURN", "てきのふりむき"}, enemy_turn_values(),
              {ext::enemy_turn_automatic, 1.0, 2.0, 3.0, 4.0}},
             {"gameplay.auto_use_keys", {"AUTO KEYS", "かぎのじどうしよう"}, {}, {}},
@@ -165,9 +170,44 @@ const std::vector<Page> &pages() {
             {"audio.volume", {"VOLUME", "おとのおおきさ"}, {},
              {0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0}},
         }});
+        made.push_back({"multiplayer", {"MULTIPLAYER", "マルチプレイ"}, {
+            {"online.name_bars", {"NAME BARS", "なまえのひようじ"},
+             {{2.0, {"ALWAYS", "かべごしも"}}, {1.0, {"IN SIGHT", "みえるとき"}}, {0.0, off_text}}, {}},
+            {"online.pickup_feed", {"PARTY FEED", "なかまのひろいもの"}, {}, {}},
+            {"online.messages", {"MESSAGES", "メツセージ"}, {}, {}},
+        }});
         return made;
     }();
     return table;
+}
+
+const Text send_away_text{"SEND AWAY", "おいだす"};
+constexpr std::array<const char *, ext::coop_guest_slots> send_away_options = {
+    "online.send_away.0", "online.send_away.1", "online.send_away.2"};
+
+// Which guest a row sends away, if it is one of those rows.
+std::optional<std::size_t> send_away_slot(std::string_view option) {
+    const auto found = std::ranges::find(send_away_options, option);
+    if (found == send_away_options.end())
+        return std::nullopt;
+    return static_cast<std::size_t>(found - send_away_options.begin());
+}
+
+// The page only a host sees (keep_pages_current), its guests' rows after what it chooses for the room.
+const Page &host_page() {
+    static const Page page = [] {
+        Page made{"host", {"YOUR ROOM", "あなたのルーム"}, {
+            tick_rate_row(),
+            {"online.room_open", {"NEW PLAYERS", "あたらしいなかま"},
+             {{true, {"WELCOME", "さんかできる"}}, {false, {"CLOSED", "しめきり"}}}, {}},
+            {"online.revive_wait_s", {"REVIVE WAIT", "ふつかつまで"},
+             {{10.0, {"10 SECONDS", "10びよう"}}, {30.0, {"30 SECONDS", "30びよう"}}, {60.0, {"60 SECONDS", "60びよう"}}}, {}},
+        }};
+        for (const char *option : send_away_options)
+            made.rows.push_back({option, {}, {}, {}});
+        return made;
+    }();
+    return page;
 }
 
 // A page of a running mod's own menu (mod.json's "menu"), after the game's: its labels and values are
@@ -194,6 +234,7 @@ struct MenuState {
     std::optional<verdite::MenuSettings> settings;
     std::vector<ModPage> mod_pages;
     std::string mod_pages_signature;
+    bool host_page_shown = false;
     float opened_turn_sensitivity = 0, opened_pitch_sensitivity = 0;
 };
 MenuState menu_state;
@@ -216,6 +257,12 @@ verdite::MenuSettings &build_menu() {
             menu_page.rows.push_back({row.option, row.stops});
         menu_pages.push_back(std::move(menu_page));
     }
+    if (menu_state.host_page_shown) {
+        verdite::MenuSettingsPage menu_page{host_page().id, {}};
+        for (const Row &row : host_page().rows)
+            menu_page.rows.push_back({row.option, row.stops});
+        menu_pages.push_back(std::move(menu_page));
+    }
     for (const ModPage &page : menu_state.mod_pages) {
         verdite::MenuSettingsPage menu_page{page.page_id, {}};
         for (const verdite::ModMenuRow &row : page.rows)
@@ -231,16 +278,18 @@ verdite::MenuSettings &menu() {
     return build_menu();
 }
 
-// Before a visit, as mods may have changed since the last. A visit's changes are kept or put back
-// before the next open, so nothing staged is lost.
-void keep_mod_pages_current() {
+// Before a visit, as mods may have changed since the last and this player may host a room now. A
+// visit's changes are kept or put back before the next open, so nothing staged is lost.
+void keep_pages_current() {
     ext::mod_menu_refresh_options();
     std::vector<ModPage> now = running_mod_pages();
     std::string signature = signature_of(now);
-    if (menu_state.settings && signature == menu_state.mod_pages_signature)
+    const bool hosting = ext::coop_hosting();
+    if (menu_state.settings && signature == menu_state.mod_pages_signature && hosting == menu_state.host_page_shown)
         return;
     menu_state.mod_pages = std::move(now);
     menu_state.mod_pages_signature = std::move(signature);
+    menu_state.host_page_shown = hosting;
     build_menu();
 }
 
@@ -299,7 +348,7 @@ const Page *find_page(std::string_view id) {
     for (const Page &page : pages())
         if (id == page.id)
             return &page;
-    return nullptr;
+    return id == host_page().id ? &host_page() : nullptr;
 }
 
 const Row *find_row(const Page &page, std::string_view option) {
@@ -320,10 +369,44 @@ std::string value_text(const Row &row, const OptionValue &value, Language langua
     return {};
 }
 
+// A guest's row on the host's page: their name and what the row does, or who could be there, dimmed.
+SettingsPageRow send_away_view(std::size_t slot, const verdite::MenuSettingsRowView &row_view, Language language) {
+    const std::string name = ext::coop_guest_name(slot);
+    if (name.empty())
+        return {(language == Language::English ? "GUEST " : "なかま ") + std::to_string(slot + 1), {}, false, row_view.selected};
+    return {name, in(send_away_text, language), row_view.enabled, row_view.selected};
+}
+
+// The title's rows of a page: their words now, as the menu font spells them. The room's leave out
+// the guests, as no one is in a room there.
+struct TitleRows {
+    const Page *page;
+    std::size_t count;
+};
+
+TitleRows title_rows(ext::TitleCoopRows rows) {
+    if (rows == ext::TitleCoopRows::Room)
+        return {&host_page(), host_page().rows.size() - send_away_options.size()};
+    const Page *page = find_page("multiplayer");
+    return {page, page ? page->rows.size() : 0};
+}
+
+// What Left and Right walk for a row: its stops, its choices, or a toggle's off and on.
+std::vector<OptionValue> stops_of(const Row &row, const verdite::OptionRow &option) {
+    if (!row.stops.empty())
+        return row.stops;
+    if (option.kind == verdite::OptionKind::Toggle)
+        return {false, true};
+    std::vector<OptionValue> stops;
+    for (const verdite::OptionChoice &each : option.choices)
+        stops.push_back(each.value);
+    return stops;
+}
+
 } // namespace
 
 void settings_page_open() {
-    keep_mod_pages_current();
+    keep_pages_current();
     remember_stick_speeds();
     menu().open();
 }
@@ -356,6 +439,10 @@ SettingsPageView settings_page_view(Language language) {
         return {};
     made.title = in(page->title, language);
     for (const verdite::MenuSettingsRowView &row_view : view.rows) {
+        if (const auto slot = send_away_slot(row_view.option)) {
+            made.rows.push_back(send_away_view(*slot, row_view, language));
+            continue;
+        }
         const Row *row = find_row(*page, row_view.option);
         if (!row)
             continue;
@@ -370,6 +457,42 @@ std::string settings_page_save_text(Language language) { return in(save_text, la
 std::string settings_page_discard_text(Language language) { return in(discard_text, language); }
 
 namespace ext {
+
+std::vector<verdite::TitleModSetting> title_coop_settings(TitleCoopRows rows, Language language) {
+    std::vector<verdite::TitleModSetting> made;
+    const TitleRows shown = title_rows(rows);
+    for (std::size_t i = 0; i < shown.count; ++i) {
+        const Row &row = shown.page->rows[i];
+        const verdite::OptionRow *option = options().find(row.option);
+        if (!option)
+            continue;
+        const bool enabled = !option->state || option->state().enabled;
+        made.push_back({in(row.label, language), value_text(row, option->get(), language), enabled});
+    }
+    return made;
+}
+
+void title_coop_setting_step(TitleCoopRows rows, std::size_t index, int delta) {
+    const TitleRows shown = title_rows(rows);
+    // Indexes as title_coop_settings made them, which leaves out rows the table lacks.
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < shown.count; ++i) {
+        const Row &row = shown.page->rows[i];
+        const verdite::OptionRow *option = options().find(row.option);
+        if (!option)
+            continue;
+        if (at++ != index)
+            continue;
+        const std::vector<OptionValue> stops = stops_of(row, *option);
+        const auto now = std::ranges::find(stops, option->get());
+        if (stops.empty())
+            return;
+        const std::size_t from = now == stops.end() ? 0 : static_cast<std::size_t>(now - stops.begin());
+        const std::size_t next = (from + stops.size() + (delta < 0 ? stops.size() - 1 : 1)) % stops.size();
+        options().set(row.option, stops[next]);
+        return;
+    }
+}
 
 void settings_page_check() {
     int rows = 0, problems = 0;
@@ -388,7 +511,7 @@ void settings_page_check() {
         else if (menu_text_width(glyphs) > limit_px)
             report(text, "wider than its box");
     };
-    for (const Page &page : pages()) {
+    const auto check_page = [&](const Page &page) {
         if (page.rows.size() > settings_page_max_rows)
             report(page.id, "more rows than the screen fits");
         for (const Row &row : page.rows) {
@@ -399,7 +522,12 @@ void settings_page_check() {
                     check_text(in(value.text, language), language, settings_page_value_px);
             }
         }
-    }
+    };
+    for (const Page &page : pages())
+        check_page(page);
+    check_page(host_page());
+    for (const Language language : {Language::English, Language::Japanese})
+        check_text(in(send_away_text, language), language, settings_page_value_px);
     std::printf("[settings page] check: %d rows, %d problem(s)\n", rows, problems);
 }
 

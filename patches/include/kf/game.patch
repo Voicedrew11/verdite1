@@ -240,7 +240,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..6befed11d122f59d4e2779b6725c9592
  extern KfMenuResult menu_list_confirm(
      const KfMenuList *list, KfMenuConfirmKind confirm_kind, KfMenuPreviewMode preview_mode,
 diff --git a/include/kf/game/menu_text.h b/include/kf/game/menu_text.h
-index 87ebaf4e17ad51009ffb9735cd87841961d6765f..5d6a56f5cd338ddb479b9922f0d5f81badb3fa2c 100644
+index 87ebaf4e17ad51009ffb9735cd87841961d6765f..93e70a1828e9b9eb84fed484fea648af30c35d49 100644
 --- a/include/kf/game/menu_text.h
 +++ b/include/kf/game/menu_text.h
 @@ -5,6 +5,10 @@
@@ -276,7 +276,7 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..5d6a56f5cd338ddb479b9922f0d5f81b
      case MenuLabel::Pickup:
          return english ? MenuGlyphRow{{0x00, 0x06, MENU_TEXT_END}}
                         : MenuGlyphRow{{0x53, 0x6a, MENU_TEXT_END}};
-@@ -123,4 +127,37 @@ inline MenuGlyphRow menu_label(MenuLabel label)
+@@ -123,4 +127,45 @@ inline MenuGlyphRow menu_label(MenuLabel label)
      return {{MENU_TEXT_END}};
  }
  
@@ -304,6 +304,14 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..5d6a56f5cd338ddb479b9922f0d5f81b
 +};
 +
 +std::vector<MenuTextGlyph> menu_spell(std::string_view text, kf::Language language);
++// PC extension: free text as the quads menu_draw_text draws, each from the line's left and top, for
++// a caller that places them itself (the name bar in the world). A font this machine lacks is left out.
++struct MenuTextQuad {
++    kf::FaceMaterial material;
++    s32 x, y, width, height;
++    s32 u, v;
++};
++std::vector<MenuTextQuad> menu_text_quads(std::span<const MenuTextGlyph> glyphs);
 +// PC extension: text spelled onto the end of a line, so a space it starts with moves on from the
 +// line's last glyph (menu_spell alone has none to move on from, and drops it).
 +void menu_spell_onto(std::vector<MenuTextGlyph> &line, std::string_view text, kf::Language language);
@@ -361,7 +369,7 @@ index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..1e48b2a7fda01d46562bde722cef2940
  extern void player_increment_physical_power_training(void);
  extern s32 player_move_horizontal(s32 heading, s32 distance);
 diff --git a/include/kf/game/render.h b/include/kf/game/render.h
-index 2f6842c54f2849a443d80daf631199b876b6cd04..15f58a8ff30dbb20854bb09285fb618d4d8cfbcf 100644
+index 2f6842c54f2849a443d80daf631199b876b6cd04..62864c4e921d12a5d19d5ffc34f9de6e7db3dad0 100644
 --- a/include/kf/game/render.h
 +++ b/include/kf/game/render.h
 @@ -10,6 +10,8 @@
@@ -381,7 +389,7 @@ index 2f6842c54f2849a443d80daf631199b876b6cd04..15f58a8ff30dbb20854bb09285fb618d
  extern std::array<KfSpriteQuad, KF_EFFECT_BILLBOARD_SPRITE_COUNT> effect_billboard_sprites;
  extern std::array<KfHudModel, KF_HUD_MODEL_TABLE_ROWS> hud_models;
  extern std::array<KfHudSprite, KF_HUD_TABLE_ROWS> hud_sprites;
-@@ -145,13 +148,43 @@ extern void render_hud_sprites(KfHudSprite *table);
+@@ -145,13 +148,46 @@ extern void render_hud_sprites(KfHudSprite *table);
  extern void render_initialize(void);
  extern void render_map_cell(
      s32 col, s32 row, KfCellVisibility visibility);
@@ -395,7 +403,8 @@ index 2f6842c54f2849a443d80daf631199b876b6cd04..15f58a8ff30dbb20854bb09285fb618d
 +    KF_RENDER_TAG_WEAPON = 1280,
 +    KF_RENDER_TAG_NOTIFICATIONS = 1296,
 +    KF_RENDER_TAG_HUD_SPRITES = 1312,
-+    KF_RENDER_TAG_ONLINE_PLAYERS = 2048
++    KF_RENDER_TAG_ONLINE_PLAYERS = 2048,
++    KF_RENDER_TAG_ONLINE_PLAYER_NAMES = 2304
 +};
  extern void render_map_cells(void);
 +// PC extension: the active cell window's cells, wherever the window keeps them.
@@ -403,6 +412,8 @@ index 2f6842c54f2849a443d80daf631199b876b6cd04..15f58a8ff30dbb20854bb09285fb618d
  extern void render_map_event(KfMapEvent *event, const MATRIX *lights);
 +// PC extension (online play): another player in the room, with a borrowed enemy or NPC model.
 +extern void render_online_player(const kf::OnlinePlayer &player);
++// PC extension (online play): the name bar above that player (kf/platform/online_name_bar.h).
++extern void render_online_player_name(const kf::OnlinePlayer &player);
 +// PC extension (messages on the ground): a message's mark on the floor of its cell.
 +extern void render_message_mark(const kf::GroundMark &mark, const MATRIX *lights);
 +// PC extension (kf.scene): the mods' lines and markers, drawn as the message marks are.

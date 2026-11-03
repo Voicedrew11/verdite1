@@ -20,10 +20,12 @@
 #include <kf/platform/automap.h>
 #include <kf/platform/coop.h>
 #include <kf/platform/host.h>
+#include <kf/platform/input.h>
 #include <kf/platform/saves.h>
 #include <verdite/pickup_feed.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -31,6 +33,7 @@
 #include <map>
 #include <optional>
 #include <random>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -59,6 +62,8 @@ struct HostSide {
     std::map<CoopPlayerId, CoopProfile> profiles;   // as each said it, kept after they leave
     std::map<CoopPlayerId, std::uint32_t> applied_through, worn_through;
     std::vector<std::pair<std::uint64_t, CoopHello>> waiting;   // hellos to answer between updates
+    std::array<std::uint64_t, coop_guest_slots> slots{};        // a guest's peer, kept while it stays
+    std::set<CoopPlayerId> sent_away;                           // refused for the rest of this session
     bool pack_changed = false;
     bool file_changed = false;
     std::uint64_t written_ms = 0;
@@ -75,6 +80,7 @@ struct GuestSide {
     std::uint32_t character_number = 0;
     std::uint32_t wear_number = 0;
     CoopRoster roster;   // as the host last sent it
+    std::optional<CoopRules> rules;   // as the host last sent them
 };
 
 struct Coop {
@@ -262,6 +268,7 @@ void reset_session() {
     coop.self = self;
     coop.profile = profile;
     coop.looked_for_aside = looked_for_aside;
+    apply_control_settings();   // a guest's tick rate is its own again
 }
 
 // A game set aside by a run that quit or crashed in a room comes back in the next, before any
@@ -494,6 +501,16 @@ void host_wear(CoopPlayerId id, std::uint32_t number, const CoopWorn &worn) {
     coop.host.pack_changed = true;
 }
 
+CoopRules host_rules() {
+    return {effective_settings().tick_rate, settings().revive_wait_s};
+}
+
+void keep_guest_slot(std::uint64_t peer) {
+    auto &slots = coop.host.slots;
+    if (const auto free = std::ranges::find(slots, std::uint64_t{0}); free != slots.end())
+        *free = peer;
+}
+
 void host_welcome(std::uint64_t peer, const CoopHello &hello) {
     HostSide &host = coop.host;
     map_world_state_persist();
@@ -504,6 +521,8 @@ void host_welcome(std::uint64_t peer, const CoopHello &hello) {
     const auto &cell = player_state.motion_state.map_cell;
     send(peer, CoopWelcome{character.state, character.wore, party.pack(), party.gold(), party.highest_floor(),
         save_system_coop_world(), kf_enum_encode<u8>(player_state.progress_state.current_floor), cell.x, cell.z});
+    send(peer, host_rules());
+    keep_guest_slot(peer);
     host.pack_changed = true;
     host.file_changed = true;
     host_roster();
@@ -661,10 +680,23 @@ void host_save(const CoopSavePoint &at) {
 
 // ---- messages ----
 
+// Why a player saying hello is not let in, if it is not.
+std::optional<CoopTurnedAwayWhy> refusal_of(CoopPlayerId id) {
+    if (coop.host.sent_away.contains(id))
+        return CoopTurnedAwayWhy::SentAway;
+    const auto characters = coop.host.file.live.party.characters();
+    const bool known = std::ranges::find(characters, id, &CoopCharacter::id) != characters.end();
+    return settings().room_open || known ? std::nullopt : std::optional(CoopTurnedAwayWhy::RoomClosed);
+}
+
 void host_receives(std::uint64_t peer, const CoopMessage &message) {
     HostSide &host = coop.host;
     if (const auto *hello = std::get_if<CoopHello>(&message)) {
-        if (hello->id != coop.self && !host.guests.contains(peer))
+        if (hello->id == coop.self || host.guests.contains(peer))
+            return;
+        if (const auto refused = refusal_of(hello->id))
+            send(peer, CoopTurnedAway{*refused});
+        else
             host.waiting.emplace_back(peer, *hello);
         return;
     }
@@ -686,8 +718,21 @@ void host_receives(std::uint64_t peer, const CoopMessage &message) {
     }
 }
 
+void guest_turned_away(CoopTurnedAwayWhy why) {
+    const bool sent_away = why == CoopTurnedAwayWhy::SentAway;
+    const char *text = sent_away ? "The host sent you away." : "The host is not letting new players in.";
+    std::printf("[coop] %s\n", text);
+    host_show_message(text);
+    online_turned_away(text, sent_away ? OnlineFailure::SentAway : OnlineFailure::RoomClosed);
+}
+
 void guest_receives(std::uint64_t peer, const CoopMessage &message) {
     GuestSide &guest = coop.guest;
+    if (const auto *away = std::get_if<CoopTurnedAway>(&message)) {
+        if (peer == guest.room_host)
+            guest_turned_away(away->why);
+        return;
+    }
     if (const auto *welcome = std::get_if<CoopWelcome>(&message)) {
         if (guest.host != 0 || coop.in_play || peer != guest.room_host)
             return;
@@ -703,7 +748,10 @@ void guest_receives(std::uint64_t peer, const CoopMessage &message) {
             guest.wipe = *wipe;
         return;
     }
-    if (const auto *roster = std::get_if<CoopRoster>(&message)) {
+    if (const auto *rules = std::get_if<CoopRules>(&message)) {
+        guest.rules = *rules;
+        apply_control_settings();
+    } else if (const auto *roster = std::get_if<CoopRoster>(&message)) {
         guest.roster = *roster;
         coop_floors_roster(*roster);
     } else if (const auto *pack = std::get_if<CoopPack>(&message)) {
@@ -818,6 +866,8 @@ void coop_peer_closed(std::uint64_t peer) {
         const CoopPlayerId id = guest->second;
         coop.host.file.live.party.leave(id);
         coop.host.guests.erase(guest);
+        if (const auto slot = std::ranges::find(coop.host.slots, peer); slot != coop.host.slots.end())
+            *slot = 0;
         coop.host.pack_changed = true;
         coop.host.file_changed = true;
         host_roster();
@@ -908,7 +958,53 @@ std::string coop_json() {
            ",\"floor\":" + std::to_string(kf_enum_encode<int>(player_state.progress_state.current_floor)) + ",\"cell\":[" +
            std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
            "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json() + "," +
-           coop_death_json() + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
+           coop_death_json() + ",\"tickVblanks\":" + std::to_string(world_update_vblanks) + ",\"reviveWaitS\":" + std::to_string(coop_revive_wait_s()) +
+           ",\"nameBarsDrawn\":" + std::to_string(online_name_bars_drawn()) + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
+}
+
+bool coop_hosting() {
+    return coop.role == Role::Host;
+}
+
+bool coop_follows_host() {
+    return coop.role == Role::Guest;
+}
+
+void coop_room_settings_changed() {
+    if (coop.role == Role::Host && coop.in_play)
+        broadcast(host_rules());
+}
+
+std::optional<int> coop_room_tick_rate() {
+    if (coop.role == Role::Guest && coop.guest.rules)
+        return coop.guest.rules->tick_rate;
+    return std::nullopt;
+}
+
+int coop_revive_wait_s() {
+    if (coop.role == Role::Guest)
+        return coop.guest.rules ? coop.guest.rules->revive_wait_s : CoopRules{}.revive_wait_s;
+    return settings().revive_wait_s;
+}
+
+std::string coop_guest_name(std::size_t slot) {
+    if (coop.role != Role::Host || slot >= coop.host.slots.size())
+        return {};
+    const auto guest = coop.host.guests.find(coop.host.slots[slot]);
+    return guest == coop.host.guests.end() ? std::string() : profile_of(guest->second).name;
+}
+
+void coop_send_away(std::size_t slot) {
+    if (coop.role != Role::Host || slot >= coop.host.slots.size())
+        return;
+    const std::uint64_t peer = coop.host.slots[slot];
+    const auto guest = coop.host.guests.find(peer);
+    if (guest == coop.host.guests.end())
+        return;
+    coop.host.sent_away.insert(guest->second);
+    send(peer, CoopTurnedAway{CoopTurnedAwayWhy::SentAway});
+    std::printf("[coop] sent %s away\n", profile_of(guest->second).name.c_str());
+    coop_peer_closed(peer);   // at once: from here the party goes on without them
 }
 
 std::string coop_panel_line() {
@@ -976,6 +1072,8 @@ CoopFeedRow feed_row(const verdite::PickupShown &shown, Language language) {
 
 std::vector<CoopFeedRow> coop_feed_view(Language language) {
     std::vector<CoopFeedRow> rows;
+    if (!ext::settings().pickup_feed)
+        return rows;
     for (const verdite::PickupShown &shown : ext::coop_feed_lines())
         rows.push_back(feed_row(shown, language));
     return rows;

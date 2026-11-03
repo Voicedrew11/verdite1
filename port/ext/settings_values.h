@@ -36,6 +36,8 @@ struct Settings {
     float enemy_turn = 1.5f;        // fixed: an enemy's turn toward the player, times its own (1: original)
     float ui_scale = 1.0f;
     int setup_seen = 0;             // the first-run setup's version last finished or skipped
+    int name_bars = 2;              // above the other players: 0 off, 1 in sight, 2 through walls too (OnlineNameBars)
+    int revive_wait_s = 30;         // hosting: the most a down player waits to come back (10, 30 or 60)
     // Classic mode: play as originally shipped. Every enhancement below is
     // overridden (see effective_settings) while the player's values are kept.
     bool classic = false;
@@ -68,5 +70,7 @@ struct Settings {
     bool discord_vitals = true;     // HP and MP
     bool discord_exp = true;        // EXP to the next level
     bool online_messages = false;   // messages on the ground: opt-in, as online play is
+    bool pickup_feed = true;        // in coop, who in the party found, bought, sold or used what
+    bool room_open = true;          // hosting: players new to the world may join
 };
 } // namespace kf::ext

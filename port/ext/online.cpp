@@ -41,6 +41,7 @@ namespace {
 
 std::string start_room; // --online-room
 std::uint32_t own_update = 0; // game updates counted by online_update, numbering the poses sent
+std::uint64_t name_bars_drawn = 0;
 
 #if KF_ONLINE
 
@@ -267,6 +268,10 @@ void online_join_at_start(std::string_view room) {
     start_room = room;
 }
 
+std::uint64_t online_name_bars_drawn() {
+    return name_bars_drawn;
+}
+
 #if KF_ONLINE
 
 std::string online_service_url() {
@@ -315,6 +320,13 @@ std::uint64_t online_self_peer() {
 void online_leave_room(std::string_view why) {
     if (online.session)
         online.leave_after_poll = std::string(why);
+}
+
+void online_turned_away(std::string_view why, OnlineFailure failure) {
+    if (!online.session)
+        return;
+    online.leave_after_poll = std::string(why);
+    online.failure = failure;
 }
 
 void online_stop() {
@@ -441,6 +453,8 @@ std::uint64_t online_self_peer() {
 
 void online_leave_room(std::string_view) {}
 
+void online_turned_away(std::string_view, OnlineFailure) {}
+
 void online_join_from_title(std::string_view, RoomRole, std::string_view) {}
 
 OnlineStatus online_status() {
@@ -489,6 +503,15 @@ bool online_world_runs_while_held() {
 #endif
 }
 
+OnlineNameBars online_name_bars() {
+    const int choice = ext::settings().name_bars;
+    return choice == 0 ? OnlineNameBars::Off : choice == 1 ? OnlineNameBars::InSight : OnlineNameBars::Always;
+}
+
+void online_name_bar_drawn() {
+    ++ext::name_bars_drawn;
+}
+
 std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     std::vector<OnlinePlayer> players;
 #if KF_ONLINE
@@ -499,7 +522,7 @@ std::vector<OnlinePlayer> online_players_on_floor(int floor) {
             const ext::CoopProfile profile = ext::coop_profile_of_peer(peer);
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
                 pose->attack_phase, pose->pitch, pose->foot_height, known.stride.phase, known.stride.amount,
-                peer == eyes, profile.colour, profile.helmet});
+                peer == eyes, profile.colour, profile.helmet, profile.name});
         }
 #else
     (void)floor;

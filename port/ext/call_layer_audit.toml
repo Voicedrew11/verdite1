@@ -126,6 +126,7 @@ loads = [
     "render_entities",
     "render_initialize",
     "render_online_player",
+    "render_online_player_name",
     "resource_file_index_item_models",
     "resource_file_load_allocated",
     "resource_file_load_into",

@@ -1,6 +1,7 @@
 #pragma once
 #include <kf/ext/ext.h>
 #include <kf/platform/analog.h>
+#include <kf/platform/language.h>
 #include <verdite/setup.h>
 #include "coop_profile.h"
 #include "online_pose.h"
@@ -126,7 +127,7 @@ enum class RoomRole : std::uint8_t { First, Later };
 void online_join_from_title(std::string_view room, RoomRole expected, std::string_view listed_as);
 // NeedsEnglish: coop draws players' names with the English font in either language, and the
 // English game files were missing; they are being added (language_task_state).
-enum class OnlineFailure : std::uint8_t { None, NoHost, InUse, Full, OtherBuild, Unreachable, NoOnline, NeedsEnglish, Other };
+enum class OnlineFailure : std::uint8_t { None, NoHost, InUse, Full, OtherBuild, Unreachable, NoOnline, NeedsEnglish, RoomClosed, SentAway, Other };
 struct OnlineStatus {
     bool joining = false;   // asked, not yet in the room
     bool in_room = false;
@@ -145,8 +146,12 @@ void online_broadcast_control(std::span<const std::uint8_t> bytes);
 void online_broadcast_state(std::span<const std::uint8_t> bytes);
 // This machine's peer in the room; 0 outside one.
 std::uint64_t online_self_peer();
+// How many name bars the game has drawn, for the agent channel's tests.
+std::uint64_t online_name_bars_drawn();
 // Leaves the room once the session's events are handled, saying why.
 void online_leave_room(std::string_view why);
+// The same, for a host that turned this player away, so the title can say which way.
+void online_turned_away(std::string_view why, OnlineFailure failure);
 
 // ---- coop (coop.cpp): the coop world played in a room (docs/COOP_PLAN.md) ----
 // What online.cpp hears of the room.
@@ -180,6 +185,25 @@ CoopProfile coop_profile_of_peer(std::uint64_t peer);
 void title_return();
 // A line for the Online window: whose world this is, or empty outside coop.
 std::string coop_panel_line();
+// ---- the room's settings (coop.cpp), which the host chooses (docs/COOP_PLAN.md, "Multiplayer settings") ----
+inline constexpr std::size_t coop_guest_slots = 3;   // the service's room holds 4 players
+// Whether this machine hosts the room it is playing in, or is a guest in one.
+bool coop_hosting();
+bool coop_follows_host();
+// A setting the room follows changed: a host sends it to the others.
+void coop_room_settings_changed();
+// The host's tick rate while this machine is a guest told it; else nothing, and its own applies.
+std::optional<int> coop_room_tick_rate();
+// The most a down player waits to come back: the host's, told or its own.
+int coop_revive_wait_s();
+// A guest of this room by its slot, which it keeps while it stays: its name, empty when there is none.
+std::string coop_guest_name(std::size_t slot);
+// Host: sends that guest out of the room, and refuses them for the rest of this session.
+void coop_send_away(std::size_t slot);
+// ---- the multiplayer settings, for the title's pages (settings_page.cpp) ----
+enum class TitleCoopRows : std::uint8_t { Own, Room };
+std::vector<verdite::TitleModSetting> title_coop_settings(TitleCoopRows rows, Language language);
+void title_coop_setting_step(TitleCoopRows rows, std::size_t row, int delta);
 
 // ---- automap ----
 // The English name of an item as the map labels it, or nullptr for an id with none.

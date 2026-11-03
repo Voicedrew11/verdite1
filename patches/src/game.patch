@@ -2523,7 +2523,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..6c7d3d722e5dae9a7e9c3ea20c8ae9d180f0770c 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed72206dc51c3d 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,17 @@
@@ -3229,7 +3229,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..6c7d3d722e5dae9a7e9c3ea20c8ae9d1
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2278,260 @@ void menu_draw_number(
+@@ -1854,10 +2278,268 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -3441,11 +3441,12 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..6c7d3d722e5dae9a7e9c3ea20c8ae9d1
 +    return state;
 +}
 +
-+void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade, s32 depth)
++std::vector<MenuTextQuad> menu_text_quads(std::span<const MenuTextGlyph> glyphs)
 +{
 +    const MenuSpriteDef &label_font = menu_resources().assets.glyph_atlas;
 +    const MenuSpriteDef &number_font = menu_resources().assets.number_atlas;
-+    s32 x = at.x;
++    std::vector<MenuTextQuad> quads;
++    s32 x = 0;
 +
 +    for (const MenuTextGlyph &glyph : glyphs) {
 +        const bool number = glyph.font == MenuTextFont::Number;
@@ -3473,17 +3474,24 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..6c7d3d722e5dae9a7e9c3ea20c8ae9d1
 +            if (glyph.code & MENU_TEXT_HANDAKUTEN)
 +                uvs[layers++] = {MENU_HANDAKUTEN_U, MENU_KANA_MARK_V};
 +        }
-+        for (s32 i = 0; i < layers; i++) {
-+            auto face = menu_textured_quad(font.material, x - glyph.left, at.y + glyph.y + (number ? 1 : 0), width, height);
-+            render_face_uv_rectangle(&face, uvs[i][0], uvs[i][1], uvs[i][0] + width, uvs[i][1] + height);
-+            for (auto &vertex : face.vertices) {
-+                vertex.r *= shade;
-+                vertex.g *= shade;
-+                vertex.b *= shade;
-+            }
-+            menu_submit_template(face, depth);
-+        }
++        for (s32 i = 0; i < layers; i++)
++            quads.push_back({font.material, x - glyph.left, glyph.y + (number ? 1 : 0), width, height, uvs[i][0], uvs[i][1]});
 +        x += glyph.advance;
++    }
++    return quads;
++}
++
++void menu_draw_text(std::span<const MenuTextGlyph> glyphs, MenuPoint at, float shade, s32 depth)
++{
++    for (const MenuTextQuad &quad : menu_text_quads(glyphs)) {
++        auto face = menu_textured_quad(quad.material, at.x + quad.x, at.y + quad.y, quad.width, quad.height);
++        render_face_uv_rectangle(&face, quad.u, quad.v, quad.u + quad.width, quad.v + quad.height);
++        for (auto &vertex : face.vertices) {
++            vertex.r *= shade;
++            vertex.g *= shade;
++            vertex.b *= shade;
++        }
++        menu_submit_template(face, depth);
 +    }
 +}
 +
@@ -4324,10 +4332,10 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c79ba46ef27f4019645c8cd2582dd6044e105609
+index 0000000000000000000000000000000000000000..f63ee4be21c93bdaa22a20a2a1e8d46665bc167f
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,476 @@
+@@ -0,0 +1,556 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
 +// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
@@ -4336,6 +4344,7 @@ index 0000000000000000000000000000000000000000..c79ba46ef27f4019645c8cd2582dd604
 +#include <kf/platform/prelude.h>
 +#include <kf/game/equipment.h>
 +#include <kf/game/graphics.h>
++#include <kf/game/menu_text.h>
 +#include <kf/game/render.h>
 +#include <kf/lib/animation.h>
 +#include <kf/lib/byte_reader.h>
@@ -4346,9 +4355,12 @@ index 0000000000000000000000000000000000000000..c79ba46ef27f4019645c8cd2582dd604
 +#include <kf/lib/map_data.h>
 +#include <kf/lib/math.h>
 +#include <kf/lib/player_stats_types.h>
++#include <kf/lib/render_face.h>
 +#include <kf/lib/resource_file.h>
 +#include <kf/lib/tmd.h>
 +#include <kf/platform/host.h>
++#include <kf/platform/language_runtime.h>
++#include <kf/platform/online_name_bar.h>
 +#include <kf/platform/online_weapon_hold.h>
 +
 +#include <algorithm>
@@ -4803,6 +4815,82 @@ index 0000000000000000000000000000000000000000..c79ba46ef27f4019645c8cd2582dd604
 +    }
 +    if (weapon)
 +        online_player_draw_held(*weapon, body, held, placements[forearm_right]);
++}
++
++// In front of the world (from KF_SCENE_MIN_OT_DEPTH up) and behind the HUD's sprites, for a bar seen
++// through walls; the band behind its text at either depth.
++enum {
++    ONLINE_NAME_BAR_OVER_WORLD_DEPTH = KF_SCENE_MIN_OT_DEPTH - 2,
++    ONLINE_NAME_BAR_TEXT_BRIGHTNESS = 96,   // the menu's text
++};
++
++static SVECTOR online_name_bar_corner(s32 x, s32 y)
++{
++    return SVECTOR{static_cast<s16>(x), static_cast<s16>(y), 0, 0};
++}
++
++// A flat quad of the bar, its corners in the order render_enqueue_sprite has them, smoothed as a world
++// sprite is and not fogged or lit, so it reads the same in the dark.
++static void online_name_bar_submit(kf::DrawFace &face, const kf::OnlineNameBarRect &rect, const MATRIX &model,
++    CVECTOR colour, s32 depth)
++{
++    const auto &view = game_graphics_runtime.render_state;
++    const std::array<SVECTOR, 4> corners = {online_name_bar_corner(rect.left, rect.top), online_name_bar_corner(rect.right, rect.top),
++        online_name_bar_corner(rect.left, rect.bottom), online_name_bar_corner(rect.right, rect.bottom)};
++    face.shape = kf::FaceShape::Quad;
++    face.casts_shadow = false;
++    for (unsigned i = 0; i < corners.size(); ++i) {
++        const auto corner = kf::render_project_point(model, view.projection, corners[i]);
++        face.vertices[i].x = kf::render_subpixel ? corner.fx : corner.x;
++        face.vertices[i].y = kf::render_subpixel ? corner.fy : corner.y;
++        face.vertices[i].w = kf::render_perspective ? corner.w : 0.0f;
++        face.vertices[i].cx = corner.cx;
++        face.vertices[i].cy = corner.cy;
++        face.vertices[i].cz = corner.cz;
++    }
++    render_carry_sprite(face, corners, model);
++    render_face_submit(&face, {&colour, 1}, kf::FaceShading::Flat, depth);
++}
++
++void render_online_player_name(const kf::OnlinePlayer &player)
++{
++    const kf::OnlineNameBars shown = kf::online_name_bars();
++    if (shown == kf::OnlineNameBars::Off || player.name.empty())
++        return;
++    const auto &view = game_graphics_runtime.render_state;
++    const SVECTOR relative = VECTOR{
++        static_cast<s32>(player.x * ONLINE_PLAYER_TILE_SIZE) - view.view_position.vx,
++        player.foot_height - kf::online_name_bar_above_feet - view.view_position.vy,
++        static_cast<s32>(player.z * ONLINE_PLAYER_TILE_SIZE) - view.view_position.vz}.narrowed();
++    // Its corners are in the camera's axes, so it always faces the camera.
++    MATRIX model;
++    kf::render_place_model(model, view.view_matrix, relative);
++    kf::matrix_set_rotation_xyz(SVECTOR{0, 0, 0, 0}, model);
++    const auto anchor = kf::render_project_point(model, view.projection, SVECTOR{0, 0, 0, 0});
++    if (anchor.cz < kf::online_name_bar_nearest_depth)
++        return;
++    const s32 otz = anchor.depth >> KF_GTE_DEPTH_TO_OT_SHIFT;
++    if (otz < KF_SCENE_MIN_OT_DEPTH)
++        return;
++    const s32 text_depth = shown == kf::OnlineNameBars::Always ? ONLINE_NAME_BAR_OVER_WORLD_DEPTH : otz;
++    const auto glyphs = menu_spell(player.name, kf::game_language());
++    const s32 width_px = menu_text_width(glyphs);
++
++    kf::DrawFace band {};
++    band.transparency = kf::FaceTransparency::Blend;
++    band.material = {kf::SurfaceKind::Solid, {}, kf::BlendMode::average};
++    online_name_bar_submit(band, kf::online_name_bar_band(width_px), model, CVECTOR{0, 0, 0, 0},
++        (text_depth + 1) & KF_ORDERING_TABLE_INDEX_MASK);
++
++    const CVECTOR text_colour = {ONLINE_NAME_BAR_TEXT_BRIGHTNESS, ONLINE_NAME_BAR_TEXT_BRIGHTNESS, ONLINE_NAME_BAR_TEXT_BRIGHTNESS, 0};
++    for (const MenuTextQuad &quad : menu_text_quads(glyphs)) {
++        kf::DrawFace face {};
++        face.material = quad.material;
++        render_face_uv_rectangle(&face, quad.u, quad.v, quad.u + quad.width, quad.v + quad.height);
++        online_name_bar_submit(face, kf::online_name_bar_piece(width_px, quad.x, quad.y, quad.width, quad.height), model,
++            text_colour, text_depth & KF_ORDERING_TABLE_INDEX_MASK);
++    }
++    kf::online_name_bar_drawn();
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
 index 33680f578d7627d7bb43b29b77f58b843371198a..76af58e4816e1fc0175f6cd5d37a1ee5bce09893 100644
@@ -6460,7 +6548,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..34927a04bf39f50ff09eaa85699c2da7b9d3b634 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632706cbe498164120bc58d1a535d9771f9eada 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
 @@ -3,6 +3,8 @@
@@ -6538,7 +6626,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..34927a04bf39f50ff09eaa85699c2da7
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +106,77 @@ void render_entities(void)
+@@ -77,23 +106,79 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -6608,6 +6696,8 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..34927a04bf39f50ff09eaa85699c2da7
 +        if (!player.eyes && render_cell_is_visible(static_cast<s32>(player.x), static_cast<s32>(player.z), origin)) {
 +            tag(KF_RENDER_TAG_ONLINE_PLAYERS, i, player.id);
 +            render_online_player(player);
++            tag(KF_RENDER_TAG_ONLINE_PLAYER_NAMES, i, player.id);
++            render_online_player_name(player);
 +        }
 +    }
 +    // PC extension (messages on the ground): the marks on this floor, on the cells in view.

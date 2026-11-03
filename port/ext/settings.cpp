@@ -189,6 +189,12 @@ void settings_load() {
     current.discord_exp = read_bool(discord, "exp", current.discord_exp);
     const cJSON *online = cJSON_GetObjectItemCaseSensitive(document, "online");
     current.online_messages = read_bool(online, "messages", current.online_messages);
+    current.name_bars = std::clamp(static_cast<int>(read_number(online, "name_bars", current.name_bars)), 0, 2);
+    current.pickup_feed = read_bool(online, "pickup_feed", current.pickup_feed);
+    current.room_open = read_bool(online, "room_open", current.room_open);
+    current.revive_wait_s = static_cast<int>(read_number(online, "revive_wait_s", current.revive_wait_s));
+    if (current.revive_wait_s != 10 && current.revive_wait_s != 60)
+        current.revive_wait_s = 30;
     settings_tidy(current);
 }
 
@@ -266,6 +272,10 @@ void settings_save() {
     write_value(discord, "exp", cJSON_CreateBool(current.discord_exp));
     cJSON *online = object_entry(document, "online");
     write_value(online, "messages", cJSON_CreateBool(current.online_messages));
+    write_value(online, "name_bars", cJSON_CreateNumber(current.name_bars));
+    write_value(online, "pickup_feed", cJSON_CreateBool(current.pickup_feed));
+    write_value(online, "room_open", cJSON_CreateBool(current.room_open));
+    write_value(online, "revive_wait_s", cJSON_CreateNumber(current.revive_wait_s));
     char *text = cJSON_Print(document);
     if (!text)
         return;
@@ -423,7 +433,8 @@ void apply_control_settings() {
     touch_button_haptics = e.touch_haptics;
     host_set_analog_options(e.analog);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.
-    world_update_vblanks = std::clamp(60 / std::max(e.tick_rate, 1), 2, 5);
+    // In a room the host's, as every player must run at one speed.
+    world_update_vblanks = std::clamp(60 / std::max(coop_room_tick_rate().value_or(e.tick_rate), 1), 2, 5);
     Language language;
     if (language_parse(e.language.c_str(), &language))
         language_preference = language;

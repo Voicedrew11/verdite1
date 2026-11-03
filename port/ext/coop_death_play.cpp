@@ -29,7 +29,6 @@ namespace {
 
 constexpr std::uint32_t calm_ms = 4000;      // without a hit taken or dealt, before a down player comes back beside them
 constexpr std::uint32_t down_least_ms = 3000; // down at least this long, so whose eyes is said before coming back
-constexpr std::uint32_t down_most_ms = 30000; // back after this long even beside a fight: an enemy can chase forever
 constexpr s32 step_most = 699;               // PLAYER_MAX_STEP_RISE: a cell to come back on is no further up or down
 constexpr float cell_units = KF_MAP_TILE_SIZE;
 
@@ -230,7 +229,8 @@ void coop_death_down_update(bool next) {
         return;
     }
     look_from(pose->second);
-    const bool calm = !pose->second.fighting || death.down_updates >= updates_in(down_most_ms);
+    // Back after the host's wait even beside a fight: an enemy can chase forever.
+    const bool calm = !pose->second.fighting || death.down_updates >= updates_in(static_cast<std::uint32_t>(coop_revive_wait_s()) * 1000);
     if (calm && death.down_updates >= updates_in(down_least_ms))
         come_back_beside(pose->second);
 }

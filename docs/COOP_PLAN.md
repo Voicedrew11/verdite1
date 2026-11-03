@@ -29,6 +29,8 @@ The test of the design: if a rule needs more than a line here, it is too complic
 - Joining sets your own game aside, and leaving puts it back where you stood.
 - A room is private, joined by its code, or public, listed for anyone to join; each keeps its own
   world. Both are hosted and joined from CO-OP on the title screen.
+- A name floats above each other player. The host chooses the room's speed, how long the fallen
+  wait, and whether new players may join, and can send a player away.
 
 ## Fixed
 
@@ -63,7 +65,8 @@ The test of the design: if a rule needs more than a line here, it is too complic
   drawn at random by the host's game; a private code is 8 digits), and the service lists a room
   only for a host who asked, so strangers never touch a private world. In a public room the host can send a player away (their
   character stays in the world, worn gear back in the pack), and a host who sends someone away
-  is not offered that room by the service again.
+  is not offered that room by the service again. (Built 2026-11-03 for any room, and refused by the
+  host for the session only: Multiplayer settings.)
 - **Late joiners start fresh, beside the host:** level 1, adding the game's starting kit (a
   Short Sword, a Medicinal Herb, 150 gold) to the party's pack and purse, and free to wear
   whatever in the pack no one is wearing. On a deep floor a level-1 character dies often, but
@@ -370,7 +373,7 @@ What the table changed:
    item use, since a difference in the pack cannot tell. Built in that order: the models with
    their tests, the file, the session, the game's patches, the feed. Until step 5 only the host's
    world records went into the coop save. Public rooms and the title menu followed the same day (The title menu),
-   with the service's list (NETWORKING_PLAN.md); sending a player away is still to come.
+   with the service's list (NETWORKING_PLAN.md); sending a player away followed (Multiplayer settings).
 5. **Done 2026-10-27, but for what a non-owner does not yet see** (Floor ownership;
    `port/ext/coop_floor.h`, `port/ext/coop_floor_owners.h`, `port/ext/coop_floor_play.h`,
    `port/ext/coop_floor_frames.h`). Floor ownership: first the floor's live snapshot and its round-trip test (a floor captured
@@ -549,7 +552,7 @@ Not yet:
 - **A public room's code** is never shown.
 - **Sounds**: the menu's cursor and confirm sounds are the game's bank, which the opening has not
   loaded; the title menu is silent.
-- **Sending a player away** from a public room, and the service's check of names.
+- The service's check of names.
 
 ## The profile
 
@@ -576,6 +579,50 @@ The rules are `port/ext/coop_profile.h` (unit-tested) and the menu's pages libve
 Not judged by eye: the name grid's narrower cells, the colours on the knight. In Japanese a name is
 drawn with the English font's capitals, so coop needs the English files (`verdite-port.md`,
 "Language handling"); `coop_pair.py --japanese a|b` plays either player in Japanese.
+
+## Multiplayer settings
+
+Built 2026-11-03. A page of its own in PORT SETTINGS (MULTIPLAYER), a Multiplayer page in F1 and
+Android's panel (the option table), and on the title, COOP, SETTINGS. Settings.json's `online` keys.
+
+| who | row | what |
+|---|---|---|
+| everyone | NAME BARS | ALWAYS (through walls, as Minecraft), IN SIGHT, OFF |
+| everyone | PARTY FEED | the pickup feed |
+| everyone | MESSAGES | messages on the ground (`docs/MESSAGES_PLAN.md`) |
+| host | TICK RATE | the room's one speed; a guest's own row is dimmed and comes back when it leaves |
+| host | NEW PLAYERS | CLOSED turns away anyone without a character in this world; a returning player still gets in |
+| host | REVIVE WAIT | 10, 30 or 60 seconds: the most a down player waits beside a fight (it was 30) |
+| host | guests' rows | SEND AWAY for each guest in the room |
+
+- **What only the host sees:** YOUR ROOM, a page built only while `coop_hosting()`; in F1, a section
+  shown only then. On the title, before any room exists, HOST, ROOM SETTINGS has the first three.
+- **The rules travel:** `CoopRules` (tick rate, revive wait) from the host, after its welcome and
+  whenever they change, and nothing else about them is trusted: only the host's are heard, and a
+  value outside the choices is no message. This builds "One tick rate per room", which the plan fixed
+  but the code had not done. Playback delay is worked out when a peer connects and not after a change
+  of tick rate.
+- **Being turned away:** `CoopTurnedAway` says why; the guest leaves as if the host had left, and the
+  title says so. A guest sent away leaves the party at once on the host, as a drop does (its gear back
+  in the pack, its floor to the next player), and its id is refused until the host's session ends.
+  A modified client can ignore the message: the host stops hearing it, but the other players still
+  see its poses until it goes, since only the service could close its connection. The refusal is not
+  kept in the world's file and is not the service's yet.
+- **A guest's rows** keep their slot while the guest stays, so a row never comes to mean someone else
+  under the cursor. Three slots, as the service's room holds 4.
+- **The name bar** (`kf/platform/online_name_bar.h`, `render_online_player_name`): the name in the menu
+  font on a dark band (black at the average blend), 2030 above the feet, 14 units to a font pixel,
+  so it shrinks with distance. Its corners are in the camera's axes, and it is a smoothed world sprite
+  like a spell's, not a HUD quad, or it would swim against the knight while turning. It is unlit and
+  unfogged. ALWAYS sorts it in front of the world; IN SIGHT at its own depth, so nearer walls paint
+  over it in the game's order (the optional depth buffer also hides ALWAYS behind walls). It shows
+  only where the knight is drawn, so never past the cell window, and not within 700 units of the
+  camera, where it would fill the picture.
+- **Checked** (`scripts/coop_settings.py`, 21 checks, three headless instances on a local service;
+  `scripts/title_pair.py` for the title's pages): rows only the host is shown, a guest following tick
+  rate and revive wait, name bars drawn, off and on, the feed off and on, a closed room, a returning
+  player, a guest sent away and refused again. `nameBarsDrawn` counts the bars submitted; how a bar
+  looks is not judged by eye: its size at range, whether it reads at 320x240, and the band's dark.
 
 ## Floor ownership
 
@@ -1044,6 +1091,8 @@ What a room costs each player, for N players:
 - 2026-10-27: other players' spells and sounds (Other players' spells and sounds) travel in the
   pose, not in the owner's frame: they are the caster's, wherever the floor runs, and the pose is
   already played in step with the knight. Sounds go as counts, so a lost pose loses none.
+- 2026-11-03: multiplayer settings and the name bar (Multiplayer settings). Sending a player away is
+  built for private rooms too, refused by the host and for the session rather than by the service.
 - 2026-10-27: the profile (The profile): chosen on the title, not in a room, so it travels in
   the hello and the roster rather than every pose. A player's own pack changes are left out of
   its feed, since its game already says so.

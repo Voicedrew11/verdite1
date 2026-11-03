@@ -179,7 +179,21 @@ def main():
         kept = a.home / "Verdite" / "Verdite1" / "coop.profile"   # SDL's pref path under XDG_DATA_HOME
         check("the profile is kept", kept.exists() and kept.read_text() == "name=ALICE\ncolour=1\nhelmet=0\n")
         a.tap("back")
+        a.choose("SETTINGS")
+        rows = a.wait("the co-op settings", a.title, lambda t: t["rows"])["rows"]
+        check("SETTINGS shows this player's own", [row["text"] for row in rows] == ["NAME BARS", "PARTY FEED", "MESSAGES"]
+              and rows[0]["value"] == "ALWAYS", rows)
+        a.choose("NAME BARS")
+        rows = a.wait("the step", a.title, lambda t: t["rows"][0]["value"] != "ALWAYS")["rows"]
+        check("Confirm steps a co-op setting", rows[0]["value"] == "IN SIGHT", rows)
+        a.tap("back")
         a.choose("HOST")
+        a.choose("ROOM SETTINGS")
+        rows = a.wait("the room's settings", a.title, lambda t: t["rows"])["rows"]
+        check("ROOM SETTINGS shows what a host chooses",
+              [(row["text"], row["value"]) for row in rows]
+              == [("TICK RATE", "15"), ("NEW PLAYERS", "WELCOME"), ("REVIVE WAIT", "30 SECONDS")], rows)
+        a.tap("back")
         a.choose("NEW WORLD")   # the first is PRIVATE
         code_page = a.title()
         code = code_page["code"]
@@ -195,6 +209,11 @@ def main():
         b.choose("JOIN BY CODE")
         b.run("title type " + code)
         check("the join page shows the code typed", b.title()["code"] == code, b.title())
+        a.run("option online.room_open false")
+        b.choose("JOIN")
+        closed = b.wait("the refusal", b.title, lambda t: t["note"] == "THE ROOM IS CLOSED")
+        check("a closed room says so on the title", closed["open"], closed)
+        a.run("option online.room_open true")
         b.choose("JOIN")
         guest = b.wait("the guest's arrival", b.coop, lambda s: s["inPlay"])
         check("B joins A's world by its code", guest["role"] == "guest" and not b.title()["open"], guest)

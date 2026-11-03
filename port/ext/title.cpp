@@ -140,6 +140,9 @@ void keep_mods_current() {
     }
     if (changed || page == verdite::TitlePage::Mods || page == verdite::TitlePage::ModSettings)
         menu().set_mods(read_mods());
+    if (menu().shows_coop_settings())
+        menu().set_coop_settings(title_coop_settings(TitleCoopRows::Own, game_language()),
+                                 title_coop_settings(TitleCoopRows::Room, game_language()));
 }
 
 void step_mod_setting(const verdite::TitleChoice &choice) {
@@ -192,6 +195,8 @@ const char *failure_id(OnlineFailure failure) {
     case OnlineFailure::Unreachable: return "unreachable";
     case OnlineFailure::NoOnline: return "no_online";
     case OnlineFailure::NeedsEnglish: return "needs_english";
+    case OnlineFailure::RoomClosed: return "room_closed";
+    case OnlineFailure::SentAway: return "sent_away";
     case OnlineFailure::None:
     case OnlineFailure::Other: break;
     }
@@ -245,6 +250,9 @@ std::optional<TitleStart> take(const verdite::TitleChoice &choice) {
     case TitleAction::StepModSetting:
         step_mod_setting(choice);
         break;
+    case TitleAction::StepCoopSetting:
+        title_coop_setting_step(choice.listed ? TitleCoopRows::Room : TitleCoopRows::Own, choice.slot, choice.delta);
+        break;
     }
     return std::nullopt;
 }
@@ -293,6 +301,7 @@ struct Words {
     std::string_view in(Language language) const { return language == Language::English ? english : japanese; }
 };
 
+constexpr Words settings_word{"SETTINGS", "せつてい"}, room_settings_word{"ROOM SETTINGS", "ルームのせつてい"};
 constexpr Words continue_word{"CONTINUE", "つづきから"}, new_game_word{"NEW GAME", "はじめから"},
     coop_word{"COOP", "マルチプレイ"}, coop_short_word{"COOP", "マルチ"}, load_word{"LOAD", "ロード"}, host_word{"HOST", "ホスト"},
     join_code_word{"JOIN BY CODE", "コードでさんか"}, room_list_word{"PUBLIC ROOMS", "こうかいルーム"},
@@ -317,7 +326,7 @@ struct Failure {
     std::string_view id;
     Words words;
 };
-constexpr std::array<Failure, 11> failures = {{
+constexpr std::array<Failure, 13> failures = {{
     {"no_host", {"NO ONE IS HOSTING THAT ROOM", "そのルームにホストがいません"}},
     {"in_use", {"THAT ROOM IS ALREADY IN USE", "そのルームはつかわれています"}},
     {"full", {"THAT ROOM IS FULL", "そのルームはまんいんです"}},
@@ -328,6 +337,8 @@ constexpr std::array<Failure, 11> failures = {{
     {"needs_english", {"COOP NEEDS THE ENGLISH FILES", "マルチプレイには えいごばんが いります"}},
     {"adding_english", {"ADDING THE ENGLISH FILES", "えいごばんを ついかしています"}},
     {"english_ready", {"THE ENGLISH FILES ARE READY", "えいごばんの じゅんびが できました"}},
+    {"room_closed", {"THE ROOM IS CLOSED", "ルームは しめきりです"}},
+    {"sent_away", {"THE HOST SENT YOU AWAY", "ホストに おいだされました"}},
     {"other", {"COULD NOT JOIN THE ROOM", "さんかできませんでした"}},
 }};
 
@@ -403,7 +414,10 @@ std::string row_text(const verdite::TitleRowView &row, std::size_t index, Langua
     case TitleRowKind::Mods: return std::string(mods_word.in(language));
     case TitleRowKind::Mod: return mod_name_text(row.mod->name);
     case TitleRowKind::ModSwitch: return std::string(enabled_word.in(language));
-    case TitleRowKind::ModSetting: return row.setting->label;
+    case TitleRowKind::ModSetting:
+    case TitleRowKind::CoopSetting: return row.setting->label;
+    case TitleRowKind::CoopSettings: return std::string(settings_word.in(language));
+    case TitleRowKind::RoomSettings: return std::string(room_settings_word.in(language));
     case TitleRowKind::LoadAnyway: return std::string(load_anyway_word.in(language));
     case TitleRowKind::SaveMod: return mod_name_text(row.save_mod->name);
     case TitleRowKind::EnterCoop: return std::string(enter_word.in(language));
@@ -445,7 +459,8 @@ std::string row_value(const verdite::TitleView &view, const verdite::TitleRowVie
     case TitleRowKind::KeptWorld: return floor_text(row.world->highest_floor, language);
     case TitleRowKind::Mod:
     case TitleRowKind::ModSwitch: return std::string(mod_state_word(row.mod->state, language));
-    case TitleRowKind::ModSetting: return row.setting->value;
+    case TitleRowKind::ModSetting:
+    case TitleRowKind::CoopSetting: return row.setting->value;
     case TitleRowKind::SaveMod: return std::string(save_mod_word(row.save_mod->change, language));
     case TitleRowKind::Slot: return save_mods_text(row.save->mods, language);
     case TitleRowKind::Room:
@@ -472,6 +487,8 @@ std::string heading(const verdite::TitleView &view, Language language) {
     case TitlePage::ModSettings: return view.rows.empty() ? std::string() : mod_name_text(view.rows.front().mod->name);
     case TitlePage::LoadWarning:
     case TitlePage::CoopWarning: return std::string(warning_word.in(language));
+    case TitlePage::CoopSettings: return std::string(settings_word.in(language));
+    case TitlePage::RoomSettings: return std::string(room_settings_word.in(language));
     }
     return {};
 }

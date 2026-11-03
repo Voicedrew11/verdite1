@@ -469,6 +469,27 @@ bool read(CoopByteReader &in, CoopWiped &wiped) {
     return in.ok() && wiped.life != 0;
 }
 
+void write(CoopByteWriter &out, const CoopRules &rules) {
+    out.u8(static_cast<std::uint8_t>(rules.tick_rate));
+    out.u8(static_cast<std::uint8_t>(rules.revive_wait_s));
+}
+
+bool read(CoopByteReader &in, CoopRules &rules) {
+    rules.tick_rate = in.u8();
+    rules.revive_wait_s = in.u8();
+    return in.ok() && coop_tick_rate_valid(rules.tick_rate) && coop_revive_wait_valid(rules.revive_wait_s);
+}
+
+void write(CoopByteWriter &out, const CoopTurnedAway &away) {
+    out.u8(static_cast<std::uint8_t>(away.why));
+}
+
+bool read(CoopByteReader &in, CoopTurnedAway &away) {
+    const std::uint8_t why = in.u8();
+    away.why = static_cast<CoopTurnedAwayWhy>(why);
+    return in.ok() && why <= static_cast<std::uint8_t>(CoopTurnedAwayWhy::SentAway);
+}
+
 template <typename Message>
 std::optional<CoopMessage> read_as(CoopByteReader &in) {
     Message message{};
@@ -478,12 +499,13 @@ std::optional<CoopMessage> read_as(CoopByteReader &in) {
 }
 
 using Reader = std::optional<CoopMessage> (*)(CoopByteReader &);
-constexpr std::array<Reader, 23> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
+constexpr std::array<Reader, 25> readers = {&read_as<CoopHello>, &read_as<CoopWelcome>, &read_as<CoopCharacterUpdate>,
     &read_as<CoopAcknowledged>, &read_as<CoopPackRequest>, &read_as<CoopWearRequest>, &read_as<CoopPack>,
     &read_as<CoopFeedLine>, &read_as<CoopSaveRequest>, &read_as<CoopRoster>, &read_as<CoopFloorAt>,
     &read_as<CoopFloorOrders>, &read_as<CoopFloorRecord>, &read_as<CoopFloorSnapshot>, &read_as<CoopFloorTaken>,
     &read_as<CoopFloorWrites>, &read_as<CoopActorHit>, &read_as<CoopActorAim>, &read_as<CoopKill>,
-    &read_as<CoopSwing>, &read_as<CoopPlayerHit>, &read_as<CoopWipe>, &read_as<CoopWiped>};
+    &read_as<CoopSwing>, &read_as<CoopPlayerHit>, &read_as<CoopWipe>, &read_as<CoopWiped>,
+    &read_as<CoopRules>, &read_as<CoopTurnedAway>};
 static_assert(readers.size() == std::variant_size_v<CoopMessage>);
 
 } // namespace
