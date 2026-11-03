@@ -87,7 +87,7 @@ the bug checks run on patch lines.
 
 ## The checks
 
-`scripts/check.sh` before every commit (`--quick` skips the sanitizer build):
+`scripts/check.sh --base @{upstream}` before a push to the remote, not before each commit (`--quick` skips the sanitizer build):
 
 - build with the project's warnings;
 - `libverdite/` tests (doctest, `libverdite/tests/`); new logic in `libverdite/` comes with tests;

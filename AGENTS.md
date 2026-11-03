@@ -43,7 +43,9 @@ done and what comes next; running it is "Fuzzing" in `verdite-port.md`),
 ## Code quality
 
 - Write new C++ by `docs/code-style.md`; patches to game code follow the decomp's style.
-- Run `scripts/check.sh` before committing (`--quick` skips the sanitizer build). It builds, runs
+- Checks are needed only before a push to the remote, not before a commit or to call work done: run
+  `scripts/check.sh --base @{upstream}` then, so the lint covers every commit being pushed (`--quick`
+  skips the sanitizer build). It builds, runs
   libverdite's tests, lints our code (`scripts/lint.py`: all of `libverdite/`, the changed lines
   of `port/`, the lines the patches add) and boots the game headless, plain and under ASan/UBSan.
 - A finding is fixed, not suppressed; a check turned off goes in the table in `code-style.md`.
