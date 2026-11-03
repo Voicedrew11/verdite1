@@ -19,6 +19,7 @@
 #include <optional>
 #include <type_traits>
 #include <utility>
+#include <kf/platform/content.h>
 #include <kf/platform/prelude.h>
 #include <kf/game/actor.h>
 #include <kf/game/animation_cache.h>
@@ -256,8 +257,12 @@ int kf_warp(lua_State *L) {
 
 // Another floor's grid is loaded by the warp, so its cell is checked after it.
 std::optional<std::array<int, 2>> landing_cell(const WarpRequest &request) {
-    if (!request.cell)
-        return first_open_cell();
+    if (!request.cell) {
+        if (!kf_floor_is_mod(kf_enum_encode<s32>(request.floor)))
+            return first_open_cell();
+        const ModFloorEntry entry = mod_floor_entry(kf_enum_encode<u8>(request.floor));   // checked open when it was added
+        return std::array<int, 2>{entry.x, entry.z};
+    }
     const auto [x, z] = *request.cell;
     if (!cell_is_blocked(x, z))
         return request.cell;
@@ -645,8 +650,10 @@ int kf_actors_get(lua_State *L) {
     return 1;
 }
 
+// Reads only the floor's rows, so it also works in on_map_load, where a mod must choose a base for a new kind.
 int kf_actors_kinds(lua_State *L) {
-    check_floor_in_play(L);
+    if (last_floor == 0)
+        return luaL_error(L, "kf.actors.kinds needs a floor loaded");
     lua_createtable(L, 0, 0);
     lua_Integer count = 0;
     for (std::size_t kind = 0; kind < kinds_on_floor.size(); ++kind) {

@@ -320,7 +320,7 @@ end
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | `"0.9"` |
+| `kf.api_version` | the API's version: `"0.17"` |
 
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
@@ -357,7 +357,7 @@ eye height. `cell_x`, `cell_z` and `map_variant` are read-only, and so is
 
 `kf.warp(floor [, cell_x, cell_z [, yaw]])` is queued and runs between game
 updates. To another floor it loads that floor (floor 5 by its entry), then
-moves the player to the cell, or to the first open cell when none is given. On
+moves the player to the cell; with none given, to a mod's floor's entry cell, or the first open cell of a disc's floor. On
 the same floor it only moves. A floor outside 1–5, a cell off the map, or a
 blocked cell on the current floor is an error at the call; a cell on another
 floor that turns out blocked once it loads falls back to the first open cell.
@@ -381,7 +381,7 @@ menu with a floor loaded, and are an error anywhere else.
 |---|---|
 | `kf.actors.list()` | the listed actors, in slot order: `{slot, kind, hp, x, y, z, yaw, cell_x, cell_z, action}` |
 | `kf.actors.get(slot)` | that table, or nil |
-| `kf.actors.kinds()` | the kinds placed on this floor: `{kind, hp, experience, gold, drop_item}`, `drop_item` -1 for none |
+| `kf.actors.kinds()` | the kinds placed on this floor: `{kind, hp, experience, gold, drop_item}`, `drop_item` -1 for none. Works in `on_map_load` too, where a mod chooses a base for a new kind |
 | `kf.actors.set_hp(slot, hp)` | HP 1 to 65535; not on an actor that is dying (kill takes one down) |
 | `kf.actors.move(slot, x, z [, yaw])` | to a world position in an open cell, at the floor's height |
 | `kf.actors.kill(slot)` | dies as the game kills: its death animation and drops play; no experience, no `on_kill` |
@@ -802,7 +802,9 @@ function on_use_item(e)
 end
 
 function on_map_load(e)
-    local brute = kf.content.monster(0)                 -- again each load: a floor's kinds are that floor's
+    local kinds = kf.actors.kinds()                     -- kinds differ by floor, and a floor may have none
+    if #kinds == 0 then return end
+    local brute = kf.content.monster(kinds[1].kind)     -- again each load: a floor's kinds are that floor's
     kf.rules.set_monster(e.floor, brute, {hp = 400, drop_item = ring})
 end
 ```
@@ -925,7 +927,10 @@ player state), `mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and
 (`kf.actors`, `kf.items`), `mods/hardmode` (`kf.rules`) and `mods/run`
 (`kf.action_pressed`, `kf.play.top_speed`: the run key, which the game no longer has
 itself) and `mods/map` (`kf.automap`, `kf.online`, the drawing calls, `kf.game.mouse`:
-the minimap and the full map on M) in this repository. The
+the minimap and the full map on M) and `mods/crypt` (`kf.content`, `kf.hook`, `kf.call`,
+`kf.raw`, `exports` and `mod.raise`: a sigil, a floor, a kind of monster and what it drops; the floor comes from
+your own disc by `tools/mod_floor_from_disc.py`, and without it the sigil rouses the monsters where you stand) in
+this repository. `scripts/example_mod_crypt.py` plays `mods/crypt` through. The
 build puts them beside the executable, and the game copies each one into the
 mods folder the first time it sees it, disabled unless it says
 `default_enabled`; `mods/.examples` lists those
