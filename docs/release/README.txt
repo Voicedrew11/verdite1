@@ -53,7 +53,7 @@ CONTROLS
   Run .................. Shift
   Attack ............... Space, left mouse button
   Magic ................ Q, right mouse button
-  Interact / confirm ... E, Enter
+  Interact / confirm ... F, Enter
   Menu ................. Tab (Tab or Backspace backs out)
   Pause ................ P, Escape
   Full map ............. M

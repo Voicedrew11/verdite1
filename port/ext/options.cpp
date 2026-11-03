@@ -440,7 +440,7 @@ OptionSection controls_bindings() {
     static constexpr std::pair<const char *, const char *> bindings[] = {
         {"Move / strafe", "W A S D"}, {"Turn", "Left / Right arrows"},
         {"Look", "Mouse, Page Up / Page Down"}, {"Attack", "Space, left mouse"}, {"Magic", "Q, right mouse"},
-        {"Interact", "E, Enter"}, {"Menu", "Tab (opens and backs out)"}, {"Back", "Backspace, Tab, right mouse in menus"},
+        {"Interact", "F, Enter"}, {"Menu", "Tab (opens and backs out)"}, {"Back", "Backspace, Tab, right mouse in menus"},
         {"Quick save", "F2"}, {"Quick load", "F4 (also on the title screen)"},
         {"Pause", "P, Escape"}, {"Overlay", "F1"}, {"Fullscreen", "F11, Alt+Enter"}};
     OptionSection section{"Keyboard (rebinding is planned)", {}};
