@@ -1603,7 +1603,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
  
  enum {
 diff --git a/src/game/item.cpp b/src/game/item.cpp
-index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1bb7e9f7f 100644
+index 660386288c157b2819409141f669eb2ae4d10af9..c17de6709867cd53d852972ea6ffaa14d1b65044 100644
 --- a/src/game/item.cpp
 +++ b/src/game/item.cpp
 @@ -10,9 +10,14 @@
@@ -1633,7 +1633,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
  
  // STAT.DAT stores little-endian words and authored GPU templates. Only this
  // loading boundary knows that layout; menus retain copied native descriptions.
-@@ -173,10 +178,18 @@ static void menu_resources_decode(std::span<const u8> bytes, KfMenuResources &re
+@@ -173,10 +178,21 @@ static void menu_resources_decode(std::span<const u8> bytes, KfMenuResources &re
      // label, moved into that removed row in the native menu description.
      auto &save_layout = resources.windows[kf_enum_encode<s32>(KF_MENU_WINDOW_SAVE)];
      save_layout.rows[KF_MENU_SAVE_RETURN_ROW].glyphs = save_layout.rows[stat_save_return_row].glyphs;
@@ -1649,10 +1649,13 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
 +    root.rows[KF_MENU_ROOT_RETURN_ROW] = root.rows[settings_row];
 +    root.rows[KF_MENU_ROOT_RETURN_ROW].position.y += root.rows[1].position.y - root.rows[0].position.y;
 +    root.rows[settings_row].glyphs.codes[0] = MENU_TEXT_END;
++    // In a coop world MULTIPLAYER is drawn where Return is, and Return a row down (menu_root).
++    root.rows[KF_MENU_ROOT_RETURN_ROW_IN_ROOM] = root.rows[KF_MENU_ROOT_RETURN_ROW];
++    root.rows[KF_MENU_ROOT_RETURN_ROW_IN_ROOM].position.y += root.rows[1].position.y - root.rows[0].position.y;
      for (auto &row : resources.items)
          menu_data_glyphs(reader, &row);
      for (auto &row : resources.magic)
-@@ -211,13 +224,21 @@ const KfMenuResources &menu_resources()
+@@ -211,13 +227,21 @@ const KfMenuResources &menu_resources()
      return menu_languages[static_cast<std::size_t>(game_text_language())].value();
  }
  
@@ -1676,7 +1679,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
  }
  
  void item_load_database(void)
-@@ -297,6 +318,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
+@@ -297,6 +321,10 @@ void shop_menu_root(KfItemStockBank shop_bank)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -1687,7 +1690,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
          }
          menu_draw_window(KF_MENU_WINDOW_SHOP, KF_SHOP_CHOICE_COUNT, cursor, confirm);
      }
-@@ -305,8 +330,8 @@ void shop_menu_root(KfItemStockBank shop_bank)
+@@ -305,8 +333,8 @@ void shop_menu_root(KfItemStockBank shop_bank)
  void shop_menu_buy(KfItemStockBank shop_bank)
  {
      KfMenuList ctx;
@@ -1698,7 +1701,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
      s32 slot;
      s32 found;
      KfMenuConfirmState confirm = KF_MENU_CONFIRM_IDLE;
-@@ -333,6 +358,13 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+@@ -333,6 +361,13 @@ void shop_menu_buy(KfItemStockBank shop_bank)
              found++;
          }
      }
@@ -1712,7 +1715,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
      ctx.entry_count = found;
      ctx.visible_rows = MENU_SHOP_VISIBLE_ROWS;
      ctx.entries = std::span<const KfObjectId>(item_ids).first(found);
-@@ -393,6 +425,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+@@ -393,6 +428,7 @@ void shop_menu_buy(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1720,7 +1723,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
          if (selection == kf_enum_encode<s32>(KF_ITEM_GOLD_CROSS))
              stock[kf_enum_encode<u8>(KF_ITEM_GOLD_CROSS)]--;
          player_state.gold -= item_buy_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
-@@ -403,8 +436,8 @@ void shop_menu_buy(KfItemStockBank shop_bank)
+@@ -403,8 +439,8 @@ void shop_menu_buy(KfItemStockBank shop_bank)
  void shop_menu_sell(KfItemStockBank shop_bank)
  {
      KfMenuList ctx;
@@ -1731,7 +1734,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
      s32 slot;
      s32 found;
      KfMenuConfirmState confirm = KF_MENU_CONFIRM_IDLE;
-@@ -422,12 +455,19 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+@@ -422,12 +458,19 @@ void shop_menu_sell(KfItemStockBank shop_bank)
              available[found] = stock[slot];
              if (player_item_is_equipped(kf_enum_decode<KfObjectId>(slot)))
                  available[found]--;
@@ -1751,7 +1754,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
      ctx.entry_count = found;
      ctx.visible_rows = MENU_SHOP_VISIBLE_ROWS;
      ctx.entries = std::span<const KfObjectId>(item_ids).first(found);
-@@ -483,6 +523,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
+@@ -483,6 +526,7 @@ void shop_menu_sell(KfItemStockBank shop_bank)
  
      menu_release_item_model();
      if (selection != kf_enum_encode<s32>(KF_MENU_RESULT_CANCELLED)) {
@@ -1759,7 +1762,7 @@ index 660386288c157b2819409141f669eb2ae4d10af9..6153eb4c66703adb2a37361fa30776c1
          stock[selection]--;
          player_state.gold += item_sell_prices[selection][kf_enum_encode<s32>(shop_bank) - kf_enum_encode<s32>(KF_ITEM_STOCK_FIRST_SHOP)];
      }
-@@ -561,13 +602,22 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
+@@ -561,13 +605,22 @@ KfMenuResult item_pickup_confirm(KfObjectId item_id)
              } else {
                  result = KF_MENU_RESULT_STACK_FULL;
                  if (stock_count != KF_ITEM_STACK_CAPACITY) {
@@ -2324,10 +2327,12 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
  
              default:
 diff --git a/src/game/menu.cpp b/src/game/menu.cpp
-index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b93dfcfef 100644
+index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..462eaeb39e52a931f610f45749b3de26567d14a0 100644
 --- a/src/game/menu.cpp
 +++ b/src/game/menu.cpp
-@@ -2,7 +2,10 @@
+@@ -1,8 +1,12 @@
++#include <kf/platform/coop.h>
+ #include <kf/platform/prelude.h>
  #include <kf/game/game.h>
  #include <kf/game/menu.h>
  #include <kf/lib/null.h>
@@ -2338,7 +2343,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b
  
  #include <array>
  #include <optional>
-@@ -15,6 +18,8 @@ static std::optional<KfObjectId> menu_use_item_panel(void);
+@@ -15,6 +19,8 @@ static std::optional<KfObjectId> menu_use_item_panel(void);
  void menu_save_confirm(void)
  {
      const auto input_context = kf::host_set_input_context(kf::InputContext::Menu);
@@ -2347,7 +2352,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b
      s32 i;
  
      i = 0;
-@@ -28,6 +33,7 @@ void menu_save_confirm(void)
+@@ -28,6 +34,7 @@ void menu_save_confirm(void)
      menu_play_input_sound(MENU_SOUND_CURSOR);
      kf::host_wait_buttons_released();
      menu_save_panel();
@@ -2355,18 +2360,69 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b
      kf::host_set_input_context(input_context);
  }
  
-@@ -89,6 +95,10 @@ KfMenuOutcome menu_root(void)
+@@ -40,13 +47,17 @@ KfMenuOutcome menu_root(void)
+     std::optional<KfMenuOutcome> result;
+     KfMenuRootChoice selection = KF_ROOT_CHOICE_NONE;
+     s32 i;
++    // PC extension: a coop world has one more row. A room is left only between updates, never in here.
++    const bool in_room = kf::coop_world_in_play();
++    const s32 return_row = in_room ? KF_MENU_ROOT_RETURN_ROW_IN_ROOM : KF_MENU_ROOT_RETURN_ROW;
++    const s32 row_count = return_row + 1;
+ 
+     i = 0;
+     do {
+         i++;
+         menu_frame_begin();
+         menu_draw_status_summary();
+-        menu_draw_window(KF_MENU_WINDOW_ROOT, KF_MENU_ROOT_ROW_COUNT, cursor, confirm);
++        menu_draw_window(KF_MENU_WINDOW_ROOT, row_count, cursor, confirm);
+         menu_present_frame();
+     } while (i < 3);
+     menu_play_input_sound(MENU_SOUND_CURSOR);
+@@ -56,7 +67,7 @@ KfMenuOutcome menu_root(void)
+         if (selection != KF_ROOT_CHOICE_NONE || (result && *result == KfMenuOutcome{KfMenuAction::Close})) {
+             menu_frame_begin();
+             menu_draw_status_summary();
+-            menu_draw_window(KF_MENU_WINDOW_ROOT, KF_MENU_ROOT_ROW_COUNT, cursor, confirm);
++            menu_draw_window(KF_MENU_WINDOW_ROOT, row_count, cursor, confirm);
+             menu_present_frame();
+             kf::host_wait_buttons_released();
+         }
+@@ -89,6 +100,13 @@ KfMenuOutcome menu_root(void)
          case KF_ROOT_CHOICE_CONFIG:
              menu_config_panel();
              break;
 +        case KF_ROOT_CHOICE_SETTINGS:
 +            // PC extension: the port's settings (kf/platform/settings_page.h).
-+            menu_settings_panel();
++            menu_settings_panel(kf::SettingsPages::Port);
++            break;
++        case KF_ROOT_CHOICE_MULTIPLAYER:
++            menu_settings_panel(kf::SettingsPages::Multiplayer);
 +            break;
          }
          if (result) {
              selection = KF_ROOT_CHOICE_NONE;
-@@ -121,6 +131,10 @@ KfMenuOutcome menu_root(void)
+@@ -104,27 +122,31 @@ KfMenuOutcome menu_root(void)
+             if (cursor != 0)
+                 cursor--;
+             else
+-                cursor = KF_MENU_ROOT_RETURN_ROW;
++                cursor = return_row;
+         } else if (kf::button_pressed(input, prev, kf::Button::Down)) {
+             menu_play_input_sound(MENU_SOUND_CURSOR);
+-            if (cursor != KF_MENU_ROOT_RETURN_ROW)
++            if (cursor != return_row)
+                 cursor++;
+             else
+                 cursor = 0;
+         } else if (kf::button_pressed(input, prev, kf::Button::Confirm)) {
+             menu_play_input_sound(MENU_SOUND_CONFIRM);
+             confirm = KF_MENU_CONFIRM_REQUESTED;
+-            if (cursor < KF_MENU_ROOT_RETURN_ROW)
++            if (cursor < return_row)
+                 selection = kf_enum_decode<KfMenuRootChoice>(cursor);
+             else
+                 result = KfMenuOutcome{KfMenuAction::Close};
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KfMenuOutcome{KfMenuAction::Close};
@@ -2377,7 +2433,12 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b
          }
          menu_frame_begin();
          menu_draw_status_summary();
-@@ -137,6 +151,17 @@ enum {
+-        menu_draw_window(KF_MENU_WINDOW_ROOT, KF_MENU_ROOT_ROW_COUNT, cursor, confirm);
++        menu_draw_window(KF_MENU_WINDOW_ROOT, row_count, cursor, confirm);
+         menu_present_frame();
+     }
+ }
+@@ -137,6 +159,17 @@ enum {
      DRAGON_KING_GRASS_FRUIT_HP_RECOVERY = 300
  };
  
@@ -2395,7 +2456,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b
  static std::optional<KfObjectId> menu_use_item_panel(void)
  {
      KfMenuList ctx;
-@@ -179,6 +204,21 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
+@@ -179,6 +212,21 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
              found++;
          }
      }
@@ -2417,7 +2478,7 @@ index 83256941282fdd1dc642e4b8e037623bb5a7fd6c..86e572cfe86bd38b495fd3e619b81a9b
      ctx.entry_count = found;
      ctx.entries = std::span<const KfObjectId>(item_ids).first(found);
      ctx.quantities = quantities;
-@@ -221,7 +261,16 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
+@@ -221,7 +269,16 @@ static std::optional<KfObjectId> menu_use_item_panel(void)
                  return std::nullopt;
          } else if (kf::button_pressed(input, prev, kf::Button::Confirm)) {
              menu_play_input_sound(MENU_SOUND_CONFIRM);
@@ -2523,7 +2584,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed72206dc51c3d 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9abaa10d2289 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,17 @@
@@ -3110,7 +3171,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
                  menu_blit_sprite_translucent(&menu_resources().assets.row_confirmed_background,
                      &layout->rows[row].position);
              } else {
-@@ -1587,6 +1960,12 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1587,6 +1960,18 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
                  text.position.x = CONFIG_OPTION_ON_X;
                  text.glyphs = menu_label(MenuLabel::LanguageName);
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
@@ -3120,10 +3181,16 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
 +                at.x += MENU_SETTINGS_ENTRY_INSET;
 +                const auto language = game_text_language();
 +                menu_draw_text(menu_spell(kf::settings_page_entry_text(language), language), at, 1.0f);
++            } else if (window_kind == KF_MENU_WINDOW_ROOT && row_count == KF_MENU_ROOT_ROW_COUNT_IN_ROOM
++                       && row == kf_enum_encode<s32>(KF_ROOT_CHOICE_MULTIPLAYER)) {
++                MenuPoint at = layout->rows[row].position;
++                at.x += MENU_SETTINGS_ENTRY_INSET;
++                const auto language = game_text_language();
++                menu_draw_text(menu_spell(kf::settings_page_multiplayer_entry_text(language), language), at, 1.0f);
              } else {
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &layout->rows[row]);
              }
-@@ -1622,6 +2001,7 @@ void menu_list_render(const KfMenuList *list)
+@@ -1622,6 +2007,7 @@ void menu_list_render(const KfMenuList *list)
      u32 tens;
      u32 ones;
  
@@ -3131,7 +3198,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
      const MenuGlyphString title{list->title_position,
          menu_resources().windows[kf_enum_encode<s32>(list->title_window)].rows[list->title_row].glyphs};
      if (list->title_position.x != 0) {
-@@ -1637,18 +2017,25 @@ void menu_list_render(const KfMenuList *list)
+@@ -1637,18 +2023,25 @@ void menu_list_render(const KfMenuList *list)
              text.position.x = list->list_x + MENU_LIST_TEXT_INSET;
              text.position.y = list->list_y + MENU_LIST_TEXT_INSET;
              text.position.y += row * MENU_LIST_ROW_HEIGHT;
@@ -3160,7 +3227,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
              if (!list->quantities.empty()) {
                  tens = list->quantities[index] / 10u;
                  ones = list->quantities[index] % 10u;
-@@ -1701,6 +2088,12 @@ enum {
+@@ -1701,6 +2094,12 @@ enum {
      MENU_PICKUP_BACKDROP_RIGHT_X = MENU_PICKUP_BACKDROP_LEFT_X + MENU_BACKDROP_COLUMN_STEP
  };
  
@@ -3173,7 +3240,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
  enum {
      MENU_FONT_COLUMNS = 16,
      MENU_FONT_CELL_WIDTH = 14,
-@@ -1716,6 +2109,16 @@ void menu_draw_two_option(
+@@ -1716,6 +2115,16 @@ void menu_draw_two_option(
      const MenuChoiceLabel *accept_label, const MenuChoiceLabel *decline_label,
      KfMenuConfirmChoice selected_choice, KfMenuConfirmState confirmation)
  {
@@ -3190,7 +3257,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
      if (selected_choice == KF_MENU_CHOICE_ACCEPT) {
          menu_blit_sprite(&menu_resources().assets.selection_cursor, &accept_label->position);
      } else {
-@@ -1766,8 +2169,9 @@ void menu_draw_pickup_preview(KfObjectId item_id)
+@@ -1766,8 +2175,9 @@ void menu_draw_pickup_preview(KfObjectId item_id)
  
      string.position.x = MENU_PICKUP_NAME_X;
      string.position.y = MENU_ITEM_PREVIEW_NAME_Y;
@@ -3202,7 +3269,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
  
      menu_draw_backdrop_tile(MENU_PICKUP_BACKDROP_LEFT_X, MENU_BACKDROP_TOP_Y, false, false);
  
-@@ -1791,6 +2195,26 @@ void menu_blit_sprite_translucent(
+@@ -1791,6 +2201,26 @@ void menu_blit_sprite_translucent(
      menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
  }
  
@@ -3229,7 +3296,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..b2143416b0646c5a0dbdd88590ed7220
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2278,268 @@ void menu_draw_number(
+@@ -1854,10 +2284,268 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -3550,7 +3617,7 @@ index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..4ce1f0a0c0edbb1c337b086273e4c687
          switch (equipment_category) {
 diff --git a/src/game/menu_settings.cpp b/src/game/menu_settings.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..563c8f8227e498d15f4b63cd998f28648f33c2a8
+index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a4687a3ee727
 --- /dev/null
 +++ b/src/game/menu_settings.cpp
 @@ -0,0 +1,450 @@
@@ -3976,14 +4043,14 @@ index 0000000000000000000000000000000000000000..563c8f8227e498d15f4b63cd998f2864
 +
 +} // namespace
 +
-+void menu_settings_panel(void)
++void menu_settings_panel(kf::SettingsPages pages)
 +{
 +    bool asking = false;
 +    s32 answer = 0;
 +    u32 input = 0;
 +    u32 prev;
 +
-+    kf::settings_page_open();
++    kf::settings_page_open(pages);
 +    kf::host_wait_buttons_released();
 +    for (;;) {
 +        const kf::Language language = game_text_language();

@@ -181,7 +181,7 @@ def main():
         a.tap("back")
         a.choose("SETTINGS")
         rows = a.wait("the co-op settings", a.title, lambda t: t["rows"])["rows"]
-        check("SETTINGS shows this player's own", [row["text"] for row in rows] == ["NAME BARS", "PARTY FEED", "MESSAGES"]
+        check("SETTINGS shows this player's own", [row["text"] for row in rows] == ["NAME BARS", "PARTY FEED"]
               and rows[0]["value"] == "ALWAYS", rows)
         a.choose("NAME BARS")
         rows = a.wait("the step", a.title, lambda t: t["rows"][0]["value"] != "ALWAYS")["rows"]

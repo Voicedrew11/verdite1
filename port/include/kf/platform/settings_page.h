@@ -1,8 +1,9 @@
 #ifndef KF_PLATFORM_SETTINGS_PAGE_H
 #define KF_PLATFORM_SETTINGS_PAGE_H
-// The port's settings as pages in the game's own menu (SYSTEM > SETTINGS),
-// through verdite/menu_settings.h over the overlay's option table. The game's
-// loop moves and steps with the pad and draws settings_page_view().
+// The port's settings as pages in the game's own menu (PORT SETTINGS), and in a
+// coop world the room's (MULTIPLAYER, a row of its own under it), through
+// verdite/menu_settings.h over the overlay's option table. The game's loop moves
+// and steps with the pad and draws settings_page_view().
 //
 // Text is in the menu font's terms for the language asked: English is
 // capitals, digits, '/' and spaces; Japanese is kana without small kana,
@@ -33,7 +34,10 @@ struct SettingsPageView {
     std::vector<SettingsPageRow> rows;
 };
 
-void settings_page_open();
+// Which row of the top menu opened the pages. Multiplayer: this player's, and a host's room's.
+enum class SettingsPages : u8 { Port, Multiplayer };
+
+void settings_page_open(SettingsPages pages);
 void settings_page_move_row(s32 delta);
 void settings_page_move_page(s32 delta);
 void settings_page_select_row(s32 row);
@@ -47,6 +51,7 @@ SettingsPageView settings_page_view(Language language);
 
 // The top menu's row that opens the page, in the language asked.
 std::string settings_page_entry_text(Language language);
+std::string settings_page_multiplayer_entry_text(Language language);
 // The leaving question's two answers, in the language asked.
 std::string settings_page_save_text(Language language);
 std::string settings_page_discard_text(Language language);

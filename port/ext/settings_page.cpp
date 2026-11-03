@@ -53,6 +53,7 @@ const Text on_text{"ON", "オン"};
 const Text off_text{"OFF", "オフ"};
 const Text custom_text{"CUSTOM", "カスタム"};
 const Text entry_text{"PORT SETTINGS", "カスタム"};
+const Text multiplayer_entry_text{"MULTIPLAYER", "マルチプレイ"};
 const Text save_text{"SAVE CHANGES", "ほぞんする"};
 const Text discard_text{"DISCARD", "もとにもどす"};
 
@@ -170,15 +171,19 @@ const std::vector<Page> &pages() {
             {"audio.volume", {"VOLUME", "おとのおおきさ"}, {},
              {0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0}},
         }});
-        made.push_back({"multiplayer", {"MULTIPLAYER", "マルチプレイ"}, {
-            {"online.name_bars", {"NAME BARS", "なまえのひようじ"},
-             {{2.0, {"ALWAYS", "かべごしも"}}, {1.0, {"IN SIGHT", "みえるとき"}}, {0.0, off_text}}, {}},
-            {"online.pickup_feed", {"PARTY FEED", "なかまのひろいもの"}, {}, {}},
-            {"online.messages", {"MESSAGES", "メツセージ"}, {}, {}},
-        }});
         return made;
     }();
     return table;
+}
+
+// What the MULTIPLAYER row opens: everyone's page, then a host's own.
+const Page &multiplayer_page() {
+    static const Page page{"multiplayer", {"MULTIPLAYER", "マルチプレイ"}, {
+        {"online.name_bars", {"NAME BARS", "なまえのひようじ"},
+         {{2.0, {"ALWAYS", "かべごしも"}}, {1.0, {"IN SIGHT", "みえるとき"}}, {0.0, off_text}}, {}},
+        {"online.pickup_feed", {"PARTY FEED", "なかまのひろいもの"}, {}, {}},
+    }};
+    return page;
 }
 
 const Text send_away_text{"SEND AWAY", "おいだす"};
@@ -234,7 +239,7 @@ struct MenuState {
     std::optional<verdite::MenuSettings> settings;
     std::vector<ModPage> mod_pages;
     std::string mod_pages_signature;
-    bool host_page_shown = false;
+    SettingsPages shown = SettingsPages::Port;
     float opened_turn_sensitivity = 0, opened_pitch_sensitivity = 0;
 };
 MenuState menu_state;
@@ -249,20 +254,23 @@ std::string signature_of(const std::vector<ModPage> &mod_pages) {
     return signature;
 }
 
+verdite::MenuSettingsPage menu_page_of(const Page &page) {
+    verdite::MenuSettingsPage made{page.id, {}};
+    for (const Row &row : page.rows)
+        made.rows.push_back({row.option, row.stops});
+    return made;
+}
+
 verdite::MenuSettings &build_menu() {
     std::vector<verdite::MenuSettingsPage> menu_pages;
-    for (const Page &page : pages()) {
-        verdite::MenuSettingsPage menu_page{page.id, {}};
-        for (const Row &row : page.rows)
-            menu_page.rows.push_back({row.option, row.stops});
-        menu_pages.push_back(std::move(menu_page));
+    if (menu_state.shown == SettingsPages::Multiplayer) {
+        menu_pages.push_back(menu_page_of(multiplayer_page()));
+        if (ext::coop_hosting())
+            menu_pages.push_back(menu_page_of(host_page()));
+        return menu_state.settings.emplace(ext::options(), std::move(menu_pages), ext::platform_features());
     }
-    if (menu_state.host_page_shown) {
-        verdite::MenuSettingsPage menu_page{host_page().id, {}};
-        for (const Row &row : host_page().rows)
-            menu_page.rows.push_back({row.option, row.stops});
-        menu_pages.push_back(std::move(menu_page));
-    }
+    for (const Page &page : pages())
+        menu_pages.push_back(menu_page_of(page));
     for (const ModPage &page : menu_state.mod_pages) {
         verdite::MenuSettingsPage menu_page{page.page_id, {}};
         for (const verdite::ModMenuRow &row : page.rows)
@@ -278,18 +286,20 @@ verdite::MenuSettings &menu() {
     return build_menu();
 }
 
-// Before a visit, as mods may have changed since the last and this player may host a room now. A
-// visit's changes are kept or put back before the next open, so nothing staged is lost.
-void keep_pages_current() {
+// Before a visit: the other row's pages may be up, and mods or who hosts may have changed since the
+// last, so the multiplayer pages are built afresh each time. A visit's changes are kept or put back
+// before the next open, so nothing staged is lost.
+void keep_pages_current(SettingsPages shown) {
     ext::mod_menu_refresh_options();
     std::vector<ModPage> now = running_mod_pages();
     std::string signature = signature_of(now);
-    const bool hosting = ext::coop_hosting();
-    if (menu_state.settings && signature == menu_state.mod_pages_signature && hosting == menu_state.host_page_shown)
+    const bool port_pages_kept = menu_state.settings && shown == SettingsPages::Port &&
+        menu_state.shown == SettingsPages::Port && signature == menu_state.mod_pages_signature;
+    menu_state.shown = shown;
+    if (port_pages_kept)
         return;
     menu_state.mod_pages = std::move(now);
     menu_state.mod_pages_signature = std::move(signature);
-    menu_state.host_page_shown = hosting;
     build_menu();
 }
 
@@ -348,6 +358,8 @@ const Page *find_page(std::string_view id) {
     for (const Page &page : pages())
         if (id == page.id)
             return &page;
+    if (id == multiplayer_page().id)
+        return &multiplayer_page();
     return id == host_page().id ? &host_page() : nullptr;
 }
 
@@ -387,8 +399,7 @@ struct TitleRows {
 TitleRows title_rows(ext::TitleCoopRows rows) {
     if (rows == ext::TitleCoopRows::Room)
         return {&host_page(), host_page().rows.size() - send_away_options.size()};
-    const Page *page = find_page("multiplayer");
-    return {page, page ? page->rows.size() : 0};
+    return {&multiplayer_page(), multiplayer_page().rows.size()};
 }
 
 // What Left and Right walk for a row: its stops, its choices, or a toggle's off and on.
@@ -405,8 +416,8 @@ std::vector<OptionValue> stops_of(const Row &row, const verdite::OptionRow &opti
 
 } // namespace
 
-void settings_page_open() {
-    keep_pages_current();
+void settings_page_open(SettingsPages pages) {
+    keep_pages_current(pages);
     remember_stick_speeds();
     menu().open();
 }
@@ -453,6 +464,7 @@ SettingsPageView settings_page_view(Language language) {
 }
 
 std::string settings_page_entry_text(Language language) { return in(entry_text, language); }
+std::string settings_page_multiplayer_entry_text(Language language) { return in(multiplayer_entry_text, language); }
 std::string settings_page_save_text(Language language) { return in(save_text, language); }
 std::string settings_page_discard_text(Language language) { return in(discard_text, language); }
 
@@ -525,6 +537,7 @@ void settings_page_check() {
     };
     for (const Page &page : pages())
         check_page(page);
+    check_page(multiplayer_page());
     check_page(host_page());
     for (const Language language : {Language::English, Language::Japanese})
         check_text(in(send_away_text, language), language, settings_page_value_px);

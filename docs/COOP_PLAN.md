@@ -582,21 +582,22 @@ drawn with the English font's capitals, so coop needs the English files (`verdit
 
 ## Multiplayer settings
 
-Built 2026-11-03. A page of its own in PORT SETTINGS (MULTIPLAYER), a Multiplayer page in F1 and
-Android's panel (the option table), and on the title, COOP, SETTINGS. Settings.json's `online` keys.
+Built 2026-11-03. MULTIPLAYER, a row of the pause menu under PORT SETTINGS, there only in a coop world
+and not part of PORT SETTINGS (the user's call); a Multiplayer page in F1 and Android's panel (the
+option table); and on the title, COOP, SETTINGS. Settings.json's `online` keys.
 
 | who | row | what |
 |---|---|---|
 | everyone | NAME BARS | ALWAYS (through walls, as Minecraft), IN SIGHT, OFF |
 | everyone | PARTY FEED | the pickup feed |
-| everyone | MESSAGES | messages on the ground (`docs/MESSAGES_PLAN.md`) |
 | host | TICK RATE | the room's one speed; a guest's own row is dimmed and comes back when it leaves |
 | host | NEW PLAYERS | CLOSED turns away anyone without a character in this world; a returning player still gets in |
 | host | REVIVE WAIT | 10, 30 or 60 seconds: the most a down player waits beside a fight (it was 30) |
 | host | guests' rows | SEND AWAY for each guest in the room |
 
-- **What only the host sees:** YOUR ROOM, a page built only while `coop_hosting()`; in F1, a section
-  shown only then. On the title, before any room exists, HOST, ROOM SETTINGS has the first three.
+- **Messages on the ground** are not a room's, so their row stays in F1 alone, as before.
+- **What only the host sees:** YOUR ROOM, MULTIPLAYER's second page, only while `coop_hosting()`; in
+  F1, a section shown only then. On the title, before any room exists, HOST, ROOM SETTINGS has the first three.
 - **The rules travel:** `CoopRules` (tick rate, revive wait) from the host, after its welcome and
   whenever they change, and nothing else about them is trusted: only the host's are heard, and a
   value outside the choices is no message. This builds "One tick rate per room", which the plan fixed

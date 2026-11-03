@@ -47,12 +47,51 @@ def main():
             time.sleep(0.25)
         return False
 
+    solo = Game("solo", PORTS[2], room=None)
+    deadline = time.monotonic() + 60
+    while solo.run("state")["state"]["context"] != "menu" and time.monotonic() < deadline:   # past the opening's script
+        solo.run("press start 100")
+        time.sleep(1)
+    time.sleep(1)
+    check("alone the pause menu has no MULTIPLAYER row", len([r for r in solo.run("menu")["rows"] if r["input"]]) == 9)
+    solo.quit()
+
     a = Game("a", PORTS[0], profile="name=ALICE\n")
     a.wait("the host's world", lambda s: s["inPlay"])
     b = Game("b", PORTS[1], profile="name=BOB7\n")
     b.wait("the guest's arrival", lambda s: s["inPlay"])
     a.wait("the roster", lambda s: len(s["roster"]) == 2)
     b.wait("the roster", lambda s: len(s["roster"]) == 2)
+
+    def open_multiplayer(game):
+        """The pause menu's rows, then the rows of what its row under PORT SETTINGS opens."""
+        game.run("press start 100")
+        time.sleep(1)
+        top = [row for row in game.run("menu")["rows"] if row["input"]]
+        game.run("press up 100")      # round to Return
+        time.sleep(0.4)
+        game.run("press up 100")      # MULTIPLAYER
+        time.sleep(0.4)
+        game.run("press confirm 100")
+        time.sleep(1)
+        return top, [row for row in game.run("menu")["rows"] if row["input"]]
+
+    def leave_menu(game, presses):
+        for _ in range(presses):
+            game.run("press back 100")
+            time.sleep(0.4)
+
+    top, page = open_multiplayer(b)
+    check("in a room the pause menu has a row more, on the picture",
+          len(top) == 10 and max(row["box"][1] + row["box"][3] for row in top) <= 240)
+    check("a guest's MULTIPLAYER has this player's own rows", len(page) == 2)
+    leave_menu(b, 2)
+    top, page = open_multiplayer(a)
+    check("a host's MULTIPLAYER opens the same", len(top) == 10 and len(page) == 2)
+    a.run("press strafe_right 100")
+    time.sleep(0.5)
+    check("a host's next page is its room's", len([row for row in a.run("menu")["rows"] if row["input"]]) == 6)
+    leave_menu(a, 2)
 
     host_rows, guest_rows = rows_of(a), rows_of(b)
     check("the host is shown its room's rows", all(i in host_rows for i in ("online.room_open", "online.revive_wait_s")))
