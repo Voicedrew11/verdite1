@@ -53,7 +53,6 @@ constexpr std::size_t event_capacity = 120;
 constexpr std::size_t kept_file_limit = 8;
 constexpr std::size_t path_capacity = 1024;
 constexpr std::size_t folder_name_room = 64; // "/crash-YYYYMMDD-HHMMSS-<pid>-<n>/report.txt"
-constexpr std::size_t max_frames = 100;
 constexpr int soft_report_limit = 8;
 constexpr char hex_digits[] = "0123456789abcdef";
 
@@ -609,6 +608,7 @@ void on_fatal_signal(int number, siginfo_t *info, void *context) {
         siglongjmp(section_jump, 1);
     if (state.handling.exchange(true))
         die(number);
+    constexpr std::size_t max_frames = 100;
     static std::array<cpptrace::frame_ptr, max_frames> frames{};
     const std::size_t count = cpptrace::safe_generate_raw_trace(frames.data(), frames.size());
     const std::span<const cpptrace::frame_ptr> stack =
