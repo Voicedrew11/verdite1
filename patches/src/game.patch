@@ -3798,13 +3798,13 @@ index 0000000000000000000000000000000000000000..539afbdc9dc7f75c9f50919cb9fb2461
 +}
 diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3477b71c3ce52813dacbf961e02532772e26f416
+index 0000000000000000000000000000000000000000..956c9b24c94764521ef82c869cca0a81cf9e7493
 --- /dev/null
 +++ b/src/game/menu_title.cpp
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,182 @@
 +// PC extension: the title menu (kf/platform/title.h) over the opening's logo, drawn with the
-+// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a short column
-+// under the logo; the others fill the picture as the menu's pages do, over the logo dimmed.
++// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a line of words
++// across the bottom of the picture, with no boxes; the others fill the picture as the menu's pages do, over the logo dimmed.
 +#include <kf/platform/prelude.h>
 +#include <kf/game/menu.h>
 +#include <kf/game/menu_text.h>
@@ -3820,7 +3820,12 @@ index 0000000000000000000000000000000000000000..3477b71c3ce52813dacbf961e0253277
 +
 +enum {
 +    TITLE_SCREEN_WIDTH = 320,
-+    TITLE_TOP_FIRST_ROW_Y = 150,
++    TITLE_TOP_Y = 215,
++    TITLE_TOP_MARGIN = 16,
++    TITLE_TOP_MIN_GAP = 6,
++    // The cursor sprite starts 18 left of the point it is drawn at, so this puts it just before a word.
++    TITLE_TOP_CURSOR_X_OFFSET = 3,
++    TITLE_TOP_CURSOR_REACH = 15,
 +    TITLE_HEADING_X = 12,
 +    TITLE_HEADING_Y = 19,
 +    TITLE_ROW_X = 26,
@@ -3882,13 +3887,30 @@ index 0000000000000000000000000000000000000000..3477b71c3ce52813dacbf961e0253277
 +    title_draw_centred(menu_spell(row.value, language), TITLE_VALUE_X, TITLE_VALUE_WIDTH, at.y, shade);
 +}
 +
-+// The top page: its rows centred under the logo.
++// The top page: its words alone, evenly across the picture, the cursor before the selected one.
 +void title_draw_top(const kf::TitleText &text, kf::Language language)
 +{
-+    const s32 box_width = menu_resources().assets.row_background.width;
-+    const s32 x = (TITLE_SCREEN_WIDTH - box_width) / 2 + TITLE_BOX_X_OFFSET;
-+    for (s32 i = 0; i < static_cast<s32>(text.rows.size()); i++)
-+        title_draw_row(text.rows[i], i, MenuPoint{at_x(x), at_x(TITLE_TOP_FIRST_ROW_Y + i * TITLE_ROW_STEP)}, language);
++    const auto &assets = menu_resources().assets;
++    std::vector<std::vector<MenuTextGlyph>> words;
++    s32 words_width = 0;
++    for (const kf::TitleRowText &row : text.rows) {
++        words.push_back(menu_spell(row.text, language));
++        words_width += menu_text_width(words.back());
++    }
++    const s32 spaces = std::max<s32>(1, static_cast<s32>(words.size()) - 1);
++    const s32 gap = std::max<s32>(TITLE_TOP_MIN_GAP, (TITLE_SCREEN_WIDTH - 2 * TITLE_TOP_MARGIN - words_width) / spaces);
++    s32 x = (TITLE_SCREEN_WIDTH - words_width - gap * spaces) / 2;
++    for (s32 i = 0; i < static_cast<s32>(words.size()); i++) {
++        const s32 width = menu_text_width(words[i]);
++        kf::host_menu_row(i, x - TITLE_TOP_CURSOR_REACH, TITLE_TOP_Y - TITLE_BOX_Y_OFFSET,
++            width + TITLE_TOP_CURSOR_REACH, assets.row_background.height);
++        if (text.rows[i].selected) {
++            const MenuPoint cursor_at{at_x(x + TITLE_TOP_CURSOR_X_OFFSET), TITLE_TOP_Y};
++            menu_blit_sprite(&assets.selection_cursor, &cursor_at);
++        }
++        menu_draw_text(words[i], MenuPoint{at_x(x), TITLE_TOP_Y}, text.rows[i].enabled ? 1.0f : title_dim_shade);
++        x += width + gap;
++    }
 +}
 +
 +// The join or name page's letters, grid_columns to a line, narrower when a line holds many;
@@ -3959,7 +3981,7 @@ index 0000000000000000000000000000000000000000..3477b71c3ce52813dacbf961e0253277
 +    else
 +        title_draw_page(text, language);
 +    if (!text.note.empty())
-+        title_draw_centred(menu_spell(text.note, language), 0, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y + (top ? 14 : 0), 1.0f);
++        title_draw_centred(menu_spell(text.note, language), 0, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y, 1.0f);
 +    return top;
 +}
 diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp

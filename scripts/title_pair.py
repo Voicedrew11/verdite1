@@ -103,7 +103,11 @@ class Game:
             if selected == target:
                 self.tap("confirm")
                 return
-            self.tap("down" if target > selected else "up")
+            across = not self.title()["heading"]   # the top page is a line across
+            if target > selected:
+                self.tap("right" if across else "down")
+            else:
+                self.tap("left" if across else "up")
         raise RuntimeError(f"{self.name}: the cursor never reached {text}")
 
     def coop(self):
@@ -132,9 +136,27 @@ def main():
     try:
         top = a.to_title()
         texts = [row["text"] for row in top["rows"]]
-        check("the top page is CONTINUE, NEW GAME, COOP", texts == ["CONTINUE", "NEW GAME", "COOP"], texts)
+        check("the top page is CONTINUE, NEW GAME, COOP, MODS", texts == ["CONTINUE", "NEW GAME", "COOP", "MODS"], texts)
         check("with no save, CONTINUE is off and the cursor on NEW GAME",
               not top["rows"][0]["enabled"] and top["rows"][1]["selected"], top["rows"])
+
+        a.tap("down")
+        check("Down does nothing on the top page", a.title()["rows"][1]["selected"], a.title()["rows"])
+        a.tap("right")
+        check("Right moves along the top page", a.title()["rows"][2]["selected"], a.title()["rows"])
+        a.tap("left")
+
+        a.choose("MODS")
+        mods = a.title()["rows"]
+        check("MODS lists the mods with their switches", mods and {row["value"] for row in mods} <= {"ON", "OFF"}, mods)
+        check("the first mod starts off", mods[0]["value"] == "OFF", mods)
+        a.tap("confirm")
+        mods = a.wait("the mod on", a.title, lambda t: t["rows"][0]["value"] != "OFF")["rows"]
+        check("Confirm switches a mod on", mods[0]["value"] == "ON", mods)
+        a.tap("confirm")
+        mods = a.wait("the mod off", a.title, lambda t: t["rows"][0]["value"] == "OFF")["rows"]
+        check("Confirm switches it off again", mods[0]["value"] == "OFF", mods)
+        a.tap("back")
 
         a.choose("COOP")
         a.choose("PROFILE")
@@ -181,7 +203,7 @@ def main():
         a.quit()
         a = None
         back = b.wait("the title", b.title, lambda t: t["open"] and t["rows"])
-        check("B is back at the title menu", [row["text"] for row in back["rows"]] == ["CONTINUE", "NEW GAME", "COOP"], back)
+        check("B is back at the title menu", [row["text"] for row in back["rows"]] == ["CONTINUE", "NEW GAME", "COOP", "MODS"], back)
         check("B left the room", b.coop()["role"] == "none")
 
         b.choose("COOP")

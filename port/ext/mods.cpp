@@ -1697,6 +1697,10 @@ int mods_loaded_count() {
     return mods_active() ? static_cast<int>(host->running_count()) : 0;
 }
 
+std::vector<verdite::ModInfo> mods_list() {
+    return host ? host->mods() : std::vector<verdite::ModInfo>{};
+}
+
 void mods_draw_panel() {
     if (!host)
         return;

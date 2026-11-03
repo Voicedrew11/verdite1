@@ -265,6 +265,7 @@ bool mods_take_mouse();           // kf.game.mouse: the cursor shows and the gam
 bool mods_has(std::string_view id);
 bool mods_enabled(std::string_view id);
 void mods_set_enabled(std::string_view id, bool enabled);
+std::vector<verdite::ModInfo> mods_list();   // the installed mods, for the title menu's MODS page
 std::optional<verdite::ModConfigValue> mods_config_value(std::string_view id, std::string_view key);
 void mods_set_config_value(std::string_view id, std::string_view key, const verdite::ModConfigValue &value);
 

@@ -73,6 +73,21 @@ verdite::TitleProfile read_profile() {
     return {profile.name, profile.colour, coop_colour_count, profile.helmet, online_player_helmet_count};
 }
 
+verdite::TitleModState mod_state(const verdite::ModInfo &mod) {
+    if (mod.state == verdite::ModState::Failed)
+        return verdite::TitleModState::Failed;
+    if (mod.held)
+        return verdite::TitleModState::Held;
+    return mod.enabled ? verdite::TitleModState::On : verdite::TitleModState::Off;
+}
+
+std::vector<verdite::TitleMod> read_mods() {
+    std::vector<verdite::TitleMod> mods;
+    for (const verdite::ModInfo &mod : mods_list())
+        mods.push_back({mod.id, mod.name, mod_state(mod)});
+    return mods;
+}
+
 // The worlds this machine hosts whose codes the menu can show.
 std::vector<verdite::TitleWorld> read_worlds() {
     std::vector<verdite::TitleWorld> worlds;
@@ -161,6 +176,12 @@ std::optional<TitleStart> take(const verdite::TitleChoice &choice) {
         coop_set_own_profile({choice.profile.name, static_cast<std::uint8_t>(choice.profile.colour),
             static_cast<std::uint8_t>(choice.profile.helmet)});
         break;
+    case TitleAction::EnableMod:
+        mods_set_enabled(choice.code, true);
+        break;
+    case TitleAction::DisableMod:
+        mods_set_enabled(choice.code, false);
+        break;
     }
     return std::nullopt;
 }
@@ -210,7 +231,7 @@ struct Words {
 };
 
 constexpr Words continue_word{"CONTINUE", "つづきから"}, new_game_word{"NEW GAME", "はじめから"},
-    coop_word{"COOP", "マルチプレイ"}, load_word{"LOAD", "ロード"}, host_word{"HOST", "ホスト"},
+    coop_word{"COOP", "マルチプレイ"}, coop_short_word{"COOP", "マルチ"}, load_word{"LOAD", "ロード"}, host_word{"HOST", "ホスト"},
     join_code_word{"JOIN BY CODE", "コードでさんか"}, room_list_word{"PUBLIC ROOMS", "こうかいルーム"},
     new_world_word{"NEW WORLD", "あたらしいワールド"}, private_word{"PRIVATE", "ひこうかい"},
     public_word{"PUBLIC", "こうかい"}, public_world_word{"PUBLIC WORLD", "こうかいワールド"},
@@ -220,7 +241,9 @@ constexpr Words continue_word{"CONTINUE", "つづきから"}, new_game_word{"NEW
     empty_word{"EMPTY", "データなし"}, damaged_word{"DAMAGED", "こわれています"},
     experience_word{"EXP", "けいけんち"}, share_word{"TELL YOUR FRIENDS THIS CODE", "このコードをともだちに"},
     profile_word{"PROFILE", "プレイヤー"}, name_word{"NAME", "なまえ"}, colour_word{"COLOUR", "いろ"},
-    helmet_word{"HELMET", "かぶと"}, done_word{"DONE", "おわり"};
+    helmet_word{"HELMET", "かぶと"}, done_word{"DONE", "おわり"}, mods_word{"MODS", "かいぞう"},
+    on_word{"ON", "オン"}, off_word{"OFF", "オフ"}, error_word{"ERROR", "エラー"}, held_word{"HELD", "ていし"},
+    no_mods_word{"NO MODS YET", "かいぞうはありません"}, held_note_word{"OFF IN CLASSIC MODE", "クラシックではていし"};
 
 struct Failure {
     std::string_view id;
@@ -262,12 +285,40 @@ std::string slot_text(const KfSaveSlotSummary &slot, Language language) {
            std::string(experience_word.in(language)) + " " + std::to_string(slot.experience);
 }
 
+constexpr std::size_t mod_name_most = 16;   // reaches the value's box at the menu font's width
+
+// A mod's name in the menu font, which has capitals but no lower case, as much as fits.
+std::string mod_name_text(std::string_view name) {
+    std::string text;
+    std::size_t letters = 0;
+    for (const char c : name) {
+        const bool continuation = (static_cast<unsigned char>(c) & 0xc0) == 0x80;
+        if (!continuation && letters == mod_name_most)
+            break;
+        letters += continuation ? 0 : 1;
+        text += c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+    }
+    return text;
+}
+
+std::string_view mod_state_word(verdite::TitleModState state, Language language) {
+    switch (state) {
+    case verdite::TitleModState::Off: return off_word.in(language);
+    case verdite::TitleModState::On: return on_word.in(language);
+    case verdite::TitleModState::Failed: return error_word.in(language);
+    case verdite::TitleModState::Held: return held_word.in(language);
+    }
+    return {};
+}
+
 std::string row_text(const verdite::TitleRowView &row, std::size_t index, Language language) {
     using verdite::TitleRowKind;
     switch (row.kind) {
     case TitleRowKind::Continue: return std::string(continue_word.in(language));
     case TitleRowKind::NewGame: return std::string(new_game_word.in(language));
-    case TitleRowKind::Coop: return std::string(coop_word.in(language));
+    case TitleRowKind::Coop: return std::string(coop_short_word.in(language));   // the top page's line is tight
+    case TitleRowKind::Mods: return std::string(mods_word.in(language));
+    case TitleRowKind::Mod: return mod_name_text(row.mod->name);
     case TitleRowKind::Slot: return std::to_string(index + 1) + "  " + slot_text(title.slots[index], language);
     case TitleRowKind::Host: return std::string(host_word.in(language));
     case TitleRowKind::JoinCode: return std::string(join_code_word.in(language));
@@ -303,6 +354,7 @@ std::string row_value(const verdite::TitleView &view, const verdite::TitleRowVie
     case TitleRowKind::NewPrivateWorld: return std::string(private_word.in(language));
     case TitleRowKind::NewPublicWorld: return std::string(public_word.in(language));
     case TitleRowKind::KeptWorld: return floor_text(row.world->highest_floor, language);
+    case TitleRowKind::Mod: return std::string(mod_state_word(row.mod->state, language));
     case TitleRowKind::Room:
         return floor_text(row.room->floor, language) + "  " + std::to_string(row.room->players) + "/" +
                std::to_string(row.room->most);
@@ -323,6 +375,7 @@ std::string heading(verdite::TitlePage page, Language language) {
     case TitlePage::Waiting: return std::string(connecting_word.in(language));
     case TitlePage::Profile: return std::string(profile_word.in(language));
     case TitlePage::NameEntry: return std::string(name_word.in(language));
+    case TitlePage::Mods: return std::string(mods_word.in(language));
     }
     return {};
 }
@@ -353,6 +406,13 @@ std::string note(const verdite::TitleView &view, Language language) {
         if (view.list_state == verdite::RoomListState::Connecting)
             return std::string(connecting_word.in(language));
         return view.rows.empty() ? std::string(no_rooms_word.in(language)) : std::string();
+    case TitlePage::Mods: {
+        if (view.rows.empty())
+            return std::string(no_mods_word.in(language));
+        const auto on = std::ranges::find(view.rows, true, &verdite::TitleRowView::selected);
+        const bool held = on != view.rows.end() && on->mod->state == verdite::TitleModState::Held;
+        return held ? std::string(held_note_word.in(language)) : std::string();
+    }
     default: return {};
     }
 }
@@ -371,7 +431,7 @@ namespace kf {
 using ext::title;
 
 void title_open() {
-    ext::menu().open(ext::read_saves(), ext::read_worlds(), ext::read_profile());
+    ext::menu().open(ext::read_saves(), ext::read_worlds(), ext::read_profile(), ext::read_mods());
     title.open = true;
     title.returning = false;
     title.waiting = false;
@@ -382,6 +442,8 @@ std::optional<TitleStart> title_update(u32 pressed) {
     if (!title.open)
         return std::nullopt;
     ext::keep_room_list();
+    if (ext::menu().view().page == verdite::TitlePage::Mods)
+        ext::menu().set_mods(ext::read_mods());
     if (const auto pointed = host_menu_pointed_row(MenuWidget::List))
         ext::menu().point(static_cast<std::size_t>(*pointed));
     ext::press(pressed);

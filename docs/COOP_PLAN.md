@@ -504,12 +504,15 @@ Not yet:
 
 Built 2026-10-27, after Verdite2's and Verdite3's title: the game's own menu under the logo.
 KF1 had none (any button at the logo started a new game, and loading was the in-game menu's), so
-the logo (the opening's scene 1) now holds it, drawn with the menu's boxes, cursor and font as the
-SETTINGS page is, with the mouse and touch through the menu pointer:
+the logo (the opening's scene 1) now holds it, with the mouse and touch through the menu pointer. Its
+top page is a line of words across the bottom of the picture, without boxes, stepped with Left and
+Right (2026-11-02); the pages under it use the menu's boxes, cursor and font as the SETTINGS page does:
 
 - **CONTINUE** (first, and where the cursor starts, when a card slot is used): the three slots
   with their floor and experience; the chosen one goes in at the game's first update.
 - **NEW GAME**: the story scroll, then a new game, as a button at the logo was.
+- **MODS**: every installed mod with its switch (ON, OFF, ERROR or HELD), Confirm flipping it; a
+  mod's settings and error text stay in the F1 Mods window.
 - **COOP**: HOST (a new private world, whose 8-digit code is shown to read out before START; a new
   public one; or a world this machine already keeps), JOIN BY CODE (a grid of digits, or the
   keyboard's), PUBLIC ROOMS (the service's list, kept up to date while shown: the host's name,
