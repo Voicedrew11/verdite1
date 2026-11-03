@@ -69,6 +69,7 @@
         KF_VMA_SOURCE = "${pkgs.vulkan-memory-allocator.src}";
         KF_VK_BOOTSTRAP_SOURCE = "${pkgs.vk-bootstrap.src}";
         KF_CPPTRACE_SOURCE = "${pkgs.cpptrace.src}";
+        KF_LIBARCHIVE_SOURCE = "${pkgs.libarchive.src}"; # unpacks the English patch's .rar in the game
         KF_ENGLISH_PATCH = "${englishDelta}";
       };
     in {

@@ -147,9 +147,19 @@ Progress 2026-10-25, none of it run on a device yet:
   from there (`readable_path` in `entry.cpp`), then removed. The disc reader tells a CHD by its
   header, so the copy's name does not matter; a `.cue` cannot work through the picker, since
   only the picked file is readable, so a single `.bin`, `.iso` or `.chd` is what to pick. The
-  plan's stream reader was not needed. The English patch on Android is open: reading a `.rar`
-  runs `bsdtar`, which a phone does not have, and the download is a `.rar` too (a local build
-  embeds the English delta, so this is a release question).
+  plan's stream reader was not needed.
+- The English patch, 2026-11-03: a phone has neither `curl` nor `bsdtar`, and the translator's
+  release is a RAR 2.9 `-m5` archive, so `patch_archive.h` has one implementation per platform.
+  Android downloads through `HttpURLConnection` (`VerditeActivity.downloadFile`, three tries) and
+  unpacks in memory with libarchive's RAR and ZIP readers, built from `KF_LIBARCHIVE_SOURCE`: BSD
+  licensed, about 190 KB of APK, and nothing written to disk from inside an archive. A `.7z` is
+  refused there (no LZMA). The patch itself stays off the repository and the APK: its terms are
+  not stated (`english-resources.md`). Picked patches are read through SDL, which opens
+  `content://`. Checked without a phone: the NDK-compiled unpacker gives the known `.ppf` from the
+  real archive, `fetch` on a desktop JVM gets the pinned file, and that `.ppf` makes verified
+  English from the Japanese disc. Not yet run on a device. To try it there, build without the
+  embedded delta (`cmake --preset android-arm64 -DKF_ENGLISH_PATCH=/nonexistent`), which is also
+  how a release APK must be built; a release also carries libarchive's licence (E).
 - A4: `VerditeActivity` passes the intent extra `args` as the command line.
 
 First run on the Pixel, in this order:

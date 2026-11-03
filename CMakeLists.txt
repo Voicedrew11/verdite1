@@ -174,12 +174,16 @@ target_include_directories(kf_support PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BIN
 add_dependencies(kf_support kf_english_patch)
 target_compile_options(kf_support PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(kf_support PRIVATE verdite SDL3::SDL3)
+# Getting the English patch: a phone has no curl or bsdtar (patch_archive.h).
+if(NOT ANDROID)
+  target_sources(kf_support PRIVATE port/platform/patch_archive_tools.cpp)
+endif()
 
 # Android builds its libraries from the sources the android nix shell names (KF_*_SOURCE), the same
 # versions the desktop links; they would not be found as packages under the NDK's sysroot.
 if(ANDROID)
   foreach(source KF_SDL3_SOURCE KF_VULKAN_HEADERS_SOURCE KF_VOLK_SOURCE KF_VMA_SOURCE KF_VK_BOOTSTRAP_SOURCE
-      KF_CPPTRACE_SOURCE)
+      KF_CPPTRACE_SOURCE KF_LIBARCHIVE_SOURCE)
     if(NOT DEFINED ENV{${source}})
       message(FATAL_ERROR "${source} is not set: configure Android in the android shell (nix develop .#android)")
     endif()
@@ -192,6 +196,19 @@ if(ANDROID)
   set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
   add_subdirectory($ENV{KF_SDL3_SOURCE} sdl3 EXCLUDE_FROM_ALL SYSTEM)
+  # The English patch's .rar and a .zip, read in memory: only the readers patch_unpack_libarchive.cpp
+  # names are linked. zlib is the NDK's, for the .zip.
+  foreach(off TEST TAR CPIO CAT UNZIP OPENSSL LIBB2 LZ4 LZO LZMA ZSTD BZip2 LIBXML2 EXPAT PCREPOSIX PCRE2POSIX
+      LibGCC CNG MBEDTLS NETTLE ACL XATTR ICONV INSTALL)
+    set(ENABLE_${off} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)   # its option defaults on, and libchdr reads it too
+  add_subdirectory($ENV{KF_LIBARCHIVE_SOURCE} libarchive EXCLUDE_FROM_ALL SYSTEM)
+  target_sources(kf_support PRIVATE port/platform/patch_unpack_libarchive.cpp port/platform/patch_download_android.cpp)
+  target_include_directories(kf_support PRIVATE $ENV{KF_LIBARCHIVE_SOURCE}/libarchive)
+  target_compile_definitions(kf_support PRIVATE LIBARCHIVE_STATIC)
+  target_link_libraries(kf_support PRIVATE archive_static)
 elseif(WIN32)
   # Windows: the SDL3 MinGW development package is downloaded unless SDL3 is
   # already on CMAKE_PREFIX_PATH.
@@ -509,6 +526,12 @@ if(doctest_FOUND)
   target_link_libraries(kf_port_tests PRIVATE kf_frontend verdite doctest::doctest)
   target_compile_options(kf_port_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME port COMMAND kf_port_tests)
+  # The unpacker Android uses, tested here when the nix shell's libarchive is at hand.
+  find_package(LibArchive QUIET)
+  if(LibArchive_FOUND)
+    target_sources(kf_port_tests PRIVATE port/tests/patch_archive.cpp port/platform/patch_unpack_libarchive.cpp)
+    target_link_libraries(kf_port_tests PRIVATE LibArchive::LibArchive)
+  endif()
   # The Vulkan backend on a real GPU, offscreen, validation layers on: any validation error fails it.
   # It loads the host's Vulkan loader and drivers, as scripts/run-linux.sh does; 77: no device.
   add_executable(kf_vulkan_tests port/tests/vulkan.cpp)

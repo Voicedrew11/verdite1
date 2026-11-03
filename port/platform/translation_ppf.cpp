@@ -1,19 +1,11 @@
 #include <kf/platform/translation_ppf.h>
 #include <kf/platform/disc_layout.h>
+#include <kf/platform/patch_archive.h>
+#include <SDL3/SDL_iostream.h>
 #include <algorithm>
-#include <atomic>
-#include <cstdio>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#else
-#include <cstdlib>
-#include <unistd.h>
-#endif
 
 namespace kf {
 namespace {
@@ -22,110 +14,27 @@ constexpr std::size_t sector_data_offset = 24;   // MODE2 form 1: sync, header, 
 constexpr std::size_t sector_data_bytes = 2048;
 constexpr std::size_t ppf_header_bytes = 0x3C;
 constexpr std::size_t ppf_block_check_bytes = 1024;
-constexpr std::size_t patch_file_limit = 64 * 1024 * 1024;
 
-std::filesystem::path utf8_path(const char *path) {
-    return std::filesystem::path(reinterpret_cast<const char8_t *>(path));
-}
-
-bool read_file(const std::filesystem::path &path, std::vector<u8> *bytes) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error || size > patch_file_limit)
+// Through SDL, which also opens the content:// URI Android's file picker gives. To the stream's
+// end, as a document provider's stream need not know its size.
+bool read_file(const char *path, std::vector<u8> *bytes) {
+    SDL_IOStream *file = SDL_IOFromFile(path, "rb");
+    if (!file)
         return false;
-    std::ifstream stream(path, std::ios::binary);
-    bytes->resize(static_cast<std::size_t>(size));
-    return stream && stream.read(reinterpret_cast<char *>(bytes->data()), static_cast<std::streamsize>(size));
-}
-
-// A private scratch folder, removed when this goes out of scope.
-struct ScratchDirectory {
-    std::filesystem::path path;
-    ScratchDirectory() {
-        std::error_code error;
-#ifdef _WIN32
-        const auto id = static_cast<unsigned long>(GetCurrentProcessId());
-#else
-        const auto id = static_cast<unsigned long>(::getpid());
-#endif
-        static std::atomic<unsigned> serial{0};
-        path = std::filesystem::temp_directory_path(error) /
-            ("verdite1-" + std::to_string(id) + "-" + std::to_string(serial++));
-        std::filesystem::remove_all(path, error);
-        std::filesystem::create_directories(path, error);
-    }
-    ~ScratchDirectory() {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
-};
-
-// Runs a tool that ships with the system (curl and bsdtar are part of Windows 10
-// and later) without a console window. Every argument is quoted.
-bool run_tool(const char *tool, const std::vector<std::filesystem::path> &arguments) {
-#ifdef _WIN32
-    wchar_t system[MAX_PATH];
-    const UINT length = GetSystemDirectoryW(system, MAX_PATH);
-    if (!length || length >= MAX_PATH)
-        return false;
-    std::wstring command = L"\"" + std::wstring(system) + L"\\" + std::filesystem::path(tool).wstring() + L".exe\"";
-    for (const auto &argument : arguments)
-        command += L" \"" + argument.wstring() + L"\"";
-    STARTUPINFOW startup{};
-    startup.cb = sizeof startup;
-    PROCESS_INFORMATION process{};
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
-                        &startup, &process))
-        return false;
-    WaitForSingleObject(process.hProcess, INFINITE);
-    DWORD code = 1;
-    GetExitCodeProcess(process.hProcess, &code);
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return code == 0;
-#else
-    std::string command = tool;
-    for (const auto &argument : arguments)
-        command += " '" + argument.string() + "'";
-    return std::system(command.c_str()) == 0;
-#endif
-}
-
-// Extracts an archive and reads the largest .ppf inside it.
-bool patch_from_archive(const std::filesystem::path &archive, std::vector<u8> *ppf, std::string *error) {
-    ScratchDirectory scratch;
-#ifdef _WIN32
-    const char *archive_tool = "tar"; // Windows' tar is bsdtar
-#else
-    const char *archive_tool = "bsdtar"; // GNU tar cannot read .rar; the AppImage carries bsdtar
-#endif
-    if (!run_tool(archive_tool, {"-xf", archive, "-C", scratch.path})) {
-        *error = "Cannot open that archive. Extract the .ppf patch from it and choose that instead.";
-        return false;
-    }
-    std::error_code failure;
-    std::filesystem::path best;
-    std::uintmax_t best_size = 0;
-    for (const auto &entry : std::filesystem::recursive_directory_iterator(scratch.path, failure)) {
-        auto extension = entry.path().extension().string();
-        std::transform(extension.begin(), extension.end(), extension.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        std::error_code size_error;
-        const auto size = entry.is_regular_file(size_error) ? entry.file_size(size_error) : 0;
-        if (extension == ".ppf" && !size_error && size > best_size) {
-            best = entry.path();
-            best_size = size;
+    std::vector<u8> chunk(std::size_t{1} << 16);
+    bytes->clear();
+    bool ok = true;
+    while (ok) {
+        const std::size_t got = SDL_ReadIO(file, chunk.data(), chunk.size());
+        if (got == 0) {
+            ok = SDL_GetIOStatus(file) == SDL_IO_STATUS_EOF;
+            break;
         }
+        ok = bytes->size() + got <= patch_file_limit;
+        if (ok)
+            bytes->insert(bytes->end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(got));
     }
-    if (best.empty()) {
-        *error = "That archive holds no .ppf patch.";
-        return false;
-    }
-    if (!read_file(best, ppf)) {
-        *error = "Cannot read the patch in that archive.";
-        return false;
-    }
-    return true;
+    return SDL_CloseIO(file) && ok;
 }
 }
 
@@ -201,41 +110,44 @@ bool translation_apply_ppf(AssetTable &assets, const std::vector<u8> &ppf, std::
 }
 
 bool translation_read_patch(const char *path, std::vector<u8> *ppf, std::string *error) {
-    const auto file = utf8_path(path);
-    auto extension = file.extension().string();
+    std::vector<u8> bytes;
+    if (!read_file(path, &bytes)) {
+        *error = "Cannot read the patch file.";
+        return false;
+    }
+    // A picked content:// file's URI need not end in its name, so the bytes decide too.
+    auto extension = std::filesystem::path(reinterpret_cast<const char8_t *>(path)).extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (extension == ".ppf") {
-        if (!read_file(file, ppf)) {
-            *error = "Cannot read the patch file.";
-            return false;
-        }
+    constexpr char ppf_magic[] = {'P', 'P', 'F'};
+    if (extension == ".ppf" || (bytes.size() >= sizeof ppf_magic && std::memcmp(bytes.data(), ppf_magic, sizeof ppf_magic) == 0)) {
+        *ppf = std::move(bytes);
         return true;
     }
-    return patch_from_archive(file, ppf, error);
+    auto unpacked = patch_from_archive(bytes, error);
+    if (!unpacked)
+        return false;
+    *ppf = std::move(*unpacked);
+    return true;
 }
 
 bool translation_download(std::vector<u8> *ppf, std::string *error) {
-    ScratchDirectory scratch;
-    const auto archive = scratch.path / "Kings_Field_Jap_to_Eng_v1.0.rar";
-    if (!run_tool("curl", {"-fsSL", "--retry", "2", "--connect-timeout", "20", "-o", archive, english_patch_url})) {
-        *error = "The download failed. Check your internet connection, or choose the patch file yourself.";
+    const auto archive = patch_archive_download(english_patch_url, error);
+    if (!archive)
         return false;
-    }
-    std::vector<u8> bytes;
-    if (!read_file(archive, &bytes)) {
-        *error = "The download failed.";
-        return false;
-    }
     Sha256 hash{};
     sha256_init(&hash);
-    sha256_update(&hash, bytes);
+    sha256_update(&hash, *archive);
     std::array<char, sha256_hex_capacity> digest;
     sha256_finish(&hash, digest);
     if (std::strcmp(digest.data(), english_patch_archive_sha256) != 0) {
         *error = "The downloaded file is not the translator's v1.0 release.";
         return false;
     }
-    return patch_from_archive(archive, ppf, error);
+    auto unpacked = patch_from_archive(*archive, error);
+    if (!unpacked)
+        return false;
+    *ppf = std::move(*unpacked);
+    return true;
 }
 }

@@ -8,8 +8,18 @@ import android.view.KeyEvent;
 
 import org.libsdl.app.SDLActivity;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
 // SDL's activity, which loads libSDL3.so and libmain.so and runs the game's main on its own thread.
 public class VerditeActivity extends SDLActivity {
+    private static final int DOWNLOAD_TRIES = 3;
+    private static final int CONNECT_TIMEOUT_MS = 20_000;
+    private static final int READ_TIMEOUT_MS = 60_000;
+
     private SettingsPanel settings;
     private SetupPanel setup;
 
@@ -68,6 +78,42 @@ public class VerditeActivity extends SDLActivity {
     // phone's own key click, as the system's "touch feedback" setting allows.
     public void feelButtonPress() {
         runOnUiThread(() -> mSurface.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY));
+    }
+
+    // From a language task's thread or the game's (port/platform/patch_download_android.cpp): the
+    // file at an https URL, or null. The game checks what it gets.
+    public byte[] downloadFile(String url, int mostBytes) {
+        for (int attempt = 1; attempt <= DOWNLOAD_TRIES; attempt++) {
+            try {
+                return fetch(url, mostBytes);
+            } catch (IOException e) {
+                Log.w("Verdite1", "download, try " + attempt + ": " + e);
+            }
+        }
+        return null;
+    }
+
+    private static byte[] fetch(String url, int mostBytes) throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            int status = connection.getResponseCode();
+            if (status != HttpURLConnection.HTTP_OK)
+                throw new IOException("HTTP " + status);
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] chunk = new byte[64 * 1024];
+            try (InputStream in = connection.getInputStream()) {
+                for (int got = in.read(chunk); got >= 0; got = in.read(chunk)) {
+                    if (bytes.size() + got > mostBytes)
+                        throw new IOException("larger than " + mostBytes + " bytes");
+                    bytes.write(chunk, 0, got);
+                }
+            }
+            return bytes.toByteArray();
+        } finally {
+            connection.disconnect();
+        }
     }
 
     // A pad's Start goes on through the setup, as it does on a desktop.
