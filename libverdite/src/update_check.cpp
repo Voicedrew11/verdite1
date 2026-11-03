@@ -10,7 +10,7 @@
 
 namespace verdite {
 namespace {
-constexpr std::int64_t check_interval_s = 24 * 60 * 60;
+constexpr std::int64_t check_interval_s = std::int64_t{24} * 60 * 60;
 constexpr std::string_view secure_scheme = "https://";
 
 using Numbers = std::array<unsigned, 3>;

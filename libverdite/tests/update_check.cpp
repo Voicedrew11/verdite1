@@ -9,7 +9,7 @@
 using namespace verdite;
 
 namespace {
-constexpr std::int64_t day_s = 24 * 60 * 60;
+constexpr std::int64_t day_s = std::int64_t{24} * 60 * 60;
 const std::string release_020 = R"({"tag_name":"v0.2.0","html_url":"https://github.com/o/r/releases/tag/v0.2.0"})";
 
 // A state file of its own, gone afterwards.
@@ -60,8 +60,8 @@ TEST_CASE("an unreadable version is never newer") {
 TEST_CASE("the release comes from GitHub's answer") {
     const auto release = update_release_from_json(release_020);
     REQUIRE(release);
-    CHECK(release->tag == "v0.2.0");
-    CHECK(release->page_url == "https://github.com/o/r/releases/tag/v0.2.0");
+    CHECK(release.value_or(UpdateRelease{}).tag == "v0.2.0");
+    CHECK(release.value_or(UpdateRelease{}).page_url == "https://github.com/o/r/releases/tag/v0.2.0");
     CHECK_FALSE(update_release_from_json("not json"));
     CHECK_FALSE(update_release_from_json(""));
     CHECK_FALSE(update_release_from_json("[]"));
@@ -122,7 +122,7 @@ TEST_CASE("a skipped release stays quiet until a later one") {
     run.answer = R"({"tag_name":"v0.3.0","html_url":"https://github.com/o/r/releases/tag/v0.3.0"})";
     const auto later = run.at(100'003, UpdatePace::Now);
     REQUIRE(later);
-    CHECK(later->tag == "v0.3.0");
+    CHECK(later.value_or(UpdateRelease{}).tag == "v0.3.0");
 }
 
 TEST_CASE("a damaged state file is only a lost cache") {
