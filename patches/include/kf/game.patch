@@ -240,7 +240,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..6befed11d122f59d4e2779b6725c9592
  extern KfMenuResult menu_list_confirm(
      const KfMenuList *list, KfMenuConfirmKind confirm_kind, KfMenuPreviewMode preview_mode,
 diff --git a/include/kf/game/menu_text.h b/include/kf/game/menu_text.h
-index 87ebaf4e17ad51009ffb9735cd87841961d6765f..29bcde285bb7b06623e70dfd5cec8e7b9c6b9bde 100644
+index 87ebaf4e17ad51009ffb9735cd87841961d6765f..5d6a56f5cd338ddb479b9922f0d5f81badb3fa2c 100644
 --- a/include/kf/game/menu_text.h
 +++ b/include/kf/game/menu_text.h
 @@ -5,6 +5,10 @@
@@ -276,7 +276,7 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..29bcde285bb7b06623e70dfd5cec8e7b
      case MenuLabel::Pickup:
          return english ? MenuGlyphRow{{0x00, 0x06, MENU_TEXT_END}}
                         : MenuGlyphRow{{0x53, 0x6a, MENU_TEXT_END}};
-@@ -123,4 +127,24 @@ inline MenuGlyphRow menu_label(MenuLabel label)
+@@ -123,4 +127,37 @@ inline MenuGlyphRow menu_label(MenuLabel label)
      return {{MENU_TEXT_END}};
  }
  
@@ -285,19 +285,32 @@ index 87ebaf4e17ad51009ffb9735cd87841961d6765f..29bcde285bb7b06623e70dfd5cec8e7b
 +// small kana or を), not both; digits and '/' come from the number font in
 +// either. In Japanese, capitals come from the English font (menu_latin_font)
 +// while its files are there. Characters no font has are left out.
-+enum class MenuTextFont : u8 { Label, Number, Latin };
++//
++// Little is the thin lettering the disc's item names are made of. The English font page has it only
++// inside its word pieces, so a Little glyph names a place on the page rather than a cell, and is
++// drawn from the English font in either language.
++enum class MenuTextFont : u8 { Label, Number, Latin, Little };
 +
 +struct MenuTextGlyph {
 +    MenuTextFont font;
 +    s16 code;      // as MenuGlyphRow and menu_draw_number take it, dakuten bits included
 +    s16 left;      // blank columns at the cell's left, skipped
 +    s16 advance;   // pixels to the next glyph
++    s16 u = 0;     // Little only: the piece of the font page to draw
++    s16 v = 0;
++    s16 width = 0;
++    s16 height = 0;
++    s16 y = 0;     // Little only: pixels below the line's top
 +};
 +
 +std::vector<MenuTextGlyph> menu_spell(std::string_view text, kf::Language language);
 +// PC extension: text spelled onto the end of a line, so a space it starts with moves on from the
 +// line's last glyph (menu_spell alone has none to move on from, and drops it).
 +void menu_spell_onto(std::vector<MenuTextGlyph> &line, std::string_view text, kf::Language language);
++// PC extension: an extra item's name, its capitals in the Little lettering of the disc's own item
++// names. Everything but capitals is spelled as menu_spell does.
++std::vector<MenuTextGlyph> menu_spell_item_name(std::string_view name, kf::Language language);
++void menu_spell_item_name_onto(std::vector<MenuTextGlyph> &line, std::string_view name, kf::Language language);
 +s32 menu_text_width(std::span<const MenuTextGlyph> glyphs);
 +
  #endif // KF_GAME_MENU_TEXT_H

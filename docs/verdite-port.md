@@ -575,6 +575,14 @@ font page, 2 pixels apart; kana 13 apart),
 - **Boxes.** `menu_blit_box_translucent` draws a box sprite at any width: its 8-pixel ends as
   they are and the middle stretched (two overlapping copies, first tried, showed a seam). Labels
   are kept to the row box's 120 pixels inside.
+- **Item names use the disc's thin lettering.** The disc's item names are drawn from word pieces
+  (MEDICINE, HERB) in thinner letters than the 26 individual capitals, so a name spelled from those
+  capitals stood out beside them. The thin letters were mapped off the English font page
+  (`little_letters`, `MenuTextFont::Little`): 24 of them, 9 pixels high, each cut from a word by its
+  pixels, 1 pixel apart. The disc has no thin J or Q on any page, so those two are drawn
+  (`drawn_little_letters`): J is the U without its left stem, Q the O with a tail, their pixels taken
+  from the thin I's stem so the colour is the font's. The Message Stone's and mods' item names use
+  this lettering. Other spelled text (settings, titles, menus' words) keeps the big capitals.
 
 ## The first-run setup
 

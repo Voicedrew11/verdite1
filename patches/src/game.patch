@@ -2523,7 +2523,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f85387a4a5fc96cb3c396d15be3e86bb29956450 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..6c7d3d722e5dae9a7e9c3ea20c8ae9d180f0770c 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -7,8 +7,17 @@
@@ -2954,7 +2954,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f85387a4a5fc96cb3c396d15be3e86bb
 +    menu_stats_compare = category;
 +}
 +
-+// PC extension: an extra item's name, spelled in the menu font where the disc's glyph row is empty.
++// PC extension: an extra item's name, spelled in the disc names' lettering where the disc's glyph row is empty.
 +// False for a disc item, whose name the caller draws from its glyph row.
 +static bool menu_draw_extra_item_name(KfObjectId item_id, MenuPoint at)
 +{
@@ -2964,7 +2964,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f85387a4a5fc96cb3c396d15be3e86bb
 +    const std::string name = kf::extra_item_name(kf_enum_encode<u8>(item_id), language);
 +    if (name.empty())
 +        return false;
-+    menu_draw_text(menu_spell(name, language), at, 1.0f);
++    menu_draw_text(menu_spell_item_name(name, language), at, 1.0f);
 +    return true;
 +}
 +
@@ -3229,7 +3229,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f85387a4a5fc96cb3c396d15be3e86bb
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2278,254 @@ void menu_draw_number(
+@@ -1854,10 +2278,260 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -3338,7 +3338,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f85387a4a5fc96cb3c396d15be3e86bb
 +{
 +    const std::string name = kf::extra_item_name(item, language);
 +    if (!name.empty())
-+        menu_spell_onto(line, name, language);
++        menu_spell_item_name_onto(line, name, language);
 +    else if (item < KF_ITEM_COUNT)
 +        menu_append_item_name(line, item);
 +}
@@ -3449,16 +3449,22 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f85387a4a5fc96cb3c396d15be3e86bb
 +
 +    for (const MenuTextGlyph &glyph : glyphs) {
 +        const bool number = glyph.font == MenuTextFont::Number;
-+        const MenuSpriteDef *latin_font = glyph.font == MenuTextFont::Latin ? menu_latin_font() : nullptr;
-+        if (glyph.font == MenuTextFont::Latin && !latin_font) {
++        const bool little = glyph.font == MenuTextFont::Little;
++        const bool needs_latin = glyph.font == MenuTextFont::Latin || little;
++        const MenuSpriteDef *latin_font = needs_latin ? menu_latin_font() : nullptr;
++        if (needs_latin && !latin_font) {
 +            x += glyph.advance;
 +            continue;
 +        }
 +        const MenuSpriteDef &font = number ? number_font : latin_font ? *latin_font : label_font;
 +        std::array<std::array<s32, 2>, 3> uvs{};
 +        s32 layers = 0;
++        const s32 width = little ? glyph.width : font.width;
++        const s32 height = little ? glyph.height : font.height;
 +        if (number) {
 +            uvs[layers++] = {font.u, glyph.code * MENU_NUMBER_CELL_HEIGHT};
++        } else if (little) {
++            uvs[layers++] = {glyph.u, glyph.v};
 +        } else {
 +            const s32 cell = glyph.code & MENU_TEXT_GLYPH_MASK;
 +            uvs[layers++] = {(cell % MENU_FONT_COLUMNS) * MENU_FONT_CELL_WIDTH, (cell / MENU_FONT_COLUMNS) * MENU_FONT_CELL_HEIGHT};
@@ -3468,8 +3474,8 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..f85387a4a5fc96cb3c396d15be3e86bb
 +                uvs[layers++] = {MENU_HANDAKUTEN_U, MENU_KANA_MARK_V};
 +        }
 +        for (s32 i = 0; i < layers; i++) {
-+            auto face = menu_textured_quad(font.material, x - glyph.left, at.y + (number ? 1 : 0), font.width, font.height);
-+            render_face_uv_rectangle(&face, uvs[i][0], uvs[i][1], uvs[i][0] + font.width, uvs[i][1] + font.height);
++            auto face = menu_textured_quad(font.material, x - glyph.left, at.y + glyph.y + (number ? 1 : 0), width, height);
++            render_face_uv_rectangle(&face, uvs[i][0], uvs[i][1], uvs[i][0] + width, uvs[i][1] + height);
 +            for (auto &vertex : face.vertices) {
 +                vertex.r *= shade;
 +                vertex.g *= shade;
@@ -3536,10 +3542,10 @@ index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..4ce1f0a0c0edbb1c337b086273e4c687
          switch (equipment_category) {
 diff --git a/src/game/menu_settings.cpp b/src/game/menu_settings.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..539afbdc9dc7f75c9f50919cb9fb246168585ca2
+index 0000000000000000000000000000000000000000..563c8f8227e498d15f4b63cd998f28648f33c2a8
 --- /dev/null
 +++ b/src/game/menu_settings.cpp
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,450 @@
 +// PC extension: the port's SETTINGS page under System, drawn with the menu's own
 +// boxes, cursor, font and sounds (kf/platform/settings_page.h has the settings).
 +#include <kf/platform/prelude.h>
@@ -3572,6 +3578,76 @@ index 0000000000000000000000000000000000000000..539afbdc9dc7f75c9f50919cb9fb2461
 +    {0x03, 3, 7}, {0x04, 6, 2}, {0x05, 3, 6}, {0x06, 3, 7}, {0x136, 4, 6}, {0x0a, 2, 9}, {0x50, 3, 7},
 +    {0x00, 3, 8}, {0x140, 4, 7}, {0x29, 3, 8}, {0x2c, 3, 8}, {0x134, 4, 7}, {0x10, 3, 10}, {0x11, 3, 7},
 +    {0x137, 2, 9}, {0x08, 0, 13}, {0xc9, 3, 7}, {0x2f, 3, 8}, {0x12, 3, 7},
++}};
++
++// The Little capitals A to Z on the English font page: where a clean copy of each lies among the
++// word pieces (its word in the comment) and its width, all of the same height. Z touches the D after
++// it and is cut at the join. Width 0: the page has none, and drawn_little_letters draws it.
++struct LittleLetter {
++    s16 u;
++    s16 v;
++    s16 width;
++};
++constexpr std::array<LittleLetter, 26> little_letters = {{
++    {187, 12, 5},    // A, ARMOR
++    {1, 108, 4},     // B, BOOTS
++    {169, 108, 4},   // C, CREST
++    {71, 60, 4},     // D, DUNGEON
++    {23, 120, 4},    // E, STONE
++    {197, 36, 4},    // F, FIRE
++    {1, 72, 5},      // G, GREEN
++    {112, 108, 4},   // H, HELM
++    {202, 36, 1},    // I, FIRE
++    {0, 0, 0},       // J
++    {115, 120, 5},   // K, KEY
++    {122, 108, 3},   // L, HELM
++    {56, 72, 5},     // M, MEDICINE
++    {17, 120, 5},    // N, STONE
++    {206, 12, 5},    // O, ARMOR
++    {0, 36, 4},      // P, PLATE
++    {0, 0, 0},       // Q
++    {193, 12, 5},    // R, ARMOR
++    {1, 120, 4},     // S, STONE
++    {28, 36, 5},     // T, TREE
++    {76, 60, 4},     // U, DUNGEON
++    {127, 48, 5},    // V, VERDITE
++    {141, 108, 7},   // W, WIND
++    {100, 84, 6},    // X, AXE
++    {126, 120, 5},   // Y, KEY
++    {53, 240, 3},    // Z, PRIZE
++}};
++constexpr s16 little_letter_gap = 1;
++constexpr s16 little_cell_height = 12;
++
++// The two capitals the page has no Little copy of: J is the U without its left stem, Q the O with a
++// tail. Their pixels come from the I's solid stem, so they share the font's colour in either language.
++constexpr s16 little_ink_rows = 9;
++constexpr s16 little_ink_top = 2;
++constexpr s16 little_stem_u = 202;
++constexpr s16 little_stem_v = 36 + little_ink_top;
++struct DrawnLittleLetter {
++    char32_t letter;
++    std::array<std::string_view, little_ink_rows> rows;
++};
++constexpr std::array<DrawnLittleLetter, 2> drawn_little_letters = {{
++    {U'J', {"...#",
++            "...#",
++            "...#",
++            "...#",
++            "...#",
++            "...#",
++            "#.##",
++            "####",
++            ".##."}},
++    {U'Q', {".##..",
++            ".###.",
++            "##.##",
++            "#...#",
++            "#...#",
++            "#...#",
++            "##.##",
++            ".###.",
++            "...##"}},
 +}};
 +
 +// The Japanese label font's kana run in this order, hiragana from 0x40 and
@@ -3650,6 +3726,57 @@ index 0000000000000000000000000000000000000000..539afbdc9dc7f75c9f50919cb9fb2461
 +    return std::nullopt;
 +}
 +
++std::optional<MenuTextGlyph> spell_one_little(char32_t c, kf::Language language)
++{
++    if (c < U'A' || c > U'Z')
++        return spell_one(c, language);
++    if (!menu_latin_font())
++        return std::nullopt;
++    const LittleLetter &letter = little_letters[c - U'A'];
++    return MenuTextGlyph{MenuTextFont::Little, 0, 0, static_cast<s16>(letter.width + little_letter_gap),
++        letter.u, letter.v, letter.width, little_cell_height, 0};
++}
++
++void append_spelled(std::vector<MenuTextGlyph> &glyphs, const std::optional<MenuTextGlyph> &glyph)
++{
++    if (!glyph)
++        return;
++    if (glyph->code == MENU_TEXT_BLANK) {
++        // A space only moves on: the label font's blank cell is not empty in every language.
++        if (!glyphs.empty())
++            glyphs.back().advance += glyph->advance;
++        return;
++    }
++    glyphs.push_back(*glyph);
++}
++
++// Each column's runs of ink as stem pieces. Every column of a drawn letter has ink.
++void append_drawn_little(std::vector<MenuTextGlyph> &glyphs, const DrawnLittleLetter &letter)
++{
++    for (std::size_t column = 0; column < letter.rows[0].size(); column++) {
++        for (s16 top = 0; top < little_ink_rows; top++) {
++            if (letter.rows[top][column] != '#')
++                continue;
++            s16 bottom = top;
++            while (bottom < little_ink_rows && letter.rows[bottom][column] == '#')
++                bottom++;
++            glyphs.push_back(MenuTextGlyph{MenuTextFont::Little, 0, 0, 0, little_stem_u, little_stem_v, 1,
++                static_cast<s16>(bottom - top), static_cast<s16>(little_ink_top + top)});
++            top = bottom;
++        }
++        glyphs.back().advance += 1;
++    }
++    glyphs.back().advance += little_letter_gap;
++}
++
++const DrawnLittleLetter *drawn_little_letter(char32_t c)
++{
++    for (const DrawnLittleLetter &letter : drawn_little_letters)
++        if (letter.letter == c)
++            return &letter;
++    return nullptr;
++}
++
 +} // namespace
 +
 +std::vector<MenuTextGlyph> menu_spell(std::string_view text, kf::Language language)
@@ -3661,17 +3788,25 @@ index 0000000000000000000000000000000000000000..539afbdc9dc7f75c9f50919cb9fb2461
 +
 +void menu_spell_onto(std::vector<MenuTextGlyph> &glyphs, std::string_view text, kf::Language language)
 +{
-+    for (const char32_t c : decode_utf8(text)) {
-+        const auto glyph = spell_one(c, language);
-+        if (!glyph)
-+            continue;
-+        if (glyph->code == MENU_TEXT_BLANK) {
-+            // A space only moves on: the label font's blank cell is not empty in every language.
-+            if (!glyphs.empty())
-+                glyphs.back().advance += glyph->advance;
-+            continue;
-+        }
-+        glyphs.push_back(*glyph);
++    for (const char32_t c : decode_utf8(text))
++        append_spelled(glyphs, spell_one(c, language));
++}
++
++std::vector<MenuTextGlyph> menu_spell_item_name(std::string_view name, kf::Language language)
++{
++    std::vector<MenuTextGlyph> glyphs;
++    menu_spell_item_name_onto(glyphs, name, language);
++    return glyphs;
++}
++
++void menu_spell_item_name_onto(std::vector<MenuTextGlyph> &glyphs, std::string_view name, kf::Language language)
++{
++    for (const char32_t c : decode_utf8(name)) {
++        const DrawnLittleLetter *drawn = drawn_little_letter(c);
++        if (!drawn)
++            append_spelled(glyphs, spell_one_little(c, language));
++        else if (menu_latin_font())
++            append_drawn_little(glyphs, *drawn);
 +    }
 +}
 +
