@@ -11,7 +11,9 @@
 // mod.json may also say "default_enabled": true, so a mod never stored before starts enabled (a mod
 // the game ships on), and "enhancement": true, for a mod the game holds while it plays as the
 // original did (hold_enhancements). It may say "api_version": "1.0", the API it was written for: a mod
-// asking for another major version, or a newer minor one, fails when it loads, and says why.
+// asking for another major version, or a newer minor one, fails when it loads, and says why. It may
+// say "menu", the rows of its settings as the game's own menus show them (ModMenuRow): a bad one fails
+// the mod when it loads, and says why.
 //
 // The host gives every mod, beside the game's tables:
 //   mod.id, mod.log(...), mod.time() (seconds since the host started), mod.save_config(),
@@ -120,6 +122,43 @@ using ModEventValue = std::variant<std::int64_t, bool, std::string_view>;
 // A value of a mod's config as the game's own settings set it (verdite/options.h's OptionValue).
 using ModConfigValue = std::variant<bool, double, std::string>;
 
+// A row of a mod's settings in the game's own menus, from mod.json's "menu":
+//   {"key": "noclip", "label": "NOCLIP", "type": "toggle", "default": false}
+//   {"key": "speed", "label": "SPEED", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 1}
+//   {"key": "mode", "label": "MODE", "type": "choice", "default": "a",
+//    "choices": [{"value": "a", "label": "EASY"}, {"value": "b", "label": "HARD"}]}
+// The value lives in the mod's config under key; the mod reads config.key, and default stands until a
+// value is set. Each label may have a "japanese" beside it, which the game's Japanese menus use.
+enum class ModMenuKind : std::uint8_t { Toggle, Number, Choice };
+
+struct ModMenuChoice {
+    ModConfigValue value;
+    std::string label, japanese;   // japanese may be empty
+};
+
+struct ModMenuRow {
+    std::string key;               // letters, digits and _, starting with a letter: a config key
+    std::string label, japanese;   // japanese may be empty
+    ModMenuKind kind = ModMenuKind::Toggle;
+    ModConfigValue fallback = false;      // "default": a boolean, a number in range, or a choice's value
+    double min = 0, max = 1, step = 1;    // Number: min < max, step > 0, and at most 256 steps from min to max
+    std::vector<ModMenuChoice> choices;   // Choice: 2 to 16, of one value type, no value twice
+};
+
+inline constexpr std::size_t mod_menu_rows_most = 32;
+inline constexpr std::size_t mod_menu_label_most = 16;      // bytes: reaches a menu's value box
+inline constexpr std::size_t mod_menu_japanese_most = 48;   // bytes: 16 kana
+
+struct ModMenuParse {
+    std::vector<ModMenuRow> rows;
+    std::string error;   // why the menu is refused, naming the row; empty when it is good, and then rows hold it
+};
+
+// The menu of a mod.json's text: no rows and no error when it has no "menu", or is not JSON (the host
+// reports that itself). A mod.json comes from outside the game: any other shape, a repeated key, or a
+// limit above passed is an error, and then rows is empty.
+ModMenuParse mod_menu_parse(std::string_view manifest_json);
+
 // What the game stores for a mod between runs.
 struct ModStored {
     bool enabled = false;
@@ -169,6 +208,7 @@ struct ModInfo {
     bool has_settings = false;    // defines on_settings
     bool enhancement = false;     // mod.json "enhancement"
     bool held = false;            // Running, but held: an enhancement while hold_enhancements lasts
+    std::vector<ModMenuRow> menu; // mod.json "menu"; empty when it has none or it was refused
 };
 
 class ModHost {

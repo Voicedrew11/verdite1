@@ -9,7 +9,7 @@ using namespace verdite;
 namespace {
 
 std::vector<TitleSave> saves(bool first, bool second, bool third) {
-    return {{first, first ? "LEVEL 3" : ""}, {second, ""}, {third, ""}};
+    return {{first, first ? "LEVEL 3" : "", 0, {}}, {second, "", 0, {}}, {third, "", 0, {}}};
 }
 
 TitleRowKind selected(const TitleMenu &menu) {
@@ -40,7 +40,13 @@ TitleProfile profile() {
 
 TitleMenu open_menu(std::vector<TitleSave> slots = saves(false, false, false), std::vector<TitleWorld> worlds = {}) {
     TitleMenu menu(1234);
-    menu.open(std::move(slots), std::move(worlds), profile(), {{"one", "ONE", TitleModState::Off}, {"two", "TWO", TitleModState::On}, {"bad", "BAD", TitleModState::Failed}});
+    menu.open(std::move(slots), std::move(worlds), profile(), {{"one", "ONE", TitleModState::Off, {}}, {"two", "TWO", TitleModState::Off, {}}, {"bad", "BAD", TitleModState::Failed, {}}});
+    return menu;
+}
+
+TitleMenu open_mods(std::vector<TitleMod> mods, std::vector<TitleSave> slots = saves(false, false, false)) {
+    TitleMenu menu(1234);
+    menu.open(std::move(slots), {}, profile(), std::move(mods));
     return menu;
 }
 
@@ -137,7 +143,7 @@ TEST_CASE("MODS lists the mods, and Confirm asks for each one's switch the other
     CHECK(choice.action == TitleAction::EnableMod);
     CHECK(choice.code == "one");
 
-    menu.set_mods({{"one", "ONE", TitleModState::On}, {"two", "TWO", TitleModState::On}, {"bad", "BAD", TitleModState::Failed}});
+    menu.set_mods({{"one", "ONE", TitleModState::On, {}}, {"two", "TWO", TitleModState::On, {}}, {"bad", "BAD", TitleModState::Failed, {}}});
     menu.press(TitleInput::Confirm);
     CHECK(taken(menu).action == TitleAction::DisableMod);
 
@@ -148,7 +154,7 @@ TEST_CASE("MODS lists the mods, and Confirm asks for each one's switch the other
     CHECK(choice.action == TitleAction::DisableMod);
     CHECK(choice.code == "bad");
 
-    menu.set_mods({{"one", "ONE", TitleModState::On}});
+    menu.set_mods({{"one", "ONE", TitleModState::On, {}}});
     CHECK(menu.view().rows[0].selected);
     menu.set_mods({});
     CHECK(menu.view().rows.empty());
@@ -158,6 +164,224 @@ TEST_CASE("MODS lists the mods, and Confirm asks for each one's switch the other
     menu.press(TitleInput::Back);
     CHECK(menu.view().page == TitlePage::Top);
     CHECK(selected(menu) == TitleRowKind::Mods);
+}
+
+TEST_CASE("CO-OP asks first only while a mod is On; Failed, Held and Off do not") {
+    for (TitleModState state : {TitleModState::Off, TitleModState::Failed, TitleModState::Held}) {
+        auto menu = open_mods({{"a", "A", state, {}}});
+        go_to(menu, TitleRowKind::Coop);
+        CHECK(menu.view().page == TitlePage::Coop);
+    }
+    auto menu = open_mods({{"a", "A", TitleModState::Off, {}}, {"b", "B", TitleModState::On, {}}});
+    go_to(menu, TitleRowKind::Coop);
+    REQUIRE(menu.view().page == TitlePage::CoopWarning);
+    CHECK(selected(menu) == TitleRowKind::EnterCoop);
+    CHECK(menu.view().rows.size() == 2);
+    CHECK(menu.view().rows[1].kind == TitleRowKind::GoBack);
+}
+
+TEST_CASE("the CO-OP warning: ENTER goes on to CO-OP, BACK returns to the CO-OP row") {
+    auto menu = open_mods({{"a", "A", TitleModState::On, {}}});
+    go_to(menu, TitleRowKind::Coop);
+    menu.press(TitleInput::Confirm);
+    CHECK(menu.view().page == TitlePage::Coop);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Top);
+    CHECK(selected(menu) == TitleRowKind::Coop);
+
+    go_to(menu, TitleRowKind::Coop);
+    menu.press(TitleInput::Down);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
+    menu.press(TitleInput::Confirm);
+    CHECK(menu.view().page == TitlePage::Top);
+    CHECK(selected(menu) == TitleRowKind::Coop);
+    CHECK_FALSE(menu.take_choice());
+}
+
+TEST_CASE("Back from CO-OP goes to the top page, not the warning") {
+    auto menu = open_mods({{"a", "A", TitleModState::On, {}}});
+    go_to(menu, TitleRowKind::Coop);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::Coop);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Top);
+    CHECK(selected(menu) == TitleRowKind::Coop);
+}
+
+TEST_CASE("a save made with other mods asks first, with the cursor on BACK, and LOAD ANYWAY loads that slot") {
+    auto slots = saves(true, true, false);
+    slots[1].mod_changes = {{"ONE", TitleSaveModChange::Added}, {"TWO", TitleSaveModChange::OtherVersion}};
+    auto menu = open_menu(slots);
+    menu.press(TitleInput::Confirm);
+    menu.press(TitleInput::Down);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::LoadWarning);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
+    CHECK_FALSE(menu.take_choice());
+    const auto rows = menu.view().rows;
+    REQUIRE(rows.size() == 4);
+    CHECK(rows[0].kind == TitleRowKind::LoadAnyway);
+    CHECK(rows[2].kind == TitleRowKind::SaveMod);
+    CHECK(rows[2].save_mod->name == "ONE");
+    CHECK(rows[3].save_mod->change == TitleSaveModChange::OtherVersion);
+    CHECK_FALSE(rows[2].enabled);
+
+    menu.press(TitleInput::Up);
+    CHECK(selected(menu) == TitleRowKind::LoadAnyway);
+    menu.press(TitleInput::Up);
+    CHECK(selected(menu) == TitleRowKind::SaveMod);
+    menu.press(TitleInput::Confirm);
+    CHECK_FALSE(menu.take_choice());
+    menu.press(TitleInput::Down);
+    CHECK(selected(menu) == TitleRowKind::LoadAnyway);
+    menu.press(TitleInput::Confirm);
+    const TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::Continue);
+    CHECK(choice.slot == 1);
+}
+
+TEST_CASE("GO BACK and Back on a save's warning return to CONTINUE on that slot") {
+    auto slots = saves(true, true, false);
+    slots[1].mod_changes = {{"ONE", TitleSaveModChange::Missing}};
+    auto menu = open_menu(slots);
+    menu.press(TitleInput::Confirm);
+    menu.press(TitleInput::Down);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::LoadWarning);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::Continue);
+    CHECK(menu.view().rows[1].selected);
+    CHECK_FALSE(menu.take_choice());
+
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::LoadWarning);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Continue);
+    CHECK(menu.view().rows[1].selected);
+    CHECK_FALSE(menu.take_choice());
+}
+
+TEST_CASE("a save made with the mods on now goes straight to its game") {
+    auto menu = open_menu(saves(true, false, false));
+    menu.press(TitleInput::Confirm);
+    menu.press(TitleInput::Confirm);
+    CHECK(menu.view().page == TitlePage::Continue);
+    const TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::Continue);
+    CHECK(choice.slot == 0);
+}
+
+TEST_CASE("a mod with settings opens its page; the switch flips by Confirm and by Left") {
+    auto menu = open_mods({{"hud", "HUD", TitleModState::Off, {{"VOLUME", "5", true}, {"SPEED", "2", false}, {"SCALE", "1", true}}}});
+    go_to(menu, TitleRowKind::Mods);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::ModSettings);
+    const auto rows = menu.view().rows;
+    REQUIRE(rows.size() == 4);
+    CHECK(selected(menu) == TitleRowKind::ModSwitch);
+    CHECK(rows[0].mod->name == "HUD");
+    CHECK(rows[1].setting->label == "VOLUME");
+    CHECK_FALSE(rows[2].enabled);
+    CHECK_FALSE(menu.take_choice());
+
+    menu.press(TitleInput::Confirm);
+    TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::EnableMod);
+    CHECK(choice.code == "hud");
+    menu.press(TitleInput::Left);
+    choice = taken(menu);
+    CHECK(choice.action == TitleAction::EnableMod);
+    CHECK(choice.code == "hud");
+    menu.set_mods({{"hud", "HUD", TitleModState::On, {{"VOLUME", "5", true}, {"SPEED", "2", false}, {"SCALE", "1", true}}}});
+    menu.press(TitleInput::Right);
+    choice = taken(menu);
+    CHECK(choice.action == TitleAction::DisableMod);
+    CHECK(choice.code == "hud");
+}
+
+TEST_CASE("a setting steps by Confirm, Left and Right, with its slot and delta; a disabled one does not step") {
+    auto menu = open_mods({{"hud", "HUD", TitleModState::Off, {{"VOLUME", "5", true}, {"SPEED", "2", false}, {"SCALE", "1", true}}}});
+    go_to(menu, TitleRowKind::Mods);
+    menu.press(TitleInput::Confirm);
+
+    menu.point(1);
+    menu.press(TitleInput::Confirm);
+    TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::StepModSetting);
+    CHECK(choice.code == "hud");
+    CHECK(choice.slot == 0);
+    CHECK(choice.delta == 1);
+
+    menu.press(TitleInput::Left);
+    choice = taken(menu);
+    CHECK(choice.slot == 0);
+    CHECK(choice.delta == -1);
+
+    menu.point(3);
+    menu.press(TitleInput::Right);
+    choice = taken(menu);
+    CHECK(choice.action == TitleAction::StepModSetting);
+    CHECK(choice.slot == 2);
+    CHECK(choice.delta == 1);
+    menu.press(TitleInput::Left);
+    choice = taken(menu);
+    CHECK(choice.slot == 2);
+    CHECK(choice.delta == -1);
+
+    menu.point(2);
+    menu.press(TitleInput::Confirm);
+    menu.press(TitleInput::Left);
+    menu.press(TitleInput::Right);
+    CHECK_FALSE(menu.take_choice());
+    CHECK(selected(menu) == TitleRowKind::ModSetting);
+}
+
+TEST_CASE("BACK from a mod's settings lands on the mod's row") {
+    auto menu = open_mods({{"plain", "PLAIN", TitleModState::Off, {}},
+                           {"hud", "HUD", TitleModState::Off, {{"VOLUME", "5", true}}}});
+    go_to(menu, TitleRowKind::Mods);
+    menu.point(1);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::ModSettings);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Mods);
+    CHECK(selected(menu) == TitleRowKind::Mod);
+    CHECK(menu.view().rows[1].selected);
+    CHECK(menu.view().rows[1].mod->id == "hud");
+}
+
+TEST_CASE("set_mods clamps the cursor to the settings that are left") {
+    auto menu = open_mods({{"hud", "HUD", TitleModState::Off, {{"VOLUME", "5", true}, {"SCALE", "1", true}}}});
+    go_to(menu, TitleRowKind::Mods);
+    menu.press(TitleInput::Confirm);
+    menu.point(2);
+    menu.set_mods({{"hud", "HUD", TitleModState::Off, {{"VOLUME", "5", true}}}});
+    REQUIRE(menu.view().page == TitlePage::ModSettings);
+    CHECK(menu.view().rows.size() == 2);
+    CHECK(selected(menu) == TitleRowKind::ModSetting);
+    CHECK(menu.view().rows[1].selected);
+}
+
+TEST_CASE("set_mods takes ModSettings back to MODS when the mod has no settings left") {
+    auto menu = open_mods({{"hud", "HUD", TitleModState::Off, {{"VOLUME", "5", true}}}});
+    go_to(menu, TitleRowKind::Mods);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::ModSettings);
+    menu.set_mods({{"hud", "HUD", TitleModState::Off, {}}});
+    CHECK(menu.view().page == TitlePage::Mods);
+    CHECK(selected(menu) == TitleRowKind::Mod);
+    menu.press(TitleInput::Confirm);
+    CHECK(taken(menu).action == TitleAction::EnableMod);
+}
+
+TEST_CASE("set_mods takes ModSettings back to MODS when the mod is gone") {
+    auto menu = open_mods({{"hud", "HUD", TitleModState::Off, {{"VOLUME", "5", true}}}});
+    go_to(menu, TitleRowKind::Mods);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::ModSettings);
+    menu.set_mods({});
+    CHECK(menu.view().page == TitlePage::Mods);
+    CHECK(menu.view().rows.empty());
 }
 
 TEST_CASE("rows wrap, and Back returns to the row that led to the page") {
@@ -434,4 +658,17 @@ TEST_CASE("the name grid: Down from its last line reaches DELETE, Up from DELETE
     menu.press(TitleInput::Up);
     menu.press(TitleInput::Up);
     CHECK(menu.view().rows[(lines - 1) * columns].selected);
+}
+
+TEST_CASE("set_saves changes what a save warns of") {
+    TitleMenu menu(1);
+    menu.open(saves(true, false, false), {}, profile(), {});
+    go_to(menu, TitleRowKind::Continue);
+    menu.set_saves({{true, "", 1, {{"MOD", TitleSaveModChange::Missing}}}, {false, "", 0, {}}, {false, "", 0, {}}});
+    go_to(menu, TitleRowKind::Slot);
+    CHECK(menu.view().page == TitlePage::LoadWarning);
+    menu.press(TitleInput::Back);
+    menu.set_saves(saves(true, false, false));
+    go_to(menu, TitleRowKind::Slot);
+    CHECK(taken(menu).action == TitleAction::Continue);
 }

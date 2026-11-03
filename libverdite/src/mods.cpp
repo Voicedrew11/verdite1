@@ -139,6 +139,8 @@ struct Mod {
     fs::path dir;
     std::string id, name, version, author, description, entry = "main.lua";
     std::string api_version;        // mod.json: the API it was written for; empty if it does not say
+    std::vector<ModMenuRow> menu;   // mod.json: "menu", as read; empty if none or refused
+    std::string menu_error;         // why the menu is refused: the mod fails when it loads
     bool default_enabled = false;   // mod.json: enabled when never stored
     bool enhancement = false;       // mod.json: held with the enhancements
     bool enabled = false;
@@ -1268,6 +1270,23 @@ void open_safe_libraries(lua_State *L) {
     lua_register(L, "print", mod_print);
 }
 
+// Protected: each menu row's fallback goes into config where the stored config has no value for
+// its key, so a script reads config.key without a nil check.
+void fill_menu_defaults(lua_State *L, const std::vector<ModMenuRow> &menu) {
+    lua_getglobal(L, "config");
+    for (const ModMenuRow &row : menu) {
+        lua_getfield(L, -1, row.key.c_str());
+        const bool stored = !lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (stored)
+            continue;
+        const Json fallback = json_of(row.fallback);
+        json_to_lua(L, fallback.get(), 0);
+        lua_setfield(L, -2, row.key.c_str());
+    }
+    lua_pop(L, 1);
+}
+
 // Protected: the sandbox, the tables, config, then the entry script run.
 int open_mod(lua_State *L) {
     const Mod &mod = mod_of_state(L);
@@ -1284,6 +1303,7 @@ int open_mod(lua_State *L) {
         raw_hook_open(L, mod.host->hooks);
     push_table_json(L, mod.config_json);
     lua_setglobal(L, "config");
+    fill_menu_defaults(L, mod.menu);
     apply_save(L);
     lua_newtable(L);
     lua_setglobal(L, "exports");
@@ -1560,6 +1580,254 @@ std::optional<std::string> api_refusal(std::string_view wanted, std::string_view
     return "written for API " + std::string(wanted) + ", and this game has " + std::string(game);
 }
 
+// ---- mod.json's "menu" (verdite/mods.h's ModMenuRow) ----
+
+// What is wrong, as the phrase its error is built from; nothing when all is well.
+using Problem = std::optional<std::string>;
+
+constexpr std::size_t mod_menu_key_most = 32;
+constexpr std::size_t mod_menu_choices_least = 2;
+constexpr std::size_t mod_menu_choices_most = 16;
+constexpr double mod_menu_steps_most = 256;
+
+bool ascii_letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+bool ascii_digit(char c) { return c >= '0' && c <= '9'; }
+
+bool valid_menu_key(std::string_view key) {
+    if (key.empty() || key.size() > mod_menu_key_most || !ascii_letter(key.front()))
+        return false;
+    return std::ranges::all_of(key, [](char c) { return ascii_letter(c) || ascii_digit(c) || c == '_'; });
+}
+
+// The string an item holds, if it is one.
+std::optional<std::string_view> text_of(const cJSON *item) {
+    if (!cJSON_IsString(item) || !item->valuestring)
+        return std::nullopt;
+    return std::string_view(item->valuestring);
+}
+
+// The value an item holds, if it is a boolean, a finite number or a string.
+std::optional<ModConfigValue> json_value(const cJSON *item) {
+    if (cJSON_IsBool(item))
+        return ModConfigValue{cJSON_IsTrue(item) != 0};
+    if (cJSON_IsNumber(item) && std::isfinite(item->valuedouble))
+        return ModConfigValue{item->valuedouble};
+    if (const auto text = text_of(item))
+        return ModConfigValue{std::string(*text)};
+    return std::nullopt;
+}
+
+// A row's key: a valid key that no earlier row has.
+Problem read_key(const cJSON *row, const std::vector<ModMenuRow> &earlier, std::string &key) {
+    const auto text = text_of(cJSON_GetObjectItemCaseSensitive(row, "key"));
+    if (!text)
+        return "key must be a string";
+    if (!valid_menu_key(*text))
+        return "key must be letters, digits and _, starting with a letter, at most 32 bytes";
+    if (std::ranges::any_of(earlier, [&](const ModMenuRow &other) { return other.key == *text; }))
+        return "key repeats an earlier row's key";
+    key = std::string(*text);
+    return std::nullopt;
+}
+
+// A label: a string of 1 to mod_menu_label_most bytes.
+Problem read_label(const cJSON *item, std::string &label) {
+    const auto text = text_of(cJSON_GetObjectItemCaseSensitive(item, "label"));
+    if (!text)
+        return "label must be a string";
+    if (text->empty())
+        return "label must not be empty";
+    if (text->size() > mod_menu_label_most)
+        return "label must be at most " + std::to_string(mod_menu_label_most) + " bytes";
+    label = std::string(*text);
+    return std::nullopt;
+}
+
+// The optional japanese beside a label: empty when there is none.
+Problem read_japanese(const cJSON *item, std::string &japanese) {
+    const cJSON *found = cJSON_GetObjectItemCaseSensitive(item, "japanese");
+    if (!found)
+        return std::nullopt;
+    const auto text = text_of(found);
+    if (!text)
+        return "japanese must be a string";
+    if (text->size() > mod_menu_japanese_most)
+        return "japanese must be at most " + std::to_string(mod_menu_japanese_most) + " bytes";
+    japanese = std::string(*text);
+    return std::nullopt;
+}
+
+// A number a row must have: finite.
+Problem read_finite(const cJSON *row, const char *key, double &number) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(row, key);
+    if (!cJSON_IsNumber(item) || !std::isfinite(item->valuedouble))
+        return std::string(key) + " must be a finite number";
+    number = item->valuedouble;
+    return std::nullopt;
+}
+
+Problem read_toggle(const cJSON *row, ModMenuRow &out) {
+    out.kind = ModMenuKind::Toggle;
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(row, "default");
+    if (!item)
+        return std::nullopt;
+    if (!cJSON_IsBool(item))
+        return "default must be a boolean";
+    out.fallback = ModConfigValue{cJSON_IsTrue(item) != 0};
+    return std::nullopt;
+}
+
+Problem read_number_default(const cJSON *row, ModMenuRow &out) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(row, "default");
+    if (!item)
+        return std::nullopt;
+    if (!cJSON_IsNumber(item))
+        return "default must be a number";
+    if (item->valuedouble < out.min || item->valuedouble > out.max)
+        return "default must be from min to max";
+    out.fallback = ModConfigValue{item->valuedouble};
+    return std::nullopt;
+}
+
+Problem read_number(const cJSON *row, ModMenuRow &out) {
+    out.kind = ModMenuKind::Number;
+    double min = 0, max = 0, step = 0;
+    if (auto problem = read_finite(row, "min", min))
+        return problem;
+    if (auto problem = read_finite(row, "max", max))
+        return problem;
+    if (auto problem = read_finite(row, "step", step))
+        return problem;
+    if (!(min < max))
+        return "min must be below max";
+    if (!(step > 0))
+        return "step must be above 0";
+    if ((max - min) / step > mod_menu_steps_most)
+        return "min to max is more than 256 steps";
+    out.min = min;
+    out.max = max;
+    out.step = step;
+    out.fallback = ModConfigValue{min};
+    return read_number_default(row, out);
+}
+
+// A choice's value: a boolean, a finite number or a string, of the first choice's type, not repeated.
+Problem read_choice_value(const cJSON *entry, const std::vector<ModMenuChoice> &earlier, ModConfigValue &value) {
+    const auto found = json_value(cJSON_GetObjectItemCaseSensitive(entry, "value"));
+    if (!found)
+        return "value must be a boolean, a finite number or a string";
+    if (!earlier.empty() && found->index() != earlier.front().value.index())
+        return "value is not the same type as choice 1's";
+    const auto repeat = std::ranges::find(earlier, *found, &ModMenuChoice::value);
+    if (repeat != earlier.end())
+        return "value repeats choice " + std::to_string(repeat - earlier.begin() + 1) + "'s value";
+    value = *found;
+    return std::nullopt;
+}
+
+// One entry of "choices": an object with a value, a label and an optional japanese.
+Problem read_choice(const cJSON *entry, std::vector<ModMenuChoice> &choices) {
+    if (!cJSON_IsObject(entry))
+        return "must be an object";
+    ModMenuChoice choice;
+    if (auto problem = read_choice_value(entry, choices, choice.value))
+        return problem;
+    if (auto problem = read_label(entry, choice.label))
+        return problem;
+    if (auto problem = read_japanese(entry, choice.japanese))
+        return problem;
+    choices.push_back(std::move(choice));
+    return std::nullopt;
+}
+
+Problem read_choices(const cJSON *row, ModMenuRow &out) {
+    const cJSON *list = cJSON_GetObjectItemCaseSensitive(row, "choices");
+    if (!cJSON_IsArray(list))
+        return "choices must be an array";
+    for (const cJSON *entry = list->child; entry; entry = entry->next) {
+        if (out.choices.size() == mod_menu_choices_most)
+            return "choices must have 2 to 16 entries";
+        if (auto problem = read_choice(entry, out.choices))
+            return "choice " + std::to_string(out.choices.size() + 1) + ": " + *problem;
+    }
+    if (out.choices.size() < mod_menu_choices_least)
+        return "choices must have 2 to 16 entries";
+    return std::nullopt;
+}
+
+// The default of a choice row: one of its values, the first choice's when there is none.
+Problem read_choice_default(const cJSON *row, ModMenuRow &out) {
+    out.fallback = out.choices.front().value;
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(row, "default");
+    if (!item)
+        return std::nullopt;
+    const auto value = json_value(item);
+    const bool offered = value && std::ranges::any_of(out.choices, [&](const ModMenuChoice &choice) {
+        return choice.value == *value;
+    });
+    if (!offered)
+        return "default must be one of the choices' values";
+    out.fallback = *value;
+    return std::nullopt;
+}
+
+Problem read_choice_row(const cJSON *row, ModMenuRow &out) {
+    out.kind = ModMenuKind::Choice;
+    if (auto problem = read_choices(row, out))
+        return problem;
+    return read_choice_default(row, out);
+}
+
+// The part of a row that its "type" decides.
+Problem read_kind(const cJSON *row, ModMenuRow &out) {
+    const auto type = text_of(cJSON_GetObjectItemCaseSensitive(row, "type"));
+    if (type && *type == "toggle")
+        return read_toggle(row, out);
+    if (type && *type == "number")
+        return read_number(row, out);
+    if (type && *type == "choice")
+        return read_choice_row(row, out);
+    return "type must be toggle, number or choice";
+}
+
+Problem read_row(const cJSON *row, const std::vector<ModMenuRow> &earlier, ModMenuRow &out) {
+    if (!cJSON_IsObject(row))
+        return "must be an object";
+    if (auto problem = read_key(row, earlier, out.key))
+        return problem;
+    if (auto problem = read_label(row, out.label))
+        return problem;
+    if (auto problem = read_japanese(row, out.japanese))
+        return problem;
+    return read_kind(row, out);
+}
+
+// The error for a row, named by its number and, when its key is a valid one, by the key.
+std::string row_problem(std::size_t number, const cJSON *row, const std::string &problem) {
+    std::string name;
+    if (cJSON_IsObject(row)) {
+        const auto key = text_of(cJSON_GetObjectItemCaseSensitive(row, "key"));
+        if (key && valid_menu_key(*key))
+            name = " (" + std::string(*key) + ")";
+    }
+    return "mod.json's menu, row " + std::to_string(number) + name + ": " + problem;
+}
+
+// Every row of the "menu" array into rows, in order, or the first problem with one.
+Problem read_menu(const cJSON *menu, std::vector<ModMenuRow> &rows) {
+    if (!cJSON_IsArray(menu))
+        return "mod.json's menu must be an array";
+    for (const cJSON *item = menu->child; item; item = item->next) {
+        if (rows.size() == mod_menu_rows_most)
+            return "mod.json's menu has more than " + std::to_string(mod_menu_rows_most) + " rows";
+        ModMenuRow row;
+        if (auto problem = read_row(item, rows, row))
+            return row_problem(rows.size() + 1, item, *problem);
+        rows.push_back(std::move(row));
+    }
+    return std::nullopt;
+}
+
 void read_manifest(Mod &mod) {
     const auto folder = mod.dir.filename().u8string();
     mod.id = mod.name = std::string(folder.begin(), folder.end());
@@ -1567,6 +1835,8 @@ void read_manifest(Mod &mod) {
     mod.author.clear();
     mod.description.clear();
     mod.api_version.clear();
+    mod.menu.clear();
+    mod.menu_error.clear();
     mod.entry = "main.lua";
     std::error_code error;
     const fs::path manifest = mod.dir / "mod.json";
@@ -1594,6 +1864,9 @@ void read_manifest(Mod &mod) {
     const auto flag = [&](const char *key) { return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json.get(), key)) != 0; };
     mod.default_enabled = flag("default_enabled");
     mod.enhancement = flag("enhancement");
+    ModMenuParse menu = mod_menu_parse(text.value_or(std::string()));
+    mod.menu = std::move(menu.rows);
+    mod.menu_error = std::move(menu.error);
 }
 
 struct Fingerprint {
@@ -1645,6 +1918,21 @@ bool is_mod_folder(const fs::directory_entry &entry) {
 }
 
 } // namespace
+
+ModMenuParse mod_menu_parse(std::string_view manifest_json) {
+    ModMenuParse parsed;
+    const Json manifest(cJSON_ParseWithLength(manifest_json.data(), manifest_json.size()));
+    if (!cJSON_IsObject(manifest.get()))
+        return parsed;
+    const cJSON *menu = cJSON_GetObjectItemCaseSensitive(manifest.get(), "menu");
+    if (!menu)
+        return parsed;
+    if (auto problem = read_menu(menu, parsed.rows)) {
+        parsed.rows.clear();
+        parsed.error = std::move(*problem);
+    }
+    return parsed;
+}
 
 // What a frame call kept waiting, in the order it was asked for.
 struct Waiting {
@@ -2020,6 +2308,10 @@ struct ModHost::State final : ModPeers {
                 return;
             }
         }
+        if (!mod.menu_error.empty()) {
+            fail(mod, mod.menu_error);
+            return;
+        }
         const auto began = Clock::now();
         if (auto error = load_asset_folder(config, mod.dir, mod.assets)) {
             fail(mod, *error);
@@ -2347,7 +2639,7 @@ std::vector<ModInfo> ModHost::mods() const {
                                                    : ModState::Disabled;
         list.push_back({mod->id, mod->name, mod->version, mod->author, mod->description, mod->enabled, shown,
                         mod->error, mod->has_settings, mod->enhancement,
-                        shown == ModState::Running && state_->held(*mod)});
+                        shown == ModState::Running && state_->held(*mod), mod->menu});
     }
     return list;
 }

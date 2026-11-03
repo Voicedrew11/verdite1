@@ -1544,3 +1544,215 @@ TEST_CASE("a mod refused for its api_version runs when mod.json is fixed, and on
     CHECK(noted("ran"));
     CHECK(mods.info("a").state == ModState::Running);
 }
+
+// The error of a mod.json's menu, which must be one; no rows with it.
+std::string menu_error_of(const std::string &menu_json) {
+    const auto parsed = mod_menu_parse(R"({"menu": )" + menu_json + "}");
+    REQUIRE_FALSE(parsed.error.empty());
+    CHECK(parsed.rows.empty());
+    return parsed.error;
+}
+
+TEST_CASE("a menu of toggle, number and choice rows parses, keeping the japanese") {
+    const auto parsed = mod_menu_parse(R"({"menu": [
+        {"key": "noclip", "label": "NOCLIP", "japanese": "ノークリップ", "type": "toggle", "default": true},
+        {"key": "speed", "label": "SPEED", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 2},
+        {"key": "mode", "label": "MODE", "type": "choice", "default": "b",
+         "choices": [{"value": "a", "label": "EASY"}, {"value": "b", "label": "HARD", "japanese": "むずかしい"}]}
+    ]})");
+    REQUIRE(parsed.error.empty());
+    REQUIRE(parsed.rows.size() == 3);
+    const ModMenuRow &toggle = parsed.rows[0];
+    CHECK(toggle.key == "noclip");
+    CHECK(toggle.kind == ModMenuKind::Toggle);
+    CHECK(toggle.japanese == "ノークリップ");
+    CHECK(toggle.fallback == ModConfigValue{true});
+    const ModMenuRow &speed = parsed.rows[1];
+    CHECK(speed.kind == ModMenuKind::Number);
+    CHECK(speed.min == 0.25);
+    CHECK(speed.max == 8.0);
+    CHECK(speed.step == 0.25);
+    CHECK(speed.fallback == ModConfigValue{2.0});
+    CHECK(speed.japanese.empty());
+    const ModMenuRow &mode = parsed.rows[2];
+    CHECK(mode.kind == ModMenuKind::Choice);
+    CHECK(mode.fallback == ModConfigValue{std::string("b")});
+    REQUIRE(mode.choices.size() == 2);
+    CHECK(mode.choices[0].label == "EASY");
+    CHECK(mode.choices[0].japanese.empty());
+    CHECK(mode.choices[1].value == ModConfigValue{std::string("b")});
+    CHECK(mode.choices[1].japanese == "むずかしい");
+}
+
+TEST_CASE("a row without a default takes false, the minimum, or the first choice") {
+    const auto parsed = mod_menu_parse(R"({"menu": [
+        {"key": "t", "label": "T", "type": "toggle"},
+        {"key": "n", "label": "N", "type": "number", "min": -2, "max": 2, "step": 1},
+        {"key": "c", "label": "C", "type": "choice", "choices": [{"value": 3, "label": "X"}, {"value": 4, "label": "Y"}]}
+    ]})");
+    REQUIRE(parsed.error.empty());
+    REQUIRE(parsed.rows.size() == 3);
+    CHECK(parsed.rows[0].fallback == ModConfigValue{false});
+    CHECK(parsed.rows[1].fallback == ModConfigValue{-2.0});
+    CHECK(parsed.rows[2].fallback == ModConfigValue{3.0});
+}
+
+TEST_CASE("a mod.json with no menu, or text that is not JSON, has no rows and no error") {
+    const auto none = mod_menu_parse(R"({"name": "A"})");
+    CHECK(none.rows.empty());
+    CHECK(none.error.empty());
+    const auto not_json = mod_menu_parse("this is not json");
+    CHECK(not_json.rows.empty());
+    CHECK(not_json.error.empty());
+}
+
+TEST_CASE("a menu that is not an array is refused") {
+    CHECK(menu_error_of(R"("speed")") == "mod.json's menu must be an array");
+    CHECK(menu_error_of("null") == "mod.json's menu must be an array");
+}
+
+// An array of count toggle rows with keys k0, k1, ...
+std::string toggle_rows(int count) {
+    std::string rows = "[";
+    for (int i = 0; i < count; ++i)
+        rows += std::string(i ? "," : "") + R"({"key": "k)" + std::to_string(i) + R"(", "label": "L", "type": "toggle"})";
+    return rows + "]";
+}
+
+TEST_CASE("a menu of more than 32 rows is refused, and 32 is not") {
+    CHECK(menu_error_of(toggle_rows(33)) == "mod.json's menu has more than 32 rows");
+    const auto parsed = mod_menu_parse(R"({"menu": )" + toggle_rows(32) + "}");
+    CHECK(parsed.rows.size() == 32);
+    CHECK(parsed.error.empty());
+}
+
+TEST_CASE("a row that is not an object, or has no label or type, is named by its number") {
+    CHECK(menu_error_of(R"(["speed"])") == "mod.json's menu, row 1: must be an object");
+    CHECK(menu_error_of(R"([{"key": "a", "type": "toggle"}])") == "mod.json's menu, row 1 (a): label must be a string");
+    CHECK(menu_error_of(R"([{"key": "a", "label": "A", "type": "slider"}])") ==
+          "mod.json's menu, row 1 (a): type must be toggle, number or choice");
+}
+
+TEST_CASE("a repeated key is refused, naming the row that repeats it") {
+    const auto error = menu_error_of(R"([{"key": "a", "label": "A", "type": "toggle"},
+                                          {"key": "a", "label": "B", "type": "toggle"}])");
+    CHECK(error == "mod.json's menu, row 2 (a): key repeats an earlier row's key");
+}
+
+TEST_CASE("a key must be letters, digits and _, starting with a letter, at most 32 bytes") {
+    const auto bad_key = [](const std::string &key) {
+        return menu_error_of(R"([{"key": ")" + key + R"(", "label": "A", "type": "toggle"}])");
+    };
+    CHECK(bad_key("1a") == "mod.json's menu, row 1: key must be letters, digits and _, starting with a letter, at most 32 bytes");
+    CHECK(bad_key("a b").find("key must be letters") != std::string::npos);
+    CHECK(bad_key("a-b").find("key must be letters") != std::string::npos);
+    CHECK(bad_key("").find("key must be letters") != std::string::npos);
+    CHECK(bad_key(std::string(33, 'a')).find("key must be letters") != std::string::npos);
+    CHECK(bad_key("_a").find("key must be letters") != std::string::npos);
+    const auto parsed = mod_menu_parse(R"({"menu": [{"key": "a_1", "label": "A", "type": "toggle"}]})");
+    CHECK(parsed.error.empty());
+    CHECK(mod_menu_parse(R"({"menu": [{"key": ")" + std::string(32, 'a') + R"(", "label": "A", "type": "toggle"}]})")
+              .error.empty());
+}
+
+TEST_CASE("a label is a non-empty string of at most 16 bytes, and a japanese of at most 48") {
+    CHECK(menu_error_of(R"([{"key": "a", "label": "", "type": "toggle"}])") ==
+          "mod.json's menu, row 1 (a): label must not be empty");
+    CHECK(menu_error_of(R"([{"key": "a", "label": "ABCDEFGHIJKLMNOPQ", "type": "toggle"}])") ==
+          "mod.json's menu, row 1 (a): label must be at most 16 bytes");
+    CHECK(menu_error_of(R"([{"key": "a", "label": "A", "japanese": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "type": "toggle"}])") ==
+          "mod.json's menu, row 1 (a): japanese must be at most 48 bytes");
+    CHECK(mod_menu_parse(R"({"menu": [{"key": "a", "label": "ABCDEFGHIJKLMNOP", "type": "toggle"}]})").error.empty());
+}
+
+TEST_CASE("a number row needs finite min, max and step, min below max, step above 0, at most 256 steps") {
+    const auto number = [](const std::string &fields) {
+        return menu_error_of(R"([{"key": "s", "label": "S", "type": "number", )" + fields + "}]");
+    };
+    CHECK(number(R"("min": 1, "max": 1, "step": 1)") == "mod.json's menu, row 1 (s): min must be below max");
+    CHECK(number(R"("min": 0, "max": 1, "step": 0)") == "mod.json's menu, row 1 (s): step must be above 0");
+    CHECK(number(R"("min": 0, "max": 300, "step": 1)") == "mod.json's menu, row 1 (s): min to max is more than 256 steps");
+    CHECK(number(R"("min": 0, "max": 1e999, "step": 1)") == "mod.json's menu, row 1 (s): max must be a finite number");
+    CHECK(number(R"("min": 0, "max": 1)") == "mod.json's menu, row 1 (s): step must be a finite number");
+    CHECK(number(R"("min": 0, "max": 2, "step": 1, "default": 3)") ==
+          "mod.json's menu, row 1 (s): default must be from min to max");
+    CHECK(number(R"("min": 0, "max": 2, "step": 1, "default": "1")") ==
+          "mod.json's menu, row 1 (s): default must be a number");
+    CHECK(mod_menu_parse(R"({"menu": [{"key": "s", "label": "S", "type": "number", "min": 0, "max": 256, "step": 1}]})")
+              .error.empty());
+}
+
+TEST_CASE("a choice row needs 2 to 16 choices of one value type, none repeated, and a default among them") {
+    const auto choice = [](const std::string &choices, const std::string &extra = "") {
+        return menu_error_of(R"([{"key": "c", "label": "C", "type": "choice", )" + extra + R"("choices": )" + choices + "}]");
+    };
+    CHECK(choice(R"([{"value": "a", "label": "A"}])") == "mod.json's menu, row 1 (c): choices must have 2 to 16 entries");
+    std::string many = "[";
+    for (int i = 0; i < 17; ++i)
+        many += std::string(i ? "," : "") + R"({"value": )" + std::to_string(i) + R"(, "label": "L"})";
+    CHECK(choice(many + "]") == "mod.json's menu, row 1 (c): choices must have 2 to 16 entries");
+    CHECK(choice(R"([{"value": "a", "label": "A"}, {"value": 1, "label": "B"}])") ==
+          "mod.json's menu, row 1 (c): choice 2: value is not the same type as choice 1's");
+    CHECK(choice(R"([{"value": "a", "label": "A"}, {"value": "a", "label": "B"}])") ==
+          "mod.json's menu, row 1 (c): choice 2: value repeats choice 1's value");
+    CHECK(choice(R"([{"value": "a", "label": "A"}, {"value": "b", "label": "B"}])", R"("default": "z", )") ==
+          "mod.json's menu, row 1 (c): default must be one of the choices' values");
+    CHECK(choice(R"([{"value": "a", "label": "A"}, {"label": "B"}])") ==
+          "mod.json's menu, row 1 (c): choice 2: value must be a boolean, a finite number or a string");
+    CHECK(mod_menu_parse(R"({"menu": [{"key": "c", "label": "C", "type": "choice", "choices": [
+        {"value": true, "label": "On"}, {"value": false, "label": "Off"}]}]})")
+              .error.empty());
+}
+
+TEST_CASE("a bad menu fails the mod when it loads, and its script does not run") {
+    Mods mods;
+    mods.write("a/mod.json", R"({"menu": [{"key": "speed", "label": "SPEED", "type": "number", "min": 0, "max": 8, "step": 0}]})");
+    mods.write("a/main.lua", "t.note('ran')");
+    mods.host->scan();
+    mods.host->enable("a");
+    const ModInfo info = mods.info("a");
+    CHECK(info.state == ModState::Failed);
+    CHECK(info.error == "mod.json's menu, row 1 (speed): step must be above 0");
+    CHECK_FALSE(noted("ran"));
+}
+
+TEST_CASE("a good menu is listed with the mod, and a script sees each row's default in config") {
+    Mods mods;
+    mods.write("a/mod.json", R"({"menu": [
+        {"key": "speed", "label": "SPEED", "type": "number", "min": 0, "max": 8, "step": 1, "default": 2},
+        {"key": "noclip", "label": "NOCLIP", "type": "toggle"}]})");
+    mods.write("a/main.lua", "t.note(tostring(config.speed) .. tostring(config.noclip))");
+    mods.host->scan();
+    CHECK(mods.info("a").menu.size() == 2);
+    CHECK(mods.info("a").menu[0].key == "speed");
+    mods.host->enable("a");
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(noted("2false"));
+}
+
+TEST_CASE("a stored config value is not overwritten by a row's default") {
+    Mods mods;
+    mods.stored["a"] = ModStored{true, R"({"speed": 5})"};
+    mods.write("a/mod.json", R"({"menu": [
+        {"key": "speed", "label": "SPEED", "type": "number", "min": 0, "max": 8, "step": 1, "default": 2},
+        {"key": "noclip", "label": "NOCLIP", "type": "toggle"}]})");
+    mods.write("a/main.lua", "t.note(tostring(config.speed) .. tostring(config.noclip))");
+    mods.host->scan();
+    CHECK(mods.info("a").state == ModState::Running);
+    CHECK(noted("5false"));
+}
+
+TEST_CASE("set_config_value then config_value round trips on a disabled mod and a running one") {
+    Mods mods;
+    mods.write("a/mod.json", R"({"menu": [{"key": "speed", "label": "SPEED", "type": "number", "min": 0, "max": 8, "step": 1}]})");
+    mods.write("a/main.lua", "function on_update() t.note(tostring(config.speed)) end");
+    mods.host->scan();
+    CHECK(mods.host->set_config_value("a", "speed", 4.0));
+    CHECK(mods.host->config_value("a", "speed") == ModConfigValue{4.0});
+    mods.host->enable("a");
+    CHECK(mods.host->config_value("a", "speed") == ModConfigValue{4.0});
+    CHECK(mods.host->set_config_value("a", "speed", 6.0));
+    CHECK(mods.host->config_value("a", "speed") == ModConfigValue{6.0});
+    mods.host->call_each(ModCallback::Update);
+    CHECK(noted("6"));
+}

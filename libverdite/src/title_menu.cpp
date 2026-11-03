@@ -74,8 +74,12 @@ std::optional<Parent> parent_of(TitlePage page) {
     case TitlePage::Profile: return Parent{TitlePage::Coop, TitleRowKind::Profile};
     case TitlePage::NameEntry: return Parent{TitlePage::Profile, TitleRowKind::ProfileName};
     case TitlePage::Mods: return Parent{TitlePage::Top, TitleRowKind::Mods};
+    case TitlePage::CoopWarning: return Parent{TitlePage::Top, TitleRowKind::Coop};
     case TitlePage::Top:
-    case TitlePage::Waiting: return std::nullopt;
+    case TitlePage::Waiting:
+    case TitlePage::LoadWarning:   // back() goes to the slot it asks about
+    case TitlePage::ModSettings:   // back() goes to the mod's row
+        return std::nullopt;
     }
     return std::nullopt;
 }
@@ -187,6 +191,7 @@ void TitleMenu::move_sideways(int delta, std::size_t count) {
     }
     move_in_grid(delta);
     step_profile(delta);
+    step_mod_row(delta);
 }
 
 void TitleMenu::move_in_grid(int delta) {
@@ -212,8 +217,42 @@ void TitleMenu::step_profile(int delta) {
     choose_profile();
 }
 
+void TitleMenu::step_mod_row(int delta) {
+    const auto rows = view().rows;
+    if (page_ != TitlePage::ModSettings || row_ >= rows.size())
+        return;
+    const TitleRowView &on = rows[row_];
+    if (on.kind == TitleRowKind::ModSwitch) {
+        flip_mod(*on.mod);
+        return;
+    }
+    if (on.kind != TitleRowKind::ModSetting || !on.enabled)
+        return;
+    // The setting's index: row 0 is the switch.
+    choice_ = TitleChoice{TitleAction::StepModSetting, row_ - 1, settings_mod_, false, {}, delta};
+}
+
+void TitleMenu::confirm_mod(const TitleMod &mod) {
+    if (mod.settings.empty()) {
+        flip_mod(mod);
+        return;
+    }
+    settings_mod_ = mod.id;
+    go(TitlePage::ModSettings, std::nullopt);
+}
+
+void TitleMenu::flip_mod(const TitleMod &mod) {
+    const TitleAction action = mod.state == TitleModState::Off ? TitleAction::EnableMod : TitleAction::DisableMod;
+    choice_ = TitleChoice{action, 0, mod.id, false, {}, 0};
+}
+
+const TitleMod *TitleMenu::shown_mod() const {
+    const auto found = std::ranges::find(mods_, settings_mod_, &TitleMod::id);
+    return found == mods_.end() ? nullptr : &*found;
+}
+
 void TitleMenu::choose_profile() {
-    choice_ = TitleChoice{TitleAction::Profile, 0, {}, false, profile_};
+    choice_ = TitleChoice{TitleAction::Profile, 0, {}, false, profile_, 0};
 }
 
 void TitleMenu::confirm() {
@@ -223,14 +262,29 @@ void TitleMenu::confirm() {
     const TitleRowView &chosen = rows[row_];
     switch (chosen.kind) {
     case TitleRowKind::Continue: go(TitlePage::Continue, std::nullopt); break;
-    case TitleRowKind::NewGame: choice_ = TitleChoice{TitleAction::NewGame, 0, {}, false, {}}; break;
-    case TitleRowKind::Coop: go(TitlePage::Coop, std::nullopt); break;
-    case TitleRowKind::Mods: go(TitlePage::Mods, std::nullopt); break;
-    case TitleRowKind::Mod:
-        choice_ = TitleChoice{chosen.mod->state == TitleModState::Off ? TitleAction::EnableMod : TitleAction::DisableMod,
-                              0, chosen.mod->id, false, {}};
+    case TitleRowKind::NewGame: choice_ = TitleChoice{TitleAction::NewGame, 0, {}, false, {}, 0}; break;
+    case TitleRowKind::Coop:
+        if (std::ranges::any_of(mods_, [](const TitleMod &mod) { return mod.state == TitleModState::On; }))
+            go(TitlePage::CoopWarning, TitleRowKind::EnterCoop);
+        else
+            go(TitlePage::Coop, std::nullopt);
         break;
-    case TitleRowKind::Slot: choice_ = TitleChoice{TitleAction::Continue, row_, {}, false, {}}; break;
+    case TitleRowKind::Mods: go(TitlePage::Mods, std::nullopt); break;
+    case TitleRowKind::Mod: confirm_mod(*chosen.mod); break;
+    case TitleRowKind::ModSwitch: flip_mod(*chosen.mod); break;
+    case TitleRowKind::ModSetting: step_mod_row(1); break;
+    case TitleRowKind::Slot:
+        if (chosen.save->mod_changes.empty()) {
+            choice_ = TitleChoice{TitleAction::Continue, row_, {}, false, {}, 0};
+        } else {
+            warned_slot_ = row_;
+            go(TitlePage::LoadWarning, TitleRowKind::GoBack);
+        }
+        break;
+    case TitleRowKind::LoadAnyway: choice_ = TitleChoice{TitleAction::Continue, warned_slot_, {}, false, {}, 0}; break;
+    case TitleRowKind::SaveMod: break;   // dimmed: refused above
+    case TitleRowKind::EnterCoop: go(TitlePage::Coop, std::nullopt); break;
+    case TitleRowKind::GoBack: back(); break;
     case TitleRowKind::Host: go(TitlePage::Host, std::nullopt); break;
     case TitleRowKind::JoinCode:
         code_.clear();
@@ -245,15 +299,15 @@ void TitleMenu::confirm() {
         code_ = room_code_private(next_random(random_));
         go(TitlePage::HostCode, TitleRowKind::Start);
         break;
-    case TitleRowKind::NewPublicWorld: wait_for({TitleAction::Host, 0, room_code_public(next_random(random_)), true, {}}); break;
+    case TitleRowKind::NewPublicWorld: wait_for({TitleAction::Host, 0, room_code_public(next_random(random_)), true, {}, 0}); break;
     case TitleRowKind::KeptWorld:
-        wait_for({TitleAction::Host, 0, chosen.world->code, room_code_is_public(chosen.world->code), {}});
+        wait_for({TitleAction::Host, 0, chosen.world->code, room_code_is_public(chosen.world->code), {}, 0});
         break;
-    case TitleRowKind::Start: wait_for({TitleAction::Host, 0, code_, false, {}}); break;
+    case TitleRowKind::Start: wait_for({TitleAction::Host, 0, code_, false, {}, 0}); break;
     case TitleRowKind::Letter: type(chosen.letter); break;
     case TitleRowKind::Delete: erase(); break;
-    case TitleRowKind::Join: wait_for({TitleAction::Join, 0, code_, false, {}}); break;
-    case TitleRowKind::Room: wait_for({TitleAction::Join, 0, chosen.room->code, false, {}}); break;
+    case TitleRowKind::Join: wait_for({TitleAction::Join, 0, code_, false, {}, 0}); break;
+    case TitleRowKind::Room: wait_for({TitleAction::Join, 0, chosen.room->code, false, {}, 0}); break;
     case TitleRowKind::Profile: go(TitlePage::Profile, std::nullopt); break;
     case TitleRowKind::ProfileName:
         code_ = profile_.name;
@@ -281,12 +335,24 @@ void TitleMenu::wait_for(TitleChoice choice) {
 
 void TitleMenu::back() {
     if (page_ == TitlePage::Waiting) {
-        choice_ = TitleChoice{TitleAction::CancelJoin, 0, code_, false, {}};
+        choice_ = TitleChoice{TitleAction::CancelJoin, 0, code_, false, {}, 0};
         return_from_waiting();
         return;
     }
     if (page_ == TitlePage::NameEntry)
         code_.clear();
+    if (page_ == TitlePage::LoadWarning) {
+        go(TitlePage::Continue, std::nullopt);
+        row_ = warned_slot_;
+        return;
+    }
+    if (page_ == TitlePage::ModSettings) {
+        // A mod that is gone leaves the cursor on the first row.
+        go(TitlePage::Mods, std::nullopt);
+        const auto found = std::ranges::find(mods_, settings_mod_, &TitleMod::id);
+        row_ = found == mods_.end() ? 0 : static_cast<std::size_t>(found - mods_.begin());
+        return;
+    }
     if (const auto parent = parent_of(page_))
         go(parent->page, parent->row);
 }
@@ -347,6 +413,18 @@ void TitleMenu::set_mods(std::vector<TitleMod> mods) {
     mods_ = std::move(mods);
     if (page_ == TitlePage::Mods)
         row_ = std::min(row_, mods_.empty() ? std::size_t{0} : mods_.size() - 1);
+    if (page_ != TitlePage::ModSettings)
+        return;
+    const TitleMod *mod = shown_mod();
+    if (!mod || mod->settings.empty()) {
+        back();
+        return;
+    }
+    row_ = std::min(row_, mod->settings.size());   // row 0 is the switch
+}
+
+void TitleMenu::set_saves(std::vector<TitleSave> saves) {
+    saves_ = std::move(saves);
 }
 
 std::optional<TitleChoice> TitleMenu::take_choice() {
@@ -434,6 +512,30 @@ TitleView TitleMenu::view() const {
             rows.push_back(row(TitleRowKind::Mod));
             rows.back().mod = &mod;
         }
+        break;
+    case TitlePage::ModSettings:
+        if (const TitleMod *mod = shown_mod()) {
+            rows.push_back(row(TitleRowKind::ModSwitch));
+            rows.back().mod = mod;
+            for (const TitleModSetting &setting : mod->settings) {
+                rows.push_back(row(TitleRowKind::ModSetting, setting.enabled));
+                rows.back().setting = &setting;
+            }
+        }
+        break;
+    case TitlePage::LoadWarning:
+        rows.push_back(row(TitleRowKind::LoadAnyway));
+        rows.push_back(row(TitleRowKind::GoBack));
+        if (warned_slot_ < saves_.size()) {
+            for (const TitleSaveMod &change : saves_[warned_slot_].mod_changes) {
+                rows.push_back(row(TitleRowKind::SaveMod, false));
+                rows.back().save_mod = &change;
+            }
+        }
+        break;
+    case TitlePage::CoopWarning:
+        rows.push_back(row(TitleRowKind::EnterCoop));
+        rows.push_back(row(TitleRowKind::GoBack));
         break;
     case TitlePage::Waiting: break;
     }

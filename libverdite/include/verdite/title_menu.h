@@ -2,7 +2,9 @@
 #define VERDITE_TITLE_MENU_H
 // The title menu under a game's logo, and its co-op pages, stepped with a pad, a keyboard or a
 // pointer. The top page is one line across: CONTINUE (first, and where the cursor starts, when
-// there is a save), NEW GAME, CO-OP and MODS. MODS lists the game's mods to switch on and off.
+// there is a save), NEW GAME, CO-OP and MODS. MODS lists the game's mods to switch on and off, and
+// opens the settings of those that have some. A save made with other mods than those on now, and
+// CO-OP while a mod is on (mods do not run there), each ask first on a page of their own.
 // CO-OP leads to hosting a world (a new private or public one, or one this
 // machine keeps), joining a room by its code, the service's list of public rooms, and the
 // player's profile: the name, colour and helmet the others in a room see.
@@ -52,10 +54,20 @@ struct TitleProfile {
     std::size_t helmets = 1;
 };
 
+// How a mod the save was made with differs from the mods on now.
+enum class TitleSaveModChange : std::uint8_t { Missing, Added, OtherVersion };
+
+struct TitleSaveMod {
+    std::string name;
+    TitleSaveModChange change = TitleSaveModChange::Missing;
+};
+
 // A card slot as CONTINUE lists it.
 struct TitleSave {
     bool used = false;
     std::string summary;   // the game's line for it ("LEVEL 12  FLOOR 3"); empty when unused
+    std::size_t mods = 0;  // how many mods it was made with
+    std::vector<TitleSaveMod> mod_changes;   // not empty: LoadWarning asks before it loads
 };
 
 // A coop world this machine keeps (it hosted it before), offered again under Host.
@@ -79,10 +91,18 @@ enum class RoomListState : std::uint8_t { Connecting, Listing, Failed };
 // A mod as MODS lists it. Failed and Held mods are switched on: Confirm switches them off.
 enum class TitleModState : std::uint8_t { Off, On, Failed, Held };
 
+// A row of a mod's settings, its text the game's to spell.
+struct TitleModSetting {
+    std::string label;
+    std::string value;
+    bool enabled = true;
+};
+
 struct TitleMod {
     std::string id;     // the game's, handed back by the choice
     std::string name;
     TitleModState state = TitleModState::Off;
+    std::vector<TitleModSetting> settings;   // not empty: Confirm on MODS opens them, rather than switching it
 };
 
 enum class TitlePage : std::uint8_t {
@@ -97,6 +117,9 @@ enum class TitlePage : std::uint8_t {
     Profile,    // NAME, COLOUR, HELMET
     NameEntry,  // the name typed so far, and a grid of name_letters with DELETE and DONE
     Mods,       // the game's mods
+    ModSettings,   // one mod: its switch, then its settings
+    LoadWarning,   // LOAD ANYWAY, BACK (where the cursor starts), then how the mods differ, dimmed
+    CoopWarning,   // ENTER, BACK: a mod is on, and mods do not run in coop
 };
 
 enum class TitleRowKind : std::uint8_t {
@@ -110,6 +133,10 @@ enum class TitleRowKind : std::uint8_t {
     ProfileName, ProfileColour, ProfileHelmet,     // Profile: Left and Right step colour and helmet
     Done,                                          // NameEntry, after its letters and DELETE
     Mod,                                           // Mods: mod
+    ModSwitch, ModSetting,                         // ModSettings: mod; setting. Left and Right step, as Confirm does
+    LoadAnyway, SaveMod,                           // LoadWarning: save_mod is dimmed
+    EnterCoop,                                     // CoopWarning
+    GoBack,                                        // LoadWarning, CoopWarning
 };
 
 struct TitleRowView {
@@ -120,7 +147,9 @@ struct TitleRowView {
     const TitleSave *save = nullptr;     // Slot
     const TitleWorld *world = nullptr;   // KeptWorld
     const TitleRoom *room = nullptr;     // Room
-    const TitleMod *mod = nullptr;       // Mod
+    const TitleMod *mod = nullptr;       // Mod, ModSwitch
+    const TitleModSetting *setting = nullptr;   // ModSetting
+    const TitleSaveMod *save_mod = nullptr;     // SaveMod
 };
 
 struct TitleView {
@@ -144,14 +173,16 @@ enum class TitleAction : std::uint8_t {
     Profile,      // profile: the player changed it; the game keeps it
     EnableMod,    // code: the mod's id. The game answers with set_mods
     DisableMod,   // code: the mod's id
+    StepModSetting,   // code: the mod's id; slot: the setting's index; delta. The game answers with set_mods
 };
 
 struct TitleChoice {
     TitleAction action = TitleAction::NewGame;
     std::size_t slot = 0;
-    std::string code;      // Host, Join, CancelJoin: the room; EnableMod, DisableMod: the mod's id
+    std::string code;      // Host, Join, CancelJoin: the room; EnableMod, DisableMod, StepModSetting: the mod's id
     bool listed = false;   // Host: a public room
     TitleProfile profile;
+    int delta = 0;         // StepModSetting: -1 or 1
 };
 
 class TitleMenu {
@@ -165,7 +196,7 @@ public:
 
     // On the top page Left and Right pick a row (wrapping) and Up and Down do nothing. Elsewhere Up
     // and Down pick a row (wrapping), Left and Right a column on the grid or a step of the colour
-    // or helmet (wrapping, chosen at once). Confirm takes the row, Back goes up a page (and
+    // or helmet or a mod's setting (wrapping, chosen at once). Confirm takes the row, Back goes up a page (and
     // on Top does nothing; on NameEntry it leaves the name as it was). DONE chooses the name.
     void press(TitleInput input);
     // A keyboard's digit on the join page, or letter or digit on the name page (lower case taken
@@ -179,8 +210,12 @@ public:
     void set_rooms(std::vector<TitleRoom> rooms, RoomListState state);
     bool wants_room_list() const;   // on RoomList: the game keeps the list open
 
-    // The mods as they are now, after a choice or when they change while MODS shows them.
+    // The mods as they are now, after a choice or when they change while MODS shows them. ModSettings
+    // goes back to MODS if its mod is gone or has no settings left.
     void set_mods(std::vector<TitleMod> mods);
+
+    // The saves as they are now, as what a save warns of follows the mods that are on.
+    void set_saves(std::vector<TitleSave> saves);
 
     // What the player chose, once.
     std::optional<TitleChoice> take_choice();
@@ -198,6 +233,10 @@ private:
     void move_sideways(int delta, std::size_t count);
     void move_in_grid(int delta);
     void step_profile(int delta);
+    void step_mod_row(int delta);
+    void confirm_mod(const TitleMod &mod);
+    void flip_mod(const TitleMod &mod);
+    const TitleMod *shown_mod() const;
     void choose_profile();
     void confirm();
     void wait_for(TitleChoice choice);
@@ -213,6 +252,8 @@ private:
     std::vector<TitleWorld> worlds_;
     std::vector<TitleRoom> rooms_;
     std::vector<TitleMod> mods_;
+    std::string settings_mod_;        // ModSettings: the mod's id
+    std::size_t warned_slot_ = 0;     // LoadWarning: the slot it asks about
     RoomListState list_state_ = RoomListState::Connecting;
     std::string code_;
     std::string failure_;
