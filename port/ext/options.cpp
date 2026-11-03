@@ -504,7 +504,8 @@ OptionSection gameplay_enemies() {
     std::vector<std::pair<double, std::string>> turns;
     turns.emplace_back(enemy_turn_automatic, "Automatic");
     turns.emplace_back(1.0, "x1 (original)");
-    for (double scale = 1.25; scale <= 4.0; scale += 0.25) {
+    for (int quarters = 5; quarters <= 16; ++quarters) {
+        const double scale = quarters / 4.0;
         char text[16];
         std::snprintf(text, sizeof text, "x%.2f", scale);
         turns.emplace_back(scale, text);

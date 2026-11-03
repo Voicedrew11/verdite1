@@ -82,9 +82,9 @@ std::vector<ValueText> enemy_turn_values() {
     std::vector<ValueText> values = {{ext::enemy_turn_automatic, {"AUTO", "じどう"}}, {1.0, {"ORIGINAL", "オリジナル"}}};
     for (const int whole : {2, 3, 4})
         values.push_back({static_cast<double>(whole), {std::to_string(whole) + "X", std::to_string(whole) + "ばい"}});
-    for (double scale = 1.25; scale < 4.0; scale += 0.25)
-        if (scale != std::floor(scale))
-            values.push_back({scale, custom_text});
+    for (int quarters = 5; quarters < 16; ++quarters)
+        if (quarters % 4 != 0)
+            values.push_back({quarters / 4.0, custom_text});
     return values;
 }
 
