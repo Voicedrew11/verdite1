@@ -530,10 +530,17 @@ Right (2026-11-02); the pages under it use the menu's boxes, cursor and font as 
 - **MODS**: every installed mod with its switch (ON, OFF, ERROR or HELD), Confirm flipping it, or opening its
   page when it has a menu of its own (docs/MODDING.md, "A mod's menu"); `on_settings` and a mod's error text
   stay in the F1 Mods window.
-- **COOP**, after a page saying mods stay off in there when one is on: HOST (a new private world, whose 8-digit code is shown to read out before START; a new
-  public one; or a world this machine already keeps), JOIN BY CODE (a grid of digits, or the
+- **COOP**, after a page saying mods stay off in there when one is on: HOST (a world this machine already keeps, the last played first and under the cursor; NEW WORLD, either private, whose 8-digit code is shown to read out before START, or
+  public; and OPTIONS, with ROOM SETTINGS and DELETE, which asks first with the cursor on BACK), JOIN BY CODE (a grid of digits, or the
   keyboard's), PUBLIC ROOMS (the service's list, kept up to date while shown: the host's name,
   floor and players; a full room is dimmed) and PROFILE ("The profile").
+
+**HOST's panel** (2026-11-04) is up to four lines on a black band under the rows, about the selected one; the band hides the logo's
+copyright line, which runs through it. A world has no typed name, so a list row names who else has played in it (`BOB AND 2`, `SOLO`) and its
+deepest floor; the panel adds private with the code or public, the last save's floor, the others' names when there are more than the row says,
+the time played and how long ago (file version 3; a world kept before then shows none, and sorts last). NEW WORLD and OPTIONS stay on screen
+below the worlds, however many there are; a list too long for the page shows `2/7` in the heading's box, on any page. Labels are one short word
+where one will do.
 
 Any button in the attract scene goes to the menu, which waits as long as the logo did before
 going back to the attract scene, on its top page only. F4's quick load still goes straight in.
@@ -634,7 +641,7 @@ option table); and on the title, COOP, SETTINGS. Settings.json's `online` keys.
 - **Messages on the ground** are on for everyone in a coop room, whatever their own row says, so all have
   the Message Stone. Its row stays in F1, for playing alone.
 - **What only the host sees:** YOUR ROOM, MULTIPLAYER's second page, only while `coop_hosting()`; in
-  F1, a section shown only then. On the title, before any room exists, HOST, ROOM SETTINGS has the first three.
+  F1, a section shown only then. On the title, before any room exists, HOST, OPTIONS, ROOM SETTINGS has the first three.
 - **The rules travel:** `CoopRules` (tick rate, revive wait) from the host, after its welcome and
   whenever they change, and nothing else about them is trusted: only the host's are heard, and a
   value outside the choices is no message. This builds "One tick rate per room", which the plan fixed

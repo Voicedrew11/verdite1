@@ -41,6 +41,7 @@ struct TitleHelmet {
     u8 symbol = 0;
     u8 colour = 0;
 };
+inline constexpr std::size_t title_details_most = 4;
 struct TitleText {
     std::string heading;   // the page's title box; empty on the top page
     std::string code;      // a room's code or the player's name, new or typed so far, drawn under the heading
@@ -48,6 +49,8 @@ struct TitleText {
     u32 grid_cells = 0;    // the join and name pages: their first rows are a grid of letters, this many,
     u32 grid_columns = 0;  // this many to a line
     std::vector<std::string> lines;   // words above the rows, centred, each its own line; an empty one is a gap
+    u32 pinned_rows = 0;   // how many of the last rows stay on screen while those above scroll
+    std::vector<std::string> details;   // about the selected row: at most title_details_most lines, under fewer rows
     std::string note;      // a line under the rows: the code typed, "CONNECTING", why a join failed
     std::optional<TitleHelmet> helmet;   // the PROFILE page: the helmet and symbol to show turning under the rows
 };

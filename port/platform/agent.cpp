@@ -294,7 +294,7 @@ std::string do_menu(verdite::AgentArgs) {
     return verdite::json_ok("menu", ",\"rows\":[" + rows + "]");
 }
 
-// The title menu as English text: whether it is up, the page's heading, code and note, and its rows.
+// The title menu as English text: whether it is up, the page's heading, code, details and note, and its rows.
 // "title type <text>" types on the join or name page, as the keyboard does.
 std::string do_title(verdite::AgentArgs args) {
     if (args.size() == 2 && args[0] == "type") {
@@ -308,6 +308,9 @@ std::string do_title(verdite::AgentArgs args) {
     std::string lines;
     for (const std::string &line : text.lines)
         lines += (lines.empty() ? "" : ",") + verdite::json_quote(line);
+    std::string details;
+    for (const std::string &line : text.details)
+        details += (details.empty() ? "" : ",") + verdite::json_quote(line);
     std::string rows;
     for (const TitleRowText &row : text.rows)
         rows += (rows.empty() ? "" : ",") + std::string("{\"text\":") + verdite::json_quote(row.text) +
@@ -315,7 +318,7 @@ std::string do_title(verdite::AgentArgs args) {
                 ",\"selected\":" + (row.selected ? "true" : "false") + "}";
     return verdite::json_ok("title", std::string(",\"open\":") + (title_is_open() ? "true" : "false") +
         ",\"heading\":" + verdite::json_quote(text.heading) + ",\"code\":" + verdite::json_quote(text.code) +
-        ",\"lines\":[" + lines + "],\"note\":" + verdite::json_quote(text.note) + ",\"rows\":[" + rows + "]");
+        ",\"lines\":[" + lines + "],\"details\":[" + details + "],\"note\":" + verdite::json_quote(text.note) + ",\"rows\":[" + rows + "]");
 }
 
 // A position in the original 320 x 240 pixels, from "<x> <y>".

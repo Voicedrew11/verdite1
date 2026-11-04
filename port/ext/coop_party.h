@@ -147,6 +147,8 @@ struct CoopWorldFile {
     std::optional<CoopWorldState> last_save;
     std::optional<CoopSavePoint> save_point{};   // the last save's; none from a file of version 1, when each
                                                  // character stands where it stood when saved
+    std::uint64_t last_played_s = 0;             // seconds since 1970; 0: not known, from a file before version 3
+    std::uint64_t played_ms = 0;
 };
 std::vector<std::uint8_t> coop_world_encode(const CoopWorldFile &file);
 // Nothing when the bytes are not a coop world: the wrong magic or version, a bad checksum, a count

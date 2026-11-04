@@ -4332,10 +4332,10 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +}
 diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..93f7e4a123d9e41dce098a6e001a464dcff01282
+index 0000000000000000000000000000000000000000..322d5500884b1b95a76ed076b20cd6b1c225407a
 --- /dev/null
 +++ b/src/game/menu_title.cpp
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,241 @@
 +// PC extension: the title menu (kf/platform/title.h) over the opening's logo, drawn with the
 +// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a line of words
 +// across the bottom of the picture, with no boxes; the others fill the picture as the menu's pages do, over the logo dimmed.
@@ -4374,6 +4374,9 @@ index 0000000000000000000000000000000000000000..93f7e4a123d9e41dce098a6e001a464d
 +    TITLE_GRID_CELL_STEP = 34,
 +    TITLE_GRID_CELL_GAP = 4,
 +    TITLE_NOTE_Y = 206,
++    // PC extension: details about the selected row, between the rows and the note.
++    TITLE_DETAILS_Y = 151,
++    TITLE_PLACE_GAP = 10,
 +    TITLE_LINE_STEP = 14,
 +    TITLE_TEXT_INSET = 6,
 +    // A translucent box sprite sits this far up and left of its text's place.
@@ -4468,15 +4471,63 @@ index 0000000000000000000000000000000000000000..93f7e4a123d9e41dce098a6e001a464d
 +    return y + (cells + columns - 1) / columns * TITLE_ROW_STEP;
 +}
 +
-+// Any other page: the heading, a code, the rows (a window of them around the cursor) and the note.
-+void title_draw_page(const kf::TitleText &text, kf::Language language)
++// The heading's box, wide enough for its words and the place in a long list at its right end.
++void title_draw_heading(const std::string &heading, const std::string &place, kf::Language language)
 +{
 +    const auto &assets = menu_resources().assets;
-+    const MenuPoint heading_at{TITLE_HEADING_X, TITLE_HEADING_Y};
-+    menu_blit_sprite_translucent(&assets.row_background, &heading_at);
-+    menu_draw_text(menu_spell(text.heading, language),
-+        MenuPoint{TITLE_HEADING_X + TITLE_TEXT_INSET - TITLE_BOX_X_OFFSET, TITLE_HEADING_Y}, 1.0f);
++    const auto words = menu_spell(heading, language);
++    const auto place_glyphs = menu_spell(place, language);
++    const s32 place_width = menu_text_width(place_glyphs);
++    const s32 needed = menu_text_width(words) + 2 * TITLE_TEXT_INSET + (place.empty() ? 0 : TITLE_PLACE_GAP + place_width);
++    const s32 width = std::max<s32>(assets.row_background.width, needed);
++    menu_blit_box_translucent(assets.row_background, MenuPoint{TITLE_HEADING_X, TITLE_HEADING_Y}, width);
++    menu_draw_text(words, MenuPoint{TITLE_HEADING_X + TITLE_TEXT_INSET - TITLE_BOX_X_OFFSET, TITLE_HEADING_Y}, 1.0f);
++    if (!place.empty())
++        menu_draw_text(place_glyphs,
++            MenuPoint{at_x(TITLE_HEADING_X + width - TITLE_TEXT_INSET - TITLE_BOX_X_OFFSET - place_width), TITLE_HEADING_Y}, 1.0f);
++}
 +
++// The rows from first at y: a window of them around the cursor, then the pinned ones, which stay.
++// Returns the cursor's place in a list too long for the window; empty when it fits or the cursor
++// is on a pinned row.
++std::string title_draw_rows(const kf::TitleText &text, s32 first, s32 y, s32 rows_end, kf::Language language)
++{
++    const s32 count = static_cast<s32>(text.rows.size());
++    const auto selected = std::find_if(text.rows.begin() + first, text.rows.end(),
++        [](const kf::TitleRowText &row) { return row.selected; });
++    const s32 cursor = selected == text.rows.end() ? first : static_cast<s32>(selected - text.rows.begin());
++    const s32 pinned = std::min<s32>(static_cast<s32>(text.pinned_rows), count - first);
++    const s32 listed_end = count - pinned;
++    const s32 listed = listed_end - first;
++    const s32 visible = std::max<s32>(1, std::min<s32>(TITLE_VISIBLE_ROWS, (rows_end - y) / TITLE_ROW_STEP));
++    const s32 slots = std::max<s32>(1, visible - pinned);
++    const s32 start = std::clamp<s32>(std::min(cursor, listed_end - 1) - slots / 2, first, std::max(first, listed_end - slots));
++    const s32 shown = std::min(slots, listed);
++    for (s32 i = 0; i < shown; i++)
++        title_draw_row(text.rows[start + i], start + i, MenuPoint{TITLE_ROW_X, at_x(y + i * TITLE_ROW_STEP)}, language);
++    for (s32 i = 0; i < pinned; i++)
++        title_draw_row(text.rows[listed_end + i], listed_end + i, MenuPoint{TITLE_ROW_X, at_x(y + (shown + i) * TITLE_ROW_STEP)}, language);
++    if (listed <= slots || cursor >= listed_end)
++        return {};
++    return std::to_string(cursor - first + 1) + "/" + std::to_string(listed);
++}
++
++// What the selected row is about, on a black band that hides the logo's copyright line behind it.
++void title_draw_details(const std::vector<std::string> &details, kf::Language language)
++{
++    kf::DrawFace band{};
++    const CVECTOR black = {0, 0, 0, 0};
++    band.material = {kf::SurfaceKind::Solid, {}, kf::BlendMode::average};
++    render_face_rectangle(&band, 0, TITLE_DETAILS_Y - TITLE_BOX_Y_OFFSET, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y);
++    render_face_submit(&band, {&black, 1}, kf::FaceShading::Flat, MENU_WINDOW_OT_DEPTH);
++    for (std::size_t i = 0; i < details.size(); i++)
++        menu_draw_text(menu_spell(details[i], language),
++            MenuPoint{at_x(TITLE_ROW_X + TITLE_TEXT_INSET - TITLE_BOX_X_OFFSET), at_x(TITLE_DETAILS_Y + static_cast<s32>(i) * TITLE_LINE_STEP)}, 1.0f);
++}
++
++// Any other page: the heading, a code, the rows, the details and the note.
++void title_draw_page(const kf::TitleText &text, kf::Language language)
++{
 +    s32 y = TITLE_FIRST_ROW_Y;
 +    // A grid's page keeps its box while the text typed is empty, so the grid does not move.
 +    if (!text.code.empty() || text.grid_columns > 0) {
@@ -4496,14 +4547,10 @@ index 0000000000000000000000000000000000000000..93f7e4a123d9e41dce098a6e001a464d
 +        y = title_draw_grid(text, y, language);
 +        first = std::min<s32>(static_cast<s32>(text.rows.size()), static_cast<s32>(text.grid_cells));
 +    }
-+    const s32 count = static_cast<s32>(text.rows.size());
-+    const auto selected = std::find_if(text.rows.begin() + first, text.rows.end(),
-+        [](const kf::TitleRowText &row) { return row.selected; });
-+    const s32 cursor = selected == text.rows.end() ? first : static_cast<s32>(selected - text.rows.begin());
-+    const s32 visible = std::max<s32>(1, std::min<s32>(TITLE_VISIBLE_ROWS, (TITLE_NOTE_Y - y) / TITLE_ROW_STEP));
-+    const s32 start = std::clamp<s32>(cursor - visible / 2, first, std::max(first, count - visible));
-+    for (s32 i = start; i < count && i < start + visible; i++)
-+        title_draw_row(text.rows[i], i, MenuPoint{TITLE_ROW_X, at_x(y + (i - start) * TITLE_ROW_STEP)}, language);
++    const s32 rows_end = text.details.empty() ? TITLE_NOTE_Y : TITLE_DETAILS_Y;
++    title_draw_heading(text.heading, title_draw_rows(text, first, y, rows_end, language), language);
++    if (!text.details.empty())
++        title_draw_details(text.details, language);
 +}
 +
 +} // namespace

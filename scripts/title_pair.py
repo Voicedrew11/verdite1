@@ -197,13 +197,16 @@ def main():
         check("Confirm steps a co-op setting", rows[0]["value"] == "IN SIGHT", rows)
         a.tap("back")
         a.choose("HOST")
+        a.choose("OPTIONS")
         a.choose("ROOM SETTINGS")
         rows = a.wait("the room's settings", a.title, lambda t: t["rows"])["rows"]
         check("ROOM SETTINGS shows what a host chooses",
               [(row["text"], row["value"]) for row in rows]
               == [("TICK RATE", "15"), ("NEW PLAYERS", "WELCOME"), ("REVIVE WAIT", "30 SECONDS")], rows)
         a.tap("back")
-        a.choose("NEW WORLD")   # the first is PRIVATE
+        a.tap("back")
+        a.choose("NEW WORLD")
+        a.choose("PRIVATE")
         code_page = a.title()
         code = code_page["code"]
         check("a new private world shows an 8-digit code", len(code) == 8 and code.isdigit(), code_page)
@@ -253,10 +256,15 @@ def main():
         a.to_title()
         a.choose("COOP")
         a.choose("HOST")
-        rows = a.title()["rows"]
-        check("A's private world is offered again under its code", any(row["text"] == code for row in rows), rows)
-        a.tap("down")   # NEW WORLD, PUBLIC
-        a.tap("confirm")
+        shown = a.title()
+        check("A's private world comes first, with its code in the details",
+              shown["rows"][0]["selected"] and shown["rows"][0]["value"] == "FLOOR 1"
+              and any(code in line for line in shown["details"]), shown)
+        check("the row says who else played, the details how long", shown["rows"][0]["text"].startswith("PLAYER")
+              and any(line.startswith("PLAYED ") for line in shown["details"]), shown)
+        check("the details fit the panel", len(shown["details"]) <= 4, shown)
+        a.choose("NEW WORLD")
+        a.choose("PUBLIC")
         host = a.wait("the public world", a.coop, lambda s: s["inPlay"])
         check("A hosts a public world", host["role"] == "host", host)
 
@@ -273,6 +281,27 @@ def main():
         for game in (a, b):
             if game:
                 game.quit()
+
+    # A kept world is deleted only past a warning that starts on BACK.
+    a = Game("a", PORTS[0])
+    try:
+        a.to_title()
+        a.choose("COOP")
+        a.choose("HOST")
+        kept = sum(1 for row in a.title()["rows"] if row["value"].startswith("FLOOR"))
+        a.choose("OPTIONS")
+        a.choose("DELETE")
+        a.tap("confirm")
+        warning = a.title()
+        check("deleting asks, on BACK", [row["text"] for row in warning["rows"]] == ["DELETE", "BACK"]
+              and warning["rows"][1]["selected"], warning)
+        a.choose("DELETE")
+        left = a.wait("the world deleted", a.title, lambda t: t["heading"] == "HOST")["rows"]
+        check("the world is gone", sum(1 for row in left if row["value"].startswith("FLOOR")) == kept - 1, left)
+        names = [p.name for p in (a.home / "saves").glob("coop-*")]
+        check("no backup of it stays", not any(name.endswith(".bak") and name[:-4] not in names for name in names), names)
+    finally:
+        a.quit()
 
     # NEW GAME starts a game: the menu is gone and the player stands on floor 1.
     a = Game("a", PORTS[0])

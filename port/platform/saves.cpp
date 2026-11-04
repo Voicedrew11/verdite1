@@ -423,23 +423,31 @@ SaveFileResult save_card_write(SaveCard card, std::span<const u8, save_card_byte
 #endif
 }
 
-SaveFileResult save_card_remove(SaveCard card) {
-#ifdef __EMSCRIPTEN__
-    (void)card;
-    return SaveFileResult::Unavailable;
-#elif defined(_WIN32)
+#ifndef __EMSCRIPTEN__
+static SaveFileResult remove_named(const char *name) {
+#if defined(_WIN32)
     if (!save_directory)
         return SaveFileResult::Unavailable;
     std::error_code error;
-    std::filesystem::remove(*save_directory / card_name(card), error);
+    std::filesystem::remove(*save_directory / name, error);
     return error ? SaveFileResult::IoError : SaveFileResult::Ok;
 #else
     if (save_directory < 0)
         return SaveFileResult::Unavailable;
-    note_save("removing", card_name(card));
-    if (::unlinkat(save_directory, card_name(card), 0) != 0 && errno != ENOENT)
+    note_save("removing", name);
+    if (::unlinkat(save_directory, name, 0) != 0 && errno != ENOENT)
         return io_error();
     return sync_file(save_directory) ? SaveFileResult::Ok : io_error();
+#endif
+}
+#endif
+
+SaveFileResult save_card_remove(SaveCard card) {
+#ifdef __EMSCRIPTEN__
+    (void)card;
+    return SaveFileResult::Unavailable;
+#else
+    return remove_named(card_name(card));
 #endif
 }
 
@@ -465,6 +473,20 @@ SaveFileResult coop_world_write(std::string_view room, std::span<const u8> data)
     return SaveFileResult::Unavailable;
 #else
     return write_named(coop_world_name(room).c_str(), data.data(), data.size(), Previous::Keep);
+#endif
+}
+
+// The file and the .bak write_named keeps beside it, as the file goes last: a world half removed is
+// still a world.
+SaveFileResult coop_world_remove(std::string_view room) {
+    if (!room_valid(room))
+        return SaveFileResult::Invalid;
+#ifdef __EMSCRIPTEN__
+    return SaveFileResult::Unavailable;
+#else
+    const std::string name = coop_world_name(room);
+    const SaveFileResult backup = remove_named((name + ".bak").c_str());
+    return backup == SaveFileResult::Ok ? remove_named(name.c_str()) : backup;
 #endif
 }
 

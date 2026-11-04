@@ -18,6 +18,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <optional>
 #include <random>
 #include <string>
@@ -152,6 +153,18 @@ void step_mod_setting(const verdite::TitleChoice &choice) {
             mod_menu_step(mod.id, mod.menu[choice.slot], choice.delta);
 }
 
+verdite::TitleWorld read_world(const std::string &room, const CoopWorldFile &file) {
+    const CoopParty &party = file.live.party;
+    verdite::TitleWorld world{room, static_cast<std::uint32_t>(party.highest_floor()), {},
+        file.save_point ? static_cast<std::uint32_t>(file.save_point->floor) : 0u, party.gold(),
+        file.played_ms / 1000, file.last_played_s};
+    const CoopPlayerId own = coop_own_id();
+    for (const CoopCharacter &character : party.characters())
+        if (character.id != own)
+            world.others.push_back(character.name);
+    return world;
+}
+
 // The worlds this machine hosts whose codes the menu can show.
 std::vector<verdite::TitleWorld> read_worlds() {
     std::vector<verdite::TitleWorld> worlds;
@@ -164,12 +177,15 @@ std::vector<verdite::TitleWorld> read_worlds() {
         const auto file = coop_world_decode(bytes);
         if (!file)
             continue;
-        const CoopParty &party = file->live.party;
-        worlds.push_back({room, static_cast<std::uint32_t>(party.highest_floor()),
-            static_cast<std::uint32_t>(party.characters().size())});
+        worlds.push_back(read_world(room, *file));
     }
-    std::ranges::sort(worlds, {}, &verdite::TitleWorld::code);
     return worlds;
+}
+
+void delete_world(std::string_view code) {
+    if (coop_world_remove(code) != SaveFileResult::Ok)
+        menu().failed_to_delete_world("delete_failed");
+    menu().set_worlds(read_worlds());
 }
 
 void keep_room_list() {
@@ -255,6 +271,9 @@ std::optional<TitleStart> take(const verdite::TitleChoice &choice) {
     case TitleAction::StepModSetting:
         step_mod_setting(choice);
         break;
+    case TitleAction::DeleteWorld:
+        delete_world(choice.code);
+        break;
     case TitleAction::StepCoopSetting:
         title_coop_setting_step(choice.listed ? TitleCoopRows::Room : TitleCoopRows::Own, choice.slot, choice.delta);
         break;
@@ -310,8 +329,12 @@ constexpr Words settings_word{"SETTINGS", "せつてい"}, room_settings_word{"R
 constexpr Words continue_word{"CONTINUE", "つづきから"}, new_game_word{"NEW GAME", "はじめから"},
     coop_word{"COOP", "マルチプレイ"}, coop_short_word{"COOP", "マルチ"}, load_word{"LOAD", "ロード"}, host_word{"HOST", "ホスト"},
     join_code_word{"JOIN BY CODE", "コードでさんか"}, room_list_word{"PUBLIC ROOMS", "こうかいルーム"},
-    new_world_word{"NEW WORLD", "あたらしいワールド"}, private_word{"PRIVATE", "ひこうかい"},
-    public_word{"PUBLIC", "こうかい"}, public_world_word{"PUBLIC WORLD", "こうかいワールド"},
+    new_world_word{"NEW WORLD", "あたらしいワールド"}, options_word{"OPTIONS", "そのた"},
+    private_word{"PRIVATE", "ひこうかい"}, public_word{"PUBLIC", "こうかい"},
+    delete_note_word{"ITS CHARACTERS GO TOO", "なかまのデータもきえます"},
+    solo_word{"SOLO", "ソロ"}, and_word{" AND ", " ほか "}, saved_word{"SAVED ", "セーブ "}, with_word{"WITH ", "なかま "},
+    played_word{"PLAYED ", "プレイ "}, just_now_word{"JUST NOW", "いま"}, ago_word{" AGO", "まえ"},
+    played_minutes_word{"M", "ふん"}, played_hours_word{"H", "じかん"},
     room_code_word{"ROOM CODE", "ルームコード"}, start_word{"START", "はじめる"}, delete_word{"DELETE", "けす"},
     join_word{"JOIN", "さんか"}, connecting_word{"CONNECTING", "つないでいます"},
     no_rooms_word{"NO PUBLIC ROOMS", "ルームはありません"}, no_list_word{"THE LIST CANNOT BE REACHED", "いちらんがよめません"},
@@ -342,7 +365,7 @@ struct Failure {
     std::string_view id;
     Words words;
 };
-constexpr std::array<Failure, 13> failures = {{
+constexpr std::array<Failure, 14> failures = {{
     {"no_host", {"NO ONE IS HOSTING THAT ROOM", "そのルームにホストがいません"}},
     {"in_use", {"THAT ROOM IS ALREADY IN USE", "そのルームはつかわれています"}},
     {"full", {"THAT ROOM IS FULL", "そのルームはまんいんです"}},
@@ -355,6 +378,7 @@ constexpr std::array<Failure, 13> failures = {{
     {"english_ready", {"THE ENGLISH FILES ARE READY", "えいごばんの じゅんびが できました"}},
     {"room_closed", {"THE ROOM IS CLOSED", "ルームは しめきりです"}},
     {"sent_away", {"THE HOST SENT YOU AWAY", "ホストに おいだされました"}},
+    {"delete_failed", {"THE WORLD COULD NOT BE DELETED", "ワールドをけせませんでした"}},
     {"other", {"COULD NOT JOIN THE ROOM", "さんかできませんでした"}},
 }};
 
@@ -365,6 +389,124 @@ std::string failure_text(std::string_view id, Language language) {
 
 std::string floor_text(std::uint32_t floor, Language language) {
     return language == Language::English ? "FLOOR " + std::to_string(floor) : std::to_string(floor) + "かい";
+}
+
+// A kept world's name in a list: who else has played in it, as the world has no other. A long first
+// name stands alone, as "AND 3" after it would run into the value's box.
+std::string world_label(const verdite::TitleWorld &world, Language language) {
+    constexpr std::size_t name_most_before_and = 7;
+    if (world.others.empty())
+        return std::string(solo_word.in(language));
+    const std::string &first = world.others.front();
+    if (world.others.size() == 1 || first.size() > name_most_before_and)
+        return first;
+    return first + std::string(and_word.in(language)) + std::to_string(world.others.size() - 1);
+}
+
+std::string room_kind_line(const verdite::TitleWorld &world, Language language) {
+    if (verdite::room_code_is_public(world.code))
+        return std::string(public_word.in(language));
+    return std::string(private_word.in(language)) + " " + world.code;
+}
+
+std::string others_line(const verdite::TitleWorld &world, Language language) {
+    constexpr std::size_t names_most_letters = 22;   // what fits beside WITH and AND
+    const std::size_t fit = verdite::title_names_that_fit(world.others, names_most_letters);
+    std::string line(with_word.in(language));
+    for (std::size_t i = 0; i < fit; ++i)
+        line += (i == 0 ? "" : " ") + world.others[i];
+    if (fit < world.others.size())
+        line += std::string(and_word.in(language)) + std::to_string(world.others.size() - fit);
+    return line;
+}
+
+std::string played_text(std::uint64_t played_s, Language language) {
+    const verdite::TitleTime played = verdite::title_time_played(played_s);
+    const Words &unit = played.unit == verdite::TitleTimeUnit::Minutes ? played_minutes_word : played_hours_word;
+    return std::string(played_word.in(language)) + std::to_string(played.count) + std::string(unit.in(language));
+}
+
+std::string ago_text(std::uint64_t elapsed_s, Language language) {
+    const verdite::TitleTime ago = verdite::title_time_ago(elapsed_s);
+    if (ago.unit == verdite::TitleTimeUnit::Minutes && ago.count == 0)
+        return std::string(just_now_word.in(language));
+    const std::string count = std::to_string(ago.count);
+    if (language != Language::English) {
+        const std::string_view unit = ago.unit == verdite::TitleTimeUnit::Minutes ? "ふん" : ago.unit == verdite::TitleTimeUnit::Hours ? "じかん" : "にち";
+        return count + std::string(unit) + std::string(ago_word.in(language));
+    }
+    const std::string_view unit = ago.unit == verdite::TitleTimeUnit::Minutes ? " MINUTE" : ago.unit == verdite::TitleTimeUnit::Hours ? " HOUR" : " DAY";
+    return count + std::string(unit) + (ago.count == 1 ? "" : "S") + std::string(ago_word.in(language));
+}
+
+std::string times_line(const verdite::TitleWorld &world, Language language) {
+    const auto now = static_cast<std::uint64_t>(std::time(nullptr));
+    const std::uint64_t elapsed_s = now > world.last_played_s ? now - world.last_played_s : 0;
+    return played_text(world.played_s, language) + "  " + ago_text(elapsed_s, language);
+}
+
+// Only what the world's file knows and its row does not already say.
+std::vector<std::string> world_details(const verdite::TitleWorld &world, Language language) {
+    std::vector<std::string> lines{room_kind_line(world, language)};
+    if (world.saved_floor != 0)
+        lines.push_back(std::string(saved_word.in(language)) + floor_text(world.saved_floor, language));
+    if (world.others.size() > 1)
+        lines.push_back(others_line(world, language));
+    if (world.last_played_s != 0)
+        lines.push_back(times_line(world, language));
+    return lines;
+}
+
+std::vector<std::string> room_settings_details(Language language) {
+    std::vector<std::string> lines;
+    for (const verdite::TitleModSetting &setting : title_coop_settings(TitleCoopRows::Room, language))
+        if (lines.size() < title_details_most)
+            lines.push_back(setting.label + "  " + setting.value);
+    return lines;
+}
+
+template <std::size_t N>
+std::vector<std::string> spelled(const std::array<Words, N> &words, Language language) {
+    std::vector<std::string> lines;
+    for (const Words &line : words)
+        lines.emplace_back(line.in(language));
+    return lines;
+}
+
+constexpr std::array<Words, 1> new_world_details = {{{"PRIVATE OR PUBLIC", "ひこうかい こうかい"}}};
+constexpr std::array<Words, 1> host_options_details = {{{"SETTINGS AND DELETE", "せつていと けす"}}};
+constexpr std::array<Words, 1> new_private_details = {{{"FRIENDS JOIN BY CODE", "コードでさんかします"}}};
+constexpr std::array<Words, 2> new_public_details = {{
+    {"ANYONE CAN JOIN", "だれでもさんかできます"},
+    {"STARTS AT ONCE", "すぐにはじまります"},
+}};
+constexpr std::array<Words, 1> delete_worlds_details = {{{"REMOVE A WORLD", "ワールドをけします"}}};
+
+bool page_has_details(verdite::TitlePage page) {
+    using verdite::TitlePage;
+    return page == TitlePage::Host || page == TitlePage::NewWorld || page == TitlePage::HostOptions ||
+           page == TitlePage::DeleteWorld || page == TitlePage::DeleteWarning;
+}
+
+// What the panel under the rows says about the selected row; nothing on a page without one.
+std::vector<std::string> details(const verdite::TitleView &view, Language language) {
+    using verdite::TitleRowKind;
+    const auto on = std::ranges::find(view.rows, true, &verdite::TitleRowView::selected);
+    if (!page_has_details(view.page) || on == view.rows.end())
+        return {};
+    if (view.page == verdite::TitlePage::DeleteWarning)
+        return view.rows.front().world ? world_details(*view.rows.front().world, language) : std::vector<std::string>{};
+    switch (on->kind) {
+    case TitleRowKind::KeptWorld:
+    case TitleRowKind::WorldToDelete: return world_details(*on->world, language);
+    case TitleRowKind::NewWorld: return spelled(new_world_details, language);
+    case TitleRowKind::HostOptions: return spelled(host_options_details, language);
+    case TitleRowKind::NewPrivateWorld: return spelled(new_private_details, language);
+    case TitleRowKind::NewPublicWorld: return spelled(new_public_details, language);
+    case TitleRowKind::RoomSettings: return room_settings_details(language);
+    case TitleRowKind::DeleteWorlds: return spelled(delete_worlds_details, language);
+    default: return {};
+    }
 }
 
 std::string profile_words(const CoopProfileWords &words, Language language) {
@@ -442,10 +584,14 @@ std::string row_text(const verdite::TitleRowView &row, std::size_t index, Langua
     case TitleRowKind::Host: return std::string(host_word.in(language));
     case TitleRowKind::JoinCode: return std::string(join_code_word.in(language));
     case TitleRowKind::RoomList: return std::string(room_list_word.in(language));
-    case TitleRowKind::NewPrivateWorld:
-    case TitleRowKind::NewPublicWorld: return std::string(new_world_word.in(language));
+    case TitleRowKind::NewWorld: return std::string(new_world_word.in(language));
+    case TitleRowKind::HostOptions: return std::string(options_word.in(language));
+    case TitleRowKind::NewPrivateWorld: return std::string(private_word.in(language));
+    case TitleRowKind::NewPublicWorld: return std::string(public_word.in(language));
     case TitleRowKind::KeptWorld:
-        return verdite::room_code_is_public(row.world->code) ? std::string(public_world_word.in(language)) : row.world->code;
+    case TitleRowKind::WorldToDelete: return world_label(*row.world, language);
+    case TitleRowKind::DeleteWorlds:
+    case TitleRowKind::DeleteAnyway: return std::string(delete_word.in(language));
     case TitleRowKind::Start: return std::string(start_word.in(language));
     case TitleRowKind::Letter: return std::string(1, row.letter);
     case TitleRowKind::Delete: return std::string(delete_word.in(language));
@@ -476,9 +622,8 @@ std::string row_value(const verdite::TitleView &view, const verdite::TitleRowVie
     case TitleRowKind::ProfileSymbol:
         return profile.symbol < online_player_symbol_count ? profile_words(coop_symbol_names()[profile.symbol], language)
                                                            : std::string();
-    case TitleRowKind::NewPrivateWorld: return std::string(private_word.in(language));
-    case TitleRowKind::NewPublicWorld: return std::string(public_word.in(language));
-    case TitleRowKind::KeptWorld: return floor_text(row.world->highest_floor, language);
+    case TitleRowKind::KeptWorld:
+    case TitleRowKind::WorldToDelete: return floor_text(row.world->highest_floor, language);
     case TitleRowKind::Mod:
     case TitleRowKind::ModSwitch: return std::string(mod_state_word(row.mod->state, language));
     case TitleRowKind::ModSetting:
@@ -509,7 +654,11 @@ std::string heading(const verdite::TitleView &view, Language language) {
     case TitlePage::Mods: return std::string(mods_word.in(language));
     case TitlePage::ModSettings: return view.rows.empty() ? std::string() : mod_name_text(view.rows.front().mod->name);
     case TitlePage::LoadWarning:
-    case TitlePage::CoopWarning: return std::string(warning_word.in(language));
+    case TitlePage::CoopWarning:
+    case TitlePage::DeleteWarning: return std::string(warning_word.in(language));
+    case TitlePage::DeleteWorld: return std::string(delete_word.in(language));
+    case TitlePage::NewWorld: return std::string(new_world_word.in(language));
+    case TitlePage::HostOptions: return std::string(options_word.in(language));
     case TitlePage::CoopSettings: return std::string(settings_word.in(language));
     case TitlePage::RoomSettings: return std::string(room_settings_word.in(language));
     }
@@ -551,6 +700,7 @@ std::string note(const verdite::TitleView &view, Language language) {
     }
     case TitlePage::LoadWarning: return std::string(other_mods_word.in(language));
     case TitlePage::CoopWarning: return std::string(coop_mods_word.in(language));
+    case TitlePage::DeleteWarning: return std::string(delete_note_word.in(language));
     default: return {};
     }
 }
@@ -605,6 +755,8 @@ TitleText title_text(Language language) {
         const verdite::TitleRowView &row = view.rows[i];
         text.rows.push_back({ext::row_text(row, i, language), ext::row_value(view, row, language), row.enabled, row.selected});
     }
+    text.pinned_rows = static_cast<u32>(view.pinned_rows);
+    text.details = ext::details(view, language);
     text.note = ext::note(view, language);
     if (view.page == verdite::TitlePage::CoopIntro)
         for (const ext::Words &line : ext::coop_intro_lines)

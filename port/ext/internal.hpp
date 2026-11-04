@@ -189,6 +189,8 @@ void coop_keep_leftover_aside();
 // This player's profile (coop_profile.h), kept in the user folder; a new one is kept at once and
 // goes to the others from the next room.
 CoopProfile coop_own_profile();
+// This install's id, the same in every session: the character that is this player's in a kept world.
+CoopPlayerId coop_own_id();
 void coop_set_own_profile(const CoopProfile &profile);
 // Whether this install has kept a profile: without one it is the player's first time in coop.
 bool coop_own_profile_is_set_up();

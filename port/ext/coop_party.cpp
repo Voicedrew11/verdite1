@@ -29,7 +29,7 @@ constexpr std::array<SlotItems, coop_worn_slots> slot_items = {{
 }};
 
 constexpr std::array<std::uint8_t, 8> file_magic = {'K', 'F', 'C', 'O', 'O', 'P', 0, 0};
-constexpr std::uint32_t file_version = 2;   // 1: no save point
+constexpr std::uint32_t file_version = 3;   // 1: no save point; 2: no times played
 constexpr std::size_t file_header_bytes = file_magic.size() + 12;
 constexpr std::uint32_t crc32_reflected_polynomial = 0xedb88320u;
 
@@ -333,6 +333,8 @@ std::vector<std::uint8_t> coop_world_encode(const CoopWorldFile &file) {
     if (file.last_save)
         write_state(payload, *file.last_save);
     write_save_point(payload, file.save_point);
+    payload.u64(file.last_played_s);
+    payload.u64(file.played_ms);
     CoopByteWriter out;
     out.raw(file_magic);
     out.u32(file_version);
@@ -369,6 +371,10 @@ std::optional<CoopWorldFile> coop_world_decode(std::span<const std::uint8_t> byt
     }
     if (version >= 2 && !read_save_point(in, file.save_point))
         return std::nullopt;
+    if (version >= 3) {
+        file.last_played_s = in.u64();
+        file.played_ms = in.u64();
+    }
     if (!in.done())
         return std::nullopt;
     return file;

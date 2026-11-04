@@ -35,6 +35,8 @@ SaveFileResult save_card_remove(SaveCard card);
 inline constexpr std::size_t coop_world_capacity = 1 << 20;
 SaveFileResult coop_world_read(std::string_view room, std::vector<u8> &data);
 SaveFileResult coop_world_write(std::string_view room, std::span<const u8> data);
+// Ok when the file is gone, whether or not it was there; any previous copy kept beside it goes too.
+SaveFileResult coop_world_remove(std::string_view room);
 // The rooms whose worlds are kept here, in no order; empty where files cannot be listed.
 std::vector<std::string> coop_world_rooms();
 

@@ -67,6 +67,7 @@ struct HostSide {
     bool pack_changed = false;
     bool file_changed = false;
     std::uint64_t written_ms = 0;
+    std::uint64_t played_until_ms = 0;   // how far file.played_ms has counted
 };
 
 struct GuestSide {
@@ -316,9 +317,18 @@ void keep_live_world() {
     coop.host.file.live.world = save_system_coop_world();
 }
 
+void note_time_played(HostSide &host) {
+    using namespace std::chrono;
+    const std::uint64_t now = now_ms();
+    host.file.played_ms += now - host.played_until_ms;
+    host.played_until_ms = now;
+    host.file.last_played_s = static_cast<std::uint64_t>(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+}
+
 void write_world_file() {
     HostSide &host = coop.host;
     keep_live_world();
+    note_time_played(host);
     const auto bytes = coop_world_encode(host.file);
     const auto result = coop_world_write(coop.room, bytes);
     if (result != SaveFileResult::Ok)
@@ -399,6 +409,7 @@ void enter_as_host() {
     }
     HostSide &host = coop.host;
     host.file = std::move(*file);
+    host.played_until_ms = now_ms();
     const CoopCharacter character = host.file.live.party.join(coop.self, coop.profile.name);
     CoopParty &party = host.file.live.party;
     coop.enter = {character.state, host.file.live.world, party.pack(), party.gold(), character.wore, std::nullopt};
@@ -835,6 +846,10 @@ void coop_start_from_title() {
 
 void coop_keep_leftover_aside() {
     coop.looked_for_aside = true;
+}
+
+CoopPlayerId coop_own_id() {
+    return install_id();
 }
 
 CoopProfile coop_own_profile() {

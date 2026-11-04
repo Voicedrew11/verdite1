@@ -190,12 +190,54 @@ TEST_CASE("a coop world keeps where its last save was made") {
     CHECK_FALSE(coop_world_decode(coop_world_encode(file)));
 }
 
+TEST_CASE("a coop world keeps its times played") {
+    CoopParty party;
+    party.join(1, "HOST");
+    CoopWorldFile file{{party, {1}}, std::nullopt};
+    file.last_played_s = 1800000000;
+    file.played_ms = 3723000;
+    const auto decoded = coop_world_decode(coop_world_encode(file));
+    REQUIRE(decoded.has_value());
+    const CoopWorldFile read = decoded.value_or(CoopWorldFile{});
+    CHECK(read.last_played_s == 1800000000);
+    CHECK(read.played_ms == 3723000);
+}
+
+TEST_CASE("a coop world of version 2 is read, with its times not known") {
+    CoopParty party;
+    party.join(1, "HOST");
+    CoopWorldFile file{{party, {1}}, std::nullopt};
+    file.save_point = CoopSavePoint{2, 3, 4};
+    auto bytes = coop_world_encode(file);
+    bytes.resize(bytes.size() - 16);
+    const auto put_u32 = [&](std::size_t at, std::uint32_t value) {
+        for (int i = 0; i < 4; ++i)
+            bytes[at + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(value >> (8 * i));
+    };
+    constexpr std::size_t header = 20;
+    std::uint32_t crc = ~0u;
+    for (std::size_t at = header; at < bytes.size(); ++at) {
+        crc ^= bytes[at];
+        for (int bit = 0; bit < 8; ++bit)
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1)));
+    }
+    put_u32(8, 2);
+    put_u32(12, static_cast<std::uint32_t>(bytes.size() - header));
+    put_u32(16, ~crc);
+    const auto decoded = coop_world_decode(bytes);
+    REQUIRE(decoded.has_value());
+    const CoopWorldFile read = decoded.value_or(CoopWorldFile{});
+    CHECK(read.save_point.has_value());
+    CHECK(read.last_played_s == 0);
+    CHECK(read.played_ms == 0);
+}
+
 TEST_CASE("a coop world of version 1 is read, with no save point") {
     CoopParty party;
     party.join(1, "HOST");
     auto bytes = coop_world_encode({{party, {1}}, CoopWorldState{party, {2}}, std::nullopt});
-    // Version 1 had no save point: its payload ends at the last save, with the header to match.
-    bytes.pop_back();
+    // Version 1 had no save point or times: its payload ends at the last save, with the header to match.
+    bytes.resize(bytes.size() - 17);
     const auto put_u32 = [&](std::size_t at, std::uint32_t value) {
         for (int i = 0; i < 4; ++i)
             bytes[at + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(value >> (8 * i));
