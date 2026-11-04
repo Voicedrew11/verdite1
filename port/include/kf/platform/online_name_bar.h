@@ -8,6 +8,7 @@
 #include <kf/platform/online_players.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace kf {
@@ -24,6 +25,16 @@ struct OnlineNameBarRect {
     s32 left, top, right, bottom;
     bool operator==(const OnlineNameBarRect &) const = default;
 };
+
+// The host's crown, before the name: three points on a band. In font pixels from the text's top
+// left, within the room the name is moved along by.
+inline constexpr s32 online_name_bar_crown_room_px = 14;
+inline constexpr std::array<OnlineNameBarRect, 7> online_name_bar_crown = {{
+    {0, 2, 1, 7}, {5, 2, 6, 7}, {10, 2, 11, 7},   // the points
+    {1, 4, 3, 7}, {4, 4, 7, 7}, {8, 4, 10, 7},    // rising to them
+    {0, 7, 11, 10},                               // the band
+}};
+inline constexpr u8 online_name_bar_crown_r = 224, online_name_bar_crown_g = 176, online_name_bar_crown_b = 48;
 
 // Whether a name is drawn above a player: in sight only where their cell is in view, always
 // everywhere on the floor; never over the player whose eyes this is.

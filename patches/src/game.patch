@@ -1540,7 +1540,7 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..d121e1ae1bfd1ce73cdc712b7ead8a6b
      kf::restore_initial_value<game_result>();
  }
 diff --git a/src/game/geometry_render.cpp b/src/game/geometry_render.cpp
-index f58a963c5e5f732356d11c95dce5045be497cba6..1242f0e9bf7b1da4e3ec03a11a65d3580880c5e6 100644
+index f58a963c5e5f732356d11c95dce5045be497cba6..909477caaf07b74ab3eebd2699db0be41572088a 100644
 --- a/src/game/geometry_render.cpp
 +++ b/src/game/geometry_render.cpp
 @@ -49,33 +49,48 @@ enum {
@@ -1595,7 +1595,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..1242f0e9bf7b1da4e3ec03a11a65d358
 +// PC extension (widescreen, HUD at the screen edges): how far a HUD record at
 +// screen X moves, out by the widescreen columns towards its side of the middle.
 +// By X rather than the middle, so a gauge whose width changes never changes side.
-+static s32 render_hud_edge_shift(s32 x)
++s32 render_hud_edge_shift(s32 x)
 +{
 +    if (!kf::render_hud_at_edges) {
 +        return 0;
@@ -4454,10 +4454,10 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a0b500f06a8f39a0f98d7b6b0da00ff02a565cc9
+index 0000000000000000000000000000000000000000..357a25f98c6b39bda7b74d113755c42be5f026e0
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,690 @@
+@@ -0,0 +1,733 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
 +// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
@@ -4483,6 +4483,7 @@ index 0000000000000000000000000000000000000000..a0b500f06a8f39a0f98d7b6b0da00ff0
 +#include <kf/lib/tmd.h>
 +#include <kf/platform/host.h>
 +#include <kf/platform/language_runtime.h>
++#include <kf/platform/online_compass.h>
 +#include <kf/platform/online_name_bar.h>
 +#include <kf/platform/online_watched_weapon.h>
 +#include <kf/platform/online_weapon_hold.h>
@@ -5033,6 +5034,8 @@ index 0000000000000000000000000000000000000000..a0b500f06a8f39a0f98d7b6b0da00ff0
 +    ONLINE_NAME_BAR_MAX_DEPTH = 65535,      // the projection's depth limit
 +};
 +
++enum { ONLINE_COMPASS_DOT_OT_DEPTH = 1 };   // as the HUD's sprites
++
 +// Where a bar is drawn: its axes and anchor (model.t), and the scale that brought the anchor in reach.
 +struct OnlineNameBarPlace {
 +    MATRIX model;
@@ -5130,7 +5133,8 @@ index 0000000000000000000000000000000000000000..a0b500f06a8f39a0f98d7b6b0da00ff0
 +    const s32 otz = std::min<s32>(static_cast<s32>(anchor[2]), ONLINE_NAME_BAR_MAX_DEPTH) >> KF_GTE_DEPTH_TO_OT_SHIFT;
 +    const s32 text_depth = shown == kf::OnlineNameBars::Always ? ONLINE_NAME_BAR_OVER_WORLD_DEPTH : otz;
 +    const auto glyphs = menu_spell(player.name, kf::game_language());
-+    const s32 width_px = menu_text_width(glyphs);
++    const s32 lead_px = player.hosts ? kf::online_name_bar_crown_room_px : 0;
++    const s32 width_px = lead_px + menu_text_width(glyphs);
 +
 +    kf::DrawFace band {};
 +    band.transparency = kf::FaceTransparency::Blend;
@@ -5143,10 +5147,49 @@ index 0000000000000000000000000000000000000000..a0b500f06a8f39a0f98d7b6b0da00ff0
 +        kf::DrawFace face {};
 +        face.material = quad.material;
 +        render_face_uv_rectangle(&face, quad.u, quad.v, quad.u + quad.width, quad.v + quad.height);
-+        online_name_bar_submit(face, kf::online_name_bar_piece(width_px, quad.x, quad.y, quad.width, quad.height), place,
++        online_name_bar_submit(face, kf::online_name_bar_piece(width_px, lead_px + quad.x, quad.y, quad.width, quad.height), place,
 +            text_colour, text_depth & KF_ORDERING_TABLE_INDEX_MASK);
 +    }
++    if (player.hosts) {
++        const CVECTOR gold = {kf::online_name_bar_crown_r, kf::online_name_bar_crown_g, kf::online_name_bar_crown_b, 0};
++        for (const kf::OnlineNameBarRect &piece : kf::online_name_bar_crown) {
++            kf::DrawFace face {};
++            face.material = {kf::SurfaceKind::Solid, {}, kf::BlendMode::opaque};
++            online_name_bar_submit(face, kf::online_name_bar_piece(width_px, piece.left, piece.top, piece.right - piece.left, piece.bottom - piece.top),
++                place, gold, text_depth & KF_ORDERING_TABLE_INDEX_MASK);
++        }
++        kf::online_crown_drawn();
++    }
 +    kf::online_name_bar_drawn();
++}
++
++void render_online_compass_dots(void)
++{
++    const KfHudSprite &compass = hud_sprites[KF_HUD_COMPASS];
++    if (compass.state != KF_SPRITE_VISIBLE)
++        return;
++    const auto players = kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor));
++    if (players.empty())
++        return;
++    const s32 left = compass.sprite.x + render_hud_edge_shift(compass.sprite.x);
++    const kf::OnlineCompassRect dial = {left, compass.sprite.y, left + compass.sprite.w, compass.sprite.y + compass.sprite.h};
++    const auto &view = game_graphics_runtime.render_state.view_position;
++    const float own_x = static_cast<float>(view.vx) / ONLINE_PLAYER_TILE_SIZE;
++    const float own_z = static_cast<float>(view.vz) / ONLINE_PLAYER_TILE_SIZE;
++    const s32 brightness = game_graphics_runtime.hud_brightness;
++    const auto faded = [brightness](u8 channel) {
++        return static_cast<u8>(std::min<s32>(channel * brightness / KF_HUD_DEFAULT_BRIGHTNESS, 255));
++    };
++    for (const kf::OnlineCompassDot &dot : kf::online_compass_dots(dial, own_x, own_z, players)) {
++        const kf::OnlinePlayerRgb rgb = kf::online_player_colour_rgb(dot.colour);
++        const CVECTOR colour = {faded(rgb.r), faded(rgb.g), faded(rgb.b), 0};
++        kf::DrawFace face {};
++        face.material = {kf::SurfaceKind::Solid, {}, kf::BlendMode::opaque};
++        face.casts_shadow = false;
++        render_face_rectangle(&face, dot.rect.left, dot.rect.top, dot.rect.right, dot.rect.bottom);
++        render_face_submit(&face, {&colour, 1}, kf::FaceShading::Flat, ONLINE_COMPASS_DOT_OT_DEPTH);
++        kf::online_compass_dot_drawn();
++    }
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
 index 33680f578d7627d7bb43b29b77f58b843371198a..76af58e4816e1fc0175f6cd5d37a1ee5bce09893 100644
@@ -6540,7 +6583,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
  }
  
 diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
-index 73c6900e478aa3769791136fbf65a88230b2c272..a1b7708ee3b55adf2be8662190f23120db8e804d 100644
+index 73c6900e478aa3769791136fbf65a88230b2c272..a7e2d843f37791807ef0f6f1d480d0f105d2e4d1 100644
 --- a/src/game/render_frame.cpp
 +++ b/src/game/render_frame.cpp
 @@ -1,16 +1,19 @@
@@ -6613,10 +6656,12 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..a1b7708ee3b55adf2be8662190f23120
          hud_sprites[KF_HUD_ATTACK_GAUGE].sprite.w = player_state.attack_charge_state.current / HUD_CHARGE_UNITS_PER_PIXEL;
          hud_sprites[KF_HUD_MAGIC_GAUGE].sprite.w = player_state.magic_charge / HUD_CHARGE_UNITS_PER_PIXEL;
          flags = player_state.status_effect_flags;
-@@ -140,6 +163,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -140,6 +163,12 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      game_graphics_runtime.active_render_color.g = game_graphics_runtime.hud_brightness;
      game_graphics_runtime.active_render_color.r = game_graphics_runtime.hud_brightness;
      render_hud_sprites(compass_sprite - KF_HUD_COMPASS);
++    // PC extension (coop): where the other players are, around the compass.
++    render_online_compass_dots();
 +    // PC extension (coop): who in the party found, bought, sold or used what.
 +    menu_draw_pickup_feed();
 +    // PC extension (messages on the ground): the message being read.
@@ -6624,7 +6669,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..a1b7708ee3b55adf2be8662190f23120
  
      notify_effect_update();
  
-@@ -153,24 +180,40 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -153,24 +182,40 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      kf::matrix_set_rotation_xyz(spin, model);
  
      game_graphics_runtime.active_render_material = game_graphics_runtime.notification_text_material;

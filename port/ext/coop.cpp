@@ -862,6 +862,10 @@ void coop_set_up_own_profile(const CoopProfile &profile) {
     keep_own_profile();
 }
 
+std::uint64_t coop_room_host_peer() {
+    return coop.role == Role::Guest ? coop.guest.room_host : 0;
+}
+
 CoopProfile coop_profile_of_peer(std::uint64_t peer) {
     for (const CoopRoster::Player &player : coop_floors_room())
         if (player.peer == peer)
@@ -975,7 +979,7 @@ std::string coop_json() {
            std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
            "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json() + "," +
            coop_death_json() + ",\"tickVblanks\":" + std::to_string(world_update_vblanks) + ",\"reviveWaitS\":" + std::to_string(coop_revive_wait_s()) +
-           ",\"nameBarsDrawn\":" + std::to_string(online_name_bars_drawn()) + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
+           ",\"nameBarsDrawn\":" + std::to_string(online_name_bars_drawn()) + ",\"crownsDrawn\":" + std::to_string(online_crowns_drawn()) + ",\"compassDotsDrawn\":" + std::to_string(online_compass_dots_drawn()) + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
 }
 
 bool coop_hosting() {

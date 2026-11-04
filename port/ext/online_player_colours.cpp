@@ -56,6 +56,11 @@ void look_in_title_pages(std::vector<u8> &tmd) {
 
 } // namespace
 
+OnlinePlayerRgb online_player_colour_rgb(u8 colour) {
+    const ext::CoopColour &wanted = ext::coop_colours()[colour < ext::coop_colour_count ? colour : 0];
+    return {wanted.r, wanted.g, wanted.b};
+}
+
 std::span<const u8> online_player_tmd_in(u8 colour) {
     if (colour >= painted.size())
         colour = 0;

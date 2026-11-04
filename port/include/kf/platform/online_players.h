@@ -27,6 +27,7 @@ struct OnlinePlayer {
     float stride_phase; // 0..1 through the walk; the right foot leaves the ground at 0, the left at 0.5
     float stride;       // 0 standing .. 1 a full stride
     bool eyes;          // this player, down, sees through theirs: their knight is not drawn here
+    bool hosts;         // they host the room: a crown beside their name
     u8 colour;          // the player's profile (port/ext/coop_profile.h): an index of the colours
     u8 helmet;          // and of the helmets
     u8 symbol;          // and of the tabard's symbols, each below its count
@@ -36,8 +37,16 @@ struct OnlinePlayer {
 // Whether a name bar shows above the other players (kf/platform/online_name_bar.h): this player's choice.
 enum class OnlineNameBars : u8 { Off, InSight, Always };   // Always: through walls too
 OnlineNameBars online_name_bars();
-// The game drew a name bar, counted for the agent channel's tests.
+// The game drew a name bar, a crown on one, a dot around the compass: counted for the agent channel's tests.
 void online_name_bar_drawn();
+void online_crown_drawn();
+void online_compass_dot_drawn();
+
+// One of the profile's colours (the first past them is the first), as the knight's tabard has it.
+struct OnlinePlayerRgb {
+    u8 r, g, b;
+};
+OnlinePlayerRgb online_player_colour_rgb(u8 colour);
 
 // Whether the world keeps running while this player is held in a menu or a scripted loop: in a
 // room (docs/COOP_PLAN.md), or with KF_TEST_WORLD_RUNS_WHILE_HELD=1 for tests without one.

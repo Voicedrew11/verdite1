@@ -118,6 +118,9 @@ def main():
         if drawn > 0:
             break
     check("a guest draws the name bar of a host in view", drawn > 0)
+    check("a guest draws a crown on the host's name", b.coop()["crownsDrawn"] > 0)
+    check("no crown is drawn for a guest's name", a.coop()["crownsDrawn"] == 0)
+    check("both draw the other's dot around the compass", a.coop()["compassDotsDrawn"] > 0 and b.coop()["compassDotsDrawn"] > 0)
     b.run("option online.name_bars 0")
     time.sleep(0.5)
     stopped = b.coop()["nameBarsDrawn"]

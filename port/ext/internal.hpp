@@ -156,8 +156,10 @@ void online_broadcast_control(std::span<const std::uint8_t> bytes);
 void online_broadcast_state(std::span<const std::uint8_t> bytes);
 // This machine's peer in the room; 0 outside one.
 std::uint64_t online_self_peer();
-// How many name bars the game has drawn, for the agent channel's tests.
+// How many name bars, crowns on them and compass dots the game has drawn, for the agent channel's tests.
 std::uint64_t online_name_bars_drawn();
+std::uint64_t online_crowns_drawn();
+std::uint64_t online_compass_dots_drawn();
 // Leaves the room once the session's events are handled, saying why.
 void online_leave_room(std::string_view why);
 // The same, for a host that turned this player away, so the title can say which way.
@@ -194,6 +196,8 @@ bool coop_own_profile_is_set_up();
 void coop_set_up_own_profile(const CoopProfile &profile);
 // The profile of the player on `peer`, as the room's roster has it.
 CoopProfile coop_profile_of_peer(std::uint64_t peer);
+// The peer hosting the room this machine is a guest in; 0 when hosting or outside a room.
+std::uint64_t coop_room_host_peer();
 // ---- the title menu (title.cpp) ----
 // A coop session started from the title ended: back to the title at the next point between updates.
 void title_return();

@@ -42,6 +42,8 @@ namespace {
 std::string start_room; // --online-room
 std::uint32_t own_update = 0; // game updates counted by online_update, numbering the poses sent
 std::uint64_t name_bars_drawn = 0;
+std::uint64_t crowns_drawn = 0;
+std::uint64_t compass_dots_drawn = 0;
 
 #if KF_ONLINE
 
@@ -271,6 +273,14 @@ void online_join_at_start(std::string_view room) {
 
 std::uint64_t online_name_bars_drawn() {
     return name_bars_drawn;
+}
+
+std::uint64_t online_crowns_drawn() {
+    return crowns_drawn;
+}
+
+std::uint64_t online_compass_dots_drawn() {
+    return compass_dots_drawn;
 }
 
 bool online_may_host() {
@@ -533,17 +543,26 @@ void online_name_bar_drawn() {
     ++ext::name_bars_drawn;
 }
 
+void online_crown_drawn() {
+    ++ext::crowns_drawn;
+}
+
+void online_compass_dot_drawn() {
+    ++ext::compass_dots_drawn;
+}
+
 std::vector<OnlinePlayer> online_players_on_floor(int floor) {
     std::vector<OnlinePlayer> players;
 #if KF_ONLINE
     // A player who is down is out of the world (docs/COOP_PLAN.md, "Death is the party's").
     const std::uint64_t eyes = ext::coop_death_eyes_peer();
+    const std::uint64_t host = ext::coop_room_host_peer();
     for (const auto &[peer, known] : ext::online.players)
         if (const auto &pose = known.shown; pose && pose->floor == floor && !pose->down) {
             const ext::CoopProfile profile = ext::coop_profile_of_peer(peer);
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
                 pose->attack_phase, pose->pitch, pose->foot_height, known.stride.phase, known.stride.amount,
-                peer == eyes, profile.colour, profile.helmet, profile.symbol, profile.name});
+                peer == eyes, peer == host, profile.colour, profile.helmet, profile.symbol, profile.name});
         }
 #else
     (void)floor;

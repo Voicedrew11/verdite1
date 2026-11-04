@@ -63,3 +63,15 @@ TEST_CASE("a bar beyond reach is scaled so its anchor's largest component is at 
     CHECK(scale == doctest::Approx(0.5));
     CHECK(60000 * scale <= online_name_bar_reach);
 }
+
+TEST_CASE("the crown fits the room before the name and the text's height") {
+    for (const OnlineNameBarRect &piece : online_name_bar_crown) {
+        CHECK(piece.left >= 0);
+        CHECK(piece.right < online_name_bar_crown_room_px);
+        CHECK(piece.top >= 0);
+        CHECK(piece.bottom <= online_name_bar_text_height_px);
+    }
+    const OnlineNameBarRect band = online_name_bar_band(12 * 15 + online_name_bar_crown_room_px);
+    CHECK(band.right < 32767);
+    CHECK(band.top > -32768);
+}

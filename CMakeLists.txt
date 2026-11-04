@@ -538,7 +538,7 @@ if(doctest_FOUND)
     port/tests/coop_party.cpp port/ext/coop_party.cpp
     port/tests/coop_message.cpp port/ext/coop_message.cpp port/tests/coop_floor_owners.cpp port/ext/coop_floor_owners.cpp
     port/tests/coop_floor_frames.cpp port/ext/coop_floor_frames.cpp port/tests/coop_death.cpp port/ext/coop_death.cpp
-    port/tests/online_name_bar.cpp port/tests/online_watched_weapon.cpp port/tests/coop_profile.cpp port/ext/coop_profile.cpp port/tests/online_player_colours.cpp port/ext/online_player_colours.cpp
+    port/tests/online_name_bar.cpp port/tests/online_compass.cpp port/tests/online_watched_weapon.cpp port/tests/coop_profile.cpp port/ext/coop_profile.cpp port/tests/online_player_colours.cpp port/ext/online_player_colours.cpp
     port/ext/online_player_model.cpp port/tests/messages.cpp port/ext/messages.cpp
     port/tests/message_reading.cpp port/ext/message_reading.cpp
     port/tests/message_writer.cpp port/ext/message_writer.cpp
