@@ -729,6 +729,9 @@ void VulkanBackend::blit_to(VkCommandBuffer commands, const GpuImage &source_ima
     const VkClearColorValue black{};
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
+    // The blit must wait for the clear: unordered, a GPU may run them together and black out part of the picture.
+    transition(commands, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     const PresentRect rect =
         letterbox(logical_width_, static_cast<int>(extent.width), static_cast<int>(extent.height));
     const ImageShape &source = source_image.shape();
