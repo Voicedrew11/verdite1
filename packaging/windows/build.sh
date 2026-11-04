@@ -16,6 +16,7 @@ cmake -S "$repo" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHA
   -DCMAKE_PREFIX_PATH=/opt/win-deps -DKF_RELEASE=ON -DPython3_EXECUTABLE=/usr/bin/python3.11 -DKF_ENGLISH_PATCH=/nonexistent \
   -DKF_HOST_CLANG=/opt/llvm-mingw/bin/x86_64-w64-mingw32-clang++ \
   -DOPENSSL_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR=/opt/win-deps \
+  -DZLIB_LIBRARY=/opt/win-deps/lib/libzlibstatic.a -DZLIB_INCLUDE_DIR=/opt/win-deps/include \
   -DCMAKE_EXE_LINKER_FLAGS=-static
 cmake --build "$build" --target verdite1 -- -k 0
 
@@ -31,6 +32,8 @@ cp "$repo/third_party/cjson/LICENSE" "$stage/licenses/cJSON.txt"
 cp "$repo/third_party/libchdr/LICENSE.txt" "$stage/licenses/libchdr.txt"
 cp "$repo/third_party/libchdr/deps/zstd-1.5.7/LICENSE" "$stage/licenses/zstd.txt"
 cp /opt/win-deps/SDL3-LICENSE.txt "$stage/licenses/SDL3.txt"
+cp /opt/libarchive/COPYING "$stage/licenses/libarchive.txt"
+cp /opt/win-deps/zlib-LICENSE.txt "$stage/licenses/zlib.txt"
 cp /opt/libdatachannel/LICENSE "$stage/licenses/libdatachannel.txt"
 cp /opt/libdatachannel/deps/libjuice/LICENSE "$stage/licenses/libjuice.txt"
 cp /opt/libdatachannel/deps/usrsctp/LICENSE.md "$stage/licenses/usrsctp.txt"
@@ -38,7 +41,7 @@ cp /opt/libdatachannel/deps/plog/LICENSE "$stage/licenses/plog.txt"
 
 # Nothing but SDL3.dll and Windows' own libraries may be needed.
 if x86_64-w64-mingw32-objdump -p "$stage/verdite1.exe" | grep 'DLL Name' \
-    | grep -iE 'libc\+\+|libunwind|libwinpthread|libcrypto|libssl|libgcc'; then
+    | grep -iE 'libc\+\+|libunwind|libwinpthread|libcrypto|libssl|libgcc|zlib|libarchive'; then
   echo "verdite1.exe links a library the package does not carry" >&2
   exit 1
 fi

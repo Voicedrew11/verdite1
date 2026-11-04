@@ -50,8 +50,8 @@ struct ScratchDirectory {
     }
 };
 
-// Runs a tool that ships with the system (curl and bsdtar are part of Windows 10
-// and later) without a console window. Every argument is quoted.
+// Runs a tool that ships with the system (curl is part of Windows 10 and later)
+// without a console window. Every argument is quoted.
 bool run_tool(const char *tool, const std::vector<std::filesystem::path> &arguments) {
 #ifdef _WIN32
     wchar_t system[MAX_PATH];
@@ -98,6 +98,7 @@ std::optional<std::vector<u8>> patch_archive_download(const char *url, std::stri
     return bytes;
 }
 
+#ifndef _WIN32 // Windows unpacks in-process (patch_unpack_libarchive.cpp)
 std::optional<std::vector<u8>> patch_from_archive(std::span<const u8> archive_bytes,
                                                   std::string *error) {
     ScratchDirectory scratch;
@@ -114,12 +115,8 @@ std::optional<std::vector<u8>> patch_from_archive(std::span<const u8> archive_by
             return std::nullopt;
         }
     }
-#ifdef _WIN32
-    const char *archive_tool = "tar"; // Windows' tar is bsdtar
-#else
-    const char *archive_tool = "bsdtar"; // GNU tar cannot read .rar; the AppImage carries bsdtar
-#endif
-    if (!run_tool(archive_tool, {"-xf", archive, "-C", extracted})) {
+    // GNU tar cannot read .rar; the AppImage carries bsdtar.
+    if (!run_tool("bsdtar", {"-xf", archive, "-C", extracted})) {
         *error =
             "Cannot open that archive. Extract the .ppf patch from it and choose that instead.";
         return std::nullopt;
@@ -146,4 +143,5 @@ std::optional<std::vector<u8>> patch_from_archive(std::span<const u8> archive_by
         *error = "Cannot read the patch in that archive.";
     return ppf;
 }
+#endif
 } // namespace kf

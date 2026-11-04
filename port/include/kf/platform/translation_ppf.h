@@ -20,7 +20,7 @@ inline constexpr const char *english_patch_archive_sha256 =
 // table must be discarded.
 bool translation_apply_ppf(AssetTable &assets, const std::vector<u8> &ppf, std::string *error);
 // Reads a patch from a .ppf file, or from an archive holding one (the
-// translator's .rar, or a .zip or .7z).
+// translator's .rar, or a .zip; on Linux also a .7z).
 bool translation_read_patch(const char *path, std::vector<u8> *ppf, std::string *error);
 // Downloads the translator's archive and extracts its patch.
 bool translation_download(std::vector<u8> *ppf, std::string *error);

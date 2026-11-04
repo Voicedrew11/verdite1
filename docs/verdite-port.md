@@ -433,7 +433,7 @@ branch point.
 | Z-buffer | `depth_buffer` | |
 | AO, per-pixel lighting | dynamic lights, AO, shadows, flame glow | different designs: judge, do not merge blindly. AO and the game's lighting per pixel are done on Vulkan (`RENDERER_PLAN.md`); dynamic lights, shadows and glow were drawn only by GL and are not drawn yet |
 | mouse look, free look | mouse look, `look_limit` | |
-| English translation | language switch, ppf/rar import | fetched at start from the Japanese files (2026-10-27, "Build and run (Linux)"). Coop needs it, for the players' names ("Language handling"). Not yet: a LANGUAGE row in the game's menu; Android, 3DS and the web have no curl or bsdtar, so they cannot download or open the `.rar` |
+| English translation | language switch, ppf/rar import | fetched at start from the Japanese files (2026-10-27, "Build and run (Linux)"). Coop needs it, for the players' names ("Language handling"). Not yet: a LANGUAGE row in the game's menu; 3DS and the web have no curl or bsdtar, so they cannot download or open the `.rar` |
 | keyboard layout | controls | |
 | settings UI (Verdite Core) | F1 overlay | the settings in the game's own menu done (2026-10-26), as Verdite2's and Verdite3's PORT SETTINGS: see "The settings page in the game's menu" below |
 

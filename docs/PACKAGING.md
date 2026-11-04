@@ -38,6 +38,11 @@ once per build folder, and a phone joins rooms but does not host them ([COOP_PLA
   Its `AppId` in `verdite1.iss` is how Windows knows an upgrade: never change it or give it to another
   port. An upgrade clears `mods\` and `licenses\` first, and keeps the game's `data\` beside it. An
   uninstall leaves `data\` and everything in the user folder, saves above all.
+- **The English patch on Windows** is unpacked inside the game by libarchive, as on Android, not by
+  Windows' `tar`: a player's machine reported "Cannot open that archive" after the download had passed
+  its checksum (2026-11-04), so `tar` was the step that failed. The image carries libarchive's source
+  and a static zlib for `.zip`. Without LZMA a `.7z` is refused on Windows, with a message to extract
+  the `.ppf` and choose that.
 - **The Windows build is a cross-compile** so it is built, and can be tried under wine, on the same
   machine as the rest. `scripts/package-windows.ps1` is gone with the native build. A disc image
   extracted by Windows has `E0` where Linux has `E0.`, so a Linux `data/` fails its check there:

@@ -184,7 +184,8 @@ target_include_directories(kf_support PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BIN
 add_dependencies(kf_support kf_english_patch)
 target_compile_options(kf_support PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(kf_support PRIVATE verdite SDL3::SDL3)
-# Getting the English patch: a phone has no curl or bsdtar (patch_archive.h).
+# Getting the English patch: a phone has no curl or bsdtar, and Windows' tar cannot be relied on
+# (patch_archive.h).
 if(NOT ANDROID)
   target_sources(kf_support PRIVATE port/platform/patch_archive_tools.cpp)
 endif()
@@ -206,21 +207,9 @@ if(ANDROID)
   set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
   add_subdirectory($ENV{KF_SDL3_SOURCE} sdl3 EXCLUDE_FROM_ALL SYSTEM)
-  # The English patch's .rar and a .zip, read in memory: only the readers patch_unpack_libarchive.cpp
-  # names are linked. zlib is the NDK's, for the .zip.
-  foreach(off TEST TAR CPIO CAT UNZIP OPENSSL LIBB2 LZ4 LZO LZMA ZSTD BZip2 LIBXML2 EXPAT PCREPOSIX PCRE2POSIX
-      LibGCC CNG MBEDTLS NETTLE ACL XATTR ICONV INSTALL)
-    set(ENABLE_${off} OFF CACHE BOOL "" FORCE)
-  endforeach()
-  set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
   # Named outright: nix's cmake does not look in /usr/include, even under the NDK's sysroot.
   set(ZLIB_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/include CACHE PATH "" FORCE)
-  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)   # its option defaults on, and libchdr reads it too
-  add_subdirectory($ENV{KF_LIBARCHIVE_SOURCE} libarchive EXCLUDE_FROM_ALL SYSTEM)
-  target_sources(kf_support PRIVATE port/platform/patch_unpack_libarchive.cpp port/platform/patch_download_android.cpp)
-  target_include_directories(kf_support PRIVATE $ENV{KF_LIBARCHIVE_SOURCE}/libarchive)
-  target_compile_definitions(kf_support PRIVATE LIBARCHIVE_STATIC)
-  target_link_libraries(kf_support PRIVATE archive_static)
+  target_sources(kf_support PRIVATE port/platform/patch_download_android.cpp)
 elseif(WIN32)
   # Windows: the SDL3 MinGW development package is downloaded unless SDL3 is
   # already on CMAKE_PREFIX_PATH.
@@ -243,6 +232,25 @@ elseif(WIN32)
   endif()
 else()
   find_package(SDL3 CONFIG REQUIRED)
+endif()
+
+# The English patch's .rar and a .zip, read in memory: only the readers patch_unpack_libarchive.cpp
+# names are linked. zlib, for the .zip, is the NDK's on Android and the build image's on Windows.
+if(ANDROID OR WIN32)
+  if(NOT DEFINED ENV{KF_LIBARCHIVE_SOURCE})
+    message(FATAL_ERROR "KF_LIBARCHIVE_SOURCE is not set: it names libarchive's source, which unpacks the English patch")
+  endif()
+  foreach(off TEST TAR CPIO CAT UNZIP OPENSSL LIBB2 LZ4 LZO LZMA ZSTD BZip2 LIBXML2 EXPAT PCREPOSIX PCRE2POSIX
+      LibGCC CNG MBEDTLS NETTLE ACL XATTR ICONV INSTALL)
+    set(ENABLE_${off} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)   # its option defaults on, and libchdr reads it too
+  add_subdirectory($ENV{KF_LIBARCHIVE_SOURCE} libarchive EXCLUDE_FROM_ALL SYSTEM)
+  target_sources(kf_support PRIVATE port/platform/patch_unpack_libarchive.cpp)
+  target_include_directories(kf_support PRIVATE $ENV{KF_LIBARCHIVE_SOURCE}/libarchive)
+  target_compile_definitions(kf_support PRIVATE LIBARCHIVE_STATIC)
+  target_link_libraries(kf_support PRIVATE archive_static)
 endif()
 
 # PC extensions: overlay (Dear ImGui), console, settings and Lua mods.
