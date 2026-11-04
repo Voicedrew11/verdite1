@@ -58,8 +58,8 @@ bands and crest are in the player's colour, to tell players apart.
 
 - **The colour** is the player's profile's ([COOP_PLAN.md](COOP_PLAN.md), "The profile"). Those
   faces are flat-coloured primitives written in the first colour (`PLAYER` in `body.py`), and the
-  model lists where each holds its R, G, B (161 of them); `online_player_tmd_in` paints a copy
-  of the TMD per colour the first time one is drawn, 34 KB each, 8 at most.
+  model lists where each holds its R, G, B (155 of them); `online_player_tmd_in` paints a copy
+  of the TMD per colour the first time one is drawn, 33 KB each, 8 at most.
 - **The helmet** is a TMD object of its own after the parts (`helmets()` in `knight.py`, in
   `online_player_helmet_count`'s order), its vertices relative to the head's pivot, drawn with
   the head; the head keeps only the mail coif. A new helmet is an entry at the end of `knight.py`'s
@@ -69,16 +69,18 @@ bands and crest are in the player's colour, to tell players apart.
   up beside floor 2's knight's head, then in the game's depth order, then on the whole knight. The
   metal's projection box is a constant (`body.py`), so a new helmet moves no texture on the others.
   - **Great helm** (68 vertices): a T visor and the crest.
-  - **Fluted helm** (189 vertices, after Demon's Souls'): a dome with a dark-stepped flute
-    down each side and a comb in the player's colour, rounded front and back, a forehead running down into a short
-    duckbill, pinched behind a broad flat end, and eye holes and breaths painted on as flat quads
+  - **Fluted helm** (153 vertices, after Demon's Souls'): a dome with two dark-stepped flutes
+    down each side and a comb in the player's colour pointing between the eyes, rounded front and back, a forehead running down into a short
+    duckbill, pinched behind a broad flat end, and angry eye holes and lengthwise breaths painted on as flat quads
     (`Part.decal`). A first, fuller version (brow, dark eye crescents, a three-tier visor, cheek
-    plates) read as sunglasses from the front, so all that was taken out.
+    plates) read as sunglasses from the front, so all that was taken out. Rows of breaths read as
+    teeth. Six skull sections are the fewest that stay round; the neck's corner faces forward so that
+    in the game's depth order it does not draw over the chin.
 
 ## The helmet on the title's PROFILE page
 
 The PROFILE page shows the chosen helmet in the player's colour, turning once in 8 seconds under the
-rows (`render_title_helmet`, called from `menu_title_draw`), within x 79 to 241 and y 120 to 229 of
+rows (`render_title_helmet`, called from `menu_title_draw`), within x 73 to 247 and y 118 to 228 of
 the 320 by 240 screen for the fluted helm through a whole turn, lit by the menu's item light. The logo (320, 256 to 640, 496) overlaps page 151, so `menu_title_prepare` copies only the metal
 square the helmets use, as `online_player_title_texture_moves` lists, to x 160, y 129, which no TIM
 on the disc touches, and the helmet is drawn from a copy of the TMD with its page changed

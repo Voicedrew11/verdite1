@@ -25,43 +25,42 @@ def mirrored(right):
     return list(right) + left
 
 def fluted_skull_ring(z, width, top, bottom):
-    """One section of the fluted helm's skull, across the head at z: a comb, one flute stepping
+    """One section of the fluted helm's skull, across the head at z: a comb, two flutes stepping
     out over the side, down to the cheek."""
     spring = 1660
     def on_dome(degrees, out):
         a = math.radians(degrees)
         return (width * out * math.sin(a), spring + (top - spring) * out * math.cos(a), z)
-    return mirrored([on_dome(6, 1.05), on_dome(9, 0.99), on_dome(46, 1.03), on_dome(51, 0.97),
-                     on_dome(92, 1.0), (width * 0.86, bottom, z)])
+    return mirrored([on_dome(5, 1.08), on_dome(10, 0.97), on_dome(30, 1.03), on_dome(36, 0.95),
+                     on_dome(58, 1.03), on_dome(64, 0.95), on_dome(90, 1.0), (width * 0.88, bottom, z)])
 
 def fluted_helm(helm, colour):
-    """The fluted helm, down to what names it: a dome with a flute down each side, a rounded forehead
-    running down into a short duckbill, and eye holes and breaths painted on."""
+    """The fluted helm, within what a PS1 model would spend: a dome with two flutes down each side,
+    a comb pointing between angry eyes, a short duckbill, and breaths painted on."""
     M = 'knight'
-    # Skull, back to front: the step of the flute is dark, the comb the player's colour.
+    # Skull, back to front: the step of each flute is dark, the comb the player's colour.
     rings = [fluted_skull_ring(*section) for section in
-             ((-166, 42, 1690, 1628), (-146, 80, 1742, 1584), (-112, 118, 1796, 1556), (-40, 130, 1838, 1546),
-              (50, 128, 1828, 1546), (112, 106, 1794, 1570), (146, 84, 1762, 1596), (166, 50, 1718, 1630))]
+             ((-180, 24, 1692, 1644), (-134, 92, 1786, 1570), (-46, 130, 1838, 1546),
+              (46, 128, 1830, 1546), (130, 90, 1782, 1578), (176, 28, 1698, 1650))]
     def skull_mat(k, i):
-        if i in (0, 10, 11): return colour
-        return DARK if i in (2, 8) and 1 <= k <= 4 else M   # the flute stops short of each end
+        if i in (0, 14, 15): return colour
+        return DARK if i in (2, 4, 10, 12) and 1 <= k <= 3 else M   # the flutes stop short of each end
     helm.shell(rings, skull_mat, lambda k, i: i, caps=(M, M))
 
-    # The neck: flaring at the foot, the nape running on from the skull's back.
-    helm.loft([((0, 1528, 0), 116, 142), ((0, 1600, 0), 108, 124)], 8, M, caps=(True, False))
+    # The neck: flaring at the foot, the nape running on from the skull's back. The body hides its ends.
+    helm.loft([((0, 1528, 0), 116, 128), ((0, 1600, 0), 104, 106)], 6, M, caps=(False, False), phase=0)
 
-    # The bill, out from under the forehead: thin and broad at its end.
-    helm.loft([((0, 1642, 136), 92, 46), ((0, 1630, 182), 70, 30), ((0, 1618, 224), 68, 17),
-               ((0, 1612, 252), 40, 8)], 8, M, axis='z', phase=math.pi / 8)
+    # The bill, out from under the forehead: thin and broad at its end. The skull hides its root.
+    helm.loft([((0, 1642, 112), 84, 44), ((0, 1626, 212), 76, 24), ((0, 1612, 268), 44, 8)],
+              6, M, caps=(False, True), axis='z', phase=math.pi / 6)
 
     # Breaths on the bill, seen from above, then eye holes on the forehead, seen from ahead: a decal
     # lands on what is built so far, so these do not land on each other. Lifted clear of the surface:
     # the faces bulge between their corners.
     forward, up = (0, 0, 1), (0, 1, 0)
     for s in (1, -1):
-        for z in (172, 198):
-            helm.decal([(s * 6, 2000, z + 12), (s * 23, 2000, z + 12), (s * 6, 2000, z), (s * 23, 2000, z)], DARK, up, lift=6)
-            helm.decal([(s * 31, 2000, z + 12), (s * 52, 2000, z + 12), (s * 31, 2000, z), (s * 52, 2000, z)], DARK, up, lift=6)
+        for x in (14, 34):
+            helm.decal([(s * x, 2000, 232), (s * (x + 8), 2000, 232), (s * (x - 2), 2000, 178), (s * (x + 6), 2000, 178)], DARK, up, lift=6)
         helm.decal([(s * 12, 1700, 400), (s * 32, 1720, 400), (s * 32, 1690, 400), (s * 54, 1706, 400)], DARK, forward, lift=7)
 
 HELMETS = [great_helm, fluted_helm]
