@@ -6,6 +6,7 @@
 #include <limits>
 #include <cstdint>
 #include <numbers>
+#include <span>
 #include <vector>
 
 using namespace kf::ext;
@@ -37,28 +38,30 @@ TEST_CASE("the cell ahead is one along the way the player looks") {
     CHECK(message_cell_ahead(5.5f, 5.5f, 2.0f * quarter_turn) == MessageCell{5, 4});
 }
 
-TEST_CASE("the action button is for the message in the player's cell first") {
-    const std::vector<MessageCell> cells = {{5, 6}, {5, 5}};   // shown order
-    CHECK(message_for_action(cells, 5.5f, 5.5f, 0.0f) == 1u);   // own cell, though one is ahead
-}
-
-TEST_CASE("the first message in shown order in a cell is the one the button is for") {
-    const std::vector<MessageCell> cells = {{2, 2}, {5, 5}, {5, 5}};
-    CHECK(message_for_action(cells, 5.5f, 5.5f, 0.0f) == 1u);
+TEST_CASE("the action button is for the messages in the player's cell first") {
+    const std::vector<MessageCell> cells = {{5, 6}, {5, 5}};
+    CHECK(message_cell_for_action(cells, 5.5f, 5.5f, 0.0f, MessageReach::HereAndAhead) == MessageCell{5, 5});
 }
 
 TEST_CASE("with none in the player's cell, the one ahead; with none at all, none") {
     const std::vector<MessageCell> ahead = {{7, 7}, {5, 6}};
-    CHECK(message_for_action(ahead, 5.5f, 5.5f, 0.0f) == 1u);
+    CHECK(message_cell_for_action(ahead, 5.5f, 5.5f, 0.0f, MessageReach::HereAndAhead) == MessageCell{5, 6});
     const std::vector<MessageCell> behind = {{5, 4}};
-    CHECK_FALSE(message_for_action(behind, 5.5f, 5.5f, 0.0f).has_value());
+    CHECK_FALSE(message_cell_for_action(behind, 5.5f, 5.5f, 0.0f, MessageReach::HereAndAhead).has_value());
     const std::vector<MessageCell> none;
-    CHECK_FALSE(message_for_action(none, 5.5f, 5.5f, 0.0f).has_value());
+    CHECK_FALSE(message_cell_for_action(none, 5.5f, 5.5f, 0.0f, MessageReach::HereAndAhead).has_value());
 }
 
 TEST_CASE("a message two cells ahead is not for the action button") {
     const std::vector<MessageCell> cells = {{5, 7}};
-    CHECK_FALSE(message_for_action(cells, 5.5f, 5.5f, 0.0f).has_value());
+    CHECK_FALSE(message_cell_for_action(cells, 5.5f, 5.5f, 0.0f, MessageReach::HereAndAhead).has_value());
+}
+
+TEST_CASE("a wall before the cell ahead leaves only the player's own") {
+    const std::vector<MessageCell> ahead = {{5, 6}};
+    CHECK_FALSE(message_cell_for_action(ahead, 5.5f, 5.5f, 0.0f, MessageReach::HereOnly).has_value());
+    const std::vector<MessageCell> here = {{5, 5}};
+    CHECK(message_cell_for_action(here, 5.5f, 5.5f, 0.0f, MessageReach::HereOnly) == MessageCell{5, 5});
 }
 
 TEST_CASE("a place is cell x, cell z, facing in 256ths of a turn, and a zero byte") {
@@ -85,32 +88,95 @@ TEST_CASE("a place whose zero byte is set is refused") {
     CHECK_FALSE(message_place_decode(3u | (7u << 8) | (1u << 24)).has_value());
 }
 
-TEST_CASE("a message stays open while the player is within a cell of it, and closes past that") {
-    OpenMessage reading;
-    reading.open(42, {5, 5});
-    reading.follow(6.5f, 6.5f);   // one cell away diagonally
-    REQUIRE(reading.current());
-    CHECK(reading.current() == OpenMessage::Open{42, {5, 5}});
-    reading.follow(7.5f, 5.5f);   // two cells away
-    CHECK_FALSE(reading.current().has_value());
+namespace {
+const std::vector<std::uint64_t> one_message = {42};
+const std::vector<std::uint64_t> two_messages = {42, 43};
+
+MessageBox open_box(std::span<const std::uint64_t> ids) {
+    MessageBox box;
+    box.open(ids, {5, 5});
+    return box;
+}
+} // namespace
+
+TEST_CASE("a box stays open within a cell of the message and closes past it") {
+    MessageBox box = open_box(one_message);
+    box.follow(6.5f, 6.5f);   // one cell away diagonally
+    CHECK(box.current() == 42u);
+    box.follow(7.5f, 5.5f);   // two cells away
+    CHECK_FALSE(box.is_open());
+    CHECK_FALSE(box.current().has_value());
 }
 
-TEST_CASE("a press of the button rates a message that can be rated, then closes it") {
-    OpenMessage reading;
-    reading.open(1, {5, 5});
-    CHECK(reading.press(MessageRating::Possible) == MessagePress::Rate);
-    CHECK_FALSE(reading.current().has_value());
+TEST_CASE("the cursor starts on Leave, so pressing the button twice rates nothing") {
+    MessageBox box = open_box(one_message);
+    CHECK(box.choices(MessageRating::Possible) == std::vector{MessageChoice::Leave, MessageChoice::Good});
+    CHECK(box.cursor(MessageRating::Possible) == 0);
+    CHECK_FALSE(box.press(MessageKey::Confirm, MessageRating::Possible).has_value());
+    CHECK_FALSE(box.is_open());
 }
 
-TEST_CASE("a press closes a message that cannot be rated, without rating it") {
-    OpenMessage reading;
-    reading.open(1, {5, 5});
-    CHECK(reading.press(MessageRating::Impossible) == MessagePress::Close);
-    CHECK_FALSE(reading.current().has_value());
+TEST_CASE("choosing Good rates the message and leaves it open on Leave") {
+    MessageBox box = open_box(one_message);
+    CHECK_FALSE(box.press(MessageKey::Following, MessageRating::Possible).has_value());
+    CHECK(box.cursor(MessageRating::Possible) == 1);
+    CHECK(box.press(MessageKey::Confirm, MessageRating::Possible) == 42u);
+    CHECK(box.is_open());
+    CHECK(box.cursor(MessageRating::Impossible) == 0);
+    CHECK(box.choices(MessageRating::Impossible) == std::vector{MessageChoice::Leave});
 }
 
-TEST_CASE("a press with nothing open does nothing") {
-    OpenMessage reading;
-    CHECK(reading.press(MessageRating::Possible) == MessagePress::Close);
-    CHECK_FALSE(reading.current().has_value());
+TEST_CASE("a message that cannot be rated offers no Good, and Back closes without rating") {
+    MessageBox box = open_box(one_message);
+    CHECK(box.choices(MessageRating::Impossible) == std::vector{MessageChoice::Leave});
+    (void)box.press(MessageKey::Following, MessageRating::Impossible);
+    CHECK(box.cursor(MessageRating::Impossible) == 0);
+    MessageBox other = open_box(one_message);
+    (void)other.press(MessageKey::Following, MessageRating::Possible);
+    CHECK_FALSE(other.press(MessageKey::Back, MessageRating::Possible).has_value());
+    CHECK_FALSE(other.is_open());
+}
+
+TEST_CASE("the cursor wraps both ways") {
+    MessageBox box = open_box(one_message);
+    (void)box.press(MessageKey::Previous, MessageRating::Possible);
+    CHECK(box.cursor(MessageRating::Possible) == 1);
+    (void)box.press(MessageKey::Following, MessageRating::Possible);
+    CHECK(box.cursor(MessageRating::Possible) == 0);
+}
+
+TEST_CASE("Next turns through the cell's messages and comes back round") {
+    MessageBox box = open_box(two_messages);
+    CHECK(box.page_count() == 2);
+    const auto rows = box.choices(MessageRating::Impossible);
+    CHECK(rows == std::vector{MessageChoice::Leave, MessageChoice::Next});
+    (void)box.press(MessageKey::Following, MessageRating::Impossible);
+    CHECK_FALSE(box.press(MessageKey::Confirm, MessageRating::Impossible).has_value());
+    CHECK(box.current() == 43u);
+    CHECK(box.page() == 1);
+    CHECK(box.cursor(MessageRating::Impossible) == 0);
+    (void)box.press(MessageKey::Following, MessageRating::Impossible);
+    (void)box.press(MessageKey::Confirm, MessageRating::Impossible);
+    CHECK(box.current() == 42u);
+}
+
+TEST_CASE("a cursor past a row that went away stays on the last row") {
+    MessageBox box = open_box(two_messages);
+    (void)box.press(MessageKey::Previous, MessageRating::Possible);   // on Next, the third row
+    CHECK(box.cursor(MessageRating::Possible) == 2);
+    CHECK(box.cursor(MessageRating::Impossible) == 1);
+}
+
+TEST_CASE("a closed box takes no key, and opening on no messages opens nothing") {
+    MessageBox box;
+    CHECK_FALSE(box.press(MessageKey::Confirm, MessageRating::Possible).has_value());
+    box.open({}, {5, 5});
+    CHECK_FALSE(box.is_open());
+}
+
+TEST_CASE("only counts that rose on messages already known are gained") {
+    const std::vector<MessageCount> before = {{1, 2}, {2, 5}};
+    const std::vector<MessageCount> after = {{1, 4}, {2, 3}, {3, 9}};
+    CHECK(message_good_gained(before, after) == 2);
+    CHECK(message_good_gained({}, after) == 0);
 }

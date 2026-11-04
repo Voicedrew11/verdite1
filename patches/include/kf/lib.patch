@@ -61,10 +61,18 @@ index 86b7d79518a678e1037fbe8eb08c9e48384c3775..e0f1d2f60a1cab80b9b808e5f636cf2d
 +
  #endif // KF_ITEM_TYPES_H
 diff --git a/include/kf/lib/map.h b/include/kf/lib/map.h
-index 85501920d30d2a9c5683e9d825c129f3195d60eb..96486d62d7c88428e62ad029aab67f4147a4e8a9 100644
+index 85501920d30d2a9c5683e9d825c129f3195d60eb..4b54e0949819c35ff3d8b752938863b849a48d81 100644
 --- a/include/kf/lib/map.h
 +++ b/include/kf/lib/map.h
-@@ -70,6 +70,9 @@ typedef struct KfMapSavedFloor {
+@@ -11,6 +11,7 @@
+ #include <kf/lib/math.h>
+ #include <kf/lib/notify_types.h>
+ #include <kf/lib/types.h>
++#include <kf/platform/messages.h>
+ 
+ #include <array>
+ #include <bit>
+@@ -70,6 +71,9 @@ typedef struct KfMapSavedFloor {
      std::array<u8, KF_MAP_SAVED_RECORD_BYTES> records;
  } KfMapSavedFloor;
  
@@ -74,7 +82,7 @@ index 85501920d30d2a9c5683e9d825c129f3195d60eb..96486d62d7c88428e62ad029aab67f41
  // Each floor's save slot begins with KF_MAP_SAVED_RECORDS_OFFSET script bytes;
  // only floors 1, 3 and 5 use them.
  typedef struct KfMapSavedWorld {
-@@ -230,11 +233,24 @@ typedef struct KfMapObject {
+@@ -230,11 +234,24 @@ typedef struct KfMapObject {
  
  #include <kf/lib/camera_path.h>
  
@@ -100,7 +108,7 @@ index 85501920d30d2a9c5683e9d825c129f3195d60eb..96486d62d7c88428e62ad029aab67f41
  }; using enum KfCharacterId;
  
  enum class KfMapEventState : u8 {
-@@ -350,6 +366,9 @@ extern s32 map_event_pool_find_overlap(s32 point_x, s32 point_z, s32 radius_padd
+@@ -350,14 +367,20 @@ extern s32 map_event_pool_find_overlap(s32 point_x, s32 point_z, s32 radius_padd
  extern KfMapEvent *map_event_pool_find_target_in_cone( const VECTOR *origin, s16 facing, s32 max_distance, s32 angle_tolerance, s32 *distance_out);
  extern void map_event_pool_load(KfResourceChunk placements);
  extern void map_event_pool_update(void);
@@ -110,7 +118,9 @@ index 85501920d30d2a9c5683e9d825c129f3195d60eb..96486d62d7c88428e62ad029aab67f41
  extern void map_event_refresh_dialogue_stage(KfMapEvent *event);
  extern void map_event_set_current(KfMapEvent *event);
  extern void map_event_timers_reset(void);
-@@ -357,7 +376,8 @@ extern void map_interaction_dispatch(
++// PC extension (messages on the ground): what stands before the player, for the action button.
++extern kf::PlayerFront map_player_front(const VECTOR *position, const SVECTOR *rotation);
+ extern void map_interaction_dispatch(
      const VECTOR *position, SVECTOR *rotation);
  extern void map_load_floor_wrapper(void);
  extern void map_load_floor(void);
@@ -120,7 +130,7 @@ index 85501920d30d2a9c5683e9d825c129f3195d60eb..96486d62d7c88428e62ad029aab67f41
  extern s32 map_object_distance_to_point( const KfMapObject *object, s32 point_x, s32 point_z, s32 max_distance);
  extern KfMapObject *map_object_effect_pool_acquire(u16 first_index, u16 count, u16 sequence);
  extern void map_object_mark_collision_edge(const KfMapObject *object, KfMapCellKind cell_kind, u16 yaw);
-@@ -370,7 +390,8 @@ extern void map_object_pool_load(KfResourceChunk placements);
+@@ -370,7 +393,8 @@ extern void map_object_pool_load(KfResourceChunk placements);
  extern void map_object_pool_trigger_link(u8 link_id);
  extern void map_object_pool_update(void);
  extern KfCollisionResult map_object_probe_door_closing(const KfMapObject *object, u16 yaw);

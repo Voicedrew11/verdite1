@@ -13,7 +13,7 @@ target_compile_options(datachannel-static PRIVATE -frtti)
 
 find_package(OpenSSL REQUIRED)
 
-add_library(verdite_online STATIC src/board.cpp src/floor_frames.cpp src/handover.cpp src/record.cpp
+add_library(verdite_online STATIC src/board.cpp src/rated_file.cpp src/floor_frames.cpp src/handover.cpp src/record.cpp
   src/session.cpp src/signaling.cpp ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)
 target_include_directories(verdite_online PUBLIC include
   PRIVATE src ${CMAKE_SOURCE_DIR}/third_party/cjson)
@@ -42,7 +42,7 @@ if(KF_LIBFUZZER)
 endif()
 
 if(doctest_FOUND)
-  add_executable(verdite_online_tests tests/main.cpp tests/floor_frames.cpp tests/handover.cpp tests/record.cpp
+  add_executable(verdite_online_tests tests/main.cpp tests/rated_file.cpp src/rated_file.cpp tests/floor_frames.cpp tests/handover.cpp tests/record.cpp
     tests/signaling.cpp
     src/floor_frames.cpp src/handover.cpp src/record.cpp src/signaling.cpp
     ${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c)

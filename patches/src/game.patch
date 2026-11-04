@@ -2253,7 +2253,7 @@ index 29c748155b7804433f0616f9c71401d7c797e736..3dbec15434f02cddb7bbae66f4fac945
      const SVECTOR effect_direction{};
      KfObjectId object_id;
 diff --git a/src/game/map_scripts.cpp b/src/game/map_scripts.cpp
-index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be289624de91 100644
+index 1477de2e4583d114e5e02fb014b8e8263bb7510b..8dff6cfd6f2aefb87842facb428dec3e01f34012 100644
 --- a/src/game/map_scripts.cpp
 +++ b/src/game/map_scripts.cpp
 @@ -1,4 +1,5 @@
@@ -2306,7 +2306,72 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
          notify_enqueue(object->link.linked_notification);
          return;
      }
-@@ -613,8 +638,11 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -601,6 +626,64 @@ static void map_start_hinged_door_pair(KfMapObject *object,
+     map_object_start_action_if_idle(object, definition->behavior_type);
+ }
+ 
++// PC extension (messages on the ground): whether a press would act on this object. A door the player
++// does not face is passed over by map_interaction_dispatch, and scenery has nothing to say.
++static bool map_object_takes_press(const KfMapObject *object, const KfMapObjectDefinition *definition, s32 yaw)
++{
++    switch (definition->behavior_type) {
++    case KF_MAP_OBJECT_OP_LIFT_DOOR:
++    case KF_MAP_OBJECT_OP_HINGED_DOOR:
++    case KF_MAP_OBJECT_OP_HINGED_DOOR_PARTNER:
++        return angle_within_tolerance(yaw, object->rotation.vy, MAP_DOOR_FACING_TOLERANCE)
++            || angle_within_tolerance(yaw, object->rotation.vy + KF_ANGLE_HALF_TURN, MAP_DOOR_FACING_TOLERANCE);
++    case KF_MAP_OBJECT_OP_HINGED_CONTAINER:
++    case KF_MAP_OBJECT_OP_ITEM_CONTAINER:
++    case KF_MAP_OBJECT_OP_ITEM_PICKUP:
++    case KF_MAP_OBJECT_OP_GOLD_PICKUP:
++    case KF_MAP_OBJECT_OP_EFFECT_SWITCH:
++    case KF_MAP_OBJECT_OP_RESTORE_POINT:
++    case KF_MAP_OBJECT_OP_SCREEN_IMAGE:
++    case KF_MAP_OBJECT_OP_SAVE_POINT:
++        return true;
++    default:
++        return object->link.default_notification != KF_NOTIFICATION_NONE;
++    }
++}
++
++// PC extension (messages on the ground): a solid cell on the way to the next cell ahead. Walls fill
++// whole cells, so this only finds one when the player looks past a corner.
++static bool map_wall_before_next_cell(const VECTOR *position, s32 yaw)
++{
++    enum { WALL_PROBES = 4 };
++    for (s32 probe = 1; probe < WALL_PROBES; probe++) {
++        const auto point = vector_yaw_probe_xz(*position, yaw, KF_MAP_TILE_SIZE * probe / WALL_PROBES);
++        const s32 cell_x = point.x / KF_MAP_TILE_SIZE;
++        const s32 cell_z = point.z / KF_MAP_TILE_SIZE;
++        if (cell_x < 0 || cell_x >= KF_MAP_COLUMNS || cell_z < 0 || cell_z >= KF_MAP_ROWS)
++            return true;
++        if (!map_cell_has_full_floor(map_collision_grid.cells[cell_z][cell_x]))
++            return true;
++    }
++    return false;
++}
++
++kf::PlayerFront map_player_front(const VECTOR *position, const SVECTOR *rotation)
++{
++    const auto probe = vector_yaw_probe_xz(*position, rotation->vy, MAP_INTERACTION_PROBE_DISTANCE);
++    if (map_event_pool_find_overlap(probe.x, probe.z, MAP_INTERACTION_RADIUS_PADDING) != -1)
++        return kf::PlayerFront::WorldTarget;
++    for (s32 index = 0;; index++) {
++        index = map_object_pool_find_interaction_from(index, probe.x, probe.z, MAP_INTERACTION_RADIUS_PADDING);
++        if (index == -1)
++            break;
++        const KfMapObject *object = &map_object_state.objects[index];
++        const KfMapObjectDefinition *definition = &map_object_state.definitions.entries[kf_enum_encode<u8>(object->object_id)];
++        if (map_object_takes_press(object, definition, rotation->vy))
++            return kf::PlayerFront::WorldTarget;
++    }
++    return map_wall_before_next_cell(position, rotation->vy) ? kf::PlayerFront::Wall : kf::PlayerFront::Clear;
++}
++
+ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+ {
+     const auto input_context = kf::host_set_input_context(kf::InputContext::Scripted);
+@@ -613,8 +696,11 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
  
      const auto attribute_probe = vector_yaw_probe_xz(
          *position, rotation->vy, MAP_ATTRIBUTE_PROBE_DISTANCE);
@@ -2320,7 +2385,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
      case KF_MAP_ATTRIBUTE_PITFALL:
          notify_enqueue(KF_NOTIFICATION_PITFALL);
          break;
-@@ -637,6 +665,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -637,6 +723,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
          && (index = map_event_pool_find_overlap(
                  interaction_probe.x, interaction_probe.z, MAP_INTERACTION_RADIUS_PADDING)) != -1) {
          event = &map_runtime_state.events[index];
@@ -2328,7 +2393,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
          switch (event->behavior) {
              case KF_MAP_EVENT_BEHAVIOR_SHOP:
                  event->animation_phase = 0;
-@@ -673,6 +702,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -673,6 +760,7 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
              default:
                  break;
          }
@@ -2336,7 +2401,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
      } else {
          for (index = 0;; index++) {
              index = map_object_pool_find_interaction_from(
-@@ -704,7 +734,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -704,7 +792,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
                  if (object->link.link_id != KF_MAP_LINK_NONE) {
@@ -2347,7 +2412,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
                      break;
                  }
                  map_object_start_action_if_idle(object, KF_MAP_OBJECT_OP_LIFT_DOOR);
-@@ -718,7 +750,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -718,7 +808,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
                      break;
                  }
                  if (object->link.link_id != KF_MAP_LINK_NONE && definition->behavior_type == KF_MAP_OBJECT_OP_HINGED_DOOR) {
@@ -2358,7 +2423,7 @@ index 1477de2e4583d114e5e02fb014b8e8263bb7510b..33b1652ec9c8091875f5fc52dd49be28
                      break;
                  }
  
-@@ -785,7 +819,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
+@@ -785,7 +877,9 @@ void map_interaction_dispatch(const VECTOR *position, SVECTOR *rotation)
  
              case KF_MAP_OBJECT_OP_SAVE_POINT:
                  map_world_state_persist();
@@ -2627,7 +2692,7 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0fa3b22836b897fc65999ce0cfd48375f7b643d2 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..6d5eae835cb85f952cd82f40ae7560dd4f81148b 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
 @@ -4,11 +4,21 @@
@@ -3320,7 +3385,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0fa3b22836b897fc65999ce0cfd48375
      menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
  }
  
-+void menu_blit_box_translucent(const MenuSpriteDef &sprite, MenuPoint position, s32 width)
++void menu_blit_box_translucent(const MenuSpriteDef &sprite, MenuPoint position, s32 width, s32 depth)
 +{
 +    enum { MENU_BOX_END_WIDTH = 8 };
 +    const s32 x = position.x - MENU_TRANSLUCENT_SPRITE_X_OFFSET;
@@ -3336,14 +3401,14 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0fa3b22836b897fc65999ce0cfd48375
 +        auto face = menu_textured_quad(sprite.material, screen_x, y, screen_width, sprite.height);
 +        render_face_uv_rectangle(&face, u, sprite.v, u + texture_width, sprite.v + sprite.height);
 +        face.transparency = kf::FaceTransparency::Blend;
-+        menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
++        menu_submit_template(face, depth);
 +    }
 +}
 +
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2285,271 @@ void menu_draw_number(
+@@ -1854,10 +2285,415 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -3386,6 +3451,11 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0fa3b22836b897fc65999ce0cfd48375
 +        menu_draw_text(glyphs, MenuPoint{feed_left_x, y}, row.opacity, MENU_HUD_OT_DEPTH);
 +        y += feed_row_step;
 +    }
++    // PC extension (messages on the ground): that other players rated this player's messages good.
++    for (const kf::MessageNotice &notice : kf::messages_notices(language)) {
++        menu_draw_text(menu_spell_item_name(notice.text, language), MenuPoint{feed_left_x, y}, notice.opacity, MENU_HUD_OT_DEPTH);
++        y += feed_row_step;
++    }
 +    // A player who is down: whose eyes it sees through, low in the middle of the picture.
 +    constexpr s16 watching_y = 200, picture_middle_x = 160;
 +    const auto watching = menu_spell(kf::coop_watching_text(language), language);
@@ -3403,24 +3473,163 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0fa3b22836b897fc65999ce0cfd48375
 +    menu_draw_text(glyphs, MenuPoint{static_cast<s16>(picture_middle_x - width / 2), y}, 1.0f, MENU_HUD_OT_DEPTH);
 +}
 +
-+// PC extension (messages on the ground): the message the action button opens, centred low in the
-+// picture, and what the button does now a row below it. Spelled as the pickup feed spells its lines.
++// PC extension (messages on the ground): the message's plaque, its choices and the prompt, on the HUD's
++// layer. The boxes go just behind the text, in front of the world.
++enum {
++    MESSAGE_BOX_DEPTH = MENU_HUD_OT_DEPTH + 1,
++    MESSAGE_PLAQUE_MOST_WIDTH = 296,
++    MESSAGE_PLAQUE_LEAST_WIDTH = 168,
++    MESSAGE_PLAQUE_SIDE_PAD = 12,
++    MESSAGE_PLAQUE_END_PAD = 6,
++    MESSAGE_PLAQUE_FRAME_HEIGHT = 6,
++    MESSAGE_PLAQUE_FRAME_WIDTH = 8,
++    MESSAGE_PLAQUE_PLAIN_WIDTH = 8,
++    MESSAGE_LINE_STEP = 15,
++    MESSAGE_STATUS_STEP = 11,
++    MESSAGE_CHOICE_Y = 212,
++    MESSAGE_CHOICE_GAP = 8,
++    MESSAGE_CHOICE_LEAST_WIDTH = 64,
++    MESSAGE_CHOICE_SIDE_PAD = 10,
++    MESSAGE_PICTURE_WIDTH = 320,
++    MESSAGE_PROMPT_Y = 198,
++};
++static constexpr float message_choice_unlit_shade = 0.6f;
++static constexpr float message_status_shade = 0.75f;
++
++static void menu_message_spell_piece(std::vector<MenuTextGlyph> &line, const kf::MessageTextPiece &piece, kf::Language language)
++{
++    menu_spell_onto(line, piece.text, language);
++    if (piece.item < KF_ITEM_COUNT)
++        menu_append_item_name(line, piece.item);
++}
++
++// The message's pieces in lines that fit the box; a line breaks between pieces, where the words end.
++static std::vector<std::vector<MenuTextGlyph>> menu_message_lines(
++    std::span<const kf::MessageTextPiece> pieces, kf::Language language)
++{
++    std::vector<std::vector<MenuTextGlyph>> lines(1);
++    for (const kf::MessageTextPiece &piece : pieces) {
++        std::vector<MenuTextGlyph> longer = lines.back();
++        menu_message_spell_piece(longer, piece, language);
++        if (lines.back().empty() || menu_text_width(longer) <= MESSAGE_PLAQUE_MOST_WIDTH) {
++            lines.back() = std::move(longer);
++            continue;
++        }
++        lines.emplace_back();
++        menu_message_spell_piece(lines.back(), piece, language);
++    }
++    return lines;
++}
++
++// One framed plaque of any size, from the row box's sprite: its corners and edges as they are, its
++// middle stretched. The sprite's top edge has a shine along its left part, so the long edges come
++// from a plain slice near its right end.
++static void menu_message_plaque(s32 x, s32 y, s32 width, s32 height)
++{
++    const MenuSpriteDef &sprite = menu_resources().assets.row_background;
++    const s32 end_w = MESSAGE_PLAQUE_FRAME_WIDTH, end_h = MESSAGE_PLAQUE_FRAME_HEIGHT;
++    const s32 plain_u = sprite.u + sprite.width - end_w - MESSAGE_PLAQUE_PLAIN_WIDTH;
++    const std::array<std::array<s32, 4>, 3> columns = {{
++        {x, end_w, sprite.u, end_w},
++        {x + end_w, width - 2 * end_w, plain_u, MESSAGE_PLAQUE_PLAIN_WIDTH},
++        {x + width - end_w, end_w, sprite.u + sprite.width - end_w, end_w},
++    }};
++    const std::array<std::array<s32, 4>, 3> rows = {{
++        {y, end_h, sprite.v, end_h},
++        {y + end_h, height - 2 * end_h, sprite.v + end_h, sprite.height - 2 * end_h},
++        {y + height - end_h, end_h, sprite.v + sprite.height - end_h, end_h},
++    }};
++    for (const auto &[row_y, row_h, v, texture_h] : rows) {
++        for (const auto &[column_x, column_w, u, texture_w] : columns) {
++            auto face = menu_textured_quad(sprite.material, column_x, row_y, column_w, row_h);
++            render_face_uv_rectangle(&face, u, v, u + texture_w, v + texture_h);
++            face.transparency = kf::FaceTransparency::Blend;
++            menu_submit_template(face, MESSAGE_BOX_DEPTH);
++        }
++    }
++}
++
++// The choices in a row under the plaque, centred, the chosen one lit.
++static void menu_message_choices(const kf::MessageReading &reading, kf::Language language)
++{
++    const auto &assets = menu_resources().assets;
++    std::vector<std::vector<MenuTextGlyph>> labels;
++    std::vector<s32> widths;
++    s32 total = -MESSAGE_CHOICE_GAP;
++    for (const std::string &choice : reading.choices) {
++        labels.push_back(menu_spell(choice, language));
++        widths.push_back(std::max<s32>(MESSAGE_CHOICE_LEAST_WIDTH, menu_text_width(labels.back()) + 2 * MESSAGE_CHOICE_SIDE_PAD));
++        total += widths.back() + MESSAGE_CHOICE_GAP;
++    }
++    s32 x = (MESSAGE_PICTURE_WIDTH - total) / 2;
++    for (std::size_t i = 0; i < labels.size(); ++i) {
++        const bool lit = i == reading.cursor;
++        menu_blit_box_translucent(lit ? assets.option_highlight : assets.option_background,
++            MenuPoint{static_cast<s16>(x), MESSAGE_CHOICE_Y}, widths[i], MESSAGE_BOX_DEPTH);
++        const s32 text_x = x - MENU_TRANSLUCENT_SPRITE_X_OFFSET + (widths[i] - menu_text_width(labels[i])) / 2;
++        menu_draw_text(labels[i], MenuPoint{static_cast<s16>(text_x), MESSAGE_CHOICE_Y},
++            lit ? 1.0f : message_choice_unlit_shade, MENU_HUD_OT_DEPTH);
++        x += widths[i] + MESSAGE_CHOICE_GAP;
++    }
++}
++
 +void menu_draw_message_reading(void)
 +{
-+    constexpr s16 message_y = 180, prompt_row_step = 14;
 +    const auto language = kf::game_language();
 +    const kf::AutomapSnapshot &at = kf::automap_snapshot();
 +    const auto reading = kf::messages_reading(language, at.floor, at.player_x, at.player_z);
-+    if (!reading)
++    if (!reading) {
++        const std::string prompt = kf::messages_prompt(language);
++        if (!prompt.empty())
++            menu_draw_centred_line(menu_spell_item_name(prompt, language), MESSAGE_PROMPT_Y);
 +        return;
-+    std::vector<MenuTextGlyph> line;
-+    for (const kf::MessageTextPiece &piece : reading->pieces) {
-+        menu_spell_onto(line, piece.text, language);
-+        if (piece.item < KF_ITEM_COUNT)
-+            menu_append_item_name(line, piece.item);
 +    }
-+    menu_draw_centred_line(line, message_y);
-+    menu_draw_centred_line(menu_spell(reading->prompt, language), static_cast<s16>(message_y + prompt_row_step));
++    const auto lines = menu_message_lines(reading->pieces, language);
++    const auto status = menu_spell_item_name(reading->status, language);
++    s32 text_width = menu_text_width(status);
++    for (const auto &line : lines)
++        text_width = std::max(text_width, menu_text_width(line));
++    const s32 width = std::max<s32>(MESSAGE_PLAQUE_LEAST_WIDTH, text_width + 2 * MESSAGE_PLAQUE_SIDE_PAD);
++    const s32 text_height = static_cast<s32>(lines.size()) * MESSAGE_LINE_STEP + (status.empty() ? 0 : MESSAGE_STATUS_STEP);
++    const s32 height = text_height + 2 * MESSAGE_PLAQUE_END_PAD;
++    const s32 choices_top = MESSAGE_CHOICE_Y - MENU_TRANSLUCENT_SPRITE_Y_OFFSET;
++    const s32 top = choices_top - MESSAGE_CHOICE_GAP / 2 - height;
++    menu_message_plaque((MESSAGE_PICTURE_WIDTH - width) / 2, top, width, height);
++    auto y = static_cast<s16>(top + MESSAGE_PLAQUE_END_PAD);
++    for (const auto &line : lines) {
++        menu_draw_centred_line(line, y);
++        y += MESSAGE_LINE_STEP;
++    }
++    if (!status.empty()) {
++        const s32 status_x = (MESSAGE_PICTURE_WIDTH - menu_text_width(status)) / 2;
++        menu_draw_text(status, MenuPoint{static_cast<s16>(status_x), y}, message_status_shade, MENU_HUD_OT_DEPTH);
++    }
++    menu_message_choices(*reading, language);
++}
++
++struct MessageBoxBinding {
++    kf::Button button;
++    kf::MessageBoxKey key;
++    KfMenuSoundCue cue;
++};
++constexpr std::array<MessageBoxBinding, 6> message_box_bindings = {{
++    {kf::Button::Left, kf::MessageBoxKey::Previous, MENU_SOUND_CURSOR},
++    {kf::Button::Right, kf::MessageBoxKey::Following, MENU_SOUND_CURSOR},
++    {kf::Button::Up, kf::MessageBoxKey::Previous, MENU_SOUND_CURSOR},
++    {kf::Button::Down, kf::MessageBoxKey::Following, MENU_SOUND_CURSOR},
++    {kf::Button::Confirm, kf::MessageBoxKey::Confirm, MENU_SOUND_CONFIRM},
++    {kf::Button::Back, kf::MessageBoxKey::Back, MENU_SOUND_CANCEL_OR_ERROR},
++}};
++
++void menu_message_box_input(u32 input, u32 prev)
++{
++    for (const MessageBoxBinding &binding : message_box_bindings) {
++        if (!kf::button_pressed(input, prev, binding.button))
++            continue;
++        menu_play_input_sound(binding.cue);
++        kf::messages_box_press(binding.key);
++        return;
++    }
 +}
 +
 +// PC extension: the menu an extra item opens (kf/platform/extra_items.h), drawn with the title and
@@ -4323,10 +4532,10 @@ index 0000000000000000000000000000000000000000..93f7e4a123d9e41dce098a6e001a464d
 +}
 diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36c42f8f80
+index 0000000000000000000000000000000000000000..7ceef48db2e5a761e5dbecd73597698461f5a5af
 --- /dev/null
 +++ b/src/game/message_render.cpp
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,134 @@
 +// PC extension (messages on the ground, docs/MESSAGES_PLAN.md): a message's mark is the signboard's
 +// carved face, as the model has it (object 130, whose texture every floor has from COM/MIX.TIM),
 +// laid flat on the floor of its cell in a colour no sign has, its writing read from where its writer
@@ -4350,7 +4559,9 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +    MESSAGE_MARK_PALETTE = 0x79c0,
 +};
 +
-+static constexpr CVECTOR message_mark_colour = {80, 230, 130, 0};
++// PC extension: unread bright, read dim, the player's own blue (GroundMarkKind's order).
++static constexpr std::array<CVECTOR, 3> message_mark_colours = {{
++    {80, 230, 130, 0}, {38, 110, 62, 0}, {90, 170, 240, 0}}};
 +static constexpr float message_mark_facing_steps = 256.0f;
 +
 +// The board's front in its model's units and texture: x to the reader's right, ahead away from them.
@@ -4397,7 +4608,7 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +        return;
 +    const SVECTOR up = {0, -KF_FIXED12_ONE, 0, 0};
 +    const kf::DepthCuedColor color = kf::render_light_normal_cued(view.lighting, *lights, up,
-+        message_mark_colour, centre.fog);
++        message_mark_colours[static_cast<std::size_t>(mark.kind)], centre.fog);
 +
 +    // Yaw 0 looks along +z and grows towards -x (kf::AutomapSnapshot).
 +    const float yaw = mark.facing * (2.0f * std::numbers::pi_v<float> / message_mark_facing_steps);
@@ -5342,19 +5553,20 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..76af58e4816e1fc0175f6cd5d37a1ee5
      player_state.previous_map_cell.z = entry->z;
      player_state.camera_position.vx = player_state.previous_map_cell.x * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3b1824f84 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3c5a009ca 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
-@@ -1,4 +1,8 @@
+@@ -1,4 +1,9 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/messages.h>
 +#include <kf/platform/mod_events.h>
 +#include <kf/platform/online_players.h>
 +#include <kf/platform/play_overrides.h>
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
-@@ -51,7 +55,7 @@ s32 player_death_saved_fog_near;
+@@ -51,7 +56,7 @@ s32 player_death_saved_fog_near;
  
  MATRIX player_death_saved_color_matrix;
  
@@ -5363,7 +5575,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
  
  void player_death_begin(void)
  {
-@@ -59,12 +63,16 @@ void player_death_begin(void)
+@@ -59,12 +64,16 @@ void player_death_begin(void)
      player_state.death_camera_pitch_step = 0;
      player_state.death_visual_blend = 0;
      sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_DEATH], KF_AUDIO_MAX_VOLUME);
@@ -5380,7 +5592,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
      player_state.experience = 0;
      player_state.progress_state.level = 1;
      player_state.progress_state.current_floor = KF_FLOOR_1;
-@@ -107,6 +115,7 @@ void game_state_initialize(void)
+@@ -107,6 +116,7 @@ void game_state_initialize(void)
      player_state.darkness_timer = KF_PLAYER_STATUS_TIMER_INACTIVE;
      player_state.curse_timer = KF_PLAYER_STATUS_TIMER_INACTIVE;
      map_runtime_state.world_state = {};
@@ -5388,7 +5600,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
      item_stock = {};
      item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_SHORT_SWORD)] = 1;
      item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_MEDICINAL_HERB)] = 1;
-@@ -188,6 +197,10 @@ void player_adjust_hp(s32 delta)
+@@ -188,6 +198,10 @@ void player_adjust_hp(s32 delta)
  {
      s32 value = player_state.vitals.current_hp;
  
@@ -5399,7 +5611,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
      value += delta;
  
      if (value <= 0) {
-@@ -223,125 +236,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
+@@ -223,125 +237,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
      }
  }
  
@@ -5625,7 +5837,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
  }
  
  void player_increment_physical_power_training(void)
-@@ -412,6 +436,7 @@ void player_add_experience(s16 amount)
+@@ -412,6 +437,7 @@ void player_add_experience(s16 amount)
          player_state.base_magic = std::min<s32>(player_state.base_magic, KF_PLAYER_POWER_MAX);
          player_recalculate_combat_stats();
          notify_enqueue(KF_NOTIFICATION_LEVEL_UP);
@@ -5633,7 +5845,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
          sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_LEVEL_UP], KF_AUDIO_MAX_VOLUME);
      }
  }
-@@ -447,6 +472,11 @@ void player_apply_damage(
+@@ -447,6 +473,12 @@ void player_apply_damage(
      s32 loss;
      s32 remaining;
  
@@ -5642,10 +5854,11 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
 +        return;
 +    }
 +    kf::coop_player_fought();
++    kf::messages_box_close(); // PC extension (messages on the ground): a hit ends reading, so it is no pause
      if ((status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
          player_state.curse_timer = KF_CURSE_DURATION_UPDATES;
          player_state.status_effect_flags |= KF_PLAYER_STATUS_CURSE;
-@@ -495,6 +525,14 @@ void player_apply_damage(
+@@ -495,6 +527,14 @@ void player_apply_damage(
      damage += KF_DAMAGE_SUBUNITS_PER_HP / 2;
      damage = (scale_q12 * (damage / KF_DAMAGE_SUBUNITS_PER_HP)) >> KF_FIXED12_BITS;
      loss = (multiplier_tenths * damage) / KF_PLAYER_DAMAGE_MULTIPLIER_ONE;
@@ -5660,7 +5873,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
      if (loss != 0) {
          remaining = player_state.vitals.current_hp - loss;
          remaining = std::max<s32>(remaining, 0);
-@@ -505,6 +543,28 @@ void player_apply_damage(
+@@ -505,6 +545,28 @@ void player_apply_damage(
      }
  }
  
@@ -5689,7 +5902,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..a35b32422af398ebe0b1a0d6859118a3
  void player_apply_radial_damage(
      const VECTOR *origin,
      u32 radius,
-@@ -520,6 +580,9 @@ void player_apply_radial_damage(
+@@ -520,6 +582,9 @@ void player_apply_radial_damage(
      s32 distance;
      u16 attenuation;
  
@@ -5723,7 +5936,7 @@ index b90adbb1ec3e303bc920fd26705f1850209ad267..4e225c97c936afe0f29462ea8a8ae98d
          player_death_apply_visual_fade(&player_death_saved_color_matrix, blend);
      }
 diff --git a/src/game/player_update.cpp b/src/game/player_update.cpp
-index a30de1fda381916646ae0970dd325eae46425ce7..0f8bf7c35ac731e6ed0ef891e7d3151cf69ce853 100644
+index a30de1fda381916646ae0970dd325eae46425ce7..46ed34c74de3d71e920b5989e6c6da0bdb6620f2 100644
 --- a/src/game/player_update.cpp
 +++ b/src/game/player_update.cpp
 @@ -1,4 +1,6 @@
@@ -5942,7 +6155,7 @@ index a30de1fda381916646ae0970dd325eae46425ce7..0f8bf7c35ac731e6ed0ef891e7d3151c
  void player_update(void)
  {
      auto &motion = player_state.motion_state;
-@@ -649,6 +743,27 @@ void player_update(void)
+@@ -649,11 +743,35 @@ void player_update(void)
  
      input = kf::host_read_buttons();
      const auto look = kf::host_take_look();
@@ -5962,15 +6175,23 @@ index a30de1fda381916646ae0970dd325eae46425ce7..0f8bf7c35ac731e6ed0ef891e7d3151c
 +    // PC extension (coop): a player who is down sees through another player's eyes until it comes
 +    // back beside them (docs/COOP_PLAN.md, "Death is the party's").
 +    if (kf::coop_player_down()) {
++        kf::messages_box_close();
 +        kf::coop_down_update(kf::button_pressed(input, player_previous_input, kf::Button::Attack)
 +            || kf::button_pressed(input, player_previous_input, kf::Button::Confirm));
 +        player_previous_input = input;
 +        return;
 +    }
      if (player_state.update_state == KF_PLAYER_UPDATE_DYING) {
++        kf::messages_box_close();
          player_death_update();
          return;
-@@ -662,7 +777,7 @@ void player_update(void)
+     }
+     if (player_state.update_state == KF_PLAYER_UPDATE_RECOVERY_FADE) {
++        kf::messages_box_close();
+         player_death_update_reverse_fade();
+         return;
+     }
+@@ -662,14 +780,22 @@ void player_update(void)
          (player_state.camera_rotation.vy + look.yaw) & KF_ANGLE_WRAP_MASK;
      player_state.camera_rotation.vx = std::clamp<s32>(
          player_state.camera_rotation.vx + look.pitch,
@@ -5979,16 +6200,35 @@ index a30de1fda381916646ae0970dd325eae46425ce7..0f8bf7c35ac731e6ed0ef891e7d3151c
      if (input & kf::Button::Select) {
          display_show_system_screen(KF_SYSTEM_SCREEN_PAUSE);
      }
-@@ -688,7 +803,11 @@ void player_update(void)
+     if (input & kf::Button::Start) {
+         input = kf::button_mask(kf::Button::Back);
+     }
+-    if (kf::button_pressed(input, player_previous_input, kf::Button::Back)
++    // PC extension (messages on the ground): an open message box holds the player and takes the buttons.
++    const bool message_box_open = kf::messages_box_open();
++    if (message_box_open) {
++        menu_message_box_input(input, player_previous_input);
++        player_clear_motion();
++        player_update_weapon_magic();
++        player_previous_input = input;
++        player_update_vertical_motion();
++    } else if (kf::button_pressed(input, player_previous_input, kf::Button::Back)
+         && player_state.weapon_attack_phase == KF_WEAPON_ATTACK_INACTIVE) {
+         const auto outcome = menu_open_root();
+         if (const auto *item = std::get_if<KfObjectId>(&outcome)) {
+@@ -688,7 +814,15 @@ void player_update(void)
          }
          player_previous_input = input;
      } else {
--        if (kf::button_pressed(input, player_previous_input, kf::Button::Confirm)) {
-+        // PC extension (messages on the ground): a press for a message opens or rates it, and the
-+        // world does nothing else with it.
++        // PC extension (messages on the ground): a press with a message in reach opens it. A door or
++        // person before the player takes the press instead, and the floor's hints and scripts always
++        // run, so a message left anywhere takes nothing from the game.
 +        const kf::AutomapSnapshot &at = kf::automap_snapshot();
-+        if (kf::button_pressed(input, player_previous_input, kf::Button::Confirm)
-+            && !kf::messages_action(at.floor, at.player_x, at.player_z, at.player_yaw)) {
++        const bool message_in_reach = kf::messages_reach(at.floor, at.player_x, at.player_z, at.player_yaw,
++            map_player_front(&player_state.camera_position, &player_state.camera_rotation));
+         if (kf::button_pressed(input, player_previous_input, kf::Button::Confirm)) {
++            if (message_in_reach)
++                kf::messages_open_reached();
              map_interaction_dispatch(&player_state.camera_position, &player_state.camera_rotation);
          }
          player_update_movement_input(input);

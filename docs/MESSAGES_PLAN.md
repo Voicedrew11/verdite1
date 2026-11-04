@@ -15,7 +15,7 @@ sees only a fraction of a floor's messages.
 |---|---|
 | how messages spread | a **floor mesh**: each online player keeps 2 or 3 links to random players on the same floor, through TURN, and gossips records over them; a **Durable Object per floor** is the cache over a D1 table that keeps them while nobody plays |
 | the fraction a player sees | a **rated random sample**: at most a few per area of the floor and a cap per floor, drawn at random weighted by rating, drawn again each session |
-| in the world | a **mark on the cell's floor**; facing it and pressing action shows the text in the game's message box, with a choice to rate it good |
+| in the world | a **mark on the cell's floor**; with one in reach a prompt shows, and the action button opens a box with the text, its count and the choices (see "Reading and rating") |
 | lifetime | **permanent until replaced**: a player has at most **10** out; an 11th retires their oldest. Ratings change only how often one is shown |
 | vocabulary | **the disc's item names** (both languages, no translation) **plus a hand-written list** (directions, features, actions, enemies, people), which we translate |
 | writing | **the Message Stone**, an item in the Use Item list while messages are on (always, in a coop room) and a floor is entered; using it opens a menu in the game's style, and the message is placed on the cell the player stands on, facing where they look |
@@ -131,10 +131,31 @@ always shown to them and do not count.
 - **Writing**: the Message Stone, an item in Use Item while messages are on (always, in a coop room) and a floor is entered,
   opens an in-game menu: it picks a template, then each blank's word (by kind, then the word),
   shows the result, and posts it on the player's cell.
-- **The mark and reading**: a patch draws a mark on the floor of each shown record's cell, the
-  signboard's carved face laid flat, tinted green and turned by the writer's facing, and
-  the action button facing one opens it in the game's message box with "Good" and "Leave".
+- **The mark**: a patch draws a mark on the floor of each shown record's cell, the signboard's
+  carved face laid flat and turned by the writer's facing, tinted bright green unread, dim green
+  once opened or rated, and blue for the player's own.
 - **Online off, or offline**: nothing is drawn or posted, and the Message Stone is not offered.
+
+## Reading and rating
+
+- **Who gets the button**: something the game acts on before the player (a person, a door they
+  face, a chest, a pickup, a sign, a save point, scenery with something to say) takes the press, and
+  no message opens, so a message left anywhere blocks nothing. The cell ahead is out of reach past a
+  wall's corner. The press still reaches the game when a message opens, for the floor's hints and scripts.
+- **The prompt**: READ MESSAGE, while a press would open one.
+- **The box**: one framed plaque, made from the row box's sprite and sized to its words, with the text
+  wrapped between its pieces and a small dimmer line: which of the cell's this is, YOUR MESSAGE, and how
+  many found it good (nothing while nobody has). Under it in a row, LEAVE, GOOD (not on one's own or one
+  already rated) and NEXT (with several in the cell), the chosen one lit. The cursor starts on LEAVE,
+  because ratings decide what others are shown and an accidental one should take a deliberate press.
+- **Holding**: while the box is open the player stands still and its buttons are the box's (Left and
+  Up, Right and Down, Confirm, Back). The world runs on, and a hit or a fall closes it, so it is no pause.
+- **After GOOD**: the box stays open, a sound plays, the count rises at once and the small line says YOU FOUND IT GOOD.
+  A refusal takes both back. A rating the service took is kept beside the key (`message_key.rated`),
+  so it is not offered again in a later session.
+- **The author**: a line under the HUD, YOUR MESSAGE RATED GOOD with a count when there are several,
+  when the 5-second refresh of their list finds a count risen on a message they already knew of.
+- `scripts/messages_flow.py` drives all of this but a hit from an enemy, with two instances and a local service.
 
 ## Interfaces (proposed)
 
@@ -170,3 +191,7 @@ always shown to them and do not count.
   item in Use Item (`port/ext/extra_items.cpp`), whose menu is drawn in the game's style, not ImGui.
 - 2026-11-04: a coop room has messages on for everyone, whatever each player's setting says, so all
   have the Message Stone. Alone it stays opt-in.
+- 2026-11-04: reading and rating redone: a prompt, a box with Leave, Good and Next, the player held
+  while it is open, marks tinted by state, ratings kept over a restart and a line for the author. A mark
+  no longer takes the action button from a door or a person. Before, one press opened and the next both
+  closed and rated. The box replaces the plan's first idea of the game's own message box.

@@ -161,6 +161,7 @@ typedef struct vo_record {
     uint8_t payload_size;
     int mine;       /* nonzero when this install posted it */
     uint32_t good;  /* its good ratings, as last heard from the service */
+    int rated;      /* nonzero when this install has rated it, in this or an earlier session */
 } vo_record;
 
 typedef struct vo_board vo_board;
@@ -182,7 +183,9 @@ void vo_board_leave(vo_board *board);
  * size is over VO_RECORD_PAYLOAD_BYTES. The record is the board's at once; whether the service
  * took it comes later, as a change to vo_board_mine. */
 vo_record_id vo_board_post(vo_board *board, uint32_t place, const uint8_t *payload, size_t size);
-/* Rates a record good, once; a rating of one's own record, or a second, does nothing. */
+/* Rates a record good, once; a rating of one's own record, or a second, does nothing. The record
+ * shows the rating and one more good at once, and loses both if the service refuses it. A rating
+ * the service took is kept beside the key, in key_path.rated. */
 void vo_board_rate(vo_board *board, vo_record_id id);
 
 /* Copies up to most of the entered area's records the board holds (the service's sample and what

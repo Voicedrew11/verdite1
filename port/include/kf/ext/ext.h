@@ -57,6 +57,10 @@ std::string setup_command(std::string_view line);
 // The coop session for the agent channel, as JSON fields: the role, whether its world is in
 // play, the pack (item: count), the purse, what this player wears and what the others wear.
 std::string coop_json();
+// The floor's shown messages, the prompt, the open box and the notices, as JSON fields (the agent's).
+std::string messages_json();
+// Leaves a message on the player's cell. False when no floor is entered or the message is invalid.
+bool messages_leave_here(std::uint8_t template_id, std::uint16_t first_word, std::uint16_t second_word);
 // For a crash report: the settings that change how the game plays or draws. Runs in the crash
 // handler, so it only reads.
 void crash_write_settings(verdite::CrashWriter &out);

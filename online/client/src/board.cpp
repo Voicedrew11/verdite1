@@ -12,6 +12,7 @@
 #include "durable_file.h"
 #include "floor_frames.h"
 #include "mesh.h"
+#include "rated_file.h"
 #include "record.h"
 #include "signaling.h"
 
@@ -172,7 +173,7 @@ vo_record to_vo_record(const Record &record, std::uint64_t id, std::uint32_t goo
 
 struct vo_board {
     vo_board(std::string service, std::string game_name, vo::RecordSigner key,
-             std::string serial_file, std::uint32_t last_serial);
+             std::string serial_file, std::uint32_t last_serial, std::string rated_file);
 
     // The game's thread: what the records socket and the mesh said since the last call.
     void pump();
@@ -235,13 +236,14 @@ struct vo_board {
     std::string game;
     vo::RecordSigner signer;
     std::string serial_path;
+    std::string rated_path;
     std::uint32_t serial = 0; // the last one used, signed or not
     std::uint32_t seed = 0;   // the sample's, for the board's life
     RecordPool pool;
     std::optional<std::uint32_t> area;
 
     std::set<std::uint64_t> sample_ids; // the service's sample of this area: shown to a new link
-    std::set<std::uint64_t> rated;      // every record this board has rated
+    std::set<std::uint64_t> rated;      // every record this install has rated, or is rating
     std::set<vo_peer> ignored;          // peers that sent a forged or malformed packet
     std::set<vo_peer> shown_by;         // peers whose one shown packet came
     std::set<vo_peer> open_peers;       // the mesh's peers whose channels are open
@@ -264,9 +266,10 @@ struct vo_board {
 };
 
 vo_board::vo_board(std::string service, std::string game_name, vo::RecordSigner key,
-                   std::string serial_file, std::uint32_t last_serial)
+                   std::string serial_file, std::uint32_t last_serial, std::string rated_file)
     : service_url(std::move(service)), game(std::move(game_name)), signer(key),
-      serial_path(std::move(serial_file)), serial(last_serial), seed(random_seed()), pool(game) {}
+      serial_path(std::move(serial_file)), rated_path(std::move(rated_file)), serial(last_serial),
+      seed(random_seed()), pool(game), rated(vo::read_rated_ids(rated_path)) {}
 
 // ---- the game's calls -------------------------------------------------------------------------
 
@@ -334,6 +337,9 @@ void vo_board::rate(vo_record_id id) {
         return;
     const vo::Rating rating = vo::rating_sign(signer, id, game);
     rated.insert(id);
+    if (const RecordPool::Held *held = find_held(id))
+        pool.set_good(id, held->good + 1); // shown at once; the answer brings the true count
+    ++records_version;
     send_request(Request{Request::Kind::Rate, id, vo::rate_frame(rating)});
 }
 
@@ -347,6 +353,7 @@ std::size_t vo_board::copy_records(vo_record *out, std::size_t most, int *change
     for (std::size_t i = 0; i < count; ++i) {
         const RecordPool::Held &each = held[i];
         out[i] = to_vo_record(each.record, each.id, each.good, each.record.author == own);
+        out[i].rated = rated.contains(each.id) ? 1 : 0;
     }
     return count;
 }
@@ -553,6 +560,8 @@ void vo_board::on_posted(std::uint64_t id, std::uint32_t good) {
 
 void vo_board::on_rated(std::uint64_t id, std::uint32_t good) {
     answered();
+    if (!vo::append_rated_id(rated_path, id))
+        std::fprintf(stderr, "[ONLINE] could not keep a rating in %s\n", rated_path.c_str());
     set_good(id, good);
 }
 
@@ -571,6 +580,10 @@ void vo_board::on_mine(const std::vector<vo::CountedRecord> &records) {
     std::erase_if(own_posts, [](const OwnRecord &own) { return own.posted; });
     raise_serial(newest);
     ++mine_version;
+    // The floor's copy of each, which the author reads in the world, has the same count.
+    for (const vo::CountedRecord &counted : records)
+        if (counted.record.author == own_key())
+            set_good(vo::record_id(counted.record), counted.good);
 }
 
 void vo_board::on_error(const std::string &code, const std::string &message) {
@@ -580,6 +593,9 @@ void vo_board::on_error(const std::string &code, const std::string &message) {
         // Refused, most likely because the author's post had not reached the service yet when
         // gossip brought it here: it may be rated again.
         rated.erase(refused->id);
+        if (const RecordPool::Held *held = find_held(refused->id); held != nullptr && held->good > 0)
+            pool.set_good(refused->id, held->good - 1);
+        ++records_version;
         return;
     }
     if (!refused || refused->kind != Request::Kind::Post)
@@ -783,7 +799,8 @@ vo_board *vo_board_open(const char *service_url, const char *game, const char *k
         const std::optional<std::uint32_t> serial = read_serial(serial_path);
         if (!serial)
             return nullptr;
-        return std::make_unique<vo_board>(service_url, game, *signer, serial_path, *serial)
+        return std::make_unique<vo_board>(service_url, game, *signer, serial_path, *serial,
+                                          std::string(key_path) + ".rated")
             .release();
     } catch (const std::exception &error) {
         std::fprintf(stderr, "[ONLINE] opening the board: %s\n", error.what());

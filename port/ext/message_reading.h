@@ -1,13 +1,14 @@
 #pragma once
 // Messages on the ground, the parts with no ImGui and no network (docs/MESSAGES_PLAN.md): which
-// shown message the action button is for, the message open for reading, and a message's place in
-// a record. A cell is AutomapSnapshot's: cell (x, z) spans [x, x + 1). Yaw is in radians, 0 facing
+// shown message the action button is for, the box of the message open for reading, and a message's
+// place in a record. A cell is AutomapSnapshot's: cell (x, z) spans [x, x + 1). Yaw is in radians, 0 facing
 // +z (north) and increasing turns towards -x, so the way the player looks is (-sin yaw, cos yaw)
 // in (x, z).
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace kf::ext {
 
@@ -24,9 +25,11 @@ MessageCell message_cell_at(float x, float z);
 // The cell one cell ahead of (x, z) along yaw, as the point there lies in.
 MessageCell message_cell_ahead(float x, float z, float yaw);
 
-// The index in cells (in shown order) of the message the action button is for: the first in the
-// player's cell, else the first in the cell ahead. Nothing when neither has one.
-[[nodiscard]] std::optional<std::size_t> message_for_action(std::span<const MessageCell> cells, float x, float z, float yaw);
+// How far the action button reaches: the cell ahead is out when a wall stands before it.
+enum class MessageReach : std::uint8_t { HereAndAhead, HereOnly };
+// The cell of the messages the action button is for: the player's, else the one ahead. Nothing when
+// neither has one.
+[[nodiscard]] std::optional<MessageCell> message_cell_for_action(std::span<const MessageCell> cells, float x, float z, float yaw, MessageReach reach);
 
 // A record's place, as the record holds it: byte 0 the cell x, byte 1 the cell z, byte 2 the facing
 // in 256ths of a turn, byte 3 zero; little-endian in the uint32.
@@ -42,29 +45,45 @@ struct MessagePlace {
 
 // Possible: not the player's own, and not rated yet by this player.
 enum class MessageRating : std::uint8_t { Possible, Impossible };
-// What a press of the action button does to an open message: rate it, or only close it.
-enum class MessagePress : std::uint8_t { Close, Rate };
+// A choice in the box. Leave is always first, and where the cursor starts, so that two presses of the
+// action button read a message without rating it.
+enum class MessageChoice : std::uint8_t { Leave, Good, Next };
+enum class MessageKey : std::uint8_t { Previous, Following, Confirm, Back };
 
-// The message open for reading. It stays open until the player walks more than a cell from it
-// (Chebyshev distance in cells) or presses the action button.
-class OpenMessage {
+// The box of the messages in one cell, open for reading. It stays open until the player chooses
+// Leave, presses Back, or is more than a cell from it (Chebyshev distance in cells). Rating leaves
+// it open on the message, so the player sees the rating taken.
+class MessageBox {
 public:
-    struct Open {
-        std::uint64_t id = 0;
-        MessageCell cell{};
-        bool operator==(const Open &) const = default;
-    };
-    void open(std::uint64_t id, MessageCell cell);
+    // ids: the messages in cell, the first shown first. None opens nothing.
+    void open(std::span<const std::uint64_t> ids, MessageCell cell);
     void close();
-    [[nodiscard]] std::optional<Open> current() const;
+    [[nodiscard]] bool is_open() const;
+    // The message shown now; nothing when closed.
+    [[nodiscard]] std::optional<std::uint64_t> current() const;
+    [[nodiscard]] std::size_t page() const;         // into the cell's messages, from 0
+    [[nodiscard]] std::size_t page_count() const;
+    // The choices for a message of this rating, and the one the cursor is on.
+    [[nodiscard]] std::vector<MessageChoice> choices(MessageRating rating) const;
+    [[nodiscard]] std::size_t cursor(MessageRating rating) const;
     // The player is at (x, z) now.
     void follow(float x, float z);
-    // The action button pressed while open: Rate when the message can still be rated, and it closes
-    // either way.
-    [[nodiscard]] MessagePress press(MessageRating rating);
+    // A key, with the rating of the message shown. The id to rate when the key rated it.
+    [[nodiscard]] std::optional<std::uint64_t> press(MessageKey key, MessageRating rating);
 
 private:
-    std::optional<Open> open_;
+    std::vector<std::uint64_t> ids_;
+    MessageCell cell_{};
+    std::size_t page_ = 0;
+    std::size_t cursor_ = 0;
 };
+
+// How many good ratings a player's messages gained between two lists of them; a message new in the
+// later list, and one that lost count, gains none.
+struct MessageCount {
+    std::uint64_t id = 0;
+    std::uint32_t good = 0;
+};
+[[nodiscard]] std::uint32_t message_good_gained(std::span<const MessageCount> before, std::span<const MessageCount> after);
 
 } // namespace kf::ext

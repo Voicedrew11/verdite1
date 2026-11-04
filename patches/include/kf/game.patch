@@ -120,7 +120,7 @@ index ffb14e82e4d75b3a6603c8ad30cc1885096a4d5e..986ebd381692837ed6b2d0e45dda483f
  extern void effect_rotate_scale_offset_y(SVECTOR *offset, VECTOR *output, s16 angle, s32 scale);
  extern void effect_spawn_ground_trail(u8 id, KfEffectRecord *parent_effect, s16 angle, s32 distance);
 diff --git a/include/kf/game/menu.h b/include/kf/game/menu.h
-index 4bf4cb599f0488e806de752cec1f4151d40e2b98..25e1d1d2f24837b909c95341732f438512da16ad 100644
+index 4bf4cb599f0488e806de752cec1f4151d40e2b98..33d1d155141f39da1373bd31a002b7a87ec8fd91 100644
 --- a/include/kf/game/menu.h
 +++ b/include/kf/game/menu.h
 @@ -8,6 +8,8 @@
@@ -205,14 +205,14 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..25e1d1d2f24837b909c95341732f4385
      const MenuSpriteDef *sprite, const MenuPoint *position);
 +// PC extension: a translucent box sprite drawn width wide, its ends as they are and
 +// its middle stretched.
-+extern void menu_blit_box_translucent(const MenuSpriteDef &sprite, MenuPoint position, s32 width);
++extern void menu_blit_box_translucent(const MenuSpriteDef &sprite, MenuPoint position, s32 width, s32 depth = MENU_WIDGET_OT_DEPTH);
  extern void menu_config_panel(void);
 +// PC extension: the port's settings as pages (kf/platform/settings_page.h).
 +extern void menu_settings_panel(kf::SettingsPages pages);
  extern void menu_resources_reload(void);
  extern void menu_draw_save_slots(
      std::span<const KfSaveSlotSummary> summaries, KfSaveSlotOverlay slot_overlay);
-@@ -340,7 +363,23 @@ extern void menu_draw_number(
+@@ -340,7 +363,25 @@ extern void menu_draw_number(
      const MenuSpriteDef *font, const MenuGlyphString *string);
  extern void menu_draw_string(
      const MenuSpriteDef *font, const MenuGlyphString *string);
@@ -225,6 +225,8 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..25e1d1d2f24837b909c95341732f4385
 +extern void menu_draw_pickup_feed(void);
 +// PC extension (messages on the ground): the message the action button opens, low in the picture.
 +extern void menu_draw_message_reading(void);
++// PC extension (messages on the ground): one pad read for the open message box, with its sounds.
++extern void menu_message_box_input(u32 input, u32 prev);
 +// PC extension: the title menu (kf/platform/title.h) over the opening's logo. menu_title_prepare
 +// puts the menu's font, boxes and cursor beside the opening's pictures, false when it cannot;
 +// menu_title_draw draws this frame's page, true when it is the top page.
@@ -236,7 +238,7 @@ index 4bf4cb599f0488e806de752cec1f4151d40e2b98..25e1d1d2f24837b909c95341732f4385
  extern void menu_draw_status_summary(void);
  extern void menu_draw_status_details(void);
  struct MenuChoiceLabel;
-@@ -358,6 +397,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
+@@ -358,6 +399,8 @@ extern void menu_open_shop(KfItemStockBank shop_bank);
  extern void menu_equip_select(KfEquipmentMenuCategory equipment_category);
  extern void menu_frame_begin(void);
  extern void menu_item_model_preview(KfObjectId item_id);

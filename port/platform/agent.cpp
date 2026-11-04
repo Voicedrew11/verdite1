@@ -193,6 +193,24 @@ std::string do_hurt(verdite::AgentArgs args) {
     return verdite::json_ok("hurt");
 }
 
+std::string do_messages(verdite::AgentArgs) {
+    return verdite::json_ok("messages", "," + ext::messages_json());
+}
+
+// Leaves a message on the player's cell, as the Message Stone's menu does.
+std::string do_leave(verdite::AgentArgs args) {
+    if (args.empty() || args.size() > 3)
+        return verdite::json_error("leave <template> [word] [word]");
+    const long template_id = std::strtol(args[0].c_str(), nullptr, 10);
+    const long first = args.size() > 1 ? std::strtol(args[1].c_str(), nullptr, 0) : 0xffff;
+    const long second = args.size() > 2 ? std::strtol(args[2].c_str(), nullptr, 0) : 0xffff;
+    if (template_id < 0 || template_id > 255 || first < 0 || first > 0xffff || second < 0 || second > 0xffff)
+        return verdite::json_error("a template is 0..255 and a word 0..65535");
+    if (!ext::messages_leave_here(static_cast<std::uint8_t>(template_id), static_cast<std::uint16_t>(first), static_cast<std::uint16_t>(second)))
+        return verdite::json_error("not left: no floor entered, or an unknown template or word");
+    return verdite::json_ok("leave");
+}
+
 std::string do_coop(verdite::AgentArgs) {
     return verdite::json_ok("coop", "," + ext::coop_json());
 }
@@ -387,6 +405,8 @@ void agent_start() {
         {"give", "give <item> <count> - change the pack (item 255: the purse) at the next update, as a pickup or use would", do_give},
         {"hurt", "hurt <hp> - lose hp at the next update as poison takes it, dying at 0", do_hurt},
         {"coop", "coop - the coop session: role, whether its world is in play, the pack, purse and what each player wears", do_coop},
+        {"messages", "messages - the floor's shown messages, the prompt, the open box and the notices, as JSON", do_messages},
+        {"leave", "leave <template> [word] [word] - leave a message on the player's cell, as the Message Stone does", do_leave},
         {"menu", "menu - the rows of the menu on screen, in game pixels", do_menu},
         {"title", "title [type <digits>] - the title menu's page as English text; type a room code on its join page", do_title},
         {"point", "point <x> <y> - move the mouse over a menu (game pixels)", do_point},
