@@ -86,7 +86,7 @@ SVECTOR online_player_model_right_wrist();
 
 // The helmets the head can wear, the first the knight's great helm. Each is a TMD object after the
 // parts, its vertices relative to the head's pivot, drawn with the head.
-inline constexpr std::size_t online_player_helmet_count = 1;
+inline constexpr std::size_t online_player_helmet_count = 2;
 u16 online_player_model_helmet_object(u8 helmet);
 // Where the TMD's primitives drawn in the player's colour hold it: each the offset of an R, G, B.
 std::span<const u32> online_player_model_colour_offsets();

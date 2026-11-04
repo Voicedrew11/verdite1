@@ -19,6 +19,10 @@ MATERIALS = {
     'knight':  dict(tpage=TPAGE_151, clut=CLUT_151, u=(65, 126), v=(129, 254)),  # NPC knights' metal
     'leather': dict(tpage=TPAGE_151, clut=CLUT_151, u=(193, 254), v=(131, 185)),
 }
+# The box the metal's side view is projected across: the knight with its great helm. A constant, so
+# a new helmet moves no texture on the others; what reaches past it takes the box's edge.
+PROJECTION_LO = np.array((-364.0, 0.0, -169.98489853368096))
+PROJECTION_HI = np.array((364.0, 1884.284271247462, 186.0))
 
 class Part:
     def __init__(self, name, parent, pivot):
@@ -74,6 +78,40 @@ class Part:
                 self.face([mid, r[i], r[(i + 1) % n]], cap_mat or mat, inside, g)
         return rings
 
+    def shell(self, rings, mat, group, caps=(None, None)):
+        """A closed tube through rings of points, all the same length, for sections a loft's n-gon
+        cannot make. mat(k, i) and group(k, i) name the material and smoothing group of the face
+        from ring k to the next, corner i to the next; caps are the end rings' materials, None for
+        an end left open because the helmet hides it."""
+        ids = [[self.vert(p) for p in ring] for ring in rings]
+        groups = {}
+        def smoothing(key):
+            if key not in groups: groups[key] = self.group()
+            return groups[key]
+        faces = []
+        for k in range(len(ids) - 1):
+            for i in range(len(ids[k])):
+                j = (i + 1) % len(ids[k])
+                faces.append(([ids[k][i], ids[k][j], ids[k + 1][i], ids[k + 1][j]], mat(k, i), smoothing(group(k, i))))
+        for ring, cap, first in ((ids[0], caps[0], True), (ids[-1], caps[1], False)):
+            if cap is None: continue
+            mid = self.vert(np.mean([self.verts[i] for i in ring], axis=0))
+            end = smoothing(('cap', first))
+            for i in range(len(ring)):
+                a, b = ring[i], ring[(i + 1) % len(ring)]
+                faces.append(([mid, b, a] if first else [mid, a, b], cap, end))
+        # Rings may go either way round: the volume's sign says which way is outward.
+        middle = np.mean([self.verts[i] for f, _, _ in faces for i in f], axis=0)
+        volume = 0.0
+        for f, _, _ in faces:
+            P = [self.verts[i] - middle for i in f]
+            volume += np.dot(P[0], np.cross(P[1], P[2]))
+            if len(f) == 4: volume += np.dot(P[1], np.cross(P[3], P[2]))
+        for f, m, g in faces:
+            if volume < 0:
+                f = [f[1], f[0], f[3], f[2]] if len(f) == 4 else [f[0], f[2], f[1]]
+            self.faces.append((f, m, g))
+
     def box(self, lo, hi, mat):
         x0, y0, z0 = lo; x1, y1, z1 = hi
         v = [self.vert((x, y, z)) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
@@ -100,8 +138,6 @@ def to_game(p):
 
 def build_tmd_with_colours(parts):
     # Textures are projected once across the whole body, as the game's NPC knights are.
-    lo = np.min([v for p in parts for v in p.verts], axis=0)
-    hi = np.max([v for p in parts for v in p.verts], axis=0)
     objects = []
     for part in parts:
         verts = [to_game(v - part.pivot) for v in part.verts]
@@ -129,11 +165,11 @@ def build_tmd_with_colours(parts):
                 W = [part.verts[i] for i in ids]
                 # A side view for every face (U from depth, V from height): front faces smear one
                 # texel column across, the streaked metal of the game's own knights.
-                span = hi - lo
+                span = PROJECTION_HI - PROJECTION_LO
                 uv = []
                 for w in W:
-                    a = (w[2] - lo[2]) / span[2]
-                    b = (hi[1] - w[1]) / span[1]
+                    a = min(max((w[2] - PROJECTION_LO[2]) / span[2], 0.0), 1.0)
+                    b = min(max((PROJECTION_HI[1] - w[1]) / span[1], 0.0), 1.0)
                     uv.append((int(round(m['u'][0] + a * (m['u'][1] - m['u'][0]))),
                                int(round(m['v'][0] + b * (m['v'][1] - m['v'][0])))))
                 prims.append(('tex', ids, ns, uv, m['tpage'], m['clut']))

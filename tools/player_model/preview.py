@@ -7,6 +7,7 @@ they go under build/ (gitignored). See docs/PLAYER_MODEL.md.
   preview.py survey                 every floor's model banks: vertices, primitives, clips, size
   preview.py floor N                floor N's map-event and actor models, three angles each
   preview.py knight                 the knight beside floor 2's standing knight, four angles
+  preview.py helmet H               helmet H close up beside floor 2's knight's head, and whole
   preview.py swing W [--yaw A,B]    the knight attacking with weapon W, one picture per update
   preview.py rest W                 the knight standing with weapon W, from round about and above
   preview.py walk [W]                the knight's walk cycle (holding weapon W) above the skeleton's
@@ -92,6 +93,25 @@ def knight_sheet(args):
     yaws = (0, math.pi * 0.75, math.pi / 2, math.pi)
     imgs = [kf.render(m, vr, yaw=y, pitch=0.12, size=360, extent=1150, center=centre)
             for m in (flat, reference.tmd) for y in yaws]
+    return kf.grid(imgs, len(yaws))
+
+def helmet_sheet(args):
+    """Helmet H round about, above floor 2's knight's head at the same scale; then each in its
+    silhouette, in the game's depth order (no depth buffer) and on the whole knight."""
+    vr = vram(args.data, 2)
+    parts = knight.knight(helmet=args.helmet)
+    tmd = build_tmd(parts)
+    helm = parts[-1]
+    print(f'helmet {args.helmet}:', len(helm.verts), 'vertices,', len(helm.faces), 'primitives,', len(tmd), 'bytes with the knight')
+    flat = flatten(parts, tmd, {})
+    reference = floor_banks(args.data, 2)['event'][0].tmd
+    top = reference.objects[0]['verts'][:, 1].min()
+    close = dict(pitch=0.08, size=args.size, extent=300)
+    yaws = (0, math.pi / 4, math.pi / 2, math.pi * 0.75, math.pi, -math.pi / 2)
+    imgs = [kf.render(flat, vr, yaw=y, center=np.array([0, -1700, 40]), **close) for y in yaws]
+    imgs += [kf.render(flat, vr, yaw=y, center=np.array([0, -1700, 40]), painter=True, **close) for y in yaws]
+    imgs += [kf.render(reference, vr, yaw=y, center=np.array([0, top + 160, 0]), **close) for y in yaws]
+    imgs += [kf.render(flat, vr, yaw=y, pitch=0.1, size=args.size, extent=1150, center=np.array([0, -900, 0])) for y in yaws]
     return kf.grid(imgs, len(yaws))
 
 def holding(parts, tmd, pose, lift, hold, phase):
@@ -255,6 +275,8 @@ def main():
     sub.add_parser('survey')
     p = sub.add_parser('floor'); p.add_argument('floor', type=int, choices=range(1, 6))
     sub.add_parser('knight')
+    p = sub.add_parser('helmet'); p.add_argument('helmet', type=int)
+    p.add_argument('--size', type=int, default=300)
     p = sub.add_parser('swing'); p.add_argument('weapon', type=int, choices=range(12))
     p.add_argument('--yaw', type=lambda s: [float(x) for x in s.split(',')], default=[0.8, math.pi / 2])
     p.add_argument('--size', type=int, default=200)
@@ -282,9 +304,10 @@ def main():
         with open(args.path, 'wb') as f:
             f.write(build_tmd(knight.knight()))
         return
-    image = {'floor': floor, 'knight': knight_sheet, 'swing': swing, 'rest': rest, 'walk': walk_sheet}[args.command](args)
+    image = {'floor': floor, 'knight': knight_sheet, 'helmet': helmet_sheet, 'swing': swing, 'rest': rest, 'walk': walk_sheet}[args.command](args)
     os.makedirs(args.out, exist_ok=True)
     name = {'floor': lambda: f'floor{args.floor}', 'knight': lambda: 'knight',
+            'helmet': lambda: f'helmet{args.helmet}',
             'swing': lambda: f'swing{args.weapon:02d}', 'rest': lambda: f'rest{args.weapon:02d}',
             'walk': lambda: 'walk'}[args.command]()
     path = os.path.join(args.out, name + '.png')

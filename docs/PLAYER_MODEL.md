@@ -15,7 +15,7 @@ of a walk and a swing is drawn, on the height they stand at.
 | `knight.py` | The knight's part table, its helmets, and the rig that poses it. |
 | `arm.py` | The weapon hold: a first-person weapon model's gauntlet and weapon in the knight's hand, at rest and through an attack. |
 | `walk.py` | The stance and the walk: legs and free arm standing ready, breathing and through a cycle, and how far the body drops onto the planted foot. |
-| `preview.py` | The command: `survey`, `floor N`, `knight`, `swing W`, `rest W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight, its helmets and its colour offsets into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
+| `preview.py` | The command: `survey`, `floor N`, `knight`, `helmet H`, `swing W`, `rest W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight, its helmets and its colour offsets into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
 | `gltf.py` | Writes a posed model as `knight.glb`, to turn around in Blender. |
 
 After changing the knight, run `preview.py cpp` and rebuild; the part order is
@@ -58,14 +58,24 @@ bands and crest are in the player's colour, to tell players apart.
 
 - **The colour** is the player's profile's ([COOP_PLAN.md](COOP_PLAN.md), "The profile"). Those
   faces are flat-coloured primitives written in the first colour (`PLAYER` in `body.py`), and the
-  model lists where each holds its R, G, B (140 of them); `online_player_tmd_in` paints a copy
-  of the TMD per colour the first time one is drawn, 26 KB each, 8 at most.
+  model lists where each holds its R, G, B (152 of them); `online_player_tmd_in` paints a copy
+  of the TMD per colour the first time one is drawn, 34 KB each, 8 at most.
 - **The helmet** is a TMD object of its own after the parts (`helmets()` in `knight.py`, in
   `online_player_helmet_count`'s order), its vertices relative to the head's pivot, drawn with
-  the head; the head keeps only the mail coif. The first, and so far only, is the great helm
-  (68 vertices): a T visor and the crest. A new helmet is an entry in `knight.py`'s `HELMETS`, its
-  name in `port/ext/coop_profile.cpp`, and the count raised; `preview.py cpp` refuses a count
-  that differs. `preview.py knight` draws the knight with the first helmet.
+  the head; the head keeps only the mail coif. A new helmet is an entry at the end of `knight.py`'s
+  `HELMETS` (a profile keeps the helmet's place in the list), its name in
+  `port/ext/coop_profile.cpp`, and the count raised; `preview.py cpp` refuses a count that differs.
+  `preview.py knight` draws the knight with the first helmet, `preview.py helmet H` helmet H close
+  up beside floor 2's knight's head, then in the game's depth order, then on the whole knight. The
+  metal's projection box is a constant (`body.py`), so a new helmet moves no texture on the others.
+  - **Great helm** (68 vertices): a T visor and the crest.
+  - **Fluted helm** (164 vertices, after Demon's Souls'): a skull ribbed front to back, whose ribs
+    make concentric arcs from the side, the steps between them dark and the comb in the player's
+    colour, as the game's own knight has its fin; a brow with a middle peak and flared temples;
+    two dark crescents for eyes; a visor drawn out to a beak in three tiers, the undercuts between
+    them dark for the breaths, its cheeks in the gauntlets' darker metal, slanting up to the hinge
+    so the piece reads apart from the skull. The game's models paint such detail as polygons and
+    leave out what would be holes, so the reference's rosette and pierced windows are left out.
 
 ## The weapon
 

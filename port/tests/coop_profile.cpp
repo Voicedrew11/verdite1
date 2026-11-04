@@ -25,6 +25,8 @@ TEST_CASE("the profile's file reads back as written") {
     const CoopProfile profile{"ANDREW", 3, 0};
     CHECK(coop_profile_text(profile) == "name=ANDREW\ncolour=3\nhelmet=0\n");
     CHECK(coop_profile_read(coop_profile_text(profile), coop_profile_default(1)) == profile);
+    const CoopProfile fluted{"ANDREW", 3, 1};
+    CHECK(coop_profile_read(coop_profile_text(fluted), coop_profile_default(1)) == fluted);
 }
 
 TEST_CASE("a part missing or bad in the file is the fallback's") {

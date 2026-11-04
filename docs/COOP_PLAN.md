@@ -573,7 +573,7 @@ chosen under COOP, PROFILE, on the title menu:
 - **COLOUR**: one of eight, Left and Right (or Confirm) stepping it: blue (the knight's first),
   red, green, gold, white, black, purple, orange. It paints the tabard, sleeves, knee bands and
   crest.
-- **HELMET**: one of the helmets; there is one for now, the great helm, so the row is dimmed.
+- **HELMET**: one of the helmets: the great helm or the fluted helm.
 
 A change is kept at once in `coop.profile` in the user folder, beside the install's id
 (`name=`, `colour=`, `helmet=` lines; a part missing or bad is the default's: `PLAYER` and four

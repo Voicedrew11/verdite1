@@ -20,6 +20,7 @@ constexpr std::array<CoopColour, coop_colour_count> colours = {{
 
 constexpr std::array<CoopProfileWords, online_player_helmet_count> helmet_names = {{
     {"GREAT HELM", "グレートヘルム"},
+    {"FLUTED HELM", "フルーテツドヘルム"},
 }};
 
 // A line's value after "key=", if the line is that key's.
