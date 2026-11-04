@@ -408,7 +408,7 @@ TEST_CASE("rows wrap, and Back returns to the row that led to the page") {
 
 TEST_CASE("a platform that may not host has no HOST row, and joins and lists as any other") {
     TitleMenu menu(1234, TitleHosting::Refused);
-    menu.open(saves(false, false, false), {{"12345678", 3, 2}}, profile(), {});
+    menu.open(saves(false, false, false), {TitleWorld{"12345678", 3}}, profile(), {});
     go_to(menu, TitleRowKind::Coop);
     REQUIRE(menu.view().page == TitlePage::Coop);
     const auto rows = menu.view().rows;
@@ -422,10 +422,127 @@ TEST_CASE("a platform that may not host has no HOST row, and joins and lists as 
     CHECK(menu.view().rows[1].selected);
 }
 
+TEST_CASE("the kept worlds come first, the last played first, and the cursor starts on it") {
+    TitleWorld older{"11111111", 1}, newer{"22222222", 1}, unknown_a{"PAAAAAAA", 1}, unknown_b{"33333333", 1};
+    older.last_played_s = 100;
+    newer.last_played_s = 200;
+    auto menu = open_menu(saves(false, false, false), {unknown_a, older, unknown_b, newer});
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Host);
+    const auto rows = menu.view().rows;
+    REQUIRE(rows.size() == 6);
+    CHECK(rows[0].selected);
+    CHECK(rows[0].world->code == "22222222");
+    CHECK(rows[1].world->code == "11111111");
+    CHECK(rows[2].world->code == "33333333");
+    CHECK(rows[3].world->code == "PAAAAAAA");
+    CHECK(rows[4].kind == TitleRowKind::NewWorld);
+    CHECK(rows[5].kind == TitleRowKind::HostOptions);
+    CHECK(menu.view().pinned_rows == 2);
+}
+
+TEST_CASE("NEW WORLD and OPTIONS each open a page, and Back returns to their rows") {
+    auto menu = open_menu(saves(false, false, false), {TitleWorld{"12345678", 3}});
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Host);
+    go_to(menu, TitleRowKind::NewWorld);
+    REQUIRE(menu.view().page == TitlePage::NewWorld);
+    CHECK(menu.view().rows[0].kind == TitleRowKind::NewPrivateWorld);
+    CHECK(menu.view().rows[1].kind == TitleRowKind::NewPublicWorld);
+    CHECK_FALSE(menu.take_choice());   // a public world does not start from HOST's own row
+    menu.press(TitleInput::Back);
+    CHECK(selected(menu) == TitleRowKind::NewWorld);
+    go_to(menu, TitleRowKind::HostOptions);
+    REQUIRE(menu.view().page == TitlePage::HostOptions);
+    CHECK(menu.view().rows[0].kind == TitleRowKind::RoomSettings);
+    CHECK(menu.view().rows[1].kind == TitleRowKind::DeleteWorlds);
+    menu.press(TitleInput::Back);
+    CHECK(selected(menu) == TitleRowKind::HostOptions);
+}
+
+TEST_CASE("with no world kept, HOST starts on a new world and offers no deleting") {
+    auto menu = open_menu();
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Host);
+    const auto rows = menu.view().rows;
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].kind == TitleRowKind::NewWorld);
+    CHECK(rows[0].selected);
+    go_to(menu, TitleRowKind::HostOptions);
+    REQUIRE(menu.view().rows.size() == 1);
+    CHECK(menu.view().rows[0].kind == TitleRowKind::RoomSettings);
+}
+
+TEST_CASE("deleting a world asks first, with the cursor on BACK") {
+    auto menu = open_menu(saves(false, false, false), {{"12345678", 3}, {"87654321", 1}});
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Host);
+    go_to(menu, TitleRowKind::HostOptions);
+    go_to(menu, TitleRowKind::DeleteWorlds);
+    REQUIRE(menu.view().page == TitlePage::DeleteWorld);
+    menu.point(1);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::DeleteWarning);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
+    CHECK(menu.view().rows[0].world->code == "87654321");
+    CHECK_FALSE(menu.take_choice());
+
+    // BACK returns to the same world, with nothing deleted.
+    menu.press(TitleInput::Confirm);
+    CHECK(menu.view().page == TitlePage::DeleteWorld);
+    CHECK(menu.view().rows[1].selected);
+    CHECK_FALSE(menu.take_choice());
+
+    menu.press(TitleInput::Confirm);
+    go_to(menu, TitleRowKind::DeleteAnyway);
+    const TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::DeleteWorld);
+    CHECK(choice.code == "87654321");
+    CHECK(menu.view().page == TitlePage::Host);
+
+    menu.set_worlds({TitleWorld{"12345678", 3}});
+    REQUIRE(menu.view().rows.size() == 3);
+    CHECK(menu.view().rows[0].selected);
+    menu.failed_to_delete_world("delete_failed");
+    CHECK(menu.view().failure == "delete_failed");
+}
+
+TEST_CASE("the last world deleted leaves the cursor on the page") {
+    auto menu = open_menu(saves(false, false, false), {TitleWorld{"12345678", 3}});
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Host);
+    menu.point(menu.view().rows.size() - 1);
+    menu.set_worlds({});
+    const auto rows = menu.view().rows;
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[1].selected);
+}
+
+TEST_CASE("times are said to the coarsest unit, and played time stops at hours") {
+    const auto said = [](TitleTime time) { return std::pair(time.count, time.unit); };
+    using enum TitleTimeUnit;
+    CHECK(said(title_time_ago(0)) == std::pair<std::uint64_t, TitleTimeUnit>(0, Minutes));
+    CHECK(said(title_time_ago(3599)) == std::pair<std::uint64_t, TitleTimeUnit>(59, Minutes));
+    CHECK(said(title_time_ago(3600)) == std::pair<std::uint64_t, TitleTimeUnit>(1, Hours));
+    CHECK(said(title_time_ago(86399)) == std::pair<std::uint64_t, TitleTimeUnit>(23, Hours));
+    CHECK(said(title_time_ago(86400)) == std::pair<std::uint64_t, TitleTimeUnit>(1, Days));
+    CHECK(said(title_time_played(86400 * 2)) == std::pair<std::uint64_t, TitleTimeUnit>(48, Hours));
+}
+
+TEST_CASE("names fit a line, at least the first") {
+    const std::vector<std::string> names = {"ALICE", "BOB", "CARL"};
+    CHECK(title_names_that_fit({}, 10) == 0);
+    CHECK(title_names_that_fit(names, 2) == 1);
+    CHECK(title_names_that_fit(names, 9) == 2);    // ALICE BOB
+    CHECK(title_names_that_fit(names, 13) == 2);
+    CHECK(title_names_that_fit(names, 14) == 3);
+}
+
 TEST_CASE("a new private world shows its code before START, and START hosts it unlisted") {
     auto menu = open_menu();
     go_to(menu, TitleRowKind::Coop);
     go_to(menu, TitleRowKind::Host);
+    go_to(menu, TitleRowKind::NewWorld);
     go_to(menu, TitleRowKind::NewPrivateWorld);
     REQUIRE(menu.view().page == TitlePage::HostCode);
     const std::string code = menu.view().code;
@@ -445,6 +562,7 @@ TEST_CASE("a new public world is hosted listed at once, under a public code") {
     auto menu = open_menu();
     go_to(menu, TitleRowKind::Coop);
     go_to(menu, TitleRowKind::Host);
+    go_to(menu, TitleRowKind::NewWorld);
     go_to(menu, TitleRowKind::NewPublicWorld);
     const TitleChoice choice = taken(menu);
     CHECK(choice.listed);
@@ -452,12 +570,12 @@ TEST_CASE("a new public world is hosted listed at once, under a public code") {
 }
 
 TEST_CASE("a kept world is hosted again under its code, listed when the code is public") {
-    auto menu = open_menu(saves(false, false, false), {{"12345678", 3, 2}, {"PABCDEFG", 1, 1}});
+    auto menu = open_menu(saves(false, false, false), {{"12345678", 3}, {"PABCDEFG", 1}});
     go_to(menu, TitleRowKind::Coop);
     go_to(menu, TitleRowKind::Host);
-    REQUIRE(menu.view().rows.size() == 5);
-    CHECK(menu.view().rows[2].world->code == "12345678");
-    menu.point(3);
+    REQUIRE(menu.view().rows.size() == 4);
+    CHECK(menu.view().rows[0].world->code == "12345678");
+    menu.point(1);
     menu.press(TitleInput::Confirm);
     const TitleChoice choice = taken(menu);
     CHECK(choice.code == "PABCDEFG");
@@ -745,6 +863,7 @@ TEST_CASE("the co-op settings are stepped on their own page, the room's under Ho
     while (selected(menu) != TitleRowKind::Host)
         menu.press(TitleInput::Up);
     menu.press(TitleInput::Confirm);
+    go_to(menu, TitleRowKind::HostOptions);
     while (selected(menu) != TitleRowKind::RoomSettings)
         menu.press(TitleInput::Down);
     menu.press(TitleInput::Confirm);

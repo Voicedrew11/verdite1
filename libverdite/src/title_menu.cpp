@@ -50,6 +50,12 @@ std::uint64_t next_random(std::uint64_t &state) {
     return z ^ (z >> 31);
 }
 
+void order_worlds(std::vector<TitleWorld> &worlds) {
+    std::ranges::sort(worlds, [](const TitleWorld &a, const TitleWorld &b) {
+        return a.last_played_s != b.last_played_s ? a.last_played_s > b.last_played_s : a.code < b.code;
+    });
+}
+
 TitleRowView row(TitleRowKind kind, bool enabled = true) {
     TitleRowView view;
     view.kind = kind;
@@ -69,7 +75,9 @@ std::optional<Parent> parent_of(TitlePage page) {
     case TitlePage::Coop: return Parent{TitlePage::Top, TitleRowKind::Coop};
     case TitlePage::CoopIntro: return Parent{TitlePage::Top, TitleRowKind::Coop};
     case TitlePage::Host: return Parent{TitlePage::Coop, TitleRowKind::Host};
-    case TitlePage::HostCode: return Parent{TitlePage::Host, TitleRowKind::NewPrivateWorld};
+    case TitlePage::NewWorld: return Parent{TitlePage::Host, TitleRowKind::NewWorld};
+    case TitlePage::HostOptions: return Parent{TitlePage::Host, TitleRowKind::HostOptions};
+    case TitlePage::HostCode: return Parent{TitlePage::NewWorld, TitleRowKind::NewPrivateWorld};
     case TitlePage::JoinCode: return Parent{TitlePage::Coop, TitleRowKind::JoinCode};
     case TitlePage::RoomList: return Parent{TitlePage::Coop, TitleRowKind::RoomList};
     case TitlePage::Profile: return Parent{TitlePage::Coop, TitleRowKind::Profile};
@@ -77,10 +85,12 @@ std::optional<Parent> parent_of(TitlePage page) {
     case TitlePage::Mods: return Parent{TitlePage::Top, TitleRowKind::Mods};
     case TitlePage::CoopWarning: return Parent{TitlePage::Top, TitleRowKind::Coop};
     case TitlePage::CoopSettings: return Parent{TitlePage::Coop, TitleRowKind::CoopSettings};
-    case TitlePage::RoomSettings: return Parent{TitlePage::Host, TitleRowKind::RoomSettings};
+    case TitlePage::RoomSettings: return Parent{TitlePage::HostOptions, TitleRowKind::RoomSettings};
+    case TitlePage::DeleteWorld: return Parent{TitlePage::HostOptions, TitleRowKind::DeleteWorlds};
     case TitlePage::Top:
     case TitlePage::Waiting:
     case TitlePage::LoadWarning:   // back() goes to the slot it asks about
+    case TitlePage::DeleteWarning: // back() goes to the world it asks about
     case TitlePage::ModSettings:   // back() goes to the mod's row
         return std::nullopt;
     }
@@ -99,6 +109,31 @@ std::vector<TitleRowView> mod_settings_rows(const TitleMod &mod) {
 }
 
 } // namespace
+
+TitleTime title_time_played(std::uint64_t played_s) {
+    constexpr std::uint64_t hour_s = 3600;
+    if (played_s < hour_s)
+        return {played_s / 60, TitleTimeUnit::Minutes};
+    return {played_s / hour_s, TitleTimeUnit::Hours};
+}
+
+TitleTime title_time_ago(std::uint64_t elapsed_s) {
+    constexpr std::uint64_t day_s = 86400;
+    if (elapsed_s < day_s)
+        return title_time_played(elapsed_s);
+    return {elapsed_s / day_s, TitleTimeUnit::Days};
+}
+
+std::size_t title_names_that_fit(std::span<const std::string> names, std::size_t most_letters) {
+    std::size_t letters = 0, fit = 0;
+    for (const std::string &name : names) {
+        letters += name.size() + (fit == 0 ? 0 : 1);
+        if (fit > 0 && letters > most_letters)
+            break;
+        ++fit;
+    }
+    return fit;
+}
 
 std::string room_code_private(std::uint64_t random_bits) {
     std::string code;
@@ -138,6 +173,7 @@ void TitleMenu::open(std::vector<TitleSave> saves, std::vector<TitleWorld> world
     mods_ = std::move(mods);
     saves_ = std::move(saves);
     worlds_ = std::move(worlds);
+    order_worlds(worlds_);
     profile_ = std::move(profile);
     rooms_.clear();
     list_state_ = RoomListState::Connecting;
@@ -339,6 +375,8 @@ void TitleMenu::confirm() {
         rooms_.clear();
         go(TitlePage::RoomList, std::nullopt);
         break;
+    case TitleRowKind::NewWorld: go(TitlePage::NewWorld, std::nullopt); break;
+    case TitleRowKind::HostOptions: go(TitlePage::HostOptions, std::nullopt); break;
     case TitleRowKind::NewPrivateWorld:
         code_ = room_code_private(next_random(random_));
         go(TitlePage::HostCode, TitleRowKind::Start);
@@ -348,6 +386,12 @@ void TitleMenu::confirm() {
         wait_for({TitleAction::Host, 0, chosen.world->code, room_code_is_public(chosen.world->code), {}, 0});
         break;
     case TitleRowKind::Start: wait_for({TitleAction::Host, 0, code_, false, {}, 0}); break;
+    case TitleRowKind::DeleteWorlds: go(TitlePage::DeleteWorld, std::nullopt); break;
+    case TitleRowKind::WorldToDelete: warn_of_deleting(*chosen.world); break;
+    case TitleRowKind::DeleteAnyway:
+        choice_ = TitleChoice{TitleAction::DeleteWorld, 0, warned_world_, false, {}, 0};
+        go(TitlePage::Host, std::nullopt);
+        break;
     case TitleRowKind::Letter: type(chosen.letter); break;
     case TitleRowKind::Delete: erase(); break;
     case TitleRowKind::Join: wait_for({TitleAction::Join, 0, code_, false, {}, 0}); break;
@@ -402,6 +446,12 @@ void TitleMenu::back() {
         row_ = warned_slot_;
         return;
     }
+    if (page_ == TitlePage::DeleteWarning) {
+        go(TitlePage::DeleteWorld, std::nullopt);
+        const auto found = std::ranges::find(worlds_, warned_world_, &TitleWorld::code);
+        row_ = found == worlds_.end() ? 0 : static_cast<std::size_t>(found - worlds_.begin());
+        return;
+    }
     if (page_ == TitlePage::ModSettings) {
         // A mod that is gone leaves the cursor on the first row.
         go(TitlePage::Mods, std::nullopt);
@@ -411,6 +461,16 @@ void TitleMenu::back() {
     }
     if (const auto parent = parent_of(page_))
         go(parent->page, parent->row);
+}
+
+void TitleMenu::warn_of_deleting(const TitleWorld &world) {
+    warned_world_ = world.code;
+    go(TitlePage::DeleteWarning, TitleRowKind::GoBack);
+}
+
+const TitleWorld *TitleMenu::warned_world() const {
+    const auto found = std::ranges::find(worlds_, warned_world_, &TitleWorld::code);
+    return found == worlds_.end() ? nullptr : &*found;
 }
 
 void TitleMenu::return_from_waiting() {
@@ -483,6 +543,17 @@ void TitleMenu::set_saves(std::vector<TitleSave> saves) {
     saves_ = std::move(saves);
 }
 
+void TitleMenu::set_worlds(std::vector<TitleWorld> worlds) {
+    worlds_ = std::move(worlds);
+    order_worlds(worlds_);
+    const std::size_t count = view().rows.size();
+    row_ = std::min(row_, count == 0 ? std::size_t{0} : count - 1);
+}
+
+void TitleMenu::failed_to_delete_world(std::string why) {
+    failure_ = std::move(why);
+}
+
 std::optional<TitleChoice> TitleMenu::take_choice() {
     return std::exchange(choice_, std::nullopt);
 }
@@ -543,13 +614,33 @@ TitleView TitleMenu::view() const {
         rows.push_back(row(TitleRowKind::CoopSettings));
         break;
     case TitlePage::Host:
-        rows.push_back(row(TitleRowKind::NewPrivateWorld));
-        rows.push_back(row(TitleRowKind::NewPublicWorld));
         for (const TitleWorld &world : worlds_) {
             rows.push_back(row(TitleRowKind::KeptWorld));
             rows.back().world = &world;
         }
+        rows.push_back(row(TitleRowKind::NewWorld));
+        rows.push_back(row(TitleRowKind::HostOptions));
+        view.pinned_rows = 2;
+        break;
+    case TitlePage::NewWorld:
+        rows.push_back(row(TitleRowKind::NewPrivateWorld));
+        rows.push_back(row(TitleRowKind::NewPublicWorld));
+        break;
+    case TitlePage::HostOptions:
         rows.push_back(row(TitleRowKind::RoomSettings));
+        if (!worlds_.empty())
+            rows.push_back(row(TitleRowKind::DeleteWorlds));
+        break;
+    case TitlePage::DeleteWorld:
+        for (const TitleWorld &world : worlds_) {
+            rows.push_back(row(TitleRowKind::WorldToDelete));
+            rows.back().world = &world;
+        }
+        break;
+    case TitlePage::DeleteWarning:
+        rows.push_back(row(TitleRowKind::DeleteAnyway));
+        rows.back().world = warned_world();
+        rows.push_back(row(TitleRowKind::GoBack));
         break;
     case TitlePage::HostCode: rows.push_back(row(TitleRowKind::Start)); break;
     case TitlePage::JoinCode:

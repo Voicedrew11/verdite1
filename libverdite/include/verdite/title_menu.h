@@ -5,8 +5,9 @@
 // there is a save), NEW GAME, CO-OP and MODS. MODS lists the game's mods to switch on and off, and
 // opens the settings of those that have some. A save made with other mods than those on now, and
 // CO-OP while a mod is on (mods do not run there), each ask first on a page of their own.
-// CO-OP leads to hosting a world (a new private or public one, or one this
-// machine keeps), joining a room by its code, the service's list of public rooms, and the
+// CO-OP leads to hosting a world (one this machine keeps, the last played first, or a new private
+// or public one), the host's options (the room's settings, and deleting a kept world after asking
+// first), joining a room by its code, the service's list of public rooms, and the
 // player's profile: the name, colour, helmet and symbol the others in a room see. A player with no
 // profile yet first gets a page explaining coop, then PROFILE with a DONE row, which leads to CO-OP.
 //
@@ -21,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -78,8 +80,27 @@ struct TitleSave {
 struct TitleWorld {
     std::string code;
     std::uint32_t highest_floor = 0;
-    std::uint32_t characters = 0;   // everyone who has played in it
+    std::vector<std::string> others{};   // who else has played in it, in the order they first came
+    std::uint32_t saved_floor = 0;     // where the party last saved; 0: not known
+    std::uint32_t gold = 0;
+    std::uint64_t played_s = 0;
+    std::uint64_t last_played_s = 0;   // seconds since 1970; 0: not known, as in a world kept before this was
 };
+
+// A length of time as a menu says it, to the coarsest unit that is not zero.
+enum class TitleTimeUnit : std::uint8_t { Minutes, Hours, Days };
+struct TitleTime {
+    std::uint64_t count = 0;
+    TitleTimeUnit unit = TitleTimeUnit::Minutes;
+};
+// How long a world has been played: minutes under an hour, then hours however many.
+TitleTime title_time_played(std::uint64_t played_s);
+// How long ago something was: minutes, hours, then days. A count of 0 minutes is just now.
+TitleTime title_time_ago(std::uint64_t elapsed_s);
+
+// How many of the names, from the first, fit on a line of `most_letters`, a space between each. At
+// least one when there are any, which the line then cuts off.
+std::size_t title_names_that_fit(std::span<const std::string> names, std::size_t most_letters);
 
 // A public room as the service lists it.
 struct TitleRoom {
@@ -114,7 +135,9 @@ enum class TitlePage : std::uint8_t {
     Continue,   // the card slots
     Coop,       // HOST, JOIN BY CODE, ROOM LIST, PROFILE
     CoopIntro,  // the game's words on how coop differs, then NEXT; only before a profile is set up
-    Host,       // NEW PRIVATE WORLD, NEW PUBLIC WORLD, then the kept worlds
+    Host,       // the kept worlds, then NEW WORLD and OPTIONS, which stay on screen
+    NewWorld,   // PRIVATE, PUBLIC
+    HostOptions,   // ROOM SETTINGS, and DELETE while any world is kept
     HostCode,   // a new private world's code, to read out before START
     JoinCode,   // the code typed so far, and a grid of the digits with DELETE and JOIN
     RoomList,   // the public rooms
@@ -127,13 +150,19 @@ enum class TitlePage : std::uint8_t {
     CoopWarning,   // ENTER, BACK: a mod is on, and mods do not run in coop
     CoopSettings,  // the player's own co-op settings
     RoomSettings,  // what a host chooses for its room, before hosting it
+    DeleteWorld,   // the kept worlds, to choose one to delete
+    DeleteWarning, // DELETE, BACK (where the cursor starts)
 };
 
 enum class TitleRowKind : std::uint8_t {
     Continue, NewGame, Coop, Mods,                 // Top
     Slot,                                          // Continue: save
     Host, JoinCode, RoomList, Profile, CoopSettings,   // Coop
-    NewPrivateWorld, NewPublicWorld, KeptWorld, RoomSettings,   // Host: world; RoomSettings after the worlds
+    KeptWorld, NewWorld, HostOptions,              // Host: world
+    NewPrivateWorld, NewPublicWorld,               // NewWorld
+    RoomSettings, DeleteWorlds,                    // HostOptions
+    WorldToDelete,                                 // DeleteWorld: world
+    DeleteAnyway,                                  // DeleteWarning: world
     Start,                                         // HostCode
     Letter, Delete, Join,                          // JoinCode: letter
     Room,                                          // RoomList: room
@@ -146,7 +175,7 @@ enum class TitleRowKind : std::uint8_t {
     CoopSetting,                                   // CoopSettings, RoomSettings: setting. Left and Right step, as Confirm does
     LoadAnyway, SaveMod,                           // LoadWarning: save_mod is dimmed
     EnterCoop,                                     // CoopWarning
-    GoBack,                                        // LoadWarning, CoopWarning
+    GoBack,                                        // LoadWarning, CoopWarning, DeleteWarning
 };
 
 struct TitleRowView {
@@ -155,7 +184,7 @@ struct TitleRowView {
     bool selected = false;
     char letter = 0;                     // Letter: a digit, or on NameEntry a name letter
     const TitleSave *save = nullptr;     // Slot
-    const TitleWorld *world = nullptr;   // KeptWorld
+    const TitleWorld *world = nullptr;   // KeptWorld, WorldToDelete, DeleteAnyway
     const TitleRoom *room = nullptr;     // Room
     const TitleMod *mod = nullptr;       // Mod, ModSwitch
     const TitleModSetting *setting = nullptr;   // ModSetting, CoopSetting
@@ -165,6 +194,7 @@ struct TitleRowView {
 struct TitleView {
     TitlePage page = TitlePage::Top;
     std::vector<TitleRowView> rows;   // JoinCode, NameEntry: the letters in reading order, then the rest
+    std::size_t pinned_rows = 0;      // how many of the last rows stay on screen while those above scroll
     std::size_t grid_columns = 0;     // JoinCode, NameEntry: the letters' columns; 0 elsewhere
     std::string code;                 // HostCode, JoinCode and Waiting: the room's code; NameEntry: the name so far
     RoomListState list_state = RoomListState::Connecting;   // RoomList
@@ -186,12 +216,13 @@ enum class TitleAction : std::uint8_t {
     DisableMod,   // code: the mod's id
     StepModSetting,   // code: the mod's id; slot: the setting's index; delta. The game answers with set_mods
     StepCoopSetting,  // listed: on RoomSettings, else CoopSettings; slot: the setting's index; delta. The game answers with set_coop_settings
+    DeleteWorld,  // code: the world's. The game answers with set_worlds, and failed_to_delete_world if it could not
 };
 
 struct TitleChoice {
     TitleAction action = TitleAction::NewGame;
     std::size_t slot = 0;
-    std::string code;      // Host, Join, CancelJoin: the room; EnableMod, DisableMod, StepModSetting: the mod's id
+    std::string code;      // Host, Join, CancelJoin, DeleteWorld: the room; EnableMod, DisableMod, StepModSetting: the mod's id
     bool listed = false;   // Host: a public room; StepCoopSetting: as above
     TitleProfile profile;
     int delta = 0;         // StepModSetting: -1 or 1
@@ -205,7 +236,8 @@ public:
     // random_seed draws new rooms' codes.
     explicit TitleMenu(std::uint64_t random_seed, TitleHosting hosting = TitleHosting::Offered);
 
-    // Starts at the top page, on CONTINUE when a save is used, else on NEW GAME.
+    // Starts at the top page, on CONTINUE when a save is used, else on NEW GAME. The worlds go the last
+    // played first, and those never known to be played by their codes.
     void open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile,
               std::vector<TitleMod> mods);
 
@@ -231,6 +263,11 @@ public:
 
     // The saves as they are now, as what a save warns of follows the mods that are on.
     void set_saves(std::vector<TitleSave> saves);
+
+    // The worlds as they are now, after one is deleted; ordered as open() orders them.
+    void set_worlds(std::vector<TitleWorld> worlds);
+    // The world asked to be deleted is still there: says why until the next press.
+    void failed_to_delete_world(std::string why);
 
     // The co-op settings' rows as they are now, as the game spells them: the player's own, and the
     // room's. The game keeps these current while their pages show.
@@ -265,6 +302,8 @@ private:
     void wait_for(TitleChoice choice);
     void back();
     void return_from_waiting();
+    void warn_of_deleting(const TitleWorld &world);
+    const TitleWorld *warned_world() const;
 
     std::uint64_t random_;
     TitleHosting hosting_;
@@ -279,6 +318,7 @@ private:
     std::vector<TitleModSetting> coop_settings_, room_settings_;
     std::string settings_mod_;        // ModSettings: the mod's id
     std::size_t warned_slot_ = 0;     // LoadWarning: the slot it asks about
+    std::string warned_world_;        // DeleteWarning: the code of the world it asks about
     RoomListState list_state_ = RoomListState::Connecting;
     std::string code_;
     std::string failure_;
