@@ -266,7 +266,7 @@ FrameBatch batch_faces(std::span<const DrawFace> faces, const BatchRules &rules,
             const auto &[a, b, c] = triangle.corners;
             // Only world geometry is depth tested; 2D and camera-fixed faces keep
             // the game's order (the held weapon relies on its sort depth).
-            const bool depth_test = rules.depth_buffer && is_world(a) && is_world(b) && is_world(c);
+            const bool depth_test = rules.depth_buffer && !face.over_world && is_world(a) && is_world(b) && is_world(c);
             // Translucent faces are tested but never hide what is drawn after them.
             const DrawState state{blend, depth_test, depth_test && blend == BlendMode::opaque};
             append_triangle(batch, triangle, attributes, state);

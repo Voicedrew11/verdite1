@@ -4404,10 +4404,10 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a13f6bd13d518cd05e8b10fa62b8d42667185529
+index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c5bc40852
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,631 @@
+@@ -0,0 +1,654 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
 +// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
@@ -4969,25 +4969,46 @@ index 0000000000000000000000000000000000000000..a13f6bd13d518cd05e8b10fa62b8d426
 +enum {
 +    ONLINE_NAME_BAR_OVER_WORLD_DEPTH = KF_SCENE_MIN_OT_DEPTH - 2,
 +    ONLINE_NAME_BAR_TEXT_BRIGHTNESS = 96,   // the menu's text
++    ONLINE_NAME_BAR_MAX_DEPTH = 65535,      // the projection's depth limit
 +};
 +
-+static SVECTOR online_name_bar_corner(s32 x, s32 y)
++// Where a bar is drawn: its axes and anchor (model.t), and the scale that brought the anchor in reach.
++struct OnlineNameBarPlace {
++    MATRIX model;
++    double scale;
++    kf::OnlineNameBars shown;
++};
++
++static SVECTOR online_name_bar_corner(s32 x, s32 y, double scale)
 +{
-+    return SVECTOR{static_cast<s16>(x), static_cast<s16>(y), 0, 0};
++    return SVECTOR{static_cast<s16>(std::lround(x * scale)), static_cast<s16>(std::lround(y * scale)), 0, 0};
++}
++
++// The anchor in camera space, kept wide: a far player's offset does not fit an SVECTOR.
++static std::array<double, 3> online_name_bar_anchor(const MATRIX &view, const VECTOR &relative)
++{
++    std::array<double, 3> anchor {};
++    for (unsigned row = 0; row < 3; ++row) {
++        anchor[row] = (double(view.m[row][0]) * relative.vx + double(view.m[row][1]) * relative.vy
++                          + double(view.m[row][2]) * relative.vz) / KF_FIXED12_ONE + view.t[row];
++    }
++    return anchor;
 +}
 +
 +// A flat quad of the bar, its corners in the order render_enqueue_sprite has them, smoothed as a world
-+// sprite is and not fogged or lit, so it reads the same in the dark.
-+static void online_name_bar_submit(kf::DrawFace &face, const kf::OnlineNameBarRect &rect, const MATRIX &model,
++// sprite is and not fogged or lit, so it reads the same in the dark. Through walls it is drawn over the
++// world, not depth tested (DrawFace::over_world).
++static void online_name_bar_submit(kf::DrawFace &face, const kf::OnlineNameBarRect &rect, const OnlineNameBarPlace &place,
 +    CVECTOR colour, s32 depth)
 +{
 +    const auto &view = game_graphics_runtime.render_state;
-+    const std::array<SVECTOR, 4> corners = {online_name_bar_corner(rect.left, rect.top), online_name_bar_corner(rect.right, rect.top),
-+        online_name_bar_corner(rect.left, rect.bottom), online_name_bar_corner(rect.right, rect.bottom)};
++    const std::array<SVECTOR, 4> corners = {online_name_bar_corner(rect.left, rect.top, place.scale),
++        online_name_bar_corner(rect.right, rect.top, place.scale), online_name_bar_corner(rect.left, rect.bottom, place.scale),
++        online_name_bar_corner(rect.right, rect.bottom, place.scale)};
 +    face.shape = kf::FaceShape::Quad;
 +    face.casts_shadow = false;
 +    for (unsigned i = 0; i < corners.size(); ++i) {
-+        const auto corner = kf::render_project_point(model, view.projection, corners[i]);
++        const auto corner = kf::render_project_point(place.model, view.projection, corners[i]);
 +        face.vertices[i].x = kf::render_subpixel ? corner.fx : corner.x;
 +        face.vertices[i].y = kf::render_subpixel ? corner.fy : corner.y;
 +        face.vertices[i].w = kf::render_perspective ? corner.w : 0.0f;
@@ -4995,7 +5016,8 @@ index 0000000000000000000000000000000000000000..a13f6bd13d518cd05e8b10fa62b8d426
 +        face.vertices[i].cy = corner.cy;
 +        face.vertices[i].cz = corner.cz;
 +    }
-+    render_carry_sprite(face, corners, model);
++    face.over_world = !kf::online_name_bar_depth_tested(place.shown);
++    render_carry_sprite(face, corners, place.model);
 +    render_face_submit(&face, {&colour, 1}, kf::FaceShading::Flat, depth);
 +}
 +
@@ -5005,20 +5027,21 @@ index 0000000000000000000000000000000000000000..a13f6bd13d518cd05e8b10fa62b8d426
 +    if (shown == kf::OnlineNameBars::Off || player.name.empty())
 +        return;
 +    const auto &view = game_graphics_runtime.render_state;
-+    const SVECTOR relative = VECTOR{
++    const VECTOR relative = {
 +        static_cast<s32>(player.x * ONLINE_PLAYER_TILE_SIZE) - view.view_position.vx,
 +        player.foot_height - kf::online_name_bar_above_feet - view.view_position.vy,
-+        static_cast<s32>(player.z * ONLINE_PLAYER_TILE_SIZE) - view.view_position.vz}.narrowed();
++        static_cast<s32>(player.z * ONLINE_PLAYER_TILE_SIZE) - view.view_position.vz};
++    const std::array<double, 3> anchor = online_name_bar_anchor(view.view_matrix, relative);
++    if (anchor[2] < kf::online_name_bar_nearest_depth)
++        return;
++    OnlineNameBarPlace place {};
++    place.shown = shown;
++    place.scale = kf::online_name_bar_scale(anchor[0], anchor[1], anchor[2]);
 +    // Its corners are in the camera's axes, so it always faces the camera.
-+    MATRIX model;
-+    kf::render_place_model(model, view.view_matrix, relative);
-+    kf::matrix_set_rotation_xyz(SVECTOR{0, 0, 0, 0}, model);
-+    const auto anchor = kf::render_project_point(model, view.projection, SVECTOR{0, 0, 0, 0});
-+    if (anchor.cz < kf::online_name_bar_nearest_depth)
-+        return;
-+    const s32 otz = anchor.depth >> KF_GTE_DEPTH_TO_OT_SHIFT;
-+    if (otz < KF_SCENE_MIN_OT_DEPTH)
-+        return;
++    kf::matrix_set_rotation_xyz(SVECTOR{0, 0, 0, 0}, place.model);
++    for (unsigned row = 0; row < 3; ++row)
++        place.model.t[row] = static_cast<s32>(std::lround(anchor[row] * place.scale));
++    const s32 otz = std::min<s32>(static_cast<s32>(anchor[2]), ONLINE_NAME_BAR_MAX_DEPTH) >> KF_GTE_DEPTH_TO_OT_SHIFT;
 +    const s32 text_depth = shown == kf::OnlineNameBars::Always ? ONLINE_NAME_BAR_OVER_WORLD_DEPTH : otz;
 +    const auto glyphs = menu_spell(player.name, kf::game_language());
 +    const s32 width_px = menu_text_width(glyphs);
@@ -5026,7 +5049,7 @@ index 0000000000000000000000000000000000000000..a13f6bd13d518cd05e8b10fa62b8d426
 +    kf::DrawFace band {};
 +    band.transparency = kf::FaceTransparency::Blend;
 +    band.material = {kf::SurfaceKind::Solid, {}, kf::BlendMode::average};
-+    online_name_bar_submit(band, kf::online_name_bar_band(width_px), model, CVECTOR{0, 0, 0, 0},
++    online_name_bar_submit(band, kf::online_name_bar_band(width_px), place, CVECTOR{0, 0, 0, 0},
 +        (text_depth + 1) & KF_ORDERING_TABLE_INDEX_MASK);
 +
 +    const CVECTOR text_colour = {ONLINE_NAME_BAR_TEXT_BRIGHTNESS, ONLINE_NAME_BAR_TEXT_BRIGHTNESS, ONLINE_NAME_BAR_TEXT_BRIGHTNESS, 0};
@@ -5034,7 +5057,7 @@ index 0000000000000000000000000000000000000000..a13f6bd13d518cd05e8b10fa62b8d426
 +        kf::DrawFace face {};
 +        face.material = quad.material;
 +        render_face_uv_rectangle(&face, quad.u, quad.v, quad.u + quad.width, quad.v + quad.height);
-+        online_name_bar_submit(face, kf::online_name_bar_piece(width_px, quad.x, quad.y, quad.width, quad.height), model,
++        online_name_bar_submit(face, kf::online_name_bar_piece(width_px, quad.x, quad.y, quad.width, quad.height), place,
 +            text_colour, text_depth & KF_ORDERING_TABLE_INDEX_MASK);
 +    }
 +    kf::online_name_bar_drawn();
@@ -6695,19 +6718,20 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632706cbe498164120bc58d1a535d9771f9eada 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..e225ee52e9513ff5fa49f5e1ad7d82bce96c0dfe 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
-@@ -3,6 +3,8 @@
+@@ -3,6 +3,9 @@
  #include <kf/game/render.h>
  #include <kf/game/state.h>
  #include <kf/lib/map_data.h>
 +#include <kf/game/player.h>
 +#include <kf/platform/messages.h>
++#include <kf/platform/online_name_bar.h>
  
  enum {
      ACTOR_CULL_SQUARE_HALF_WIDTH = 12,
-@@ -14,6 +16,22 @@ struct RenderCellOrigin {
+@@ -14,6 +17,22 @@ struct RenderCellOrigin {
      u16 z;
  };
  
@@ -6730,7 +6754,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632706cbe498164120bc58d1a535d97
  static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin origin)
  {
      // Narrow before checking bounds, including cells before the window origin.
-@@ -23,7 +41,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
+@@ -23,7 +42,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
          return false;
      }
      const u16 col = cell_x - origin.x;
@@ -6739,7 +6763,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632706cbe498164120bc58d1a535d97
  }
  
  static bool render_actor_is_visible(const KfActor &actor, RenderCellOrigin origin)
-@@ -51,19 +69,30 @@ void render_entities(void)
+@@ -51,19 +70,30 @@ void render_entities(void)
  
      tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
  
@@ -6773,7 +6797,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632706cbe498164120bc58d1a535d97
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +106,79 @@ void render_entities(void)
+@@ -77,23 +107,83 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
@@ -6788,27 +6812,27 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632706cbe498164120bc58d1a535d97
 -    for (auto &effect : effect_state.records) {
 +    for (std::size_t i = 0; i < std::size(effect_state.records); ++i) {
 +        auto &effect = effect_state.records[i];
-         if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
-             continue;
-         }
-         if (render_cell_is_visible(
-                 effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
-+            tag(KF_RENDER_TAG_EFFECTS, i, u32(kf_enum_encode<u8>(effect.kind)) << 8 | kf_enum_encode<u8>(effect.type));
-             render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
-         }
-     }
-+    // PC extension (coop): the effects of a floor another machine runs, as it sends them.
-+    for (std::size_t i = 0; i < std::size(effect_shown_records); ++i) {
-+        auto &effect = effect_shown_records[i];
 +        if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
 +            continue;
 +        }
 +        if (render_cell_is_visible(
 +                effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
-+            tag(KF_RENDER_TAG_EFFECTS + int(KF_EFFECT_CAPACITY), i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
++            tag(KF_RENDER_TAG_EFFECTS, i, u32(kf_enum_encode<u8>(effect.kind)) << 8 | kf_enum_encode<u8>(effect.type));
 +            render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
 +        }
 +    }
++    // PC extension (coop): the effects of a floor another machine runs, as it sends them.
++    for (std::size_t i = 0; i < std::size(effect_shown_records); ++i) {
++        auto &effect = effect_shown_records[i];
+         if (effect.type == KF_EFFECT_SLOT_FREE || !effect_has_visual(effect)) {
+             continue;
+         }
+         if (render_cell_is_visible(
+                 effect.position.vx / KF_MAP_TILE_SIZE, effect.position.vz / KF_MAP_TILE_SIZE, origin)) {
++            tag(KF_RENDER_TAG_EFFECTS + int(KF_EFFECT_CAPACITY), i, u32(kf_enum_encode<u8>(effect.kind)) << 8);
+             render_effect(&effect, &render_light_matrices[KF_RENDER_LIGHT_EFFECT]);
+         }
+     }
 +    // PC extension (coop): the other players' spells, as their poses carry them.
 +    static_assert(int(KF_RENDER_TAG_EFFECTS) + (2 + KF_EFFECT_SHOWN_PLAYERS) * int(KF_EFFECT_CAPACITY) <= int(KF_RENDER_TAG_MAP_EVENTS));
 +    for (std::size_t player = 0; player < std::size(effect_player_shown_records); ++player) {
@@ -6839,10 +6863,14 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..4632706cbe498164120bc58d1a535d97
 +    const auto players = kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor));
 +    for (std::size_t i = 0; i < players.size(); ++i) {
 +        const auto &player = players[i];
++        const bool in_window = render_cell_is_visible(static_cast<s32>(player.x), static_cast<s32>(player.z), origin);
 +        // Not the knight whose eyes this player, down, sees through.
-+        if (!player.eyes && render_cell_is_visible(static_cast<s32>(player.x), static_cast<s32>(player.z), origin)) {
++        if (!player.eyes && in_window) {
 +            tag(KF_RENDER_TAG_ONLINE_PLAYERS, i, player.id);
 +            render_online_player(player);
++        }
++        // PC extension (online play): the name's own choice, so it can show outside the window.
++        if (kf::online_name_bar_shown(kf::online_name_bars(), player.eyes, in_window)) {
 +            tag(KF_RENDER_TAG_ONLINE_PLAYER_NAMES, i, player.id);
 +            render_online_player_name(player);
 +        }

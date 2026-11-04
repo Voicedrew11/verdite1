@@ -340,6 +340,20 @@ TEST_CASE("batch: depth test only for world faces with the depth buffer on") {
     CHECK(batch.runs[1].state.depth_write);
 }
 
+TEST_CASE("batch: a world face marked over_world is not depth tested, a plain one is") {
+    TextureLayers layers;
+    BatchRules rules;
+    rules.depth_buffer = true;
+    DrawFace over = solid_face(0, 100);
+    over.over_world = true;
+    const FrameBatch drawn_over = batch_faces(std::vector<DrawFace>{over}, rules, layers);
+    REQUIRE(drawn_over.runs.size() == 1);
+    CHECK_FALSE(drawn_over.runs[0].state.depth_test);
+    const FrameBatch drawn_plain = batch_faces(std::vector<DrawFace>{solid_face(1, 100)}, rules, layers);
+    REQUIRE(drawn_plain.runs.size() == 1);
+    CHECK(drawn_plain.runs[0].state.depth_test);
+}
+
 TEST_CASE("batch: a face keeps its part, and a part the update does not have is none") {
     TextureLayers layers;
     std::vector<DrawFace> faces = {solid_face(0), solid_face(1)};

@@ -5,8 +5,10 @@
 // it shrinks with distance. Where its parts lie, in world units around the point above the knight's
 // head that the band stands on: x to the camera's right, y down, so the band's bottom edge is at 0.
 #include <kf/lib/types.h>
+#include <kf/platform/online_players.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace kf {
 
@@ -15,11 +17,36 @@ inline constexpr s32 online_name_bar_units_per_px = 14;       // a font pixel, i
 inline constexpr s32 online_name_bar_text_height_px = 12;     // the menu font's cell
 inline constexpr s32 online_name_bar_margin_px = 2;           // of the band, around the text
 inline constexpr s32 online_name_bar_nearest_depth = 700;     // nearer the camera it would fill the picture
+// The largest camera-space component a bar's anchor keeps; a farther bar is drawn scaled about the eye.
+inline constexpr s32 online_name_bar_reach = 30000;
 
 struct OnlineNameBarRect {
     s32 left, top, right, bottom;
     bool operator==(const OnlineNameBarRect &) const = default;
 };
+
+// Whether a name is drawn above a player: in sight only where their cell is in view, always
+// everywhere on the floor; never over the player whose eyes this is.
+constexpr bool online_name_bar_shown(OnlineNameBars mode, bool eyes, bool in_window)
+{
+    if (eyes || mode == OnlineNameBars::Off)
+        return false;
+    return mode == OnlineNameBars::Always || in_window;
+}
+
+// Only a bar in sight is tested against the world's depth; one that shows through walls is not.
+constexpr bool online_name_bar_depth_tested(OnlineNameBars mode)
+{
+    return mode == OnlineNameBars::InSight;
+}
+
+// The factor that draws a bar whose anchor is at (x, y, z) in camera space: 1 within reach. Scaling
+// the bar and its anchor by the same factor about the eye leaves it where it is on screen, at the same size.
+constexpr double online_name_bar_scale(double x, double y, double z)
+{
+    const double largest = std::max({std::abs(x), std::abs(y), std::abs(z)});
+    return largest <= online_name_bar_reach ? 1.0 : online_name_bar_reach / largest;
+}
 
 // The band around a name `text_width_px` wide.
 constexpr OnlineNameBarRect online_name_bar_band(s32 text_width_px) {

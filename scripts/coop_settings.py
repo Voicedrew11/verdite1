@@ -127,6 +127,34 @@ def main():
     b.wait("name bars in sight", lambda s: s["nameBarsDrawn"] > stopped)
     check("name bars in sight draws them again", True)
 
+    # Past the guest's cell window (14 cells across), in sight draws no bar and through walls draws one.
+    # The guest's facing is not in the state, so each of the four ways out is tried until the bar shows.
+    x, z = b.coop()["cell"]
+
+    def bars_past_window(mode):
+        b.run(f"option online.name_bars {mode}")
+        time.sleep(1)
+        before = b.coop()["nameBarsDrawn"]
+        time.sleep(1.5)
+        return b.coop()["nameBarsDrawn"] - before
+
+    through, far = 0, None
+    for dx, dz in ((12, 0), (-12, 0), (0, 12), (0, -12)):
+        cell = [x + dx, z + dz]
+        a.run(f"move {cell[0]} {cell[1]}")
+        try:
+            a.wait("the host past the guest's window", lambda s, cell=cell: s["cell"] == cell, seconds=10)
+        except RuntimeError:
+            continue
+        through = bars_past_window(2)
+        if through > 0:
+            far = cell
+            break
+    check("name bars through walls draw one past the window", through > 0)
+    if far is not None:
+        a.wait("the host past the guest's window", lambda s: s["cell"] == far)
+        check("name bars in sight draw none at that cell", bars_past_window(1) == 0)
+
     a.run("option online.pickup_feed false")
     b.run("give 21 1")
     a.wait("the guest's find", lambda s: s["pack"].get("21") == 1)

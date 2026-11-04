@@ -80,6 +80,8 @@ struct DrawFace {
     // PC extension: flat billboards (flames, spell and item sprites) would throw
     // their own quad's shape as a shadow, often from the light they carry.
     bool casts_shadow = true;
+    // PC extension (online name bars): a world face drawn over the world, not depth tested.
+    bool over_world = false;
     // PC extension: the moving entity this face belongs to (0: none), so frame
     // smoothing can move it between its last two poses.
     u16 entity = 0;
