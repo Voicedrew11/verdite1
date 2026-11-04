@@ -1,16 +1,21 @@
 {
   "id": "debug",
   "name": "Debug",
-  "version": "1.0",
-  "api_version": "1.0",
+  "version": "2.0",
+  "api_version": "1.1",
   "author": "Verdite",
-  "description": "Noclip, god mode, infinite MP, peaceful, speed and warps.",
+  "gameplay": true,
+  "description": "Flight through the world, noclip, god mode, infinite MP, peaceful, speed, editors for character, items, magic and state, warps and bookmarks. F3 opens the panel.",
   "menu": [
     {"key": "noclip", "label": "NOCLIP", "japanese": "かべぬけ", "type": "toggle"},
+    {"key": "fly", "label": "FLY", "japanese": "そらをとぶ", "type": "toggle"},
+    {"key": "cinematic", "label": "FILM CAMERA", "japanese": "えいがカメラ", "type": "toggle"},
     {"key": "invincible", "label": "GOD MODE", "japanese": "むてき", "type": "toggle"},
     {"key": "infinite_mp", "label": "INFINITE MP", "japanese": "MPむげん", "type": "toggle"},
     {"key": "peaceful", "label": "PEACEFUL", "japanese": "てきがおそわない", "type": "toggle"},
     {"key": "move_speed", "label": "MOVE SPEED", "japanese": "あるくはやさ", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 1},
+    {"key": "turn_speed", "label": "TURN SPEED", "japanese": "まわるはやさ", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 1},
+    {"key": "fly_speed", "label": "FLY SPEED", "japanese": "とぶはやさ", "type": "number", "min": 250, "max": 8000, "step": 250, "default": 4000},
     {"key": "game_speed", "label": "GAME SPEED", "japanese": "ゲームのはやさ", "type": "number", "min": 0.25, "max": 8, "step": 0.25, "default": 1}
   ]
 }
