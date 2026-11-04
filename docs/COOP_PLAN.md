@@ -591,6 +591,27 @@ Not judged by eye: the name grid's narrower cells, the colours on the knight. In
 drawn with the English font's capitals, so coop needs the English files (`verdite-port.md`,
 "Language handling"); `coop_pair.py --japanese a|b` plays either player in Japanese.
 
+**A first time in coop** (2026-11-04): an install with no `coop.profile` gets, on choosing COOP on the
+title (after the mods' warning, if any), a page saying coop differs from the standard game and is
+streamlined to be more casual and approachable for online play; its NEXT leads to PROFILE with a
+DONE row, and DONE keeps the profile, changed or not, and goes on to COOP's rows. Back steps back
+through them and asks again next time. A change kept before leaving counts as set up, since the file
+is then there. An install that already has the file never sees this, and the F1 panel's and
+`--join`'s ways in skip it. The menu font has no apostrophe, so the words say "the standard game".
+
+## Where the others are
+
+Built 2026-11-04, from the online test's notes.
+
+- **The host's crown:** gold, before the host's name on its name bar (`port/include/kf/platform/online_name_bar.h`),
+  drawn as the bar is, so it follows the NAME BARS setting. A host sees no crown, having no other host to see.
+- **The compass's dots** (`port/include/kf/platform/online_compass.h`, unit-tested): a dot of 4 by 4 pixels
+  in each other player's colour, 1 pixel outside the dial at N, E, S or W, whichever is nearest the way
+  that player lies. The dial is fixed to the world and its needle shows where this player faces
+  (N is +z, E is +x), so a dot does not move as this player turns. Several at one point stand in a
+  row. Only players up and on this floor have one, and not the player a down player watches through.
+  They follow the compass's own setting and fade with the HUD. A black player's dot is dark by nature.
+
 ## Multiplayer settings
 
 Built 2026-11-03. MULTIPLAYER, a row of the pause menu under PORT SETTINGS, there only in a coop world
@@ -927,20 +948,15 @@ What a room costs each player, for N players:
 ## To do, from the online test
 
 Noted by the user after an online test (2026-11-04). The spectating viewmodel and nametags through
-walls are fixed (Death, Multiplayer settings); the rest is not built.
+walls are fixed (Death, Multiplayer settings). So are the host's crown, the compass's dots (both in
+"Where the others are") and a first time's explanation and setup ("The profile"). Still open:
 
-- **Host's crown:** a crown next to the host's name.
-- **Compass:** a 4-pixel-wide indicator around the compass's four cardinal directions, showing
-  that another player is in that direction, in that player's colour.
 - **Player messages:** in coop, everyone should see the same ones. Today each player draws their
   own sample (MESSAGES_PLAN.md, "The fraction a player sees").
 - **The Moonstone:** not everyone had it when the group played coop. Cause unconfirmed. The pack
   stayed in step in every headless test (gives, joins, rejoins, wipes), though real chest and floor
   pickups were not driven. A lead: the Message Stone wears the Moonstone's model and is offered only
   to a player whose Messages setting is on (off by default), so it would differ per player.
-- **First-time onboarding:** a player's first time in coop sets up their profile.
-- **Coop explained first:** before that profile setup, tell them coop deviates from the standard
-  King's Field experience and is streamlined to be more casual and approachable for online play.
 
 ## Questions
 
@@ -1132,3 +1148,4 @@ walls are fixed (Death, Multiplayer settings); the rest is not built.
   the hello and the roster rather than every pose. A player's own pack changes are left out of
   its feed, since its game already says so.
 - 2026-11-04: the user's notes from an online test (To do, from the online test).
+- 2026-11-04: a first time in coop (The profile); the crown and the compass's dots (Where the others are).
