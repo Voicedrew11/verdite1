@@ -58,8 +58,8 @@ bands and crest are in the player's colour, to tell players apart.
 
 - **The colour** is the player's profile's ([COOP_PLAN.md](COOP_PLAN.md), "The profile"). Those
   faces are flat-coloured primitives written in the first colour (`PLAYER` in `body.py`), and the
-  model lists where each holds its R, G, B (205 of them); `online_player_tmd_in` paints a copy
-  of the TMD per colour the first time one is drawn, 36 KB each, 8 at most.
+  model lists where each holds its R, G, B (245 of them); `online_player_tmd_in` paints a copy
+  of the TMD per colour the first time one is drawn, 38 KB each, 8 at most.
 - **The helmet** is a TMD object of its own after the parts (`helmets()` in `knight.py`, in
   `online_player_helmet_count`'s order), its vertices relative to the head's pivot, drawn with
   the head; the head keeps only the mail coif. A new helmet is an entry at the end of `knight.py`'s
@@ -86,7 +86,8 @@ bands and crest are in the player's colour, to tell players apart.
   pivot, drawn with the torso. A new symbol is an entry at the end of `knight.py`'s `SYMBOLS`
   (rectangles across the chest, as seen from outside, so a letter reads the right way round), its name
   in `port/ext/coop_profile.cpp`, and the count raised; `preview.py cpp` refuses a count that differs.
-  `preview.py symbol S` draws it round about, in the game's depth order and from above and below.
+  `preview.py symbol S` draws it round about, in the game's depth order and from above and below,
+  then its badge.
   - The mark is the chest's own faces, cut along the rectangles' edges, as the great helm's cross is.
     **The ink** is the colour's (`CoopColour::ink`): white, black on the white tabard. Its faces are
     listed like the colour's, as `online_player_model_ink_offsets`, and painted with it.
@@ -103,9 +104,11 @@ rows (`render_title_helmet`, called from `menu_title_draw`), within x 81 to 239 
 the 320 by 240 screen for the fluted helm through a whole turn, lit by the menu's item light. The logo (320, 256 to 640, 496) overlaps page 151, so `menu_title_prepare` copies only the metal
 square the helmets use, as `online_player_title_texture_moves` lists, to x 160, y 129, which no TIM
 on the disc touches, and the helmet is drawn from a copy of the TMD with its page changed
-(`online_player_title_tmd_in`). A new helmet using another material adds its square there. On the
-SYMBOL row the same place shows the torso and its tabard instead (`render_title_chest`), x 103 to 217
-and y 126 to 217.
+(`online_player_title_tmd_in`). A new helmet using another material adds its square there. 
+The player's symbol hovers to its right, turning with it (`render_title_symbol`, nothing for no
+symbol), within x 258 to 296 and y 140 to 192. It is a badge, the mark on a sheet of the player's
+colour (`badges()` in `knight.py`, TMD objects after the tabards), not the mark alone: the logo behind
+is dimmed to a third, so a black mark alone would not show.
 
 ## The weapon
 

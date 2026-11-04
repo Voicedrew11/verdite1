@@ -4073,7 +4073,7 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +}
 diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4bcff37e97351ce9200e6002ab75585b00ac695
+index 0000000000000000000000000000000000000000..2f5b24cd4fb2044a2d4300aaf1237a10b8ce6a77
 --- /dev/null
 +++ b/src/game/menu_title.cpp
 @@ -0,0 +1,187 @@
@@ -4258,10 +4258,10 @@ index 0000000000000000000000000000000000000000..b4bcff37e97351ce9200e6002ab75585
 +        title_draw_page(text, language);
 +    if (!text.note.empty())
 +        title_draw_centred(menu_spell(text.note, language), 0, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y, 1.0f);
-+    if (text.helmet)
++    if (text.helmet) {
 +        render_title_helmet(text.helmet->helmet, text.helmet->colour);
-+    if (text.symbol)
-+        render_title_chest(text.symbol->symbol, text.symbol->colour);
++        render_title_symbol(text.helmet->symbol, text.helmet->colour);
++    }
 +    return top;
 +}
 diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp
@@ -4404,7 +4404,7 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6e2089463800f27c6aec46def7b85f6c3de87436
+index 0000000000000000000000000000000000000000..a13f6bd13d518cd05e8b10fa62b8d42667185529
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
 @@ -0,0 +1,631 @@
@@ -4806,19 +4806,22 @@ index 0000000000000000000000000000000000000000..6e2089463800f27c6aec46def7b85f6c
 +    TITLE_HELMET_SCREEN_Y = 178,
 +    TITLE_HELMET_TRANSLATION_Y = 157,
 +    TITLE_HELMET_TRANSLATION_Z = 740,
-+    TITLE_CHEST_TRANSLATION_Y = 222,
-+    TITLE_CHEST_TRANSLATION_Z = 1350,
++    TITLE_SYMBOL_SCREEN_X = 277,
++    TITLE_SYMBOL_SCREEN_Y = 166,
++    TITLE_SYMBOL_TRANSLATION_Z = 1400,
 +    TITLE_HELMET_DEPTH_BIAS = 1000,
 +    TITLE_HELMET_AMBIENT = 64
 +};
 +
-+struct TitleTurningObject {
++// An object of the painted knight, turning about a point below its pivot and this far off, that
++// point on the screen here.
++struct TitleTurning {
 +    u16 object_index;
-+    s16 depth_bias;
++    s32 translation_y, translation_z;
++    s32 screen_x, screen_y;
 +};
 +
-+// The objects of the painted knight, about one pivot, turning on the view's axis at this distance.
-+static void render_title_turning(std::span<const TitleTurningObject> objects, u8 colour, s32 translation_y, s32 translation_z)
++static void render_title_turning(const TitleTurning &turning, u8 colour)
 +{
 +    const auto painted = kf::online_player_title_tmd_in(colour);
 +    auto context = tmd_context();
@@ -4829,8 +4832,8 @@ index 0000000000000000000000000000000000000000..6e2089463800f27c6aec46def7b85f6c
 +    MATRIX model;
 +    kf::matrix_set_rotation_xyz(rotation, model);
 +    model.t[0] = 0;
-+    model.t[1] = translation_y;
-+    model.t[2] = translation_z;
++    model.t[1] = turning.translation_y;
++    model.t[2] = turning.translation_z;
 +
 +    // The menu's light on an item (menu_preview_light_source): fixed in the view as the helmet turns.
 +    constexpr s16 LIT = -KF_FIXED12_ONE;
@@ -4844,30 +4847,27 @@ index 0000000000000000000000000000000000000000..6e2089463800f27c6aec46def7b85f6c
 +    lighting_set_active_color_matrix(KF_GAME_COLOR_DEFAULT);
 +    lighting.ambient = {TITLE_HELMET_AMBIENT, TITLE_HELMET_AMBIENT, TITLE_HELMET_AMBIENT};
 +    kf::Projection projection;
-+    projection.center_y = TITLE_HELMET_SCREEN_Y;
-+    for (const TitleTurningObject &turning : objects) {
-+        const auto object = tmd_read_object(context, turning.object_index);
-+        tmd_select_object_vertices(context, turning.object_index);
-+        tmd_project_vertices(static_cast<s32>(object.vertex_count), &model, projection);
-+        render_enqueue_tmd(turning.object_index, TITLE_HELMET_DEPTH_BIAS + turning.depth_bias, &light);
-+    }
++    projection.center_x = turning.screen_x;
++    projection.center_y = turning.screen_y;
++    const auto object = tmd_read_object(context, turning.object_index);
++    tmd_select_object_vertices(context, turning.object_index);
++    tmd_project_vertices(static_cast<s32>(object.vertex_count), &model, projection);
++    render_enqueue_tmd(turning.object_index, TITLE_HELMET_DEPTH_BIAS, &light);
 +    lighting = saved_lighting;
 +}
 +
 +void render_title_helmet(u8 helmet, u8 colour)
 +{
 +    const u16 object_index = kf::online_player_model_helmet_object(helmet < kf::online_player_helmet_count ? helmet : 0);
-+    const std::array<TitleTurningObject, 1> objects = {{{object_index, 0}}};
-+    render_title_turning(objects, colour, TITLE_HELMET_TRANSLATION_Y, TITLE_HELMET_TRANSLATION_Z);
++    render_title_turning({object_index, TITLE_HELMET_TRANSLATION_Y, TITLE_HELMET_TRANSLATION_Z, 160, TITLE_HELMET_SCREEN_Y}, colour);
 +}
 +
-+void render_title_chest(u8 symbol, u8 colour)
++void render_title_symbol(u8 symbol, u8 colour)
 +{
-+    const u16 tabard = kf::online_player_model_tabard_object(symbol < kf::online_player_symbol_count ? symbol : 0);
-+    const std::array<TitleTurningObject, 2> objects = {{
-+        {kf_enum_encode<u8>(kf::OnlinePlayerPart::Torso), 0},
-+        {tabard, kf::online_player_model_tabard_depth_bias()}}};
-+    render_title_turning(objects, colour, TITLE_CHEST_TRANSLATION_Y, TITLE_CHEST_TRANSLATION_Z);
++    if (symbol == 0 || symbol >= kf::online_player_symbol_count)
++        return;
++    render_title_turning({kf::online_player_model_badge_object(symbol), 0, TITLE_SYMBOL_TRANSLATION_Z,
++        TITLE_SYMBOL_SCREEN_X, TITLE_SYMBOL_SCREEN_Y}, colour);
 +}
 +
 +static VECTOR online_player_offset(const MATRIX &rotation, const SVECTOR &to, const SVECTOR &from)

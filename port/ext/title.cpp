@@ -592,13 +592,8 @@ TitleText title_text(Language language) {
         text.code = view.code;
     if (view.page == verdite::TitlePage::NameEntry)
         text.code = view.code;
-    if (view.page == verdite::TitlePage::Profile) {
-        const auto on_symbol = [](const verdite::TitleRowView &row) { return row.selected && row.kind == verdite::TitleRowKind::ProfileSymbol; };
-        if (std::ranges::any_of(view.rows, on_symbol))
-            text.symbol = TitleSymbol{static_cast<u8>(view.profile.symbol), static_cast<u8>(view.profile.colour)};
-        else
-            text.helmet = TitleHelmet{static_cast<u8>(view.profile.helmet), static_cast<u8>(view.profile.colour)};
-    }
+    if (view.page == verdite::TitlePage::Profile)
+        text.helmet = TitleHelmet{static_cast<u8>(view.profile.helmet), static_cast<u8>(view.profile.symbol), static_cast<u8>(view.profile.colour)};
     return text;
 }
 

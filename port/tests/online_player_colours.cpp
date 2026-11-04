@@ -87,13 +87,16 @@ TEST_CASE("every helmet is an object after the parts") {
         CHECK(online_player_model_helmet_object(helmet) == online_player_part_count + helmet);
     // The TMD's object count is its third word.
     const auto tmd = online_player_model_tmd();
-    CHECK(tmd[8] == online_player_part_count + online_player_helmet_count + online_player_symbol_count);
+    CHECK(tmd[8] == online_player_part_count + online_player_helmet_count + 2 * online_player_symbol_count - 1);
 }
 
 TEST_CASE("every tabard is an object after the helmets, and the plain first one carries no ink") {
     for (u8 symbol = 0; symbol < online_player_symbol_count; ++symbol)
         CHECK(online_player_model_tabard_object(symbol) == online_player_part_count + online_player_helmet_count + symbol);
     CHECK(online_player_model_tabard_depth_bias() < 0);
+    for (u8 symbol = 1; symbol < online_player_symbol_count; ++symbol)
+        CHECK(online_player_model_badge_object(symbol) ==
+              online_player_part_count + online_player_helmet_count + online_player_symbol_count + symbol - 1);
     // The TMD's object table: each entry's primitives, from the end of the 12-byte header.
     const auto tmd = online_player_model_tmd();
     const auto word = [&](std::size_t at) { return tmd[at] | tmd[at + 1] << 8 | tmd[at + 2] << 16 | tmd[at + 3] << 24; };

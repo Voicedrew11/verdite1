@@ -166,6 +166,14 @@ class Part:
         for a, b in ((0, 1), (1, 3), (3, 2), (2, 0)):
             self.face([inner[a], inner[b], outer_ids[a], outer_ids[b]], back_mat or mat, inside, self.group())
 
+    def sheet(self, width, height, mat, marks, ink):
+        """A flat upright sheet about the pivot with no thickness, seen from ahead and behind: the
+        panel's outer face on each side, the same marks on both."""
+        x, y, z = width / 2, height / 2, self.pivot
+        for side in (1, -1):
+            P = [z + (-side * x, y, side), z + (side * x, y, side), z + (-side * x, -y, side), z + (side * x, -y, side)]
+            self.panel_face(P, [self.vert(p) for p in P], mat, marks, ink, z - (0, 0, side * 10))
+
     def panel_face(self, P, corners, mat, marks, ink, inside):
         """A panel's outer face, one quad for each cell the marks' edges cut it into."""
         across = sorted({0.0, 1.0} | {x for m in marks for x in (m[0], m[2])})

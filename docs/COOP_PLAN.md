@@ -574,8 +574,8 @@ chosen under COOP, PROFILE, on the title menu:
   red, green, gold, white, black, purple, orange. It paints the tabard, sleeves, knee bands and
   crest.
 - **HELMET**: one of the helmets: the great helm or the fluted helm, shown turning under the rows.
-- **SYMBOL**: a mark on the tabard's chest, front and back: none or a cross, shown on the chest turning
-  under the rows while this row is chosen. White, and black on a white tabard.
+- **SYMBOL**: a mark on the tabard's chest, front and back: none or a cross, shown hovering and turning
+  beside the helmet. White, and black on a white tabard.
 
 A change is kept at once in `coop.profile` in the user folder, beside the install's id
 (`name=`, `colour=`, `helmet=`, `symbol=` lines; a part missing or bad is the default's: `PLAYER`

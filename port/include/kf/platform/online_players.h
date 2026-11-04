@@ -94,6 +94,9 @@ u16 online_player_model_helmet_object(u8 helmet);
 // a TMD object after the helmets, its vertices relative to the torso's pivot, drawn with the torso.
 inline constexpr std::size_t online_player_symbol_count = 2;
 u16 online_player_model_tabard_object(u8 symbol);
+// A symbol, but not the first, on a sheet of the player's colour for the title's PROFILE page. A TMD
+// object after the tabards, turned about its own middle.
+u16 online_player_model_badge_object(u8 symbol);
 // What to sort a tabard by, nearer than it is: the breastplate's large faces would draw over its
 // small ones.
 s16 online_player_model_tabard_depth_bias();

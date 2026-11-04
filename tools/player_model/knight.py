@@ -116,6 +116,16 @@ def tabards(colour=PLAYER, ink=INK):
         out.append(tabard)
     return out
 
+def badges(colour=PLAYER, ink=INK):
+    """Each symbol but none on a sheet of the player's colour, for the title's PROFILE page: the
+    picture behind it is too dark for a black mark alone. Each a part of its own."""
+    out = []
+    for i, marks in enumerate(SYMBOLS[1:], 1):
+        badge = Part(f'badge_{i}', None, (0, 1000, 0))
+        badge.sheet(260, 330, colour, marks, ink)
+        out.append(badge)
+    return out
+
 def knight(helmet=0, colour=PLAYER, symbol=0, ink=INK):
     """The knight's parts; with a symbol (an index of SYMBOLS) and a helmet (an index of HELMETS)
     those follow them, as a picture shows it; with None the parts alone, as the game's model has
