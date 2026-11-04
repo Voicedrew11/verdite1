@@ -526,7 +526,7 @@ TEST_CASE("times are said to the coarsest unit, and played time stops at hours")
     CHECK(said(title_time_ago(3600)) == std::pair<std::uint64_t, TitleTimeUnit>(1, Hours));
     CHECK(said(title_time_ago(86399)) == std::pair<std::uint64_t, TitleTimeUnit>(23, Hours));
     CHECK(said(title_time_ago(86400)) == std::pair<std::uint64_t, TitleTimeUnit>(1, Days));
-    CHECK(said(title_time_played(86400 * 2)) == std::pair<std::uint64_t, TitleTimeUnit>(48, Hours));
+    CHECK(said(title_time_played(172800)) == std::pair<std::uint64_t, TitleTimeUnit>(48, Hours));
 }
 
 TEST_CASE("names fit a line, at least the first") {
@@ -907,10 +907,9 @@ TEST_CASE("a first time in co-op explains it, then sets up the profile, then goe
 
     confirm_kind(TitleRowKind::ProfileDone);
     CHECK(menu.view().page == TitlePage::Coop);
-    const auto choice = menu.take_choice();
-    REQUIRE(choice);
-    CHECK(choice->action == TitleAction::ProfileSetUp);
-    CHECK(choice->profile.name == "PLAYER1");
+    const TitleChoice choice = taken(menu);
+    CHECK(choice.action == TitleAction::ProfileSetUp);
+    CHECK(choice.profile.name == "PLAYER1");
 
     menu.press(TitleInput::Back);
     menu.press(TitleInput::Confirm);

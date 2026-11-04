@@ -63,6 +63,16 @@ TitleRowView row(TitleRowKind kind, bool enabled = true) {
     return view;
 }
 
+std::vector<TitleRowView> world_rows(const std::vector<TitleWorld> &worlds, TitleRowKind kind) {
+    std::vector<TitleRowView> rows;
+    rows.reserve(worlds.size());
+    for (const TitleWorld &world : worlds) {
+        rows.push_back(row(kind));
+        rows.back().world = &world;
+    }
+    return rows;
+}
+
 // The page Back goes to, and the row on it that leads here.
 struct Parent {
     TitlePage page;
@@ -72,7 +82,7 @@ struct Parent {
 std::optional<Parent> parent_of(TitlePage page) {
     switch (page) {
     case TitlePage::Continue: return Parent{TitlePage::Top, TitleRowKind::Continue};
-    case TitlePage::Coop: return Parent{TitlePage::Top, TitleRowKind::Coop};
+    case TitlePage::Coop:
     case TitlePage::CoopIntro: return Parent{TitlePage::Top, TitleRowKind::Coop};
     case TitlePage::Host: return Parent{TitlePage::Coop, TitleRowKind::Host};
     case TitlePage::NewWorld: return Parent{TitlePage::Host, TitleRowKind::NewWorld};
@@ -614,10 +624,7 @@ TitleView TitleMenu::view() const {
         rows.push_back(row(TitleRowKind::CoopSettings));
         break;
     case TitlePage::Host:
-        for (const TitleWorld &world : worlds_) {
-            rows.push_back(row(TitleRowKind::KeptWorld));
-            rows.back().world = &world;
-        }
+        rows = world_rows(worlds_, TitleRowKind::KeptWorld);
         rows.push_back(row(TitleRowKind::NewWorld));
         rows.push_back(row(TitleRowKind::HostOptions));
         view.pinned_rows = 2;
@@ -631,12 +638,7 @@ TitleView TitleMenu::view() const {
         if (!worlds_.empty())
             rows.push_back(row(TitleRowKind::DeleteWorlds));
         break;
-    case TitlePage::DeleteWorld:
-        for (const TitleWorld &world : worlds_) {
-            rows.push_back(row(TitleRowKind::WorldToDelete));
-            rows.back().world = &world;
-        }
-        break;
+    case TitlePage::DeleteWorld: rows = world_rows(worlds_, TitleRowKind::WorldToDelete); break;
     case TitlePage::DeleteWarning:
         rows.push_back(row(TitleRowKind::DeleteAnyway));
         rows.back().world = warned_world();
