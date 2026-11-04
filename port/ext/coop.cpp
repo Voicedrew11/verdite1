@@ -100,7 +100,7 @@ struct Coop {
     CoopWorn worn_sent = coop_nothing_worn;
     HostSide host;
     GuestSide guest;
-    verdite::PickupFeed feed{verdite::PickupFeedShape{}};
+    verdite::PickupFeed feed{verdite::PickupFeedShape{.most_lines = 3, .shown_ms = 3000}};
     std::vector<CoopPlayerId> feed_players;   // a feed line's player is an index into this
     bool looked_for_aside = false;            // once a run, for a game a quit left set aside
     std::uint32_t life = 0;                   // how many times the party went back to its last save

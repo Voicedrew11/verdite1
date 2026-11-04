@@ -2627,10 +2627,14 @@ index eaedf30d9e3117e375f8bee3bcd40797bca15708..0d461739855cd7ea197b8babd7a11b38
          menu_draw_equipment_names();
          menu_draw_window(KF_MENU_WINDOW_EQUIPMENT, KF_MENU_EQUIPMENT_ROW_COUNT, cursor, confirm);
 diff --git a/src/game/menu_runtime.cpp b/src/game/menu_runtime.cpp
-index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9abaa10d2289 100644
+index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..0fa3b22836b897fc65999ce0cfd48375f7b643d2 100644
 --- a/src/game/menu_runtime.cpp
 +++ b/src/game/menu_runtime.cpp
-@@ -7,8 +7,17 @@
+@@ -4,11 +4,21 @@
+ #include <kf/game/menu.h>
+ #include <kf/game/menu_glyphs.h>
+ #include <kf/game/menu_text.h>
++#include <kf/game/render.h>
  #include <kf/game/resources.h>
  #include <kf/lib/null.h>
  #include <kf/lib/render_face.h>
@@ -2648,7 +2652,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  #include <array>
  #include <cstdio>
  #include <cstdlib>
-@@ -16,8 +25,12 @@
+@@ -16,8 +26,12 @@
  #include <optional>
  #include <string>
  #include <utility>
@@ -2661,7 +2665,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  struct MenuImage {
      std::string path;
      std::array<kf::ByteBuffer, 2> versions;
-@@ -94,12 +107,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
+@@ -94,12 +108,40 @@ static void menu_submit_template(kf::DrawFace face, s32 depth)
      kf::host_enqueue_face(face);
  }
  
@@ -2702,7 +2706,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  }
  
  static void menu_draw_backdrop_tile(s32 x, s32 y, bool flip_x, bool flip_y)
-@@ -156,8 +197,8 @@ void menu_status_panel(void)
+@@ -156,8 +198,8 @@ void menu_status_panel(void)
  void menu_drop_item_panel(void)
  {
      KfMenuList ctx;
@@ -2713,7 +2717,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
      s32 found;
      s32 item_id;
      KfMenuConfirmState confirm = KF_MENU_CONFIRM_IDLE;
-@@ -171,11 +212,16 @@ void menu_drop_item_panel(void)
+@@ -171,11 +213,16 @@ void menu_drop_item_panel(void)
      found = 0;
      item_id = 0;
      auto &player_stock = item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)];
@@ -2731,7 +2735,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
              if (quantities[found] != 0) {
                  item_ids[found] = kf_enum_decode<KfObjectId>(item_id);
                  found++;
-@@ -266,6 +312,9 @@ KfMenuAction menu_system_panel(void)
+@@ -266,6 +313,9 @@ KfMenuAction menu_system_panel(void)
          case KF_MENU_SYSTEM_ACTION_QUIT:
              result = menu_two_option_prompt(
                  KF_MENU_WINDOW_SYSTEM, KF_MENU_SYSTEM_ROW_COUNT, cursor, {});
@@ -2741,7 +2745,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
              if (result == KF_MENU_RESULT_ACCEPTED) {
                  menu_load_texture(MENU_TEXTURE_POWER_OFF);
                  audio_stop_sequence_fade();
-@@ -313,6 +362,10 @@ KfMenuAction menu_system_panel(void)
+@@ -313,6 +363,10 @@ KfMenuAction menu_system_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2752,7 +2756,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
          }
  
          menu_frame_begin();
-@@ -415,6 +468,10 @@ KfMenuResult menu_save_panel(void)
+@@ -415,6 +469,10 @@ KfMenuResult menu_save_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2763,7 +2767,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
          }
  
          menu_frame_begin();
-@@ -425,6 +482,40 @@ KfMenuResult menu_save_panel(void)
+@@ -425,6 +483,40 @@ KfMenuResult menu_save_panel(void)
      return result;
  }
  
@@ -2804,7 +2808,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  KfMenuResult menu_load_panel(void)
  {
      std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> summaries;
-@@ -460,6 +551,9 @@ KfMenuResult menu_load_panel(void)
+@@ -460,6 +552,9 @@ KfMenuResult menu_load_panel(void)
  
          if (confirm == KF_MENU_CONFIRM_REQUESTED && cursor != KF_MENU_LOAD_RETURN_ROW) {
              result = menu_two_option_prompt(KF_MENU_WINDOW_LOAD, KF_MENU_LOAD_ROW_COUNT, cursor, summaries);
@@ -2814,7 +2818,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
              if (result == KF_MENU_RESULT_CANCELLED) {
                  result = KF_MENU_RESULT_PENDING;
              } else {
-@@ -518,6 +612,10 @@ KfMenuResult menu_load_panel(void)
+@@ -518,6 +613,10 @@ KfMenuResult menu_load_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2825,7 +2829,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
          }
  
          menu_frame_begin();
-@@ -630,11 +728,21 @@ void menu_config_panel(void)
+@@ -630,11 +729,21 @@ void menu_config_panel(void)
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -2848,7 +2852,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
              menu_draw_string(&menu_resources().assets.glyph_atlas, &message);
          }
          menu_present_frame();
-@@ -1173,6 +1281,237 @@ enum {
+@@ -1173,6 +1282,237 @@ enum {
      MENU_INVENTORY_QUANTITY_VALUE_X = 279
  };
  
@@ -3086,7 +3090,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  void menu_item_model_preview(KfObjectId item_id)
  {
      MenuGlyphString text;
-@@ -1180,10 +1519,15 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1180,10 +1520,15 @@ void menu_item_model_preview(KfObjectId item_id)
      MATRIX light_source;
      MATRIX light_result;
  
@@ -3105,7 +3109,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
          menu_item_preview_rotation.vy =
              (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
              & KF_ANGLE_WRAP_MASK;
-@@ -1195,8 +1539,9 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1195,8 +1540,9 @@ void menu_item_model_preview(KfObjectId item_id)
  
          text.position.x = MENU_ITEM_NAME_X;
          text.position.y = MENU_ITEM_PREVIEW_NAME_Y;
@@ -3117,7 +3121,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  
          text.position.x = MENU_INVENTORY_QUANTITY_LABEL_X;
          text.glyphs.codes[0] = menu_glyphs::quantity[0];
-@@ -1206,7 +1551,10 @@ void menu_item_model_preview(KfObjectId item_id)
+@@ -1206,7 +1552,10 @@ void menu_item_model_preview(KfObjectId item_id)
          menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
  
          text.position.x = MENU_INVENTORY_QUANTITY_VALUE_X;
@@ -3129,7 +3133,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
          menu_draw_number(&menu_resources().assets.number_atlas, &text);
      }
  }
-@@ -1241,9 +1589,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1241,9 +1590,13 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
          return;
      }
  
@@ -3146,7 +3150,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
      menu_item_preview_rotation.vy =
          (menu_item_preview_rotation.vy + MENU_ITEM_PREVIEW_YAW_STEP)
          & KF_ANGLE_WRAP_MASK;
-@@ -1255,8 +1607,9 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
+@@ -1255,8 +1608,9 @@ void menu_draw_item_detail(KfObjectId item_id, KfItemStockBank shop_bank, KfTrad
  
      text.position.x = MENU_ITEM_NAME_X;
      text.position.y = MENU_ITEM_PREVIEW_NAME_Y;
@@ -3158,7 +3162,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  
      text.position.x = MENU_ITEM_DETAIL_PRICE_X;
      text.position.y += MENU_ITEM_PREVIEW_LINE_HEIGHT;
-@@ -1480,6 +1833,10 @@ static KfMenuResult menu_list_confirm_impl(
+@@ -1480,6 +1834,10 @@ static KfMenuResult menu_list_confirm_impl(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -3169,7 +3173,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
          }
          draw_preview();
          menu_list_render(list);
-@@ -1546,6 +1903,10 @@ KfMenuResult menu_two_option_prompt(
+@@ -1546,6 +1904,10 @@ KfMenuResult menu_two_option_prompt(
          } else if (kf::button_pressed(input, prev, kf::Button::Back)) {
              menu_play_input_sound(MENU_SOUND_CANCEL_OR_ERROR);
              result = KF_MENU_RESULT_CANCELLED;
@@ -3180,7 +3184,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
          }
  
          menu_frame_begin();
-@@ -1556,12 +1917,22 @@ KfMenuResult menu_two_option_prompt(
+@@ -1556,12 +1918,22 @@ KfMenuResult menu_two_option_prompt(
      }
  }
  
@@ -3203,7 +3207,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
      if (layout->title.position.x != 0) {
          menu_blit_sprite_translucent(
              &menu_resources().assets.row_background, &layout->title.position);
-@@ -1570,7 +1941,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1570,7 +1942,9 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
      if (row_count > 0) {
          row = 0;
          do {
@@ -3214,7 +3218,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
                  menu_blit_sprite_translucent(&menu_resources().assets.row_confirmed_background,
                      &layout->rows[row].position);
              } else {
-@@ -1587,6 +1960,18 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
+@@ -1587,6 +1961,18 @@ void menu_draw_window(KfMenuWindowKind window_kind, s32 row_count, s32 highlight
                  text.position.x = CONFIG_OPTION_ON_X;
                  text.glyphs = menu_label(MenuLabel::LanguageName);
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &text);
@@ -3233,7 +3237,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
              } else {
                  menu_draw_string(&menu_resources().assets.glyph_atlas, &layout->rows[row]);
              }
-@@ -1622,6 +2007,7 @@ void menu_list_render(const KfMenuList *list)
+@@ -1622,6 +2008,7 @@ void menu_list_render(const KfMenuList *list)
      u32 tens;
      u32 ones;
  
@@ -3241,7 +3245,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
      const MenuGlyphString title{list->title_position,
          menu_resources().windows[kf_enum_encode<s32>(list->title_window)].rows[list->title_row].glyphs};
      if (list->title_position.x != 0) {
-@@ -1637,18 +2023,25 @@ void menu_list_render(const KfMenuList *list)
+@@ -1637,18 +2024,25 @@ void menu_list_render(const KfMenuList *list)
              text.position.x = list->list_x + MENU_LIST_TEXT_INSET;
              text.position.y = list->list_y + MENU_LIST_TEXT_INSET;
              text.position.y += row * MENU_LIST_ROW_HEIGHT;
@@ -3270,7 +3274,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
              if (!list->quantities.empty()) {
                  tens = list->quantities[index] / 10u;
                  ones = list->quantities[index] % 10u;
-@@ -1701,6 +2094,12 @@ enum {
+@@ -1701,6 +2095,12 @@ enum {
      MENU_PICKUP_BACKDROP_RIGHT_X = MENU_PICKUP_BACKDROP_LEFT_X + MENU_BACKDROP_COLUMN_STEP
  };
  
@@ -3283,7 +3287,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  enum {
      MENU_FONT_COLUMNS = 16,
      MENU_FONT_CELL_WIDTH = 14,
-@@ -1716,6 +2115,16 @@ void menu_draw_two_option(
+@@ -1716,6 +2116,16 @@ void menu_draw_two_option(
      const MenuChoiceLabel *accept_label, const MenuChoiceLabel *decline_label,
      KfMenuConfirmChoice selected_choice, KfMenuConfirmState confirmation)
  {
@@ -3300,7 +3304,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
      if (selected_choice == KF_MENU_CHOICE_ACCEPT) {
          menu_blit_sprite(&menu_resources().assets.selection_cursor, &accept_label->position);
      } else {
-@@ -1766,8 +2175,9 @@ void menu_draw_pickup_preview(KfObjectId item_id)
+@@ -1766,8 +2176,9 @@ void menu_draw_pickup_preview(KfObjectId item_id)
  
      string.position.x = MENU_PICKUP_NAME_X;
      string.position.y = MENU_ITEM_PREVIEW_NAME_Y;
@@ -3312,7 +3316,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  
      menu_draw_backdrop_tile(MENU_PICKUP_BACKDROP_LEFT_X, MENU_BACKDROP_TOP_Y, false, false);
  
-@@ -1791,6 +2201,26 @@ void menu_blit_sprite_translucent(
+@@ -1791,6 +2202,26 @@ void menu_blit_sprite_translucent(
      menu_submit_template(face, MENU_WIDGET_OT_DEPTH);
  }
  
@@ -3339,7 +3343,7 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
  void menu_blit_sprite(
      const MenuSpriteDef *sprite, const MenuPoint *position)
  {
-@@ -1854,10 +2284,268 @@ void menu_draw_number(
+@@ -1854,10 +2285,271 @@ void menu_draw_number(
          auto face = menu_text_glyph(atlas, label, x_offset);
          const s32 v = label->glyphs.codes[i] * MENU_NUMBER_CELL_HEIGHT;
          render_face_uv_rectangle(&face, atlas->u, v, atlas->u + atlas->width, v + atlas->height);
@@ -3364,18 +3368,21 @@ index c9fe6169e8ddfacc25c2d883aa2e16c36f887028..1839268f3a2cf1954c70c8bff52b9aba
 +    }
 +}
 +
-+// PC extension (coop): the pickup feed at the picture's left, each line spelled in the menu font
-+// with the item's name as the menus draw it (kf/platform/coop.h).
++// PC extension (coop): the pickup feed below the HUD, in line with its left edge, each line in the
++// Little lettering of the item names, with the item's name as the menus draw it (kf/platform/coop.h).
 +void menu_draw_pickup_feed(void)
 +{
-+    constexpr s16 feed_left_x = 8, feed_top_y = 28, feed_row_step = 14;
++    constexpr s16 feed_gap_below_hud = 2, feed_row_step = 11;
++    const KfHudSprite &left_panel = hud_sprites[KF_HUD_HP_PANEL];
++    const KfHudSprite &compass = hud_sprites[KF_HUD_COMPASS];
++    const auto feed_left_x = static_cast<s16>(left_panel.sprite.x + render_hud_edge_shift(left_panel.sprite.x));
 +    const auto language = kf::game_language();
-+    s16 y = feed_top_y;
++    auto y = static_cast<s16>(compass.sprite.y + compass.sprite.h + feed_gap_below_hud);
 +    for (const kf::CoopFeedRow &row : kf::coop_feed_view(language)) {
-+        std::vector<MenuTextGlyph> glyphs = menu_spell(row.before, language);
++        std::vector<MenuTextGlyph> glyphs = menu_spell_item_name(row.before, language);
 +        if (row.item < KF_ITEM_COUNT)
 +            menu_append_item_name(glyphs, row.item);
-+        menu_spell_onto(glyphs, row.after, language);
++        menu_spell_item_name_onto(glyphs, row.after, language);
 +        menu_draw_text(glyphs, MenuPoint{feed_left_x, y}, row.opacity, MENU_HUD_OT_DEPTH);
 +        y += feed_row_step;
 +    }

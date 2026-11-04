@@ -483,9 +483,12 @@ room's coop world. `port/ext/coop.cpp` is the session; the party's rules and the
   down (Death) in place of the game's revival or restart, which is a new game and would empty the
   party's pack. NPC stages and the floor-2 departure read the world's highest floor, and a stage
   never goes lower.
-- **The feed** is drawn by the game after its HUD (`menu_draw_pickup_feed`), at the left of the
-  picture: the line spelled by `menu_spell` with the item's name as the menus draw it, faded
-  with the shade `menu_draw_text` takes. In English "PLAYER1234 USED MEDICINAL HERB"; in Japanese
+- **The feed** is drawn by the game after its HUD (`menu_draw_pickup_feed`), below the compass and in
+  line with the HP panel, moving out with the HUD in widescreen: at most 3 lines, 3 seconds each, in
+  the Little lettering of the item names, with the item's name as the menus draw it, faded with the
+  shade `menu_draw_text` takes. It shares the HUD's draw depth, where what is submitted later draws
+  underneath, so it must not overlap the HUD. The longest line measured is 261 pixels of the 320
+  (the longest name, BOUGHT and a count); a typical one 179. In English "PLAYER1234 USED MEDICINAL HERB"; in Japanese
   the name, the item, the count and a verb in kana (てにいれました, かいました, うりました,
   つかいました). A player's own changes are left out of its feed: its game already says so, or it
   made them in a menu. Not yet judged by eye.
@@ -1151,3 +1154,4 @@ walls are fixed (Death, Multiplayer settings). So are the host's crown, the comp
 - 2026-11-04: the user's notes from an online test (To do, from the online test).
 - 2026-11-04: a first time in coop (The profile); the crown and the compass's dots (Where the others are).
 - 2026-11-04: messages on the ground are on for everyone in a coop room, so all have the Message Stone (Multiplayer settings).
+- 2026-11-04: the feed moved below the HUD, in smaller lettering, at most 3 lines for 3 seconds each (Not yet judged by eye).
