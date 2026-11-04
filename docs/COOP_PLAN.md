@@ -627,9 +627,11 @@ option table); and on the title, COOP, SETTINGS. Settings.json's `online` keys.
   so it shrinks with distance. Its corners are in the camera's axes, and it is a smoothed world sprite
   like a spell's, not a HUD quad, or it would swim against the knight while turning. It is unlit and
   unfogged. ALWAYS sorts it in front of the world; IN SIGHT at its own depth, so nearer walls paint
-  over it in the game's order (the optional depth buffer also hides ALWAYS behind walls). It shows
-  only where the knight is drawn, so never past the cell window, and not within 700 units of the
-  camera, where it would fill the picture.
+  over it in the game's order (the optional depth buffer also hides IN SIGHT behind walls; ALWAYS
+  skips it through `DrawFace::over_world`). IN SIGHT shows only where the knight is drawn, so never
+  past the cell window; ALWAYS shows for everyone on the floor at any distance, a far bar scaled
+  about the eye so its place fits the 16-bit vectors. Neither shows within 700 units of the camera,
+  where it would fill the picture.
 - **Checked** (`scripts/coop_settings.py`, 21 checks, three headless instances on a local service;
   `scripts/title_pair.py` for the title's pages): rows only the host is shown, a guest following tick
   rate and revive wait, name bars drawn, off and on, the feed off and on, a closed room, a returning
@@ -819,7 +821,9 @@ machine's part in `port/ext/coop_death_play.h`, the wipe in the session (`port/e
   sound and the automap follow), and the knight it looks out of is not drawn on its machine. When
   they are on another floor it goes there as a warp does, through `map_unload_floor`, so an owner
   hands its floor on and the arrival path follows: it counts as on that floor, and may run it. The
-  game draws "WATCHING PLAYER1234" low in the middle of the picture, in the menu font.
+  game draws "WATCHING PLAYER1234" low in the middle of the picture, in the menu font. The
+  first-person weapon drawn is theirs, at their swing (`render_watched_weapon`), from the last pose
+  heard; as in the game, it shows only during a swing.
 - **Out of a fight:** judged by the player's own machine for its pose: a hit taken
   (`player_apply_damage`) or dealt (`actor_apply_damage` with its credit) in the last 4 seconds, or
   an awake enemy pursuing or attacking it. The owner knows its actors' targets; a machine drawing
@@ -919,6 +923,24 @@ What a room costs each player, for N players:
   bytes each, and its actors' effects in flight, 30 bytes each: about 450 bytes with the headers for a dozen awake, so about 7 KB a second to each
   other player at 15 updates, sent to everyone and kept only on the owner's floor. A handover or
   an arrival's snapshot is about 40 KB, once.
+
+## To do, from the online test
+
+Noted by the user after an online test (2026-11-04). The spectating viewmodel and nametags through
+walls are fixed (Death, Multiplayer settings); the rest is not built.
+
+- **Host's crown:** a crown next to the host's name.
+- **Compass:** a 4-pixel-wide indicator around the compass's four cardinal directions, showing
+  that another player is in that direction, in that player's colour.
+- **Player messages:** in coop, everyone should see the same ones. Today each player draws their
+  own sample (MESSAGES_PLAN.md, "The fraction a player sees").
+- **The Moonstone:** not everyone had it when the group played coop. Cause unconfirmed. The pack
+  stayed in step in every headless test (gives, joins, rejoins, wipes), though real chest and floor
+  pickups were not driven. A lead: the Message Stone wears the Moonstone's model and is offered only
+  to a player whose Messages setting is on (off by default), so it would differ per player.
+- **First-time onboarding:** a player's first time in coop sets up their profile.
+- **Coop explained first:** before that profile setup, tell them coop deviates from the standard
+  King's Field experience and is streamlined to be more casual and approachable for online play.
 
 ## Questions
 
@@ -1109,3 +1131,4 @@ What a room costs each player, for N players:
 - 2026-10-27: the profile (The profile): chosen on the title, not in a room, so it travels in
   the hello and the roster rather than every pose. A player's own pack changes are left out of
   its feed, since its game already says so.
+- 2026-11-04: the user's notes from an online test (To do, from the online test).
