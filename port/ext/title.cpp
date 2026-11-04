@@ -468,6 +468,7 @@ std::vector<std::string> room_settings_details(Language language) {
 template <std::size_t N>
 std::vector<std::string> spelled(const std::array<Words, N> &words, Language language) {
     std::vector<std::string> lines;
+    lines.reserve(N);
     for (const Words &line : words)
         lines.emplace_back(line.in(language));
     return lines;

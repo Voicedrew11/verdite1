@@ -213,7 +213,7 @@ bool holds_game_files(const std::filesystem::path &library) {
 // user folder. Earlier versions kept them beside it: those move over, or stay
 // in use where they are when they cannot (another drive).
 std::filesystem::path appimage_library() {
-    const auto beside = release_directory() / "data";
+    auto beside = release_directory() / "data";
     auto user = native_path(user_folder().c_str()) / "data";
     std::error_code error;
     if (holds_game_files(beside) && !holds_game_files(user)) {

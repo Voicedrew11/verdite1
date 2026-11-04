@@ -35,8 +35,9 @@ TEST_CASE("the watched player's weapon and swing are drawn") {
     const std::vector<OnlinePlayer> players = {player(3, false, 1, 100), player(7, true, 5, 1500)};
     const auto watched = online_watched_weapon(players);
     REQUIRE(watched.has_value());
-    CHECK(watched->weapon == 5);
-    CHECK(watched->phase == 1500);
+    const OnlineWatchedWeapon drawn = watched.value_or(OnlineWatchedWeapon{});
+    CHECK(drawn.weapon == 5);
+    CHECK(drawn.phase == 1500);
 }
 
 TEST_CASE("a watched player with no weapon draws none") {
@@ -63,7 +64,10 @@ TEST_CASE("each player and weapon has its own identity, never the game's own wea
     REQUIRE(first.has_value());
     REQUIRE(other_weapon.has_value());
     REQUIRE(other_player.has_value());
-    CHECK(first->identity != 0);
-    CHECK(first->identity != other_weapon->identity);
-    CHECK(first->identity != other_player->identity);
+    const auto identity = [](const std::optional<OnlineWatchedWeapon> &watched) {
+        return watched.value_or(OnlineWatchedWeapon{}).identity;
+    };
+    CHECK(identity(first) != 0);
+    CHECK(identity(first) != identity(other_weapon));
+    CHECK(identity(first) != identity(other_player));
 }
