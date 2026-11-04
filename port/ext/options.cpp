@@ -531,17 +531,8 @@ OptionSection gameplay_enemies() {
     }});
 }
 
-OptionSection gameplay_fixes() {
-    return classic_locked({"", {
-        combined_toggle("gameplay.bug_fixes", "Bug fixes",
-                        "Fixes for bugs in the original game: jumping enemies that bump a low ceiling drop back down "
-                        "instead of hovering, and some floor 5 enemy sounds get the panning they were marked for.",
-                        bug_fixes, set_bug_fixes, apply_control_settings),
-    }});
-}
-
 OptionPage gameplay_page() {
-    return {"Gameplay", {gameplay_classic(), gameplay_world(), gameplay_enemies(), gameplay_fixes()}};
+    return {"Gameplay", {gameplay_classic(), gameplay_world(), gameplay_enemies()}};
 }
 
 // ---- Language ----

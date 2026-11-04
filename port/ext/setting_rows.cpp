@@ -94,13 +94,8 @@ bool wiggle(const Settings &settings) { return !settings.subpixel && !settings.p
 
 void set_wiggle(Settings &settings, bool on) { settings.subpixel = settings.perspective = !on; }
 
-bool bug_fixes(const Settings &settings) { return settings.fix_ceiling_fall && settings.fix_spatial_panning; }
-
-void set_bug_fixes(Settings &settings, bool on) { settings.fix_ceiling_fall = settings.fix_spatial_panning = on; }
-
 void settings_tidy(Settings &settings) {
     set_wiggle(settings, !(settings.subpixel && settings.perspective));
-    set_bug_fixes(settings, bug_fixes(settings));
     // The row's stops are powers of two; a hand-edited 3 goes down to 2.
     int samples = 1;
     while (samples * 2 <= std::clamp(settings.anisotropy, 1, 16))

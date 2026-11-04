@@ -94,15 +94,11 @@ TEST_CASE("an old file's mixtures settle on a state a row can show") {
     Settings settings;
     settings.subpixel = true;
     settings.perspective = false;
-    settings.fix_ceiling_fall = true;
-    settings.fix_spatial_panning = false;
     settings.mipmaps = false;
     settings.anisotropy = 3;
     settings.enemy_turn = 3.1f;
     settings_tidy(settings);
     CHECK(wiggle(settings));
-    CHECK_FALSE(bug_fixes(settings));
-    CHECK_FALSE(settings.fix_ceiling_fall);
     CHECK(settings.mipmaps);
     CHECK(settings.anisotropy == 2);
     CHECK(settings.enemy_turn == 3.0f);
@@ -112,7 +108,6 @@ TEST_CASE("settings_tidy leaves reachable settings alone") {
     Settings settings;
     settings_tidy(settings);
     CHECK_FALSE(wiggle(settings));
-    CHECK(bug_fixes(settings));
     CHECK(aniso_choice(settings) == 16);
     settings.mipmaps = false;
     settings.anisotropy = 1;

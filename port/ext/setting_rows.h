@@ -43,9 +43,6 @@ void set_stick_sens(Settings &settings, double sens);
 bool wiggle(const Settings &settings);   // the PlayStation's vertex snapping and texture warping
 void set_wiggle(Settings &settings, bool on);
 
-bool bug_fixes(const Settings &settings);
-void set_bug_fixes(Settings &settings, bool on);
-
 // What a file can hold that no row can reach, from before these rows were one: settled once at load.
 void settings_tidy(Settings &settings);
 

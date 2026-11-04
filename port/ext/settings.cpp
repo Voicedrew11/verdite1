@@ -171,8 +171,6 @@ void settings_load() {
     current.tick_rate = static_cast<int>(read_number(gameplay, "tick_rate", current.tick_rate));
     current.enemy_turn_auto = read_bool(gameplay, "enemy_turn_auto", current.enemy_turn_auto);
     current.enemy_turn = std::clamp(static_cast<float>(read_number(gameplay, "enemy_turn", current.enemy_turn)), 1.0f, 4.0f);
-    current.fix_ceiling_fall = read_bool(gameplay, "fix_ceiling_fall", current.fix_ceiling_fall);
-    current.fix_spatial_panning = read_bool(gameplay, "fix_spatial_panning", current.fix_spatial_panning);
     const cJSON *map = cJSON_GetObjectItemCaseSensitive(document, "map");
     const cJSON *overlay = cJSON_GetObjectItemCaseSensitive(document, "overlay");
     current.pause_when_open = read_bool(overlay, "pause_when_open", current.pause_when_open);
@@ -254,8 +252,6 @@ void settings_save() {
     write_value(gameplay, "tick_rate", cJSON_CreateNumber(current.tick_rate));
     write_value(gameplay, "enemy_turn_auto", cJSON_CreateBool(current.enemy_turn_auto));
     write_value(gameplay, "enemy_turn", cJSON_CreateNumber(current.enemy_turn));
-    write_value(gameplay, "fix_ceiling_fall", cJSON_CreateBool(current.fix_ceiling_fall));
-    write_value(gameplay, "fix_spatial_panning", cJSON_CreateBool(current.fix_spatial_panning));
     cJSON *map = object_entry(document, "map");
     cJSON *overlay = object_entry(document, "overlay");
     write_value(overlay, "pause_when_open", cJSON_CreateBool(current.pause_when_open));

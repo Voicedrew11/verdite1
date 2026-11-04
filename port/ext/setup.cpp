@@ -228,14 +228,7 @@ SetupPage gameplay_page() {
         choice("Under the item preview", "What the item does, such as healing or an equipment effect.",
                {"balanced", "modern"}, {{"overlay.item_descriptions", true}}),
     }};
-    const SetupGroup fixes{"fixes", "Bug fixes", "", {
-        choice("As released",
-               "Jumping enemies can be left hovering under a low ceiling, and some floor 5 enemy sounds miss their panning.",
-               {"original"}, {{"gameplay.bug_fixes", false}}),
-        choice("Fixed", "Jumping enemies drop back down after hitting a ceiling, and those floor 5 sounds pan as meant.",
-               {"balanced", "modern"}, {{"gameplay.bug_fixes", true}}),
-    }};
-    return {"gameplay", "Gameplay", tiers_intro, {keys, descriptions, fixes}, SetupPageTiers::Offered};
+    return {"gameplay", "Gameplay", tiers_intro, {keys, descriptions}, SetupPageTiers::Offered};
 }
 
 verdite::SetupWelcome welcome_words() {

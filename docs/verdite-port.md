@@ -530,7 +530,7 @@ apart, each label in a row box and its value centred in an option box at X 180, 
   | DISPLAY | FULLSCREEN, RESOLUTION, ASPECT, HUD AT EDGES, FRAME RATE, ANTIALIASING, RUN SETUP |
   | GRAPHICS | WIGGLE, TRUE COLOUR, FILTER, ANISO, PER PIXEL LIGHT, AO |
   | WORLD | FOG, DETAILED MAP, DYNAMIC LIGHT, FLAME GLOW |
-  | GAMEPLAY | CLASSIC MODE, TICK RATE, ENEMY TURN, AUTO KEYS, ITEM TEXT, BUG FIXES |
+  | GAMEPLAY | CLASSIC MODE, TICK RATE, ENEMY TURN, AUTO KEYS, ITEM TEXT |
   | CONTROLS | CONTROLS, PAD BUTTONS, INVERT CAMERA, STICK SENS |
   | SOUND | VOLUME |
 
@@ -539,9 +539,12 @@ apart, each label in a row box and its value centred in an option box at X 180, 
 - **One row per decision.** `port/ext/setting_rows.h` reads and writes several saved keys as one
   choice, for the page, the overlay and Android alike: ANISO (mipmaps, anisotropy), AO (on, quality),
   DYNAMIC LIGHT (lights, shadows), CONTROLS (analog, stick mode, acceleration), ENEMY TURN (auto, speed),
-  BUG FIXES, WIGGLE and, in Fine tuning, Look response. The keys stay, so no file is converted;
+  WIGGLE and, in Fine tuning, Look response. The keys stay, so no file is converted;
   `settings_tidy` settles an old file's mixtures at load. Smoothing has no row: FRAME RATE carries it,
   and Unlimited turns VSync off.
+- **The bug fixes are not a choice** (2026-11-04): the ceiling fall and the sound panning are on, with
+  Classic mode the one thing that turns them off. A settings file's old `fix_*` keys are ignored, so a
+  player who had turned them off is not left without a way back.
 - **Gone, not asked** (2026-11-03): Mouse in menus (on), Left stick moves and Right stick looks (on
   with analog), Walls block light (on), Enemies keep you in sight (above x1), the light, glow, shadow
   and occlusion strengths (100, 100, 70, 100). Their keys are no longer read, so a saved

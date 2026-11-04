@@ -157,7 +157,6 @@ const std::vector<Page> &pages() {
              {ext::enemy_turn_automatic, 1.0, 2.0, 3.0, 4.0}},
             {"gameplay.auto_use_keys", {"AUTO KEYS", "かぎのじどうしよう"}, {}, {}},
             {"overlay.item_descriptions", {"ITEM TEXT", "アイテムのせつめい"}, {}, {}},
-            {"gameplay.bug_fixes", {"BUG FIXES", "バグのしゆうせい"}, {}, {}},
         }});
         made.push_back({"controls", {"CONTROLS", "そうさ"}, {
             {"analog.style", {"CONTROLS", "そうさ"},
