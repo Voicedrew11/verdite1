@@ -40,28 +40,29 @@ def fluted_helm(helm, colour):
     M = 'knight'
     # Skull, back to front: the step of the flute is dark, the comb the player's colour.
     rings = [fluted_skull_ring(*section) for section in
-             ((-146, 66, 1716, 1600), (-112, 118, 1796, 1556), (-40, 130, 1838, 1546), (50, 128, 1828, 1546),
-              (112, 106, 1794, 1570), (146, 76, 1748, 1610))]
+             ((-166, 42, 1690, 1628), (-146, 80, 1742, 1584), (-112, 118, 1796, 1556), (-40, 130, 1838, 1546),
+              (50, 128, 1828, 1546), (112, 106, 1794, 1570), (146, 84, 1762, 1596), (166, 50, 1718, 1630))]
     def skull_mat(k, i):
         if i in (0, 10, 11): return colour
-        return DARK if i in (2, 8) and k < 4 else M   # the flute ends before the forehead
+        return DARK if i in (2, 8) and 1 <= k <= 4 else M   # the flute stops short of each end
     helm.shell(rings, skull_mat, lambda k, i: i, caps=(M, M))
 
     # The neck: flaring at the foot, the nape running on from the skull's back.
     helm.loft([((0, 1528, 0), 116, 142), ((0, 1600, 0), 108, 124)], 8, M, caps=(True, False))
 
     # The bill, out from under the forehead: thin and broad at its end.
-    helm.loft([((0, 1642, 124), 92, 46), ((0, 1630, 170), 70, 30), ((0, 1618, 212), 68, 17),
-               ((0, 1612, 240), 40, 8)], 8, M, axis='z', phase=math.pi / 8)
+    helm.loft([((0, 1642, 136), 92, 46), ((0, 1630, 182), 70, 30), ((0, 1618, 224), 68, 17),
+               ((0, 1612, 252), 40, 8)], 8, M, axis='z', phase=math.pi / 8)
 
-    # Eye holes on the forehead's flat front, seen from ahead; breaths on the bill, seen from above.
-    # Lifted clear of the surface: the bill's faces bulge between their corners.
+    # Breaths on the bill, seen from above, then eye holes on the forehead, seen from ahead: a decal
+    # lands on what is built so far, so these do not land on each other. Lifted clear of the surface:
+    # the faces bulge between their corners.
     forward, up = (0, 0, 1), (0, 1, 0)
     for s in (1, -1):
-        helm.decal([(s * 12, 1700, 400), (s * 32, 1720, 400), (s * 32, 1690, 400), (s * 54, 1706, 400)], DARK, forward)
-        for z in (158, 186):
+        for z in (172, 198):
             helm.decal([(s * 6, 2000, z + 12), (s * 23, 2000, z + 12), (s * 6, 2000, z), (s * 23, 2000, z)], DARK, up, lift=6)
             helm.decal([(s * 31, 2000, z + 12), (s * 52, 2000, z + 12), (s * 31, 2000, z), (s * 52, 2000, z)], DARK, up, lift=6)
+        helm.decal([(s * 12, 1700, 400), (s * 32, 1720, 400), (s * 32, 1690, 400), (s * 54, 1706, 400)], DARK, forward, lift=7)
 
 HELMETS = [great_helm, fluted_helm]
 
