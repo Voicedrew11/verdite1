@@ -47,6 +47,7 @@ struct TitleText {
     std::vector<TitleRowText> rows;
     u32 grid_cells = 0;    // the join and name pages: their first rows are a grid of letters, this many,
     u32 grid_columns = 0;  // this many to a line
+    std::vector<std::string> lines;   // words above the rows, centred, each its own line; an empty one is a gap
     std::string note;      // a line under the rows: the code typed, "CONNECTING", why a join failed
     std::optional<TitleHelmet> helmet;   // the PROFILE page: the helmet and symbol to show turning under the rows
 };

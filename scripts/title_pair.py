@@ -161,10 +161,15 @@ def main():
         a.tap("back")
 
         a.choose("COOP")
-        a.choose("PROFILE")
+        intro = a.title()
+        check("a first time in COOP explains it first", intro["lines"] and [row["text"] for row in intro["rows"]] == ["NEXT"], intro)
+        a.tap("back")
+        check("Back from the explanation is the top page", a.title()["heading"] == "", a.title())
+        a.choose("COOP")
+        a.choose("NEXT")
         rows = a.title()["rows"]
-        check("PROFILE shows the name, colour, helmet and symbol",
-              [(row["text"], row["value"]) for row in rows][1:] == [("COLOUR", "BLUE"), ("HELMET", "GREAT HELM"), ("SYMBOL", "NONE")]
+        check("PROFILE shows the name, colour, helmet and symbol, then DONE",
+              [(row["text"], row["value"]) for row in rows][1:] == [("COLOUR", "BLUE"), ("HELMET", "GREAT HELM"), ("SYMBOL", "NONE"), ("DONE", "")]
               and rows[0]["text"] == "NAME" and rows[0]["value"].startswith("PLAYER"), rows)
         a.choose("NAME")
         for _ in range(len(a.title()["code"])):
@@ -175,10 +180,14 @@ def main():
         a.choose("COLOUR")   # Confirm steps it, as Right does
         rows = a.title()["rows"]
         check("the profile has the new name and the next colour",
-              [row["value"] for row in rows] == ["ALICE", "RED", "GREAT HELM", "NONE"], rows)
+              [row["value"] for row in rows] == ["ALICE", "RED", "GREAT HELM", "NONE", ""], rows)
         kept = a.home / "Verdite" / "Verdite1" / "coop.profile"   # SDL's pref path under XDG_DATA_HOME
         check("the profile is kept", kept.exists() and kept.read_text() == "name=ALICE\ncolour=1\nhelmet=0\nsymbol=0\n")
+        a.choose("DONE")
+        check("DONE goes on to COOP's rows", "JOIN BY CODE" in [row["text"] for row in a.title()["rows"]], a.title())
         a.tap("back")
+        a.choose("COOP")
+        check("the second time goes straight to COOP's rows", "JOIN BY CODE" in [row["text"] for row in a.title()["rows"]], a.title())
         a.choose("SETTINGS")
         rows = a.wait("the co-op settings", a.title, lambda t: t["rows"])["rows"]
         check("SETTINGS shows this player's own", [row["text"] for row in rows] == ["NAME BARS", "PARTY FEED"]
@@ -206,6 +215,9 @@ def main():
         b = Game("b", PORTS[1])
         b.to_title()
         b.choose("COOP")
+        b.choose("NEXT")
+        b.choose("DONE")
+        check("DONE keeps a profile left as it was", (b.home / "Verdite" / "Verdite1" / "coop.profile").exists())
         b.choose("JOIN BY CODE")
         b.run("title type " + code)
         check("the join page shows the code typed", b.title()["code"] == code, b.title())

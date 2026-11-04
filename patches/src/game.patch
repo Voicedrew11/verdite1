@@ -4116,10 +4116,10 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +}
 diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2f5b24cd4fb2044a2d4300aaf1237a10b8ce6a77
+index 0000000000000000000000000000000000000000..93f7e4a123d9e41dce098a6e001a464dcff01282
 --- /dev/null
 +++ b/src/game/menu_title.cpp
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,194 @@
 +// PC extension: the title menu (kf/platform/title.h) over the opening's logo, drawn with the
 +// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a line of words
 +// across the bottom of the picture, with no boxes; the others fill the picture as the menu's pages do, over the logo dimmed.
@@ -4158,6 +4158,7 @@ index 0000000000000000000000000000000000000000..2f5b24cd4fb2044a2d4300aaf1237a10
 +    TITLE_GRID_CELL_STEP = 34,
 +    TITLE_GRID_CELL_GAP = 4,
 +    TITLE_NOTE_Y = 206,
++    TITLE_LINE_STEP = 14,
 +    TITLE_TEXT_INSET = 6,
 +    // A translucent box sprite sits this far up and left of its text's place.
 +    TITLE_BOX_X_OFFSET = 4,
@@ -4268,6 +4269,12 @@ index 0000000000000000000000000000000000000000..2f5b24cd4fb2044a2d4300aaf1237a10
 +        title_draw_box(text.code, (TITLE_SCREEN_WIDTH - width) / 2 + TITLE_BOX_X_OFFSET, y, width, true, language);
 +        y += 2 * TITLE_ROW_STEP;
 +    }
++    for (const std::string &line : text.lines) {
++        title_draw_centred(menu_spell(line, language), 0, TITLE_SCREEN_WIDTH, y, 1.0f);
++        y += TITLE_LINE_STEP;
++    }
++    if (!text.lines.empty())
++        y += TITLE_LINE_STEP;
 +    s32 first = 0;
 +    if (text.grid_columns > 0) {
 +        y = title_draw_grid(text, y, language);

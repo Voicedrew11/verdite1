@@ -134,6 +134,13 @@ std::filesystem::path profile_path() {
     return user_dir() / "coop.profile";
 }
 
+void keep_own_profile() {
+    std::ofstream out(profile_path(), std::ios::binary);
+    out << coop_profile_text(coop.profile);
+    if (!out)
+        std::printf("[coop] cannot keep this player's profile in %s\n", profile_path().string().c_str());
+}
+
 CoopProfile read_own_profile(CoopPlayerId id) {
     std::ifstream in(profile_path(), std::ios::binary);
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -840,10 +847,19 @@ void coop_set_own_profile(const CoopProfile &profile) {
     if (!coop_profile_valid(profile) || profile == coop.profile)
         return;
     coop.profile = profile;
-    std::ofstream out(profile_path(), std::ios::binary);
-    out << coop_profile_text(profile);
-    if (!out)
-        std::printf("[coop] cannot keep this player's profile in %s\n", profile_path().string().c_str());
+    keep_own_profile();
+}
+
+bool coop_own_profile_is_set_up() {
+    std::error_code error;
+    return std::filesystem::exists(profile_path(), error);
+}
+
+void coop_set_up_own_profile(const CoopProfile &profile) {
+    know_self();
+    if (coop_profile_valid(profile))
+        coop.profile = profile;
+    keep_own_profile();
 }
 
 CoopProfile coop_profile_of_peer(std::uint64_t peer) {

@@ -287,6 +287,9 @@ std::string do_title(verdite::AgentArgs args) {
         return verdite::json_error("title [type <text>]");
     }
     const TitleText text = title_text(Language::English);
+    std::string lines;
+    for (const std::string &line : text.lines)
+        lines += (lines.empty() ? "" : ",") + verdite::json_quote(line);
     std::string rows;
     for (const TitleRowText &row : text.rows)
         rows += (rows.empty() ? "" : ",") + std::string("{\"text\":") + verdite::json_quote(row.text) +
@@ -294,7 +297,7 @@ std::string do_title(verdite::AgentArgs args) {
                 ",\"selected\":" + (row.selected ? "true" : "false") + "}";
     return verdite::json_ok("title", std::string(",\"open\":") + (title_is_open() ? "true" : "false") +
         ",\"heading\":" + verdite::json_quote(text.heading) + ",\"code\":" + verdite::json_quote(text.code) +
-        ",\"note\":" + verdite::json_quote(text.note) + ",\"rows\":[" + rows + "]");
+        ",\"lines\":[" + lines + "],\"note\":" + verdite::json_quote(text.note) + ",\"rows\":[" + rows + "]");
 }
 
 // A position in the original 320 x 240 pixels, from "<x> <y>".

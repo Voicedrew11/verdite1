@@ -95,7 +95,7 @@ std::vector<verdite::TitleSave> read_saves() {
 verdite::TitleProfile read_profile() {
     const CoopProfile profile = coop_own_profile();
     return {profile.name, profile.colour, coop_colour_count, profile.helmet, online_player_helmet_count,
-            profile.symbol, online_player_symbol_count};
+            profile.symbol, online_player_symbol_count, coop_own_profile_is_set_up()};
 }
 
 verdite::TitleModState mod_state(const verdite::ModInfo &mod) {
@@ -242,6 +242,10 @@ std::optional<TitleStart> take(const verdite::TitleChoice &choice) {
         coop_set_own_profile({choice.profile.name, static_cast<std::uint8_t>(choice.profile.colour),
             static_cast<std::uint8_t>(choice.profile.helmet), static_cast<std::uint8_t>(choice.profile.symbol)});
         break;
+    case TitleAction::ProfileSetUp:
+        coop_set_up_own_profile({choice.profile.name, static_cast<std::uint8_t>(choice.profile.colour),
+            static_cast<std::uint8_t>(choice.profile.helmet), static_cast<std::uint8_t>(choice.profile.symbol)});
+        break;
     case TitleAction::EnableMod:
         mods_set_enabled(choice.code, true);
         break;
@@ -321,7 +325,18 @@ constexpr Words continue_word{"CONTINUE", "つづきから"}, new_game_word{"NEW
     enter_word{"ENTER", "はいる"}, enabled_word{"SWITCH", "スイッチ"}, off_now_word{"OFF NOW", "いまはオフ"},
     new_word{"NEW", "あたらしい"}, changed_word{"CHANGED", "はんがちがう"},
     other_mods_word{"THIS SAVE WAS MADE WITH OTHER MODS", "べつのかいぞうのセーブです"},
-    coop_mods_word{"YOUR MODS STAY OFF WHILE IN COOP", "マルチプレイではかいぞうはオフです"};
+    coop_mods_word{"YOUR MODS STAY OFF WHILE IN COOP", "マルチプレイではかいぞうはオフです"},
+    next_word{"NEXT", "つぎへ"};
+
+// A player's first time in coop. The menu font has no apostrophe, so it says the game rather than the name.
+constexpr std::array<Words, 6> coop_intro_lines = {{
+    {"COOP IS DIFFERENT FROM", "マルチプレイは ふつうの"},
+    {"THE STANDARD GAME", "ゲームとは ちがいます"},
+    {"", ""},
+    {"IT IS STREAMLINED TO BE MORE", "オンラインで あそびやすいように"},
+    {"CASUAL AND APPROACHABLE", "かんたんで きがるな"},
+    {"FOR ONLINE PLAY", "つくりに なつています"},
+}};
 
 struct Failure {
     std::string_view id;
@@ -441,7 +456,9 @@ std::string row_text(const verdite::TitleRowView &row, std::size_t index, Langua
     case TitleRowKind::ProfileColour: return std::string(colour_word.in(language));
     case TitleRowKind::ProfileHelmet: return std::string(helmet_word.in(language));
     case TitleRowKind::ProfileSymbol: return std::string(symbol_word.in(language));
-    case TitleRowKind::Done: return std::string(done_word.in(language));
+    case TitleRowKind::Done:
+    case TitleRowKind::ProfileDone: return std::string(done_word.in(language));
+    case TitleRowKind::CoopIntroNext: return std::string(next_word.in(language));
     }
     return {};
 }
@@ -480,7 +497,8 @@ std::string heading(const verdite::TitleView &view, Language language) {
     switch (view.page) {
     case TitlePage::Top: return {};
     case TitlePage::Continue: return std::string(load_word.in(language));
-    case TitlePage::Coop: return std::string(coop_word.in(language));
+    case TitlePage::Coop:
+    case TitlePage::CoopIntro: return std::string(coop_word.in(language));
     case TitlePage::Host: return std::string(host_word.in(language));
     case TitlePage::HostCode:
     case TitlePage::JoinCode: return std::string(room_code_word.in(language));
@@ -588,6 +606,9 @@ TitleText title_text(Language language) {
         text.rows.push_back({ext::row_text(row, i, language), ext::row_value(view, row, language), row.enabled, row.selected});
     }
     text.note = ext::note(view, language);
+    if (view.page == verdite::TitlePage::CoopIntro)
+        for (const ext::Words &line : ext::coop_intro_lines)
+            text.lines.emplace_back(line.in(language));
     if (view.page == verdite::TitlePage::HostCode || view.page == verdite::TitlePage::JoinCode)
         text.code = view.code;
     if (view.page == verdite::TitlePage::NameEntry)

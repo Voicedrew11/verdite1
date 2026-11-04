@@ -188,6 +188,10 @@ void coop_keep_leftover_aside();
 // goes to the others from the next room.
 CoopProfile coop_own_profile();
 void coop_set_own_profile(const CoopProfile &profile);
+// Whether this install has kept a profile: without one it is the player's first time in coop.
+bool coop_own_profile_is_set_up();
+// The first setup is done: keeps the profile even if it is still the default.
+void coop_set_up_own_profile(const CoopProfile &profile);
 // The profile of the player on `peer`, as the room's roster has it.
 CoopProfile coop_profile_of_peer(std::uint64_t peer);
 // ---- the title menu (title.cpp) ----
