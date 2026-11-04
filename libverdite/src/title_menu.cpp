@@ -119,7 +119,7 @@ bool name_valid(std::string_view name) {
     return !name.empty() && name.size() <= name_most && std::ranges::all_of(name, is_name_letter);
 }
 
-TitleMenu::TitleMenu(std::uint64_t random_seed) : random_(random_seed) {}
+TitleMenu::TitleMenu(std::uint64_t random_seed, TitleHosting hosting) : random_(random_seed), hosting_(hosting) {}
 
 void TitleMenu::open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile,
                      std::vector<TitleMod> mods) {
@@ -489,7 +489,8 @@ TitleView TitleMenu::view() const {
         }
         break;
     case TitlePage::Coop:
-        rows.push_back(row(TitleRowKind::Host));
+        if (hosting_ == TitleHosting::Offered)
+            rows.push_back(row(TitleRowKind::Host));
         rows.push_back(row(TitleRowKind::JoinCode));
         rows.push_back(row(TitleRowKind::RoomList));
         rows.push_back(row(TitleRowKind::Profile));

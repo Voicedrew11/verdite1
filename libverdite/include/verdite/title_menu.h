@@ -189,10 +189,13 @@ struct TitleChoice {
     int delta = 0;         // StepModSetting: -1 or 1
 };
 
+// Whether this platform may host a world. Refused: CO-OP has no HOST row.
+enum class TitleHosting : std::uint8_t { Offered, Refused };
+
 class TitleMenu {
 public:
     // random_seed draws new rooms' codes.
-    explicit TitleMenu(std::uint64_t random_seed);
+    explicit TitleMenu(std::uint64_t random_seed, TitleHosting hosting = TitleHosting::Offered);
 
     // Starts at the top page, on CONTINUE when a save is used, else on NEW GAME.
     void open(std::vector<TitleSave> saves, std::vector<TitleWorld> worlds, TitleProfile profile,
@@ -254,6 +257,7 @@ private:
     void return_from_waiting();
 
     std::uint64_t random_;
+    TitleHosting hosting_;
     TitlePage page_ = TitlePage::Top;
     TitlePage waiting_from_ = TitlePage::Top;
     std::size_t row_ = 0;

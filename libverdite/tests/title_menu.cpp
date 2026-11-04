@@ -406,6 +406,22 @@ TEST_CASE("rows wrap, and Back returns to the row that led to the page") {
     CHECK(menu.view().page == TitlePage::Top);
 }
 
+TEST_CASE("a platform that may not host has no HOST row, and joins and lists as any other") {
+    TitleMenu menu(1234, TitleHosting::Refused);
+    menu.open(saves(false, false, false), {{"12345678", 3, 2}}, profile(), {});
+    go_to(menu, TitleRowKind::Coop);
+    REQUIRE(menu.view().page == TitlePage::Coop);
+    const auto rows = menu.view().rows;
+    CHECK(std::ranges::none_of(rows, [](const TitleRowView &each) { return each.kind == TitleRowKind::Host; }));
+    CHECK(rows.front().kind == TitleRowKind::JoinCode);
+    CHECK(rows.front().selected);
+    go_to(menu, TitleRowKind::RoomList);
+    CHECK(menu.view().page == TitlePage::RoomList);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Coop);
+    CHECK(menu.view().rows[1].selected);
+}
+
 TEST_CASE("a new private world shows its code before START, and START hosts it unlisted") {
     auto menu = open_menu();
     go_to(menu, TitleRowKind::Coop);
