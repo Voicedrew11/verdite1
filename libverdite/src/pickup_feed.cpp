@@ -33,24 +33,35 @@ void PickupFeed::add(const PickupLine &line, std::uint64_t now_ms) {
     Entry entry{line, now_ms, now_ms};
     if (like != entries_.end()) {
         entry.line.count = add_counts(like->line.count, line.count);
-        entries_.erase(like);
+        drop(like, now_ms);
     }
     entries_.push_back(entry);
     if (entries_.size() > shape_.most_lines)
-        entries_.erase(entries_.begin());
+        drop(entries_.begin(), now_ms);
+}
+
+// The next line becomes the oldest, and its time starts now.
+void PickupFeed::drop(std::vector<Entry>::iterator at, std::uint64_t now_ms) {
+    const bool oldest = at == entries_.begin();
+    entries_.erase(at);
+    if (oldest && !entries_.empty())
+        entries_.front().shown_from_ms = std::max(entries_.front().shown_from_ms, now_ms);
 }
 
 std::vector<PickupShown> PickupFeed::shown(std::uint64_t now_ms) {
     const std::uint64_t gone_ms = std::uint64_t{shape_.shown_ms} + shape_.fade_ms;
-    std::erase_if(entries_, [&](const Entry &entry) { return since(entry.shown_from_ms, now_ms) >= gone_ms; });
+    while (!entries_.empty() && since(entries_.front().shown_from_ms, now_ms) >= gone_ms) {
+        const std::uint64_t left_ms = entries_.front().shown_from_ms + gone_ms;
+        drop(entries_.begin(), left_ms);
+    }
     std::vector<PickupShown> lines;
     lines.reserve(entries_.size());
-    for (const Entry &entry : entries_) {
-        const std::uint64_t elapsed_ms = since(entry.shown_from_ms, now_ms);
-        float opacity = 1.0f;
+    for (const Entry &entry : entries_)
+        lines.push_back({entry.line, 1.0f});
+    if (!entries_.empty()) {
+        const std::uint64_t elapsed_ms = since(entries_.front().shown_from_ms, now_ms);
         if (elapsed_ms > shape_.shown_ms)
-            opacity = 1.0f - static_cast<float>(elapsed_ms - shape_.shown_ms) / static_cast<float>(shape_.fade_ms);
-        lines.push_back({entry.line, opacity});
+            lines.front().opacity = 1.0f - static_cast<float>(elapsed_ms - shape_.shown_ms) / static_cast<float>(shape_.fade_ms);
     }
     return lines;
 }

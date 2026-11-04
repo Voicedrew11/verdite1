@@ -32,8 +32,11 @@ TEST_CASE("the same find within the merge time adds to its line") {
     CHECK(lines[0].line.item == 9);
     CHECK(lines[1].line.item == 7);
     CHECK(lines[1].line.count == 3);
-    // Shown again from the merge: still there after the first add's time is up.
-    CHECK(feed.shown(4900).size() == 1);
+    // The other became the oldest at the merge, so its time runs from then; the merged line waits.
+    CHECK(feed.shown(5599).size() == 2);
+    const auto left = feed.shown(5600);
+    REQUIRE(left.size() == 1);
+    CHECK(left[0].line.item == 7);
 }
 
 TEST_CASE("each merge restarts the merge time, and an old line is not merged into") {
@@ -64,6 +67,63 @@ TEST_CASE("past the most lines the oldest goes first") {
     REQUIRE(lines.size() == 3);
     CHECK(lines[0].line.item == 2);
     CHECK(lines[2].line.item == 4);
+}
+
+TEST_CASE("lines added together leave one at a time") {
+    PickupFeed feed({3, 1000, 100, 0});
+    feed.add(line(1, 1), 0);
+    feed.add(line(1, 2), 0);
+    feed.add(line(1, 3), 0);
+    // Only the oldest fades.
+    auto lines = feed.shown(1050);
+    REQUIRE(lines.size() == 3);
+    CHECK(lines[0].opacity == doctest::Approx(0.5f));
+    CHECK(lines[1].opacity == doctest::Approx(1.0f));
+    // The next one's time starts when the oldest has gone.
+    lines = feed.shown(1100);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].line.item == 2);
+    CHECK(lines[0].opacity == doctest::Approx(1.0f));
+    CHECK(feed.shown(2150)[0].opacity == doctest::Approx(0.5f));
+    REQUIRE(feed.shown(2200).size() == 1);
+    CHECK(feed.shown(2200)[0].line.item == 3);
+    CHECK(feed.shown(3300).empty());
+}
+
+TEST_CASE("a long gap between looks lets every waiting line go") {
+    PickupFeed feed({3, 1000, 100, 0});
+    feed.add(line(1, 1), 0);
+    feed.add(line(1, 2), 0);
+    feed.add(line(1, 3), 0);
+    CHECK(feed.shown(3300).empty());
+}
+
+TEST_CASE("a line added to a full queue replaces the oldest, and the next one's time starts then") {
+    PickupFeed feed({2, 1000, 100, 0});
+    feed.add(line(1, 1), 0);
+    feed.add(line(1, 2), 500);
+    feed.add(line(1, 3), 1050);   // the first was fading; the second has waited past its own time
+    const auto lines = feed.shown(1050);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].line.item == 2);
+    CHECK(lines[0].opacity == doctest::Approx(1.0f));
+    CHECK(lines[1].line.item == 3);
+    CHECK(feed.shown(2049).size() == 2);
+    CHECK(feed.shown(2150).size() == 1);
+}
+
+TEST_CASE("merging the oldest moves it to the end, and the next one's time starts then") {
+    PickupFeed feed({3, 1000, 100, 1500});
+    feed.add(line(1, 1), 0);
+    feed.add(line(1, 2), 0);
+    feed.add(line(1, 1), 1000);
+    const auto lines = feed.shown(1000);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].line.item == 2);
+    CHECK(lines[1].line.item == 1);
+    CHECK(lines[1].line.count == 2);
+    CHECK(feed.shown(2099)[0].line.item == 2);
+    CHECK(feed.shown(2100)[0].line.item == 1);
 }
 
 TEST_CASE("counts stop at their most, and no fade or no lines is no trouble") {
