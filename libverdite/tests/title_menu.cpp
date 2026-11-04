@@ -615,6 +615,31 @@ TEST_CASE("a single helmet is dimmed and does not step") {
     CHECK_FALSE(menu.take_choice().has_value());
 }
 
+TEST_CASE("PROFILE's symbol steps with Left and Right, wrapping, and a single one is dimmed") {
+    TitleMenu menu(1);
+    menu.open({}, {}, {"A", 0, 8, 0, 2, 0, 2}, {});
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::Profile);
+    menu.point(3);
+    REQUIRE(selected(menu) == TitleRowKind::ProfileSymbol);
+    menu.press(TitleInput::Right);
+    CHECK(taken(menu).profile.symbol == 1);
+    menu.press(TitleInput::Right);
+    CHECK(taken(menu).profile.symbol == 0);
+    menu.press(TitleInput::Confirm);
+    CHECK(taken(menu).profile.symbol == 1);
+
+    TitleMenu single(1);
+    single.open({}, {}, {"A", 0, 8, 0, 1}, {});
+    go_to(single, TitleRowKind::Coop);
+    go_to(single, TitleRowKind::Profile);
+    single.point(3);
+    REQUIRE(selected(single) == TitleRowKind::ProfileSymbol);
+    CHECK_FALSE(single.view().rows[3].enabled);
+    single.press(TitleInput::Right);
+    CHECK_FALSE(single.take_choice().has_value());
+}
+
 TEST_CASE("the name page starts from the name, takes letters as capitals, and DONE chooses it") {
     auto menu = open_profile();
     go_to(menu, TitleRowKind::ProfileName);

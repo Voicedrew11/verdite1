@@ -7,11 +7,11 @@
 // CO-OP while a mod is on (mods do not run there), each ask first on a page of their own.
 // CO-OP leads to hosting a world (a new private or public one, or one this
 // machine keeps), joining a room by its code, the service's list of public rooms, and the
-// player's profile: the name, colour and helmet the others in a room see.
+// player's profile: the name, colour, helmet and symbol the others in a room see.
 //
 // Game-agnostic and holding no text of its own: the game draws each page with its own menus and
 // font, naming rows by their kind; the text it is handed (a save's summary, a host's name) is the
-// game's or the service's, drawn as given. A profile's colour and helmet are indexes into the
+// game's or the service's, drawn as given. A profile's colour, helmet and symbol are indexes into the
 // game's own lists.
 //
 // The menu knows no network. A choice is handed to the game once, by take_choice(). A co-op
@@ -52,6 +52,8 @@ struct TitleProfile {
     std::size_t colours = 1;
     std::size_t helmet = 0;      // < helmets
     std::size_t helmets = 1;
+    std::size_t symbol = 0;      // < symbols
+    std::size_t symbols = 1;
 };
 
 // How a mod the save was made with differs from the mods on now.
@@ -114,7 +116,7 @@ enum class TitlePage : std::uint8_t {
     JoinCode,   // the code typed so far, and a grid of the digits with DELETE and JOIN
     RoomList,   // the public rooms
     Waiting,    // joining; Back cancels
-    Profile,    // NAME, COLOUR, HELMET
+    Profile,    // NAME, COLOUR, HELMET, SYMBOL
     NameEntry,  // the name typed so far, and a grid of name_letters with DELETE and DONE
     Mods,       // the game's mods
     ModSettings,   // one mod: its switch, then its settings
@@ -132,7 +134,7 @@ enum class TitleRowKind : std::uint8_t {
     Start,                                         // HostCode
     Letter, Delete, Join,                          // JoinCode: letter
     Room,                                          // RoomList: room
-    ProfileName, ProfileColour, ProfileHelmet,     // Profile: Left and Right step colour and helmet
+    ProfileName, ProfileColour, ProfileHelmet, ProfileSymbol,   // Profile: Left and Right step all but the name
     Done,                                          // NameEntry, after its letters and DELETE
     Mod,                                           // Mods: mod
     ModSwitch, ModSetting,                         // ModSettings: mod; setting. Left and Right step, as Confirm does
@@ -203,7 +205,7 @@ public:
 
     // On the top page Left and Right pick a row (wrapping) and Up and Down do nothing. Elsewhere Up
     // and Down pick a row (wrapping), Left and Right a column on the grid or a step of the colour
-    // or helmet or a mod's setting (wrapping, chosen at once). Confirm takes the row, Back goes up a page (and
+    // or helmet or symbol or a mod's setting (wrapping, chosen at once). Confirm takes the row, Back goes up a page (and
     // on Top does nothing; on NameEntry it leaves the name as it was). DONE chooses the name.
     void press(TitleInput input);
     // A keyboard's digit on the join page, or letter or digit on the name page (lower case taken

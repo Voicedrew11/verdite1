@@ -244,6 +244,8 @@ void TitleMenu::step_profile(int delta) {
         profile_.colour = step_wrapping(profile_.colour, delta, profile_.colours);
     else if (on == TitleRowKind::ProfileHelmet && profile_.helmets > 1)
         profile_.helmet = step_wrapping(profile_.helmet, delta, profile_.helmets);
+    else if (on == TitleRowKind::ProfileSymbol && profile_.symbols > 1)
+        profile_.symbol = step_wrapping(profile_.symbol, delta, profile_.symbols);
     else
         return;
     choose_profile();
@@ -349,7 +351,8 @@ void TitleMenu::confirm() {
         go(TitlePage::NameEntry, std::nullopt);
         break;
     case TitleRowKind::ProfileColour:
-    case TitleRowKind::ProfileHelmet: step_profile(1); break;
+    case TitleRowKind::ProfileHelmet:
+    case TitleRowKind::ProfileSymbol: step_profile(1); break;
     case TitleRowKind::Done:
         profile_.name = code_;
         code_.clear();
@@ -544,6 +547,7 @@ TitleView TitleMenu::view() const {
         rows.push_back(row(TitleRowKind::ProfileName));
         rows.push_back(row(TitleRowKind::ProfileColour, profile_.colours > 1));
         rows.push_back(row(TitleRowKind::ProfileHelmet, profile_.helmets > 1));
+        rows.push_back(row(TitleRowKind::ProfileSymbol, profile_.symbols > 1));
         break;
     case TitlePage::RoomList:
         for (const TitleRoom &room : rooms_) {
