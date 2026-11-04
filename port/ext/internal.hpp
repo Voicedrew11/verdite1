@@ -116,8 +116,9 @@ void online_start();   // joins the room given on the command line, if any
 void online_poll();    // on every host poll: the session's events (our pose goes out from online_update)
 void online_stop();    // leaves the room
 void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
-#ifdef __ANDROID__
-// Points OpenSSL at the phone's root certificates (online_android_roots.cpp), for the service's wss://.
+#ifdef __linux__
+// Points OpenSSL at the system's root certificates, for the service's wss://: online_android_roots.cpp
+// on a phone, online_linux_roots.cpp on a desktop. Windows' OpenSSL reads the system's store itself.
 void online_trust_system_roots();
 #endif
 // Whether this platform may be a room's first, its host: not Android (docs/COOP_PLAN.md, "Fixed").

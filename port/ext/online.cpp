@@ -288,7 +288,7 @@ std::string online_service_url() {
 }
 
 void online_start() {
-#ifdef __ANDROID__
+#ifdef __linux__
     online_trust_system_roots();
 #endif
     if (!start_room.empty())

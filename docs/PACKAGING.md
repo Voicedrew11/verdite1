@@ -27,7 +27,9 @@ once per build folder, and a phone joins rooms but does not host them ([COOP_PLA
 
 - **The AppImage** runs on glibc 2.35 or later and carries `libSDL3.so.0`, the C++ runtime, OpenSSL
   linked in, and bsdtar on `PATH` for the English patch's `.rar` (GNU tar cannot read it). Vulkan's
-  loader and drivers are the host's. The repository is mounted at its own path with git's common
+  loader and drivers are the host's. That OpenSSL looks for root certificates only where the build
+  image's Debian keeps them, so `port/ext/online_linux_roots.cpp` names the file each distribution
+  keeps; without it, online play fails on Fedora with "the server cannot be reached". The repository is mounted at its own path with git's common
   directory beside it, because a worktree's `.git` files name them absolutely. When a player runs it,
   it writes `~/.local/share/applications/verdite1.desktop` and the icon, so it is in the menu, naming
   the file it runs from; it rewrites that entry when the file has moved, and leaves an entry it did

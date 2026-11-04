@@ -311,6 +311,8 @@ if(KF_ONLINE)
   target_link_libraries(kf_ext PRIVATE verdite_online)
   if(ANDROID)
     target_sources(kf_ext PRIVATE port/ext/online_android_roots.cpp)
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(kf_ext PRIVATE port/ext/online_linux_roots.cpp)
   endif()
 endif()
 
