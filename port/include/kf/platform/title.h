@@ -34,6 +34,11 @@ struct TitleRowText {
     bool enabled = true;
     bool selected = false;
 };
+// A helmet as the player's profile has it: online_player_helmet_count's and the colours' indexes.
+struct TitleHelmet {
+    u8 helmet = 0;
+    u8 colour = 0;
+};
 struct TitleText {
     std::string heading;   // the page's title box; empty on the top page
     std::string code;      // a room's code or the player's name, new or typed so far, drawn under the heading
@@ -41,6 +46,7 @@ struct TitleText {
     u32 grid_cells = 0;    // the join and name pages: their first rows are a grid of letters, this many,
     u32 grid_columns = 0;  // this many to a line
     std::string note;      // a line under the rows: the code typed, "CONNECTING", why a join failed
+    std::optional<TitleHelmet> helmet;   // the PROFILE page: the helmet to show turning under the rows
 };
 TitleText title_text(Language language);
 

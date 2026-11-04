@@ -4073,15 +4073,16 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +}
 diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..956c9b24c94764521ef82c869cca0a81cf9e7493
+index 0000000000000000000000000000000000000000..a88db2a13c0200f41db8c7449a87b7cba2dcb738
 --- /dev/null
 +++ b/src/game/menu_title.cpp
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,185 @@
 +// PC extension: the title menu (kf/platform/title.h) over the opening's logo, drawn with the
 +// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a line of words
 +// across the bottom of the picture, with no boxes; the others fill the picture as the menu's pages do, over the logo dimmed.
 +#include <kf/platform/prelude.h>
 +#include <kf/game/menu.h>
++#include <kf/game/render.h>
 +#include <kf/game/menu_text.h>
 +#include <kf/game/resources.h>
 +#include <kf/platform/menu_pointer.h>
@@ -4257,6 +4258,8 @@ index 0000000000000000000000000000000000000000..956c9b24c94764521ef82c869cca0a81
 +        title_draw_page(text, language);
 +    if (!text.note.empty())
 +        title_draw_centred(menu_spell(text.note, language), 0, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y, 1.0f);
++    if (text.helmet)
++        render_title_helmet(text.helmet->helmet, text.helmet->colour);
 +    return top;
 +}
 diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp
@@ -4399,10 +4402,10 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f63ee4be21c93bdaa22a20a2a1e8d46665bc167f
+index 0000000000000000000000000000000000000000..190e714d8f0d6fa56ca3a4cad0dfb19cf000d0ce
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,602 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
 +// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
@@ -4792,6 +4795,52 @@ index 0000000000000000000000000000000000000000..f63ee4be21c93bdaa22a20a2a1e8d466
 +        context.current_vertices = vertices;
 +    tmd_project_vertices(static_cast<s32>(object.vertex_count), &composed, game_graphics_runtime.render_state.projection);
 +    render_enqueue_tmd(object_index, 0, &light);
++}
++
++// One turn in this time, by the clock: the title's loop runs at the display's rate. Its middle is on
++// the view's axis, which is moved down the screen, so it swells evenly as the beak comes round.
++static constexpr std::uint64_t TITLE_HELMET_TURN_NS = 8'000'000'000;
++enum {
++    TITLE_HELMET_SCREEN_Y = 170,
++    TITLE_HELMET_TRANSLATION_Y = 157,
++    TITLE_HELMET_TRANSLATION_Z = 680,
++    TITLE_HELMET_DEPTH_BIAS = 1000,
++    TITLE_HELMET_AMBIENT = 64
++};
++
++void render_title_helmet(u8 helmet, u8 colour)
++{
++    const auto painted = kf::online_player_title_tmd_in(colour);
++    auto context = tmd_context();
++    context.current_tmd = tmd_resource_view(painted.data(), painted.size());
++    const u16 object_index = kf::online_player_model_helmet_object(helmet < kf::online_player_helmet_count ? helmet : 0);
++    const auto object = tmd_read_object(context, object_index);
++    tmd_select_object_vertices(context, object_index);
++
++    const auto turn_ns = kf::host_clock_ns() % TITLE_HELMET_TURN_NS;
++    const SVECTOR rotation = {0, static_cast<s16>(turn_ns * 4096 / TITLE_HELMET_TURN_NS), 0, 0};
++    MATRIX model;
++    kf::matrix_set_rotation_xyz(rotation, model);
++    model.t[0] = 0;
++    model.t[1] = TITLE_HELMET_TRANSLATION_Y;
++    model.t[2] = TITLE_HELMET_TRANSLATION_Z;
++
++    // The menu's light on an item (menu_preview_light_source): fixed in the view as the helmet turns.
++    constexpr s16 LIT = -KF_FIXED12_ONE;
++    const MATRIX light_source = {{{{{LIT, LIT, LIT}}, {{LIT, LIT, LIT}}, {{0, 0, 0}}}}, {}};
++    MATRIX light;
++    kf::matrix_multiply_rotation(light_source, model, light);
++
++    // The game has set no lighting of its own yet here, or left a floor's.
++    auto &lighting = game_graphics_runtime.render_state.lighting;
++    const auto saved_lighting = lighting;
++    lighting_set_active_color_matrix(KF_GAME_COLOR_DEFAULT);
++    lighting.ambient = {TITLE_HELMET_AMBIENT, TITLE_HELMET_AMBIENT, TITLE_HELMET_AMBIENT};
++    kf::Projection projection;
++    projection.center_y = TITLE_HELMET_SCREEN_Y;
++    tmd_project_vertices(static_cast<s32>(object.vertex_count), &model, projection);
++    render_enqueue_tmd(object_index, TITLE_HELMET_DEPTH_BIAS, &light);
++    lighting = saved_lighting;
 +}
 +
 +static VECTOR online_player_offset(const MATRIX &rotation, const SVECTOR &to, const SVECTOR &from)
@@ -6816,7 +6865,7 @@ index a89ed01864d01ed77774c0159d4d4234cf179f4e..8d8e3c96ce3edee16b16d43a66b184ce
      return resource_file_try_load_allocated(memory_arena, destination, item_model_files[index].path.data(), loaded_size);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274630c4bd5 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..7a4bfe8df90b27471a786cfd686c8958b8e18d87 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
 @@ -2,6 +2,8 @@
@@ -6828,11 +6877,12 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274
  #include <kf/game/player.h>
  #include <kf/game/render.h>
  #include <kf/game/resources.h>
-@@ -9,11 +11,14 @@
+@@ -9,11 +11,15 @@
  #include <kf/lib/map.h>
  #include <kf/lib/null.h>
  #include <kf/lib/resources.h>
 +#include <kf/platform/mod_events.h>
++#include <kf/platform/online_players.h>
 +#include <kf/renderer/renderer.h>
  
  #include <array>
@@ -6843,7 +6893,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274
  
  enum {
      MAP_VARIANT_ASSET_BUFFER_BYTES = 0x5a000,
-@@ -40,6 +45,17 @@ KfMapCollisionGrid map_collision_grid;
+@@ -40,6 +46,17 @@ KfMapCollisionGrid map_collision_grid;
  KfMapAttributeGrid map_cell_attribute_grid;
  
  namespace {
@@ -6861,7 +6911,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274
  std::array<kf::ByteBuffer, 2> language_images;
  std::optional<kf::Language> displayed_language;
  
-@@ -61,7 +77,7 @@ bool show_text_language(kf::Language language)
+@@ -61,7 +78,7 @@ bool show_text_language(kf::Language language)
          return false;
      const auto &before = language_images[static_cast<std::size_t>(previous)];
      const auto &after = language_images[static_cast<std::size_t>(language)];
@@ -6870,7 +6920,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274
              before.data(), before.size(), after.data(), after.size()))
          kf::host_fail("Cannot replace language graphics.");
      displayed_language = language;
-@@ -69,6 +85,66 @@ bool show_text_language(kf::Language language)
+@@ -69,6 +86,69 @@ bool show_text_language(kf::Language language)
  }
  }
  
@@ -6887,7 +6937,10 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274
 +        {0, MENU_TITLE_PALETTES_Y, MENU_TITLE_PALETTES_WIDTH, MENU_TITLE_PALETTES_HEIGHT},
 +    }};
 +    const auto &images = language_images[static_cast<std::size_t>(language)];
-+    return kf::texture_store_upload_tim_within(&kf::host_textures(), images.data(), images.size(), menu_areas);
++    return kf::texture_store_upload_tim_within(&kf::host_textures(), images.data(), images.size(), menu_areas)
++        // The PROFILE page's helmet: its metal's own pages overlap the logo.
++        && kf::texture_store_upload_tim_moved(&kf::host_textures(), images.data(), images.size(),
++            kf::online_player_title_texture_moves());
 +}
 +
 +namespace {
@@ -6937,7 +6990,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..d97afeaecd00bdd58d6ec3e9b00c4274
  kf::Language game_text_language()
  {
      return displayed_language.value_or(kf::game_language());
-@@ -130,20 +206,21 @@ void common_resources_load(void)
+@@ -130,20 +210,21 @@ void common_resources_load(void)
          resource_chunk_data<KfMagicTable>(resource_chunk_view(stream, resource_end)));
      stream = resource_stream_next(stream, resource_end);
      // The original copy includes the next chunk's header and 148 growth bytes.

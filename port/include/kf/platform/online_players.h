@@ -5,6 +5,7 @@
 // (docs/PLAYER_MODEL.md).
 #include <kf/lib/geometry_types.h>
 #include <kf/lib/types.h>
+#include <kf/renderer/textures.h>
 
 #include <cstddef>
 #include <span>
@@ -94,6 +95,14 @@ std::span<const u32> online_player_model_colour_offsets();
 // is the first), made the first time it is asked for and kept, since the renderer reads it until
 // the frame is drawn.
 std::span<const u8> online_player_tmd_in(u8 colour);
+// Where the TMD's textured primitives hold their texture page.
+std::span<const u32> online_player_model_page_offsets();
+
+// The title's PROFILE page shows the helmet, but the opening's logo overlaps the metal's texture
+// page. So the title puts the metal the helmets use elsewhere in the texture store, as these moves
+// say, and draws from a copy of the TMD that looks for it there, made like online_player_tmd_in's.
+std::span<const TextureMove> online_player_title_texture_moves();
+std::span<const u8> online_player_title_tmd_in(u8 colour);
 }
 
 #endif // KF_PLATFORM_ONLINE_PLAYERS_H

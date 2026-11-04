@@ -58,8 +58,8 @@ bands and crest are in the player's colour, to tell players apart.
 
 - **The colour** is the player's profile's ([COOP_PLAN.md](COOP_PLAN.md), "The profile"). Those
   faces are flat-coloured primitives written in the first colour (`PLAYER` in `body.py`), and the
-  model lists where each holds its R, G, B (152 of them); `online_player_tmd_in` paints a copy
-  of the TMD per colour the first time one is drawn, 34 KB each, 8 at most.
+  model lists where each holds its R, G, B (155 of them); `online_player_tmd_in` paints a copy
+  of the TMD per colour the first time one is drawn, 33 KB each, 8 at most.
 - **The helmet** is a TMD object of its own after the parts (`helmets()` in `knight.py`, in
   `online_player_helmet_count`'s order), its vertices relative to the head's pivot, drawn with
   the head; the head keeps only the mail coif. A new helmet is an entry at the end of `knight.py`'s
@@ -69,13 +69,20 @@ bands and crest are in the player's colour, to tell players apart.
   up beside floor 2's knight's head, then in the game's depth order, then on the whole knight. The
   metal's projection box is a constant (`body.py`), so a new helmet moves no texture on the others.
   - **Great helm** (68 vertices): a T visor and the crest.
-  - **Fluted helm** (164 vertices, after Demon's Souls'): a skull ribbed front to back, whose ribs
-    make concentric arcs from the side, the steps between them dark and the comb in the player's
-    colour, as the game's own knight has its fin; a brow with a middle peak and flared temples;
-    two dark crescents for eyes; a visor drawn out to a beak in three tiers, the undercuts between
-    them dark for the breaths, its cheeks in the gauntlets' darker metal, slanting up to the hinge
-    so the piece reads apart from the skull. The game's models paint such detail as polygons and
-    leave out what would be holes, so the reference's rosette and pierced windows are left out.
+  - **Fluted helm** (165 vertices, after Demon's Souls'): a dome with a dark-stepped flute
+    down each side and a comb in the player's colour, a rounded forehead running down into a short
+    duckbill, pinched behind a broad flat end, and eye holes and breaths painted on as flat quads
+    (`Part.decal`). A first, fuller version (brow, dark eye crescents, a three-tier visor, cheek
+    plates) read as sunglasses from the front, so all that was taken out.
+
+## The helmet on the title's PROFILE page
+
+The PROFILE page shows the chosen helmet in the player's colour, turning once in 8 seconds under the
+rows (`render_title_helmet`, called from `menu_title_draw`), within x 84 to 236 and y 120 to 229 of
+the 320 by 240 screen for the fluted helm through a whole turn, lit by the menu's item light. The logo (320, 256 to 640, 496) overlaps page 151, so `menu_title_prepare` copies only the metal
+square the helmets use, as `online_player_title_texture_moves` lists, to x 160, y 129, which no TIM
+on the disc touches, and the helmet is drawn from a copy of the TMD with its page changed
+(`online_player_title_tmd_in`). A new helmet using another material adds its square there.
 
 ## The weapon
 
@@ -189,7 +196,7 @@ with the forearm bent 12 degrees, and the weapon arm holds its rest.
 - The head bends about the neck by the player's pitch, so others see where they look up or
   down; held to 60 degrees, a neck's reach, though the look limit allows 85.
 - A remote player's weapon file is loaded the first time someone holds it (16 at most, about
-  25 KB each) and its hold found once; through a swing it is sampled into the morph scratch as the
+  33 KB each) and its hold found once; through a swing it is sampled into the morph scratch as the
   game samples its own, for the three followed vertices. A player with no weapon keeps the knight's
   own hand.
 - Checked 2026-10-27 with two headless instances in a room at 15 updates a second: after the

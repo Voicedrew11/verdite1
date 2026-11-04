@@ -42,6 +42,26 @@ TEST_CASE("a painted knight differs from the model only in its player's-colour b
     CHECK(online_player_tmd_in(ext::coop_colour_count).data() == online_player_tmd_in(0).data());
 }
 
+TEST_CASE("the title's knight differs from the painted one only in the pages the moves fill") {
+    const auto offsets = online_player_model_page_offsets();
+    REQUIRE_FALSE(offsets.empty());
+    const auto painted = online_player_tmd_in(2);
+    const auto title = online_player_title_tmd_in(2);
+    REQUIRE(title.size() == painted.size());
+    for (const u32 offset : offsets) {
+        REQUIRE(offset + 2 <= title.size());
+        CHECK(painted[offset + 1] == 0);
+        CHECK((painted[offset] == 142 || painted[offset] == 151));
+        CHECK(title[offset] == (painted[offset] == 151 ? 130 : painted[offset]));
+    }
+    for (std::size_t i = 0; i < title.size(); ++i)
+        if (title[i] != painted[i])
+            CHECK(std::ranges::find_if(offsets, [i](u32 o) { return i == o; }) != offsets.end());
+    // An 8-bit page at x 128, y 0: the metal lands inside it, off the logo's area.
+    const auto moves = online_player_title_texture_moves();
+    CHECK((moves[0].to_x >= 128 && moves[0].to_x + moves[0].from.width <= 256));
+}
+
 TEST_CASE("every helmet is an object after the parts") {
     for (u8 helmet = 0; helmet < online_player_helmet_count; ++helmet)
         CHECK(online_player_model_helmet_object(helmet) == online_player_part_count + helmet);

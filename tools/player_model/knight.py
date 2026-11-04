@@ -25,56 +25,43 @@ def mirrored(right):
     return list(right) + left
 
 def fluted_skull_ring(z, width, top, bottom):
-    """One section of the fluted helm's skull, across the head at z: a comb, then three flutes
-    each stepping out over the next, down to the cheek."""
+    """One section of the fluted helm's skull, across the head at z: a comb, one flute stepping
+    out over the side, down to the cheek."""
     spring = 1660
     def on_dome(degrees, out):
         a = math.radians(degrees)
         return (width * out * math.sin(a), spring + (top - spring) * out * math.cos(a), z)
-    return mirrored([on_dome(6, 1.05), on_dome(9, 0.99), on_dome(32, 1.03), on_dome(37, 0.97),
-                     on_dome(60, 1.03), on_dome(65, 0.97), on_dome(92, 1.02), (width * 0.86, bottom, z)])
+    return mirrored([on_dome(6, 1.05), on_dome(9, 0.99), on_dome(46, 1.03), on_dome(51, 0.97),
+                     on_dome(92, 1.0), (width * 0.86, bottom, z)])
 
 def fluted_helm(helm, colour):
-    """The fluted helm: a skull ribbed front to back, a flame-edged brow, and a visor drawn out to a
-    beak in three tiers, the dark undercuts between them its breaths."""
+    """The fluted helm, down to what names it: a dome with a flute down each side, a rounded forehead
+    running down into a short duckbill, and eye holes and breaths painted on."""
     M = 'knight'
-    # Skull, back to front: the steps between the flutes are dark, drawing the helm's concentric
-    # arcs from the side; the comb is the player's colour, as the game's own knight has a fin.
+    # Skull, back to front: the step of the flute is dark, the comb the player's colour.
     rings = [fluted_skull_ring(*section) for section in
-             ((-146, 66, 1716, 1600), (-112, 118, 1796, 1556), (-40, 130, 1838, 1546),
-              (50, 128, 1828, 1546), (118, 100, 1800, 1580))]
+             ((-146, 66, 1716, 1600), (-112, 118, 1796, 1556), (-40, 130, 1838, 1546), (50, 128, 1828, 1546),
+              (112, 106, 1794, 1570), (146, 76, 1748, 1610))]
     def skull_mat(k, i):
-        if i in (0, 14, 15): return colour
-        return DARK if i in (2, 4, 10, 12) else M
-    helm.shell(rings, skull_mat, lambda k, i: i, caps=(M, DARK))
+        if i in (0, 10, 11): return colour
+        return DARK if i in (2, 8) and k < 4 else M   # the flute ends before the forehead
+    helm.shell(rings, skull_mat, lambda k, i: i, caps=(M, M))
 
     # The neck: flaring at the foot, the nape running on from the skull's back.
-    helm.loft([((0, 1528, 26), 118, 156), ((0, 1600, 16), 108, 130)], 8, M, caps=(True, False))
+    helm.loft([((0, 1528, 0), 116, 142), ((0, 1600, 0), 108, 124)], 8, M, caps=(True, False))
 
-    # The brow: a plate over the skull's front, peaked in the middle, flaring at the temples.
-    columns = ((0, 132), (56, 122), (104, 80), (128, 26))
-    brow_low = (1726, 1756, 1738, 1722)
-    brow_high = (1812, 1782, 1776, 1792)
-    helm.shell([mirrored([(x, y, z) for (x, z), y in zip(columns, heights)]) for heights in (brow_low, brow_high)],
-               lambda k, i: M, lambda k, i: i)
+    # The bill, out from under the forehead: thin and broad at its end.
+    helm.loft([((0, 1642, 124), 92, 46), ((0, 1630, 170), 70, 30), ((0, 1618, 212), 68, 17),
+               ((0, 1612, 240), 40, 8)], 8, M, axis='z', phase=math.pi / 8)
 
-    # The visor, chin to rim: each level's beak (z in the middle), then the sides fall back to the
-    # hinge. The faces between the levels marked dark are the undercuts: the breaths.
-    levels = ((1548, 160, 0.70), (1586, 196, 0.90), (1598, 172, 0.90), (1628, 226, 0.96),
-              (1640, 200, 0.96), (1672, 262, 1.0), (1692, 150, 1.0))
-    breaths = {1, 3}
-    def visor_ring(y, tip, wide):
-        face = 124   # just before the skull's dark front
-        rim = y >= 1690
-        up = (y - 1548) / (1692 - 1548)   # the cheek's back edge slants up from the chin to the hinge
-        return mirrored([(0, y + (26 if rim else 0), tip - (8 if rim else 0)),
-                         (54 * wide, y - (12 if rim else 0), face + (tip - face) * 0.52),
-                         (108 * wide, y, face + (tip - face) * 0.16),
-                         (126 + 22 * up, y + (54 if rim else 0), 104 - 112 * up)])
-    def visor_mat(k, i):
-        if i in (2, 3, 4): return 'plate'   # the cheeks, a darker metal, set the visor off the skull
-        return DARK if k in breaths else M
-    helm.shell([visor_ring(*level) for level in levels], visor_mat, lambda k, i: (k, i), caps=(M, M))
+    # Eye holes on the forehead's flat front, seen from ahead; breaths on the bill, seen from above.
+    # Lifted clear of the surface: the bill's faces bulge between their corners.
+    forward, up = (0, 0, 1), (0, 1, 0)
+    for s in (1, -1):
+        helm.decal([(s * 12, 1700, 400), (s * 32, 1720, 400), (s * 32, 1690, 400), (s * 54, 1706, 400)], DARK, forward)
+        for z in (158, 186):
+            helm.decal([(s * 6, 2000, z + 12), (s * 23, 2000, z + 12), (s * 6, 2000, z), (s * 23, 2000, z)], DARK, up, lift=6)
+            helm.decal([(s * 31, 2000, z + 12), (s * 52, 2000, z + 12), (s * 31, 2000, z), (s * 52, 2000, z)], DARK, up, lift=6)
 
 HELMETS = [great_helm, fluted_helm]
 

@@ -112,6 +112,33 @@ class Part:
                 f = [f[1], f[0], f[3], f[2]] if len(f) == 4 else [f[0], f[2], f[1]]
             self.faces.append((f, m, g))
 
+    def surface_at(self, origin, axis):
+        """Where a ray from origin along -axis (a unit vector) first meets this part's faces."""
+        best = None
+        for ids, _, _ in self.faces:
+            P = [self.verts[i] for i in ids]
+            for a, b, c in [(P[0], P[1], P[2])] + ([(P[1], P[3], P[2])] if len(P) == 4 else []):
+                n = np.cross(b - a, c - a)
+                facing = np.dot(n, axis)
+                if abs(facing) < 1e-9: continue
+                t = np.dot(n, origin - a) / facing
+                hit = origin - axis * t
+                inside = (np.dot(np.cross(b - a, hit - a), n) >= 0 and np.dot(np.cross(c - b, hit - b), n) >= 0
+                          and np.dot(np.cross(a - c, hit - c), n) >= 0)
+                if inside and t >= 0 and (best is None or t < best[0]):
+                    best = (t, hit)
+        if best is None:
+            raise ValueError(f'nothing under {origin} along {axis}')
+        return best[1]
+
+    def decal(self, corners, mat, axis, lift=3):
+        """Detail painted as the game's models paint it: one flat quad on the faces built so far.
+        corners are outside the surface in strip order, dropped onto it along -axis, then lifted."""
+        axis = np.array(axis, float)
+        ids = [self.vert(self.surface_at(np.array(c, float), axis) + axis * lift) for c in corners]
+        inside = np.mean([self.verts[i] for i in ids], axis=0) - axis * 10
+        self.face(ids, mat, inside, self.group())
+
     def box(self, lo, hi, mat):
         x0, y0, z0 = lo; x1, y1, z1 = hi
         v = [self.vert((x, y, z)) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
@@ -182,11 +209,12 @@ def build_tmd(parts):
     return build_tmd_with_colours(parts)[0]
 
 def write_tmd(objects):
-    """The TMD, and the offsets of the R, G, B of each primitive in the player's colour."""
+    """The TMD, the offsets of the R, G, B of each primitive in the player's colour, and of the
+    texture page of each textured one."""
     header = 12
     table_size = 28 * len(objects)
     blobs, table, cursor = [], b'', table_size
-    colours = []
+    colours, pages = [], []
     for verts, normals, prims in objects:
         vb = b''.join(struct.pack('<4h', *v, 0) for v in verts)
         nb = b''.join(struct.pack('<4h', *n, 0) for n in normals)
@@ -197,6 +225,7 @@ def write_tmd(objects):
             if p[0] == 'tex':
                 uv, tpage, clut = p[3], p[4], p[5]
                 mode = 0x3c if n == 4 else 0x34
+                pages.append(header + cursor + len(vb) + len(nb) + len(pb) + 10)
                 body = b''.join(struct.pack('<BBH', uv[i][0], uv[i][1], clut if i == 0 else tpage if i == 1 else 0) for i in range(n))
             else:
                 mode = 0x38 if n == 4 else 0x30
@@ -209,4 +238,4 @@ def write_tmd(objects):
                              cursor + len(vb) + len(nb), len(prims), 0)
         cursor += len(vb) + len(nb) + len(pb)
         blobs += [vb, nb, pb]
-    return struct.pack('<3I', 0x41, 0, len(objects)) + table + b''.join(blobs), colours
+    return struct.pack('<3I', 0x41, 0, len(objects)) + table + b''.join(blobs), colours, pages

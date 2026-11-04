@@ -587,6 +587,8 @@ TitleText title_text(Language language) {
         text.code = view.code;
     if (view.page == verdite::TitlePage::NameEntry)
         text.code = view.code;
+    if (view.page == verdite::TitlePage::Profile)
+        text.helmet = TitleHelmet{static_cast<u8>(view.profile.helmet), static_cast<u8>(view.profile.colour)};
     return text;
 }
 
