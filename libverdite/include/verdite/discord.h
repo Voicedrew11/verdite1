@@ -33,10 +33,12 @@ bool discord_start(const DiscordConfig &config);
 // counting value does not flood Discord. Lines are clipped to Discord's 128
 // characters.
 void discord_show(const DiscordActivity &activity);
-// Takes the presence down, keeping the connection.
+// Takes the presence down, keeping the connection, 1.5 s after the last
+// activity at the soonest, so a client still looking that one up cannot undo it.
 void discord_clear();
-// Takes the presence down without waiting long for Discord, closes the
-// connection and joins the thread; for exit.
+// Takes the presence down as discord_clear does, without waiting for Discord's
+// reply, closes the connection and joins the thread; for exit. Blocks for up
+// to 1.5 s when an activity has just gone out.
 void discord_stop();
 
 } // namespace verdite

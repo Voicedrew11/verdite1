@@ -290,12 +290,35 @@ TEST_CASE("Discord hanging up is followed by a reconnect and the latest activity
     discord_stop();
 }
 
-TEST_CASE("stopping takes the presence down") {
+TEST_CASE("stopping takes the presence down, after the client has had time with the last activity") {
     FakeDiscord discord;
     REQUIRE(discord_start({"1234", "TEST"}));
     discord_show(activity("Level 1", "HP 1"));
     REQUIRE(discord.wait_for_count(2));
+    const auto shown = std::chrono::steady_clock::now();
     discord_stop();
     REQUIRE(discord.wait_for_count(3));
+    CHECK(std::chrono::steady_clock::now() - shown >= 1400ms);
     CHECK_FALSE(contains(discord.frames()[2].payload, "activity"));
+}
+
+TEST_CASE("a clear waits for the client to finish with the last activity, and a new one cancels it") {
+    FakeDiscord discord;
+    REQUIRE(discord_start({"1234", "TEST"}));
+    discord_show(activity("Level 1", "HP 1"));
+    REQUIRE(discord.wait_for_count(2));
+    const auto shown = std::chrono::steady_clock::now();
+    discord_clear();
+    REQUIRE(discord.wait_for_count(3));
+    CHECK(std::chrono::steady_clock::now() - shown >= 1400ms);
+    CHECK_FALSE(contains(discord.frames()[2].payload, "activity"));
+
+    discord_show(activity("Level 2", "HP 1"));
+    REQUIRE(discord.wait_for_count(4));
+    discord_clear();
+    std::this_thread::sleep_for(100ms);
+    discord_show(activity("Level 3", "HP 1"));
+    REQUIRE(discord.wait_for_count(5));
+    CHECK(contains(discord.frames()[4].payload, R"("details":"Level 3")"));
+    discord_stop();
 }

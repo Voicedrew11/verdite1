@@ -48,6 +48,10 @@ constexpr auto io_timeout = 2s;
 constexpr auto poll_period = 50ms;
 constexpr auto headline_gap = 50ms;           // a new first line
 constexpr auto detail_gap = 250ms;            // the second line alone
+// Clients on arRPC (Vesktop, Equibop) look an activity up over the network before showing it, but
+// show a clear at once. A clear that overtakes the lookup is undone, and the presence stays until
+// the client restarts, so a clear waits this long after the last activity.
+constexpr auto clear_settle = 1500ms;
 constexpr auto reconnect_min = 2s;
 constexpr auto reconnect_max = 30s;
 constexpr std::size_t max_line_chars = 128;   // Discord's limit, in characters
@@ -400,7 +404,9 @@ bool reconnect(Link &link, Clock::time_point now) {
 }
 
 Clock::duration send_gap(const std::optional<DiscordActivity> &shown, const std::optional<DiscordActivity> &wanted) {
-    return shown && wanted && shown->details == wanted->details ? detail_gap : headline_gap;
+    if (!wanted)
+        return clear_settle;
+    return shown && shown->details == wanted->details ? detail_gap : headline_gap;
 }
 
 // On the publisher thread.
@@ -454,8 +460,11 @@ void run() {
         }
         step(link, wanted);
     }
+    if (!link.pipe || !link.shown)
+        return;
+    std::this_thread::sleep_until(link.last_send + clear_settle);
     // The process is going away: no waiting for the reply.
-    if (link.pipe && link.shown && !write_frame(*link.pipe, Op::Frame, set_activity(std::nullopt, ++link.nonce)))
+    if (!write_frame(*link.pipe, Op::Frame, set_activity(std::nullopt, ++link.nonce)))
         log("cannot clear the presence on exit");
 }
 
