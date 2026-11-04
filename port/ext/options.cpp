@@ -728,8 +728,8 @@ OptionSection multiplayer_own() {
                "The lines at the side of the picture saying who in the party found, bought, sold or used what.",
                s.pickup_feed, store_only),
         toggle("online.messages", "Messages",
-               "Messages other players left on the ground, and leaving your own (F1, Leave a message). "
-               "Connects to the Verdite online service while you play.",
+               "Messages other players left on the ground, and leaving your own with the Message Stone. "
+               "Connects to the Verdite online service while you play. Always on in a coop room.",
                s.online_messages, store_only),
     }};
 }

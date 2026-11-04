@@ -627,7 +627,8 @@ option table); and on the title, COOP, SETTINGS. Settings.json's `online` keys.
 | host | REVIVE WAIT | 10, 30 or 60 seconds: the most a down player waits beside a fight (it was 30) |
 | host | guests' rows | SEND AWAY for each guest in the room |
 
-- **Messages on the ground** are not a room's, so their row stays in F1 alone, as before.
+- **Messages on the ground** are on for everyone in a coop room, whatever their own row says, so all have
+  the Message Stone. Its row stays in F1, for playing alone.
 - **What only the host sees:** YOUR ROOM, MULTIPLAYER's second page, only while `coop_hosting()`; in
   F1, a section shown only then. On the title, before any room exists, HOST, ROOM SETTINGS has the first three.
 - **The rules travel:** `CoopRules` (tick rate, revive wait) from the host, after its welcome and
@@ -953,10 +954,10 @@ walls are fixed (Death, Multiplayer settings). So are the host's crown, the comp
 
 - **Player messages:** in coop, everyone should see the same ones. Today each player draws their
   own sample (MESSAGES_PLAN.md, "The fraction a player sees").
-- **The Moonstone:** not everyone had it when the group played coop. Cause unconfirmed. The pack
-  stayed in step in every headless test (gives, joins, rejoins, wipes), though real chest and floor
-  pickups were not driven. A lead: the Message Stone wears the Moonstone's model and is offered only
-  to a player whose Messages setting is on (off by default), so it would differ per player.
+- **The Moonstone:** not everyone had it when the group played coop. Most likely this was the Message
+  Stone, which wears its model and was offered only to a player with Messages on; the real one is a gem
+  to sell and is never in the Use list. A room now has messages on for everyone. Not confirmed with the
+  other players' settings, and real chest and floor pickups are still not driven by any coop test.
 
 ## Questions
 
@@ -1149,3 +1150,4 @@ walls are fixed (Death, Multiplayer settings). So are the host's crown, the comp
   its feed, since its game already says so.
 - 2026-11-04: the user's notes from an online test (To do, from the online test).
 - 2026-11-04: a first time in coop (The profile); the crown and the compass's dots (Where the others are).
+- 2026-11-04: messages on the ground are on for everyone in a coop room, so all have the Message Stone (Multiplayer settings).

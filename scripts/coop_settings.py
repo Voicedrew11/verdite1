@@ -108,6 +108,11 @@ def main():
     state = b.wait("the host's revive wait", lambda s: s["reviveWaitS"] == 10)
     check("a guest follows the host's revive wait", state["reviveWaitS"] == 10)
 
+    # Neither has turned Messages on: a room has them on regardless.
+    a.wait("the host's Message Stone", lambda s: s["messageStone"])
+    b.wait("the guest's Message Stone", lambda s: s["messageStone"])
+    check("everyone in a room is offered the Message Stone", True)
+
     # A guest arrives on the host's cell, too near for a bar, so the host steps to wherever the guest looks.
     x, z = b.coop()["cell"]
     drawn = 0

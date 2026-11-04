@@ -18,7 +18,7 @@ sees only a fraction of a floor's messages.
 | in the world | a **mark on the cell's floor**; facing it and pressing action shows the text in the game's message box, with a choice to rate it good |
 | lifetime | **permanent until replaced**: a player has at most **10** out; an 11th retires their oldest. Ratings change only how often one is shown |
 | vocabulary | **the disc's item names** (both languages, no translation) **plus a hand-written list** (directions, features, actions, enemies, people), which we translate |
-| writing | **the Message Stone**, an item in the Use Item list while messages are on and a floor is entered; using it opens a menu in the game's style, and the message is placed on the cell the player stands on, facing where they look |
+| writing | **the Message Stone**, an item in the Use Item list while messages are on (always, in a coop room) and a floor is entered; using it opens a menu in the game's style, and the message is placed on the cell the player stands on, facing where they look |
 | reward for a good rating | **none**; a player sees their messages' counts under the Message Stone's Your messages. The game played alone is unchanged |
 
 ## A message on the wire and in the database
@@ -128,7 +128,7 @@ always shown to them and do not count.
   lever), actions, enemies and people (the game names neither on screen, so they are ours),
   conditions (poison, darkness). Japanese is drawn with the game's Japanese font page, so the
   Japanese words must use glyphs that page has: kana, and only kanji it holds.
-- **Writing**: the Message Stone, an item in Use Item while messages are on and a floor is entered,
+- **Writing**: the Message Stone, an item in Use Item while messages are on (always, in a coop room) and a floor is entered,
   opens an in-game menu: it picks a template, then each blank's word (by kind, then the word),
   shows the result, and posts it on the player's cell.
 - **The mark and reading**: a patch draws a mark on the floor of each shown record's cell, the
@@ -168,3 +168,5 @@ always shown to them and do not count.
   item's name is drawn from the disc's glyph row, not spelled.
 - 2026-10-31: writing moved from the overlay's "Leave a message" window to the Message Stone, an
   item in Use Item (`port/ext/extra_items.cpp`), whose menu is drawn in the game's style, not ImGui.
+- 2026-11-04: a coop room has messages on for everyone, whatever each player's setting says, so all
+  have the Message Stone. Alone it stays opt-in.

@@ -24,7 +24,7 @@ constexpr std::array<ExtraItem, 1> extra_item_table{{
      .english = "MESSAGE STONE",
      .japanese = "ことばの いし",
      .description = "Leave a message on the ground for other players, or see how yours were rated. "
-                    "Offered while Settings, Interface, Online, Messages is on.",
+                    "Offered in a coop room, and while Settings, Interface, Online, Messages is on.",
      .model_item = 41,   // the Moonstone's model
      .offered = messages_stone_offered,
      .open = messages_stone_open},

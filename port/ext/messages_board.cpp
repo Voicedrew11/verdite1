@@ -9,6 +9,7 @@
 #include "messages.h"
 
 #include <kf/platform/automap.h>
+#include <kf/platform/coop.h>
 #include <kf/platform/messages.h>
 #include <kf/platform/title.h>
 #include <verdite/message_sample.h>
@@ -178,9 +179,10 @@ void enter_floor(int floor) {
     board.records_stale = true;
 }
 
-// The floor the player is on: none at the title or off the map.
+// The floor the player is on: none at the title or off the map, or with messages off. A coop room
+// has them on for everyone, whatever each player's setting says.
 std::optional<int> floor_now() {
-    if (title_is_open() || !settings().online_messages)
+    if (title_is_open() || !(settings().online_messages || coop_world_in_play()))
         return std::nullopt;
     const int floor = automap_snapshot().floor;
     if (floor < 1 || floor > automap_floor_count)

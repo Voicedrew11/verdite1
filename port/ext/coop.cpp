@@ -979,7 +979,7 @@ std::string coop_json() {
            std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
            "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json() + "," +
            coop_death_json() + ",\"tickVblanks\":" + std::to_string(world_update_vblanks) + ",\"reviveWaitS\":" + std::to_string(coop_revive_wait_s()) +
-           ",\"nameBarsDrawn\":" + std::to_string(online_name_bars_drawn()) + ",\"crownsDrawn\":" + std::to_string(online_crowns_drawn()) + ",\"compassDotsDrawn\":" + std::to_string(online_compass_dots_drawn()) + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
+           ",\"messageStone\":" + (messages_stone_offered() ? "true" : "false") + ",\"nameBarsDrawn\":" + std::to_string(online_name_bars_drawn()) + ",\"crownsDrawn\":" + std::to_string(online_crowns_drawn()) + ",\"compassDotsDrawn\":" + std::to_string(online_compass_dots_drawn()) + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
 }
 
 bool coop_hosting() {

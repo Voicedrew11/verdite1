@@ -69,7 +69,7 @@ struct Settings {
     bool discord_location = true;   // floor and place
     bool discord_vitals = true;     // HP and MP
     bool discord_exp = true;        // EXP to the next level
-    bool online_messages = false;   // messages on the ground: opt-in, as online play is
+    bool online_messages = false;   // messages on the ground: opt-in alone, always on in a coop room
     bool pickup_feed = true;        // in coop, who in the party found, bought, sold or used what
     bool room_open = true;          // hosting: players new to the world may join
 };
