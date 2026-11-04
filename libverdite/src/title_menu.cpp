@@ -67,6 +67,7 @@ std::optional<Parent> parent_of(TitlePage page) {
     switch (page) {
     case TitlePage::Continue: return Parent{TitlePage::Top, TitleRowKind::Continue};
     case TitlePage::Coop: return Parent{TitlePage::Top, TitleRowKind::Coop};
+    case TitlePage::CoopIntro: return Parent{TitlePage::Top, TitleRowKind::Coop};
     case TitlePage::Host: return Parent{TitlePage::Coop, TitleRowKind::Host};
     case TitlePage::HostCode: return Parent{TitlePage::Host, TitleRowKind::NewPrivateWorld};
     case TitlePage::JoinCode: return Parent{TitlePage::Coop, TitleRowKind::JoinCode};
@@ -301,7 +302,7 @@ void TitleMenu::confirm() {
         if (std::ranges::any_of(mods_, [](const TitleMod &mod) { return mod.state == TitleModState::On; }))
             go(TitlePage::CoopWarning, TitleRowKind::EnterCoop);
         else
-            go(TitlePage::Coop, std::nullopt);
+            enter_coop();
         break;
     case TitleRowKind::Mods: go(TitlePage::Mods, std::nullopt); break;
     case TitleRowKind::Mod: confirm_mod(*chosen.mod); break;
@@ -320,7 +321,13 @@ void TitleMenu::confirm() {
         break;
     case TitleRowKind::LoadAnyway: choice_ = TitleChoice{TitleAction::Continue, warned_slot_, {}, false, {}, 0}; break;
     case TitleRowKind::SaveMod: break;   // dimmed: refused above
-    case TitleRowKind::EnterCoop: go(TitlePage::Coop, std::nullopt); break;
+    case TitleRowKind::EnterCoop: enter_coop(); break;
+    case TitleRowKind::CoopIntroNext: go(TitlePage::Profile, std::nullopt); break;
+    case TitleRowKind::ProfileDone:
+        profile_.set_up = true;
+        choice_ = TitleChoice{TitleAction::ProfileSetUp, 0, {}, false, profile_, 0};
+        go(TitlePage::Coop, std::nullopt);
+        break;
     case TitleRowKind::GoBack: back(); break;
     case TitleRowKind::Host: go(TitlePage::Host, std::nullopt); break;
     case TitleRowKind::JoinCode:
@@ -362,6 +369,13 @@ void TitleMenu::confirm() {
     }
 }
 
+void TitleMenu::enter_coop() {
+    if (profile_.set_up)
+        go(TitlePage::Coop, std::nullopt);
+    else
+        go(TitlePage::CoopIntro, std::nullopt);
+}
+
 void TitleMenu::wait_for(TitleChoice choice) {
     waiting_from_ = page_;
     waiting_row_ = row_;
@@ -379,6 +393,10 @@ void TitleMenu::back() {
     }
     if (page_ == TitlePage::NameEntry)
         code_.clear();
+    if (page_ == TitlePage::Profile && !profile_.set_up) {
+        go(TitlePage::CoopIntro, std::nullopt);
+        return;
+    }
     if (page_ == TitlePage::LoadWarning) {
         go(TitlePage::Continue, std::nullopt);
         row_ = warned_slot_;
@@ -548,7 +566,10 @@ TitleView TitleMenu::view() const {
         rows.push_back(row(TitleRowKind::ProfileColour, profile_.colours > 1));
         rows.push_back(row(TitleRowKind::ProfileHelmet, profile_.helmets > 1));
         rows.push_back(row(TitleRowKind::ProfileSymbol, profile_.symbols > 1));
+        if (!profile_.set_up)
+            rows.push_back(row(TitleRowKind::ProfileDone));
         break;
+    case TitlePage::CoopIntro: rows.push_back(row(TitleRowKind::CoopIntroNext)); break;
     case TitlePage::RoomList:
         for (const TitleRoom &room : rooms_) {
             rows.push_back(row(TitleRowKind::Room, room.players < room.most));

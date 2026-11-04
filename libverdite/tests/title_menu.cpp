@@ -758,3 +758,64 @@ TEST_CASE("the co-op settings are stepped on their own page, the room's under Ho
     menu.press(TitleInput::Back);
     CHECK(selected(menu) == TitleRowKind::RoomSettings);
 }
+
+TEST_CASE("a first time in co-op explains it, then sets up the profile, then goes on") {
+    TitleMenu menu(1);
+    TitleProfile profile{"PLAYER1", 0, 8, 0, 2, 0, 2};
+    profile.set_up = false;
+    menu.open({}, {}, profile, {});
+    const auto confirm_kind = [&](TitleRowKind kind) {
+        for (int i = 0; i < 40 && selected(menu) != kind; ++i)
+            menu.press(menu.view().page == TitlePage::Top ? TitleInput::Right : TitleInput::Down);
+        REQUIRE(selected(menu) == kind);
+        menu.press(TitleInput::Confirm);
+    };
+
+    confirm_kind(TitleRowKind::Coop);
+    CHECK(menu.view().page == TitlePage::CoopIntro);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Top);
+    CHECK(selected(menu) == TitleRowKind::Coop);
+
+    menu.press(TitleInput::Confirm);
+    confirm_kind(TitleRowKind::CoopIntroNext);
+    CHECK(menu.view().page == TitlePage::Profile);
+    CHECK(selected(menu) == TitleRowKind::ProfileName);
+    CHECK(menu.view().rows.back().kind == TitleRowKind::ProfileDone);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::CoopIntro);
+    menu.press(TitleInput::Confirm);
+
+    confirm_kind(TitleRowKind::ProfileDone);
+    CHECK(menu.view().page == TitlePage::Coop);
+    const auto choice = menu.take_choice();
+    REQUIRE(choice);
+    CHECK(choice->action == TitleAction::ProfileSetUp);
+    CHECK(choice->profile.name == "PLAYER1");
+
+    menu.press(TitleInput::Back);
+    menu.press(TitleInput::Confirm);
+    CHECK(menu.view().page == TitlePage::Coop);
+    const auto rows = [&] {
+        for (int i = 0; i < 10 && selected(menu) != TitleRowKind::Profile; ++i)
+            menu.press(TitleInput::Down);
+        menu.press(TitleInput::Confirm);
+        return menu.view().rows;
+    }();
+    CHECK(rows.back().kind == TitleRowKind::ProfileSymbol);
+}
+
+TEST_CASE("a mod's warning comes before the first time's explanation") {
+    TitleMenu menu(1);
+    TitleProfile profile{"PLAYER1", 0, 8, 0, 2, 0, 2};
+    profile.set_up = false;
+    menu.open({}, {}, profile, {{"crypt", "CRYPT", TitleModState::On, {}}});
+    for (int i = 0; i < 4 && selected(menu) != TitleRowKind::Coop; ++i)
+        menu.press(TitleInput::Right);
+    menu.press(TitleInput::Confirm);
+    REQUIRE(menu.view().page == TitlePage::CoopWarning);
+    menu.press(TitleInput::Confirm);
+    CHECK(menu.view().page == TitlePage::CoopIntro);
+    menu.press(TitleInput::Back);
+    CHECK(menu.view().page == TitlePage::Top);
+}

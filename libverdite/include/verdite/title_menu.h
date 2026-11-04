@@ -7,7 +7,8 @@
 // CO-OP while a mod is on (mods do not run there), each ask first on a page of their own.
 // CO-OP leads to hosting a world (a new private or public one, or one this
 // machine keeps), joining a room by its code, the service's list of public rooms, and the
-// player's profile: the name, colour, helmet and symbol the others in a room see.
+// player's profile: the name, colour, helmet and symbol the others in a room see. A player with no
+// profile yet first gets a page explaining coop, then PROFILE with a DONE row, which leads to CO-OP.
 //
 // Game-agnostic and holding no text of its own: the game draws each page with its own menus and
 // font, naming rows by their kind; the text it is handed (a save's summary, a host's name) is the
@@ -54,6 +55,7 @@ struct TitleProfile {
     std::size_t helmets = 1;
     std::size_t symbol = 0;      // < symbols
     std::size_t symbols = 1;
+    bool set_up = true;          // false: the player's first time; CO-OP leads through CoopIntro and PROFILE first
 };
 
 // How a mod the save was made with differs from the mods on now.
@@ -111,12 +113,13 @@ enum class TitlePage : std::uint8_t {
     Top,        // CONTINUE, NEW GAME, CO-OP, MODS: a line across
     Continue,   // the card slots
     Coop,       // HOST, JOIN BY CODE, ROOM LIST, PROFILE
+    CoopIntro,  // the game's words on how coop differs, then NEXT; only before a profile is set up
     Host,       // NEW PRIVATE WORLD, NEW PUBLIC WORLD, then the kept worlds
     HostCode,   // a new private world's code, to read out before START
     JoinCode,   // the code typed so far, and a grid of the digits with DELETE and JOIN
     RoomList,   // the public rooms
     Waiting,    // joining; Back cancels
-    Profile,    // NAME, COLOUR, HELMET, SYMBOL
+    Profile,    // NAME, COLOUR, HELMET, SYMBOL, and DONE while the profile is being set up
     NameEntry,  // the name typed so far, and a grid of name_letters with DELETE and DONE
     Mods,       // the game's mods
     ModSettings,   // one mod: its switch, then its settings
@@ -135,6 +138,8 @@ enum class TitleRowKind : std::uint8_t {
     Letter, Delete, Join,                          // JoinCode: letter
     Room,                                          // RoomList: room
     ProfileName, ProfileColour, ProfileHelmet, ProfileSymbol,   // Profile: Left and Right step all but the name
+    ProfileDone,                                   // Profile, while it is being set up
+    CoopIntroNext,                                 // CoopIntro
     Done,                                          // NameEntry, after its letters and DELETE
     Mod,                                           // Mods: mod
     ModSwitch, ModSetting,                         // ModSettings: mod; setting. Left and Right step, as Confirm does
@@ -176,6 +181,7 @@ enum class TitleAction : std::uint8_t {
     Join,         // code
     CancelJoin,   // Back on Waiting: leave the room
     Profile,      // profile: the player changed it; the game keeps it
+    ProfileSetUp, // profile: DONE on the first setup; the game keeps it, changed or not, and asks no more
     EnableMod,    // code: the mod's id. The game answers with set_mods
     DisableMod,   // code: the mod's id
     StepModSetting,   // code: the mod's id; slot: the setting's index; delta. The game answers with set_mods
@@ -247,6 +253,7 @@ private:
     void move_sideways(int delta, std::size_t count);
     void move_in_grid(int delta);
     void step_profile(int delta);
+    void enter_coop();
     void step_mod_row(int delta);
     void step_coop_setting(int delta);
     void confirm_mod(const TitleMod &mod);
