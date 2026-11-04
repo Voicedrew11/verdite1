@@ -9,12 +9,32 @@ HEAD_PIVOT = (0, 1530, 0)
 
 # The helmets, in kf::online_player_helmet_count's order: each builds its pieces on a part that
 # follows the head. A new helmet is a new entry here and its name in port/ext/coop_profile.cpp.
+def great_helm_ring(y):
+    """One section of the great helm at height y: an octagon with its flat to the front, with extra
+    corners where the cross's edges cross it. Listed from the upright's left edge going right."""
+    profile = ((1565, 116, 128), (1680, 126, 138), (1770, 108, 120), (1826, 58, 64))
+    heights, widths, depths = zip(*profile)
+    width, depth = np.interp(y, heights, widths), np.interp(y, heights, depths)
+    def corner(degrees):
+        a = math.radians(degrees)
+        return np.array((width * math.sin(a), y, depth * math.cos(a)))
+    upright, bar_end = 0.29, 0.55   # across half the flat front; along the next face round
+    front_left, front_right = corner(-22.5), corner(22.5)
+    middle, half = (front_left + front_right) / 2, (front_right - front_left) / 2
+    return [middle - half * upright, middle + half * upright,
+            front_right, front_right + (corner(67.5) - front_right) * bar_end, corner(67.5),
+            corner(112.5), corner(157.5), corner(202.5), corner(247.5), corner(292.5),
+            front_left + (corner(292.5) - front_left) * bar_end, front_left]
+
 def great_helm(helm, colour):
-    """A great helm with a T visor, a crest in the player's colour."""
+    """A great helm with a cross painted on its visor, a crest in the player's colour."""
     M = 'knight'
-    helm.loft([((0, 1565, 0), 116, 128), ((0, 1680, 0), 126, 138), ((0, 1770, 0), 108, 120), ((0, 1826, 0), 58, 64)], 8, M)
-    helm.box((-86, 1664, 120), (86, 1688, 140), DARK)
-    helm.box((-14, 1606, 126), (14, 1668, 142), DARK)
+    # The cross is the shell's own faces, not quads laid over it: in the game's depth order the
+    # helm's larger faces would draw over those from above and below.
+    bar, upright = {0, 1, 2, 10, 11}, {0}
+    painted = {1: upright, 2: bar, 3: upright}   # by the ring below: 1606 to 1664, the bar, to 1730
+    rings = [great_helm_ring(y) for y in (1565, 1606, 1664, 1688, 1730, 1770, 1826)]
+    helm.shell(rings, lambda k, i: DARK if i in painted.get(k, ()) else M, lambda k, i: 0, caps=(M, M))
     helm.loft([((0, 1770, -124), 15, 44), ((0, 1846, -22), 15, 50), ((0, 1856, 76), 15, 40), ((0, 1796, 130), 11, 22)],
               4, colour, axis='z', phase=math.pi / 4)
 

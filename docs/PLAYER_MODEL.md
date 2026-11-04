@@ -68,7 +68,10 @@ bands and crest are in the player's colour, to tell players apart.
   `preview.py knight` draws the knight with the first helmet, `preview.py helmet H` helmet H close
   up beside floor 2's knight's head, then in the game's depth order, then on the whole knight. The
   metal's projection box is a constant (`body.py`), so a new helmet moves no texture on the others.
-  - **Great helm** (68 vertices): a T visor and the crest.
+  - **Great helm** (104 vertices): a cross on the visor and the crest. The cross is the shell's own
+    faces in dark, with no relief. Flat quads laid over the shell (`Part.decal`) lost its top arm and
+    most of its bar from above and below: the shell's faces there are large, so in the game's depth
+    order they draw over the quads.
   - **Fluted helm** (153 vertices, after Demon's Souls'): a dome with two dark-stepped flutes
     down each side and a comb in the player's colour pointing between the eyes, rounded front and back, a forehead running down into a short
     duckbill, pinched behind a broad flat end, and angry eye holes and lengthwise breaths painted on as flat quads
