@@ -343,8 +343,8 @@ end
 | `kf.context()` | `"opening"`, `"gameplay"`, `"menu"` or `"scripted"` |
 | `kf.frame()` | presented-frame counter |
 | `kf.time()` | seconds since start |
-| `kf.key_down(name)` / `kf.key_pressed(name)` | SDL key names: `"F5"`, `"G"`, `"Left Shift"`; `pressed` is true on the first frame only. Both are false while the overlay is open. |
-| `kf.action_down(name)` / `kf.action_pressed(name)` | an action held by any of its keys, pad buttons or touch controls (below); `pressed` is true on the first update in `on_update`, the first drawn frame in `on_draw`. Both are false while the overlay is open. |
+| `kf.key_down(name)` / `kf.key_pressed(name)` | SDL key names: `"F5"`, `"G"`, `"Left Shift"`; `pressed` is true on the first frame only. Both are false while the overlay is open or a mod's `ui.input_text` has the keyboard. |
+| `kf.action_down(name)` / `kf.action_pressed(name)` | an action held by any of its keys, pad buttons or touch controls (below); `pressed` is true on the first update in `on_update`, the first drawn frame in `on_draw`. Both are false while the overlay is open or a mod's `ui.input_text` has the keyboard. |
 | `kf.action_hold(name, on)` | while `on` is true, the game sees the action held, as if its key were down |
 | `kf.action_press(name)` | the game's next button read sees the action held, and the one after released: one press |
 | `kf.action_block(name, on)` | while `on` is true, the game does not see the action from the player's keys, pad or touch; a blocked movement or look direction also stops that direction of the stick and the mouse |
@@ -355,8 +355,9 @@ end
 | `kf.warp(floor [, cell_x, cell_z [, yaw]])` | queued, see below; `floor` is 1 to 5, or a floor of a mod that is running |
 | `kf.equipped(slot)` | the item id worn in `"weapon"`, `"head"`, `"body"`, `"arm"`, `"leg"`, `"shield"` or `"accessory"`, or nil |
 | `kf.equip(slot [, item])` | queued, see below |
+| `kf.move_player(x, y, z)` | moves the player now, world units; `y` nil keeps the height. See Position below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | the API's version: `"1.0"` |
+| `kf.api_version` | the API's version: `"1.1"` |
 
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
@@ -393,6 +394,15 @@ Position: `x`, `y`, `z` are read-only world units, 2000 per cell; `y` is the
 eye height. `cell_x`, `cell_z` and `map_variant` are read-only, and so is
 `highest_floor`. `yaw` (0–4095, wraps) and `pitch` (−191..191) are read/write.
 
+`kf.move_player(x, y, z)` is the way to set the position, since `x`, `y` and `z`
+are read-only. It moves the player at once, so it works from `on_update` and
+`on_draw`. `x` and `z` are world units on the map (0 to the map's width and depth
+less one), and a blocked cell is allowed; off the map is an error. `y` is the eye
+height, an integer from −200000 to 200000, or nil to keep the height the player has.
+With a height the player stands at it until the floor pulls them down, unless
+`kf.play.fly` is on. `kf.world.standing_y(cell_x, cell_z)` gives the eye height
+of a player standing on a cell, for a `y` that stands the player there.
+
 ### `kf.warp`
 
 `kf.warp(floor [, cell_x, cell_z [, yaw]])` is queued and runs between game
@@ -410,6 +420,7 @@ floor that turns out blocked once it loads falls back to the first open cell.
 | `cell_blocked(x, z)` | boolean; true off the map, so a mod can look past the edge |
 | `floor1_passage_opened`, `floor1_revival_enabled`, `floor5_character_arrived`, `floor5_weapon_transformed`, `floor5_boss_encounter_started`, `floor5_boss_defeated` | story flags, booleans, read/write |
 | `floor3_revealed_pieces` | story flag, integer 0–4, read/write |
+| `standing_y(cell_x, cell_z)` | the eye height of a player standing on that cell (the floor's height less the camera's); an error off the map |
 
 ### `kf.actors`
 
@@ -453,6 +464,7 @@ The player's pack: each item id, 0 to 79 and a mod's from 160 ([`kf.content`](#k
 | `kf.items.drop(item, x, z)` | lays a named item at a world position in an open cell, falling as a monster's drop does; not item 39, the gold coin |
 | `kf.items.name(item)` | the item's English name, or nil for an id with none |
 | `kf.items.description(item)` | what it does, as the item menu says in English (`"Heals 25 HP."`), or nil |
+| `kf.items.slot(item)` | the equipment slot the item fits (`"weapon"`, `"head"`, `"body"`, `"shield"`, `"arm"`, `"leg"`, `"accessory"`), or nil; nil too for an id outside 0 to 79 |
 
 `give` and `take` take a named item and `n` of at least 1; a larger `n` is held to a stack.
 
@@ -466,6 +478,10 @@ takes the arm and leg armour off, as the menu does. The slots, in the order coop
 
 `kf.magic.learned(spell)` and `kf.magic.set_learned(spell, learned)` take a spell from 0 to 8, in the
 game's order (the spell menu lists 4 to 8). Unlearning the selected spell deselects it, as the menu does.
+
+`kf.magic.selected()` is the spell selected, 0 to 8, or nil for none. `kf.magic.select(spell)` selects a
+learned spell at once, as the spell menu does, and is an error for one not learned; `select()` or
+`select(nil)` deselects.
 
 ### `kf.automap`
 
@@ -515,10 +531,11 @@ cheating.
 | field | notes |
 |---|---|
 | `noclip` | boolean: walls do not stop the player; height still follows the floor |
-| `invincible` | boolean: HP losses are ignored, so no death |
+| `invincible` | boolean: HP losses are ignored, so no death; a fatal fall or drop and a fatal floor do not kill either |
 | `peaceful` | boolean: enemies never attack the player |
 | `move_speed`, `turn_speed` | number, 0.25–8 |
 | `top_speed` | number, 0.25–8: the walking speed limit, as a sprint or run would raise it (1.6 is the usual value). Not while slowed |
+| `fly` | boolean: the player's height stays where it is. No falls, no pit or fatal-drop death, and the height is not pulled to the floor; walls still block unless `noclip` is on. Move up and down with `kf.move_player` |
 
 Each mod's `kf.play` and `kf.game` values are its own; the game combines them.
 A switch is on when any mod turns it on, speeds multiply, and the product is
@@ -943,6 +960,13 @@ interface scale.
 | `ui.slider_int(label, v, min, max)` → v | |
 | `ui.slider_float(label, v, min, max [, fmt])` → v | |
 | `ui.combo(label, index, {items})` → index | 1-based |
+| `ui.input_text(label, text [, max_bytes])` → text | a text box; `max_bytes` 64 by default, held to 1–1024, and longer text is cut to fit. While it has the keyboard, the keys do not reach the game or `kf.key_*` and `kf.action_*` |
+| `ui.input_int(label, v)` → v | |
+| `ui.collapsing_header(label [, default_open])` → open | `default_open` opens it the first time it is drawn; after that the player's choice holds |
+| `ui.text_wrapped(s)` | wraps to the window's width |
+| `ui.begin_scroll(id, height_px)` → visible; `ui.end_scroll()` | a bordered area of that height (above 0), full width, scrolled; always call `end_scroll` |
+| `ui.begin_tab_bar(id)` → visible; `ui.end_tab_bar()` | call `end_tab_bar` only when `begin_tab_bar` was true; no tab may be open then |
+| `ui.begin_tab(label)` → visible; `ui.end_tab()` | in a tab bar; call `end_tab` only when `begin_tab` was true |
 | `ui.separator()`, `ui.same_line()`, `ui.spacing()`, `ui.tooltip(s)` | |
 | `ui.begin_window(title [, click_through])` → visible; `ui.end_window()` | always call `end_window` |
 | `ui.draw_text(x, y, s [, r, g, b, a [, size]])` | window pixels, with a shadow; `size` in pixels (default 18) |
@@ -958,6 +982,10 @@ interface scale.
 | `ui.mouse_wheel()` → steps | this frame, up positive; 0 while the overlay is open |
 | `ui.game_to_screen(x, y)` → x, y | converts PS1 320×240 coordinates (the original area, where the game's HUD and menus are) |
 | `ui.world_to_screen(x, y, z)` → x, y or nil, nil | a world point through the camera this frame shows; nil behind the camera or with no world drawn (menus) |
+
+The `begin_` calls that open a window or a scroll area always need their `end_`; the tab
+ones need theirs only when the begin returned true. A Lua error between a begin and its end
+does not break the game's interface: the frame ends the open ones, innermost first.
 
 ## Examples
 
@@ -1131,6 +1159,11 @@ mods are off in coop (decided 2026-10-31).
     names are held ([Stability](#stability)). After 1.0, none of which breaks a mod: a way to make a floor other than
     copying the disc's, items to equip, models of an item's own, lights in the world, more kinds of file to replace, and
     gameplay mods in coop.
+
+13. ~~Declare 1.1 (2026-11-04): a flying debug mod's needs. `kf.play.fly`,
+    `kf.move_player`, `kf.world.standing_y`, invincibility over falls and drops,
+    `kf.items.slot`, `kf.magic.selected` and `select`, and the ui's tabs, collapsing
+    headers, scroll areas, text boxes and int boxes. The new names raise the minor version.~~
 
 ### Open questions
 

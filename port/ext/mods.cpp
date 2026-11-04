@@ -68,7 +68,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "1.0";
+constexpr const char *api_version = "1.1";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -381,6 +381,9 @@ const std::vector<verdite::ModField> &play_fields() {
         switch_field<&ModPlay::noclip>("noclip", "Walls do not stop the player; height still follows the floor."),
         switch_field<&ModPlay::invincible>("invincible", "HP losses are ignored, so no death."),
         switch_field<&ModPlay::peaceful>("peaceful", "Enemies never attack the player."),
+        switch_field<&ModPlay::fly>(
+            "fly",
+            "The player flies: the height stays where it is, with no falls, pits or fatal drops."),
         speed_field<&ModPlay::move_speed>("move_speed", "Walking distance, 0.25 to 8."),
         speed_field<&ModPlay::turn_speed>("turn_speed", "Turning speed, 0.25 to 8."),
         speed_field<&ModPlay::top_speed>("top_speed",
@@ -585,17 +588,22 @@ void push_kind(lua_State *L, std::size_t kind) {
     set_integer(L, "drop_item", drops ? kf_enum_encode<lua_Integer>(drop) : -1);
 }
 
-// A world position in units, on the map and in a cell that is not blocked, at the floor's height.
-VECTOR check_open_position(lua_State *L, int index) {
-    const lua_Integer x = luaL_checkinteger(L, index);
-    const lua_Integer z = luaL_checkinteger(L, index + 1);
+// An x and z in world units that lie on the map; a cell may be blocked.
+std::array<s32, 2> check_map_units(lua_State *L, lua_Integer x, lua_Integer z) {
     const lua_Integer width = static_cast<lua_Integer>(KF_MAP_COLUMNS) * KF_MAP_TILE_SIZE;
     const lua_Integer depth = static_cast<lua_Integer>(KF_MAP_ROWS) * KF_MAP_TILE_SIZE;
     if (x < 0 || x >= width || z < 0 || z >= depth)
         luaL_error(L, "position %I, %I is off the map", x, z);
-    if (cell_is_blocked(static_cast<int>(x / KF_MAP_TILE_SIZE), static_cast<int>(z / KF_MAP_TILE_SIZE)))
-        luaL_error(L, "position %I, %I is in a blocked cell", x, z);
-    VECTOR position = {static_cast<s32>(x), 0, static_cast<s32>(z)};
+    return {static_cast<s32>(x), static_cast<s32>(z)};
+}
+
+// A world position in units, on the map and in a cell that is not blocked, at the floor's height.
+VECTOR check_open_position(lua_State *L, int index) {
+    const auto [x, z] =
+        check_map_units(L, luaL_checkinteger(L, index), luaL_checkinteger(L, index + 1));
+    if (cell_is_blocked(x / KF_MAP_TILE_SIZE, z / KF_MAP_TILE_SIZE))
+        luaL_error(L, "position %d, %d is in a blocked cell", x, z);
+    VECTOR position = {x, 0, z};
     position.vy = map_floor_height_at_position(&position);
     return position;
 }
@@ -775,6 +783,53 @@ int kf_actors_spawn(lua_State *L) {
     return 1;
 }
 
+// ---------- kf.move_player: the player's position, set at once ----------
+// The eye height an optional argument gives, in units; nothing when it is absent.
+std::optional<s32> optional_eye_height(lua_State *L, int index) {
+    if (lua_isnoneornil(L, index))
+        return std::nullopt;
+    const lua_Integer height = luaL_checkinteger(L, index);
+    if (height < -200000 || height > 200000)
+        luaL_error(L, "eye height %I is out of range (-200000 to 200000)", height);
+    return static_cast<s32>(height);
+}
+
+// Moves the player, and the cell's occupancy with it. Flight calls this every update, so it leaves
+// alone what player_sync_position_to_map resets for a warp: the turn in progress, the equipment
+// timers, the HUD's brightness and the near-spawn permission.
+void move_player_to(std::array<s32, 2> position, std::optional<s32> eye_height) {
+    auto &cell = player_state.motion_state.map_cell;
+    collision_adjust_cell_occupancy(cell.x, cell.z, -1);
+    player_state.camera_position.vx = position[0];
+    player_state.camera_position.vz = position[1];
+    cell.x = position[0] / KF_MAP_TILE_SIZE;
+    cell.z = position[1] / KF_MAP_TILE_SIZE;
+    collision_adjust_cell_occupancy(cell.x, cell.z, 1);
+    if (!eye_height)
+        return;
+    player_state.camera_position.vy = *eye_height;
+    player_state.foot_height = *eye_height + KF_PLAYER_CAMERA_HEIGHT;
+    player_state.vertical_state = KF_PLAYER_VERTICAL_GROUNDED;
+    player_state.vertical_velocity = 0;
+}
+
+// kf.move_player(x, y, z): y nil keeps the height the player has.
+int kf_move_player(lua_State *L) {
+    check_floor_in_play(L);
+    const lua_Integer x = luaL_checkinteger(L, 1);
+    const std::optional<s32> eye_height = optional_eye_height(L, 2);
+    const lua_Integer z = luaL_checkinteger(L, 3);
+    move_player_to(check_map_units(L, x, z), eye_height);
+    return 0;
+}
+
+// kf.world.standing_y(cell_x, cell_z): the eye height of a player standing on the cell.
+int kf_world_standing_y(lua_State *L) {
+    const auto [x, z] = check_map_cell(L, 1);
+    lua_pushinteger(L, map_base_floor_height(x, z) - KF_PLAYER_CAMERA_HEIGHT);
+    return 1;
+}
+
 // ---------- kf.items: the player's pack ----------
 u8 &pack_count(u8 item) {
     return item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][item];
@@ -889,6 +944,23 @@ std::size_t check_equipment_slot(lua_State *L, int index) {
     return static_cast<std::size_t>(found - equipment_slots.begin());
 }
 
+// kf.items.slot(item): the slot the item fits, by name; nil for an id outside 0 to 79 or one that
+// fits none.
+int kf_items_slot(lua_State *L) {
+    const lua_Integer item = luaL_checkinteger(L, 1);
+    if (item >= 0 && item < KF_ITEM_COUNT) {
+        const auto id = static_cast<std::uint8_t>(item);
+        for (const EquipmentSlot &slot : equipment_slots) {
+            if (coop_item_fits(slot.worn_index, id)) {
+                lua_pushstring(L, slot.name);
+                return 1;
+            }
+        }
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
 // A worn item, which must fit the slot and be carried.
 std::uint8_t check_worn_item(lua_State *L, int index, std::size_t entry) {
     const lua_Integer item = luaL_checkinteger(L, index);
@@ -976,6 +1048,30 @@ int kf_magic_set_learned(lua_State *L) {
     return 0;
 }
 
+// kf.magic.selected(): the spell selected, 0 to 8, or nil for none.
+int kf_magic_selected(lua_State *L) {
+    const KfEffectKind selected = player_state.selected_magic_id;
+    if (selected == KF_MAGIC_NONE)
+        lua_pushnil(L);
+    else
+        lua_pushinteger(L, kf_enum_encode<lua_Integer>(selected));
+    return 1;
+}
+
+// kf.magic.select(spell): a learned spell, 0 to 8; nil deselects. Done at once, as the spell menu
+// does.
+int kf_magic_select(lua_State *L) {
+    if (lua_isnoneornil(L, 1)) {
+        player_select_magic(KF_MAGIC_NONE);
+        return 0;
+    }
+    const KfEffectKind spell = check_spell(L, 1);
+    if (effect_state.magic.entries[kf_enum_encode<u8>(spell)].learned != KF_MAGIC_LEARNED)
+        luaL_error(L, "spell %I is not learned", kf_enum_encode<lua_Integer>(spell));
+    player_select_magic(spell);
+    return 0;
+}
+
 // ---------- kf.* ----------
 int kf_log(lua_State *L) {
     std::string text;
@@ -1004,12 +1100,12 @@ SDL_Scancode check_key(lua_State *L) {
 }
 int kf_key_down(lua_State *L) {
     const auto code = check_key(L);
-    lua_pushboolean(L, !overlay_captures_input() && keys_now[code]);
+    lua_pushboolean(L, !overlay_captures_keys() && keys_now[code]);
     return 1;
 }
 int kf_key_pressed(lua_State *L) {
     const auto code = check_key(L);
-    lua_pushboolean(L, !overlay_captures_input() && keys_now[code] && !keys_before[code]);
+    lua_pushboolean(L, !overlay_captures_keys() && keys_now[code] && !keys_before[code]);
     return 1;
 }
 // Action as the mods name it, in its order.
@@ -1029,14 +1125,15 @@ u32 check_action(lua_State *L) {
 int kf_action_down(lua_State *L) {
     const u32 bit = check_action(L);
     host_touch_note_actions_read(bit);
-    lua_pushboolean(L, !overlay_captures_input() && (callback_actions->now & bit) != 0);
+    lua_pushboolean(L, !overlay_captures_keys() && (callback_actions->now & bit) != 0);
     return 1;
 }
 int kf_action_pressed(lua_State *L) {
     const u32 bit = check_action(L);
     host_touch_note_actions_read(bit);
     const ActionEdges &edges = *callback_actions;
-    lua_pushboolean(L, !overlay_captures_input() && (edges.now & bit) != 0 && (edges.before & bit) == 0);
+    lua_pushboolean(L, !overlay_captures_keys() && (edges.now & bit) != 0 &&
+                           (edges.before & bit) == 0);
     return 1;
 }
 // Holds and blocks take effect when refresh_mod_play runs after the callback that set them.
@@ -1146,10 +1243,102 @@ int ui_begin_window(lua_State *L) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing;
     if (no_input && !overlay_open())
         flags |= ImGuiWindowFlags_NoInputs;
-    lua_pushboolean(L, ImGui::Begin(luaL_checkstring(L, 1), nullptr, flags));
+    const bool shown = ImGui::Begin(luaL_checkstring(L, 1), nullptr, flags);
+    ui_scope_begin(UiScope::Window);
+    lua_pushboolean(L, shown);
     return 1;
 }
-int ui_end_window(lua_State *L) { ui_require_frame(L); ImGui::End(); return 0; }
+int ui_end_window(lua_State *L) {
+    ui_require_frame(L);
+    ui_scope_end(L, UiScope::Window);
+    return 0;
+}
+int ui_begin_tab_bar(lua_State *L) {
+    ui_require_frame(L);
+    const bool shown = ImGui::BeginTabBar(luaL_checkstring(L, 1));
+    if (shown)
+        ui_scope_begin(UiScope::TabBar);
+    lua_pushboolean(L, shown);
+    return 1;
+}
+int ui_end_tab_bar(lua_State *L) {
+    ui_require_frame(L);
+    ui_scope_end(L, UiScope::TabBar);
+    return 0;
+}
+int ui_begin_tab(lua_State *L) {
+    ui_require_frame(L);
+    const bool shown = ImGui::BeginTabItem(luaL_checkstring(L, 1));
+    if (shown)
+        ui_scope_begin(UiScope::Tab);
+    lua_pushboolean(L, shown);
+    return 1;
+}
+int ui_end_tab(lua_State *L) {
+    ui_require_frame(L);
+    ui_scope_end(L, UiScope::Tab);
+    return 0;
+}
+int ui_collapsing_header(lua_State *L) {
+    ui_require_frame(L);
+    const ImGuiTreeNodeFlags flags =
+        lua_toboolean(L, 2) ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None;
+    lua_pushboolean(L, ImGui::CollapsingHeader(luaL_checkstring(L, 1), flags));
+    return 1;
+}
+// A text box's longest text, in bytes: 64 by default, held to 1 to 1024.
+constexpr lua_Integer default_text_bytes = 64;
+constexpr lua_Integer min_text_bytes = 1;
+constexpr lua_Integer max_text_bytes = 1024;
+int ui_input_text(lua_State *L) {
+    ui_require_frame(L);
+    const char *label = luaL_checkstring(L, 1);
+    std::size_t length = 0;
+    const char *text = luaL_checklstring(L, 2, &length);
+    const lua_Integer bytes =
+        std::clamp(luaL_optinteger(L, 3, default_text_bytes), min_text_bytes, max_text_bytes);
+    // ImGui edits a buffer that ends in a NUL, so the text keeps one byte of it free.
+    std::string buffer(static_cast<std::size_t>(bytes), '\0');
+    std::memcpy(buffer.data(), text, std::min(length, buffer.size() - 1));
+    const bool changed = ImGui::InputText(label, buffer.data(), buffer.size());
+    mark_changed(L, changed);
+    lua_pushstring(L, buffer.c_str());
+    return 1;
+}
+int ui_input_int(lua_State *L) {
+    ui_require_frame(L);
+    const char *label = luaL_checkstring(L, 1);
+    const lua_Integer value = luaL_checkinteger(L, 2);
+    if (!std::in_range<int>(value))
+        luaL_error(L, "%I is out of range for ui.input_int", value);
+    int number = static_cast<int>(value);
+    mark_changed(L, ImGui::InputInt(label, &number));
+    lua_pushinteger(L, number);
+    return 1;
+}
+int ui_text_wrapped(lua_State *L) {
+    ui_require_frame(L);
+    ImGui::TextWrapped("%s", luaL_checkstring(L, 1));
+    return 0;
+}
+int ui_begin_scroll(lua_State *L) {
+    ui_require_frame(L);
+    const char *id = luaL_checkstring(L, 1);
+    const lua_Integer height = luaL_checkinteger(L, 2);
+    if (height <= 0)
+        luaL_error(L, "scroll height %I is not above 0", height);
+    // Full width of the window; the scroll area is always bordered.
+    const bool shown =
+        ImGui::BeginChild(id, ImVec2(0.0f, static_cast<float>(height)), ImGuiChildFlags_Borders);
+    ui_scope_begin(UiScope::Scroll);
+    lua_pushboolean(L, shown);
+    return 1;
+}
+int ui_end_scroll(lua_State *L) {
+    ui_require_frame(L);
+    ui_scope_end(L, UiScope::Scroll);
+    return 0;
+}
 // ui: the widgets here, the drawing from mod_draw.
 verdite::ModTable ui_table() {
     using verdite::ModFunction;
@@ -1170,6 +1359,25 @@ verdite::ModTable ui_table() {
         {"begin_window", "fun(title: string, click_through?: boolean): boolean",
          "Always call end_window after it.", ui_begin_window},
         {"end_window", "fun()", "", ui_end_window},
+        {"begin_tab_bar", "fun(id: string): boolean", "Call end_tab_bar only when this is true.",
+         ui_begin_tab_bar},
+        {"end_tab_bar", "fun()", "Ends the tab bar; no tab may be open.", ui_end_tab_bar},
+        {"begin_tab", "fun(label: string): boolean",
+         "In a tab bar. Call end_tab only when this is true.", ui_begin_tab},
+        {"end_tab", "fun()", "", ui_end_tab},
+        {"collapsing_header", "fun(label: string, default_open?: boolean): boolean",
+         "True while open. default_open opens it the first time it is drawn; after that the "
+         "player's choice holds.",
+         ui_collapsing_header},
+        {"begin_scroll", "fun(id: string, height_px: integer): boolean",
+         "A bordered area of this height, scrolled. Always call end_scroll after it.",
+         ui_begin_scroll},
+        {"end_scroll", "fun()", "", ui_end_scroll},
+        {"input_text", "fun(label: string, text: string, max_bytes?: integer): string",
+         "A text box; the text it holds. Text past max_bytes (64 by default, 1 to 1024) is cut.",
+         ui_input_text},
+        {"input_int", "fun(label: string, value: integer): integer", "", ui_input_int},
+        {"text_wrapped", "fun(text: string)", "", ui_text_wrapped},
     };
     std::ranges::move(ui_draw_functions(), std::back_inserter(functions));
     return {.path = "ui",
@@ -1226,8 +1434,17 @@ std::vector<verdite::ModTable> api_tables() {
                kf_warp},
               {"equipped", "fun(slot: \"weapon\"|\"head\"|\"body\"|\"arm\"|\"leg\"|\"shield\"|\"accessory\"): integer?",
                "The item id worn in a slot, or nil.", kf_equipped},
-              {"equip", "fun(slot: \"weapon\"|\"head\"|\"body\"|\"arm\"|\"leg\"|\"shield\"|\"accessory\", item?: integer)",
-               "Wears a carried item that fits the slot, or takes it off (nil). Done between updates.", kf_equip}},
+              {"equip",
+               "fun(slot: \"weapon\"|\"head\"|\"body\"|\"arm\"|\"leg\"|\"shield\"|\"accessory\", "
+               "item?: integer)",
+               "Wears a carried item that fits the slot, or takes it off (nil). Done between "
+               "updates.",
+               kf_equip},
+              {"move_player", "fun(x: integer, y: integer?, z: integer)",
+               "Moves the player now, in world units on the map, blocked cells too; y is the eye "
+               "height (nil keeps "
+               "it). Callable from on_update and on_draw.",
+               kf_move_player}},
          .fields = {{"api_version", "string", "The API's version.", push_api_version, nullptr}}},
         {.path = "kf.player",
          .doc = "The player's state, read and written in the game's player_state.",
@@ -1237,7 +1454,10 @@ std::vector<verdite::ModTable> api_tables() {
          .doc = "The floor's map and its story flags.",
          .functions =
              {ModFunction{"cell_blocked", "fun(x: integer, z: integer): boolean",
-                          "True for a wall or rock cell; an error off the map.", world_cell_blocked}},
+                          "True for a wall or rock cell; an error off the map.", world_cell_blocked},
+              {"standing_y", "fun(cell_x: integer, cell_z: integer): integer",
+               "The eye height of a player standing on a cell, for kf.move_player; an error off the map.",
+               kf_world_standing_y}},
          .fields = world_fields()},
         {.path = "kf.play",
          .doc = "The calling mod's play switches and speeds; the game combines every running mod's.",
@@ -1292,7 +1512,9 @@ std::vector<verdite::ModTable> api_tables() {
                kf_items_name},
               {"description", "fun(item: integer): string?",
                "What the item does, as the item menu says it in English, or nil when it says nothing.",
-               kf_items_description}},
+               kf_items_description},
+              {"slot", "fun(item: integer): \"weapon\"|\"head\"|\"body\"|\"shield\"|\"arm\"|\"leg\"|\"accessory\"?",
+               "The equipment slot the item fits, or nil.", kf_items_slot}},
          .fields = {}},
         {.path = "kf.magic",
          .doc = "The player's spells, ids 0 to 8 as KfEffectKind (the spell menu lists 4 to 8).",
@@ -1301,7 +1523,11 @@ std::vector<verdite::ModTable> api_tables() {
                           kf_magic_learned},
               {"set_learned", "fun(spell: integer, learned: boolean)",
                "Learns or unlearns a spell; an unlearned spell that is selected is deselected.",
-               kf_magic_set_learned}},
+               kf_magic_set_learned},
+              {"selected", "fun(): integer?", "The spell selected, 0 to 8, or nil for none.", kf_magic_selected},
+              {"select", "fun(spell: integer?)",
+               "Selects a learned spell, 0 to 8; nil deselects. Done at once, as the spell menu does.",
+               kf_magic_select}},
          .fields = {}},
         rules_table(),
         {.path = "kf.audio",

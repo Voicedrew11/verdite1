@@ -284,5 +284,7 @@ struct ViewRect { float x, y, w, h; };
 ViewRect game_view();             // the whole presented picture (wider than 4:3 in widescreen)
 ViewRect original_view();         // the original 320x240 area within it
 bool overlay_captures_input();
+// The keys belong to the overlay, or to a mod's text box that has the keyboard.
+bool overlay_captures_keys();
 SDL_Window *window();
 }

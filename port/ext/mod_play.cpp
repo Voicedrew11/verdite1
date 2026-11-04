@@ -21,6 +21,7 @@ ModPlayCombined combine_mod_play(std::span<const ModPlay> mods) {
     bool noclip = false;
     bool invincible = false;
     bool peaceful = false;
+    bool flies = false;
     bool paused = false;
     bool silencing = false;   // a mod pauses without keeping the music
     bool takes_mouse = false;
@@ -34,6 +35,7 @@ ModPlayCombined combine_mod_play(std::span<const ModPlay> mods) {
         noclip = noclip || mod.noclip;
         invincible = invincible || mod.invincible;
         peaceful = peaceful || mod.peaceful;
+        flies = flies || mod.fly;
         paused = paused || mod.paused;
         silencing = silencing || (mod.paused && !mod.music_while_paused);
         takes_mouse = takes_mouse || mod.takes_mouse;
@@ -49,6 +51,7 @@ ModPlayCombined combine_mod_play(std::span<const ModPlay> mods) {
     combined.overrides.walls_block_player = !noclip;
     combined.overrides.player_takes_damage = !invincible;
     combined.overrides.enemies_attack = !peaceful;
+    combined.overrides.player_flies = flies;
     combined.overrides.move_scale_permille = permille_of(move_speed);
     combined.overrides.turn_scale_permille = permille_of(turn_speed);
     combined.overrides.top_speed_permille = permille_of(top_speed);

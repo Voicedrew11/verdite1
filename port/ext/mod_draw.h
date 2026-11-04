@@ -19,4 +19,12 @@ void ui_frame_close();
 void ui_require_frame(lua_State *L);
 [[nodiscard]] bool ui_frame_is_open();
 
+// The begin and end pairs a mod opens (windows, scroll areas, tab bars and tabs). A begin records
+// its scope whether or not ImGui shows it, as ImGui wants its end either way; an end closes the
+// innermost scope, and a Lua error when that is not the one named. A scope the mod leaves open when
+// its frame closes (a Lua error between begin and end) is ended by ui_frame_close, so ImGui stays whole.
+enum class UiScope : unsigned char { Window, Scroll, TabBar, Tab };
+void ui_scope_begin(UiScope scope);
+void ui_scope_end(lua_State *L, UiScope scope);
+
 } // namespace kf::ext

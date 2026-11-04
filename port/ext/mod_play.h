@@ -16,6 +16,7 @@ struct ModPlay {
     bool noclip = false;
     bool invincible = false;
     bool peaceful = false;
+    bool fly = false;
     float move_speed = 1.0f;
     float turn_speed = 1.0f;
     float top_speed = 1.0f;

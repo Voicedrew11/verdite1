@@ -42,6 +42,19 @@ TEST_CASE("switches are on when any mod turns them on") {
     CHECK_FALSE(combine_mod_play(peaceful_pair).overrides.enemies_attack);
 }
 
+TEST_CASE("one mod's fly switch makes the player fly, and no other switch does") {
+    ModPlay flier;
+    flier.fly = true;
+    const ModPlayCombined combined = combine_mod_play(std::span{&flier, 1});
+    CHECK(combined.overrides.player_flies);
+    CHECK(combined.overrides.walls_block_player);
+    CHECK(combined.overrides.player_takes_damage);
+    ModPlay noclip;
+    noclip.noclip = true;
+    CHECK_FALSE(combine_mod_play(std::span{&noclip, 1}).overrides.player_flies);
+    CHECK_FALSE(combine_mod_play({}).overrides.player_flies);
+}
+
 TEST_CASE("speeds multiply across mods") {
     std::array<ModPlay, 2> mods{};
     mods[0].move_speed = 2.0f;

@@ -9,6 +9,7 @@
 #include <array>
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -23,8 +24,37 @@ struct DrawFrame {
     bool open = false;
     Layer layer = Layer::Foreground;
     std::array<int, 2> clips{};   // pushed on each layer's list
+    std::vector<UiScope> scopes;  // begun and not yet ended, outermost first
 };
 DrawFrame frame;
+
+struct ScopeNames {
+    const char *begin;
+    const char *end;
+};
+constexpr std::array<ScopeNames, 4> scope_names{{
+    {"begin_window", "end_window"},
+    {"begin_scroll", "end_scroll"},
+    {"begin_tab_bar", "end_tab_bar"},
+    {"begin_tab", "end_tab"},
+}};
+
+void end_imgui(UiScope scope) {
+    switch (scope) {
+    case UiScope::Window:
+        ImGui::End();
+        return;
+    case UiScope::Scroll:
+        ImGui::EndChild();
+        return;
+    case UiScope::TabBar:
+        ImGui::EndTabBar();
+        return;
+    case UiScope::Tab:
+        ImGui::EndTabItem();
+        return;
+    }
+}
 
 ImDrawList *list_of(Layer layer) {
     return layer == Layer::Background ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
@@ -241,7 +271,29 @@ void ui_frame_open() {
     frame.open = true;
 }
 
+void ui_scope_begin(UiScope scope) {
+    frame.scopes.push_back(scope);
+}
+
+void ui_scope_end(lua_State *L, UiScope scope) {
+    if (frame.scopes.empty() || frame.scopes.back() != scope) {
+        const ScopeNames &names = scope_names[static_cast<std::size_t>(scope)];
+        luaL_error(L, "ui.%s has no open ui.%s to end", names.end, names.begin);
+    }
+    frame.scopes.pop_back();
+    end_imgui(scope);
+}
+
 void ui_frame_close() {
+    // A scope the mod left open is ended here, innermost first, so ImGui is whole for the next
+    // frame.
+    while (!frame.scopes.empty()) {
+        const UiScope scope = frame.scopes.back();
+        std::printf("[mods] ui.%s was not called; ending it\n",
+                    scope_names[static_cast<std::size_t>(scope)].end);
+        frame.scopes.pop_back();
+        end_imgui(scope);
+    }
     for (std::size_t i = 0; i < frame.clips.size(); ++i)
         for (; frame.clips[i] > 0; --frame.clips[i])
             list_of(static_cast<Layer>(i))->PopClipRect();

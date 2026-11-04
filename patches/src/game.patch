@@ -5457,7 +5457,7 @@ index 0000000000000000000000000000000000000000..357a25f98c6b39bda7b74d113755c42b
 +    }
 +}
 diff --git a/src/game/player_core.cpp b/src/game/player_core.cpp
-index 33680f578d7627d7bb43b29b77f58b843371198a..76af58e4816e1fc0175f6cd5d37a1ee5bce09893 100644
+index 33680f578d7627d7bb43b29b77f58b843371198a..0d19a7f9e48cd235e7dc66791ca9471b27f10ac2 100644
 --- a/src/game/player_core.cpp
 +++ b/src/game/player_core.cpp
 @@ -1,4 +1,5 @@
@@ -5587,7 +5587,41 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..76af58e4816e1fc0175f6cd5d37a1ee5
      for (;;) {
          const auto collision = collision_query_world(new_x, player_state.foot_height, new_z,
                  KF_COLLISION_PLAYER_RADIUS, KF_COLLISION_PLAYER_HEIGHT,
-@@ -584,7 +664,10 @@ void player_warp_to_floor_entry(void)
+@@ -514,15 +594,21 @@ void player_update_view_bob(void)
+ static void player_update_floor_motion(s32 target)
+ {
+     if (player_state.update_state != KF_PLAYER_UPDATE_DYING) {
++        // PC extension (mods): invincible, a fatal fall or drop lands the player alive.
++        const bool may_die = kf::host_play_overrides().player_takes_damage;
+         if (player_state.foot_height - target < -PLAYER_FATAL_DROP_DISTANCE) {
+             if (player_state.equipped_leg_armor_id == KF_ITEM_FEATHER_BOOTS
+                 && player_current_map_attribute() == KF_MAP_ATTRIBUTE_BOTTOMLESS_PIT) {
+                 return;
+             }
+-            player_death_begin();
++            if (may_die) {
++                player_death_begin();
++            }
+         } else if (target >= PLAYER_ATTRIBUTE_52_FATAL_HEIGHT
+                    && player_current_map_attribute() == KF_MAP_ATTRIBUTE_52) {
+-            player_death_begin();
++            if (may_die) {
++                player_death_begin();
++            }
+         }
+     }
+ 
+@@ -569,6 +655,9 @@ void player_update_vertical_motion(void)
+     s32 target;
+     s32 view_offset;
+ 
++    // PC extension (mods): a flying player keeps the height the mods gave it (kf.move_player).
++    if (kf::host_play_overrides().player_flies)
++        return;
+     target = map_base_floor_height(cell.x, cell.z);
+     player_update_floor_motion(target);
+     view_offset = player_state.view_bob_offset - KF_PLAYER_CAMERA_HEIGHT;
+@@ -584,7 +673,10 @@ void player_warp_to_floor_entry(void)
      player_get_floor_position(position);
      player_warp_shimmer(KF_WARP_SHIMMER_GROW_REMOVE, &position);
      floor = player_state.progress_state.current_floor;

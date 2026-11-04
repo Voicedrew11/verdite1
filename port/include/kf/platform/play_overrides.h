@@ -8,7 +8,8 @@ namespace kf {
 
 struct PlayOverrides {
     bool walls_block_player = true;    // player_move_horizontal's wall and step checks
-    bool player_takes_damage = true;   // player_apply_damage, player_adjust_hp losses
+    bool player_takes_damage = true;   // player_apply_damage, player_adjust_hp losses, falls and drops
+    bool player_flies = false;         // player_update_vertical_motion: the height stays where it is
     bool enemies_attack = true;        // actor_try_attack_player
     s32 move_scale_permille = 1000;    // forward/strafe distance in player_update_movement_input
     s32 turn_scale_permille = 1000;    // turn velocity

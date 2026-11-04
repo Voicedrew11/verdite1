@@ -373,6 +373,10 @@ static bool covered() { return open || settings_panel_open() || setup_open() || 
 
 bool overlay_open() { return covered(); }
 bool overlay_captures_input() { return covered(); }
+// A mod's text box that has the keyboard takes the keys too, but not the mouse.
+bool overlay_captures_keys() {
+    return covered() || (imgui && ImGui::GetIO().WantTextInput);
+}
 // Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
     return settings_panel_open() || setup_open() || update_notice_open() || (open && settings().pause_when_open) ||
@@ -496,7 +500,13 @@ bool process_event(const SDL_Event &event) {
         || event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL;
     if (mods_take_mouse() && mouse_event)
         return true;
-    return covered() && is_input_event(event.type);
+    if (covered())
+        return is_input_event(event.type);
+    // The keys typed into a mod's text box are not the game's. A key let go still reaches the game,
+    // so a key pressed before the box had the keyboard is not left held.
+    const bool typed = event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT ||
+                       event.type == SDL_EVENT_TEXT_EDITING;
+    return typed && imgui && ImGui::GetIO().WantTextInput;
 }
 
 void poll() {
