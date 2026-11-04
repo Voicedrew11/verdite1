@@ -37,7 +37,8 @@ Put your disc image (.cue + .bin, .iso or .chd) in the same folder as the game
 choose the image when asked. The game copies its files into a "data" folder
 there, once (into the user folder below if the game's folder is read-only).
 An installed copy keeps it in its install folder, by default
-%LOCALAPPDATA%\Programs\Verdite1.
+%LOCALAPPDATA%\Programs\Verdite1. The AppImage keeps it in the user folder
+below, and moves a "data" folder from beside it there.
 The image itself is not changed. On Windows you can also drop the .cue onto
 verdite1.exe. On Linux, make the .AppImage executable first.
 

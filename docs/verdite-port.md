@@ -196,9 +196,10 @@ to `~/.local/share/Verdite/Verdite1/`. The `offscreen` SDL driver finds no
 EGL device even so, so there is no headless run yet.
 
 Without `--data` or `--disc` the game takes the release path, as on Windows:
-game files in `data/ja` and `data/en` beside the game (beside the `.AppImage`
-file, from `$APPIMAGE`, not the mount), or under the user folder when that
-folder cannot be written; otherwise a `.cue`, `.bin`, `.iso` or `.chd` beside the game
+game files in `data/ja` and `data/en` beside the game, or under the user folder when that
+folder cannot be written. An AppImage always uses the user folder, since it is one file often
+left in Downloads, and moves a `data` from beside it (from `$APPIMAGE`, not the mount) there, or
+keeps using it when the move fails (another drive); otherwise a `.cue`, `.bin`, `.iso` or `.chd` beside the game
 is copied there once, otherwise a file dialog asks for one.
 
 English is added on its own when only the Japanese files are there (any start but `--language

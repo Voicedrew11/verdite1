@@ -184,7 +184,8 @@ void offer_english() {
 
 #if !defined(__EMSCRIPTEN__)
 // Release layout: game files are copied out of the player's disc image once,
-// into "data/ja" and "data/en" beside the game.
+// into "data/ja" and "data/en" beside the game, or in the user folder for an
+// AppImage.
 
 // The folder the player keeps the game in: an AppImage's own folder, not the
 // mount it runs from.
@@ -199,9 +200,38 @@ std::string user_folder() {
     return folder.empty() ? "the user folder" : utf8(folder);
 }
 
-// "data" beside the game, or in the user folder when the game's folder cannot
-// be written (an AppImage in /opt, Program Files).
+bool holds_game_files(const std::filesystem::path &library) {
+    std::error_code error;
+    for (const auto &folder : {library, library / "ja", library / "en"}) {
+        if (std::filesystem::is_regular_file(folder / "GAME.EXE", error))
+            return true;
+    }
+    return false;
+}
+
+// An AppImage is one file, often left in Downloads, so its game files go in the
+// user folder. Earlier versions kept them beside it: those move over, or stay
+// in use where they are when they cannot (another drive).
+std::filesystem::path appimage_library() {
+    const auto beside = release_directory() / "data";
+    auto user = native_path(user_folder().c_str()) / "data";
+    std::error_code error;
+    if (holds_game_files(beside) && !holds_game_files(user)) {
+        std::filesystem::rename(beside, user, error);
+        if (error) {
+            std::printf("Keeping the game files in %s: %s\n", utf8(beside).c_str(), error.message().c_str());
+            return beside;
+        }
+    }
+    std::filesystem::create_directories(user, error);
+    return user;
+}
+
+// "data" beside the game, or in the user folder for an AppImage or when the
+// game's folder cannot be written (Program Files).
 std::filesystem::path release_library() {
+    if (std::getenv("APPIMAGE"))
+        return appimage_library();
     auto beside = release_directory() / "data";
     std::error_code error;
     std::filesystem::create_directories(beside, error);
@@ -428,7 +458,7 @@ int main(int argc, char **argv) {
         if (!prepared)
             return 1;
     } else {
-        kf::languages_configure(utf8(release_directory() / "data"));
+        kf::languages_configure(utf8(std::getenv("APPIMAGE") ? appimage_library() : release_directory() / "data"));
     }
 #else
     if (!data_selected && !disc)
