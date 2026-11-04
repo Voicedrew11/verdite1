@@ -86,6 +86,17 @@ std::optional<Parent> parent_of(TitlePage page) {
     return std::nullopt;
 }
 
+std::vector<TitleRowView> mod_settings_rows(const TitleMod &mod) {
+    std::vector<TitleRowView> rows;
+    rows.push_back(row(TitleRowKind::ModSwitch));
+    rows.back().mod = &mod;
+    for (const TitleModSetting &setting : mod.settings) {
+        rows.push_back(row(TitleRowKind::ModSetting, setting.enabled));
+        rows.back().setting = &setting;
+    }
+    return rows;
+}
+
 } // namespace
 
 std::string room_code_private(std::uint64_t random_bits) {
@@ -467,6 +478,20 @@ void TitleMenu::coop_failed(std::string why) {
     failure_ = std::move(why);
 }
 
+std::vector<TitleRowView> TitleMenu::grid_rows(std::string_view letters) const {
+    std::vector<TitleRowView> rows;
+    for (const char letter : letters) {
+        rows.push_back(row(TitleRowKind::Letter));
+        rows.back().letter = letter;
+    }
+    rows.push_back(row(TitleRowKind::Delete, !code_.empty()));
+    if (page_ == TitlePage::JoinCode)
+        rows.push_back(row(TitleRowKind::Join, code_.size() == private_code_length));
+    else
+        rows.push_back(row(TitleRowKind::Done, name_valid(code_)));
+    return rows;
+}
+
 TitleView TitleMenu::view() const {
     TitleView view;
     view.page = page_;
@@ -512,15 +537,7 @@ TitleView TitleMenu::view() const {
         if (!grid)
             break;
         view.grid_columns = grid->columns;
-        for (const char letter : grid->letters) {
-            rows.push_back(row(TitleRowKind::Letter));
-            rows.back().letter = letter;
-        }
-        rows.push_back(row(TitleRowKind::Delete, !code_.empty()));
-        if (page_ == TitlePage::JoinCode)
-            rows.push_back(row(TitleRowKind::Join, code_.size() == private_code_length));
-        else
-            rows.push_back(row(TitleRowKind::Done, name_valid(code_)));
+        rows = grid_rows(grid->letters);
         break;
     }
     case TitlePage::Profile:
@@ -541,14 +558,8 @@ TitleView TitleMenu::view() const {
         }
         break;
     case TitlePage::ModSettings:
-        if (const TitleMod *mod = shown_mod()) {
-            rows.push_back(row(TitleRowKind::ModSwitch));
-            rows.back().mod = mod;
-            for (const TitleModSetting &setting : mod->settings) {
-                rows.push_back(row(TitleRowKind::ModSetting, setting.enabled));
-                rows.back().setting = &setting;
-            }
-        }
+        if (const TitleMod *mod = shown_mod())
+            rows = mod_settings_rows(*mod);
         break;
     case TitlePage::LoadWarning:
         rows.push_back(row(TitleRowKind::LoadAnyway));

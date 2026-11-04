@@ -250,6 +250,7 @@ private:
     void confirm_mod(const TitleMod &mod);
     void flip_mod(const TitleMod &mod);
     const TitleMod *shown_mod() const;
+    std::vector<TitleRowView> grid_rows(std::string_view letters) const;
     void choose_profile();
     void confirm();
     void wait_for(TitleChoice choice);
