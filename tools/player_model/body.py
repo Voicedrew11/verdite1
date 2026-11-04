@@ -11,6 +11,10 @@ import numpy as np
 # flat colour the game paints in each player's own (port/ext/coop_profile.h), written as the first.
 PLAYER = 'player'
 PLAYER_DEFAULT = (60, 84, 180)
+# A flat colour painted the same way: the mark on the tabard, in the ink that shows on the player's
+# colour (port/ext/coop_profile.h), written as the first colour's.
+INK = 'ink'
+INK_DEFAULT = (232, 228, 216)
 TPAGE_142, CLUT_142 = 142, 31296   # 8-bit page at (896, 0), palette row 489: the weapon arm's
 TPAGE_151, CLUT_151 = 151, 31552   # 8-bit page at (448, 256), palette row 493: the NPC knights'
 MATERIALS = {
@@ -146,18 +150,37 @@ class Part:
         for q in ((0, 1, 2, 3), (4, 6, 5, 7), (0, 4, 1, 5), (2, 3, 6, 7), (0, 2, 4, 6), (1, 5, 3, 7)):
             self.face([v[i] for i in q], mat, inside, self.group())
 
-    def panel(self, corners, thickness, mat, back_mat=None):
-        """A thin quad slab: corners are the front face in strip order (top-left, top-right,
-        bottom-left, bottom-right as seen from the front); the back is offset by thickness."""
+    def panel(self, corners, thickness, mat, back_mat=None, marks=(), ink=INK):
+        """A thin quad slab: corners are its inner face in strip order, the outer one is thickness
+        further out. marks are rectangles (left, top, right, bottom) across the outer face, 0 to 1
+        as it is seen from outside with corners[0] at the top right, in ink: its own faces, cut
+        along their edges."""
         P = [np.array(c, float) for c in corners]
         n = np.cross(P[1] - P[0], P[2] - P[0]); n /= np.linalg.norm(n)
-        front = [self.vert(p) for p in P]
-        back = [self.vert(p - n * thickness) for p in P]
+        inner = [self.vert(p) for p in P]
+        outer = [p - n * thickness for p in P]
+        outer_ids = [self.vert(p) for p in outer]
         inside = np.mean(P, axis=0) - n * thickness / 2
-        self.face(front, mat, inside, self.group())
-        self.face(back, back_mat or mat, inside, self.group())
+        self.face(inner, back_mat or mat, inside, self.group())
+        self.panel_face(outer, outer_ids, mat, marks, ink, inside)
         for a, b in ((0, 1), (1, 3), (3, 2), (2, 0)):
-            self.face([front[a], front[b], back[a], back[b]], back_mat or mat, inside, self.group())
+            self.face([inner[a], inner[b], outer_ids[a], outer_ids[b]], back_mat or mat, inside, self.group())
+
+    def panel_face(self, P, corners, mat, marks, ink, inside):
+        """A panel's outer face, one quad for each cell the marks' edges cut it into."""
+        across = sorted({0.0, 1.0} | {x for m in marks for x in (m[0], m[2])})
+        down = sorted({0.0, 1.0} | {y for m in marks for y in (m[1], m[3])})
+        def at(x, y):   # across from the corner on the right as it is seen
+            return (P[1] * (1 - x) + P[0] * x) * (1 - y) + (P[3] * (1 - x) + P[2] * x) * y
+        ids = {(x, y): self.vert(at(x, y)) for x in across for y in down if (x, y) not in
+               ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0))}
+        ids |= {(1.0, 0.0): corners[0], (0.0, 0.0): corners[1], (1.0, 1.0): corners[2], (0.0, 1.0): corners[3]}
+        flat = self.group()
+        for x0, x1 in zip(across, across[1:]):
+            for y0, y1 in zip(down, down[1:]):
+                marked = any(m[0] <= x0 and x1 <= m[2] and m[1] <= y0 and y1 <= m[3] for m in marks)
+                self.face([ids[(x0, y0)], ids[(x1, y0)], ids[(x0, y1)], ids[(x1, y1)]],
+                          ink if marked else mat, inside, flat)
 
 # ---- writer ---------------------------------------------------------------------------------
 def to_game(p):
@@ -186,7 +209,9 @@ def build_tmd_with_colours(parts):
         for (ids, mat, g), fn in zip(part.faces, face_normal):
             ns = [normal_id(acc[(i, g)]) for i in ids]
             if mat == PLAYER:
-                prims.append(('col', ids, ns, PLAYER_DEFAULT, True))
+                prims.append(('col', ids, ns, PLAYER_DEFAULT, PLAYER))
+            elif mat == INK:
+                prims.append(('col', ids, ns, INK_DEFAULT, INK))
             elif isinstance(mat, str):
                 m = MATERIALS[mat]
                 W = [part.verts[i] for i in ids]
@@ -201,7 +226,7 @@ def build_tmd_with_colours(parts):
                                int(round(m['v'][0] + b * (m['v'][1] - m['v'][0])))))
                 prims.append(('tex', ids, ns, uv, m['tpage'], m['clut']))
             else:
-                prims.append(('col', ids, ns, mat, False))
+                prims.append(('col', ids, ns, mat, None))
         objects.append(([tuple(int(round(c)) for c in v) for v in verts], normals, prims))
     return write_tmd(objects)
 
@@ -209,12 +234,12 @@ def build_tmd(parts):
     return build_tmd_with_colours(parts)[0]
 
 def write_tmd(objects):
-    """The TMD, the offsets of the R, G, B of each primitive in the player's colour, and of the
-    texture page of each textured one."""
+    """The TMD, the offsets of the R, G, B of each primitive in the player's colour, of each in the
+    mark's ink, and of the texture page of each textured one."""
     header = 12
     table_size = 28 * len(objects)
     blobs, table, cursor = [], b'', table_size
-    colours, pages = [], []
+    painted, pages = {PLAYER: [], INK: []}, []
     for verts, normals, prims in objects:
         vb = b''.join(struct.pack('<4h', *v, 0) for v in verts)
         nb = b''.join(struct.pack('<4h', *n, 0) for n in normals)
@@ -231,11 +256,11 @@ def write_tmd(objects):
                 mode = 0x38 if n == 4 else 0x30
                 body = struct.pack('<4B', *p[3], mode)
                 if p[4]:
-                    colours.append(header + cursor + len(vb) + len(nb) + len(pb) + 4)
+                    painted[p[4]].append(header + cursor + len(vb) + len(nb) + len(pb) + 4)
             body += b''.join(struct.pack('<HH', ns[i], ids[i]) for i in range(n))
             pb += struct.pack('<4B', len(body) // 4 + 1, len(body) // 4, 0, mode) + body
         table += struct.pack('<6Ii', cursor, len(verts), cursor + len(vb), len(normals),
                              cursor + len(vb) + len(nb), len(prims), 0)
         cursor += len(vb) + len(nb) + len(pb)
         blobs += [vb, nb, pb]
-    return struct.pack('<3I', 0x41, 0, len(objects)) + table + b''.join(blobs), colours, pages
+    return struct.pack('<3I', 0x41, 0, len(objects)) + table + b''.join(blobs), painted[PLAYER], painted[INK], pages

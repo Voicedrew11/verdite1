@@ -39,6 +39,11 @@ struct TitleHelmet {
     u8 helmet = 0;
     u8 colour = 0;
 };
+// A tabard's symbol the same way: online_player_symbol_count's and the colours' indexes.
+struct TitleSymbol {
+    u8 symbol = 0;
+    u8 colour = 0;
+};
 struct TitleText {
     std::string heading;   // the page's title box; empty on the top page
     std::string code;      // a room's code or the player's name, new or typed so far, drawn under the heading
@@ -47,6 +52,7 @@ struct TitleText {
     u32 grid_columns = 0;  // this many to a line
     std::string note;      // a line under the rows: the code typed, "CONNECTING", why a join failed
     std::optional<TitleHelmet> helmet;   // the PROFILE page: the helmet to show turning under the rows
+    std::optional<TitleSymbol> symbol;   // or on its SYMBOL row, the chest in place of the helmet
 };
 TitleText title_text(Language language);
 

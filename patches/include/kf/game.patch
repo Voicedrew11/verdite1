@@ -375,7 +375,7 @@ index 8e96a2cb99b0e3848f38a77a6b6b8c1401a18cdf..1e48b2a7fda01d46562bde722cef2940
  extern void player_increment_physical_power_training(void);
  extern s32 player_move_horizontal(s32 heading, s32 distance);
 diff --git a/include/kf/game/render.h b/include/kf/game/render.h
-index 2f6842c54f2849a443d80daf631199b876b6cd04..aefee0a99cbcad5a714c04c8bb876493a0812158 100644
+index 2f6842c54f2849a443d80daf631199b876b6cd04..d1e1f0cb18add6ec682a39f123c73921f15ab088 100644
 --- a/include/kf/game/render.h
 +++ b/include/kf/game/render.h
 @@ -10,6 +10,8 @@
@@ -395,7 +395,7 @@ index 2f6842c54f2849a443d80daf631199b876b6cd04..aefee0a99cbcad5a714c04c8bb876493
  extern std::array<KfSpriteQuad, KF_EFFECT_BILLBOARD_SPRITE_COUNT> effect_billboard_sprites;
  extern std::array<KfHudModel, KF_HUD_MODEL_TABLE_ROWS> hud_models;
  extern std::array<KfHudSprite, KF_HUD_TABLE_ROWS> hud_sprites;
-@@ -145,13 +148,48 @@ extern void render_hud_sprites(KfHudSprite *table);
+@@ -145,13 +148,50 @@ extern void render_hud_sprites(KfHudSprite *table);
  extern void render_initialize(void);
  extern void render_map_cell(
      s32 col, s32 row, KfCellVisibility visibility);
@@ -420,6 +420,8 @@ index 2f6842c54f2849a443d80daf631199b876b6cd04..aefee0a99cbcad5a714c04c8bb876493
 +extern void render_online_player(const kf::OnlinePlayer &player);
 +// PC extension (the title's PROFILE page): a helmet alone, turning under the page's rows.
 +extern void render_title_helmet(u8 helmet, u8 colour);
++// PC extension (the same, on its SYMBOL row): the chest and its tabard, turning in the same place.
++extern void render_title_chest(u8 symbol, u8 colour);
 +// PC extension (online play): the name bar above that player (kf/platform/online_name_bar.h).
 +extern void render_online_player_name(const kf::OnlinePlayer &player);
 +// PC extension (messages on the ground): a message's mark on the floor of its cell.

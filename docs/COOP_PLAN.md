@@ -565,7 +565,7 @@ Not yet:
 
 ## The profile
 
-Built 2026-10-27. What the others in a room see of a player: a name, a colour and a helmet,
+Built 2026-10-27. What the others in a room see of a player: a name, a colour, a helmet and a symbol,
 chosen under COOP, PROFILE, on the title menu:
 
 - **NAME**: a grid of the capitals and digits (12 to a line, three lines), or the keyboard's, with
@@ -574,12 +574,14 @@ chosen under COOP, PROFILE, on the title menu:
   red, green, gold, white, black, purple, orange. It paints the tabard, sleeves, knee bands and
   crest.
 - **HELMET**: one of the helmets: the great helm or the fluted helm, shown turning under the rows.
+- **SYMBOL**: a mark on the tabard's chest, front and back: none or a cross, shown on the chest turning
+  under the rows while this row is chosen. White, and black on a white tabard.
 
 A change is kept at once in `coop.profile` in the user folder, beside the install's id
-(`name=`, `colour=`, `helmet=` lines; a part missing or bad is the default's: `PLAYER` and four
-digits of the id, blue, the great helm). It goes to the others in the next room: in the guest's
+(`name=`, `colour=`, `helmet=`, `symbol=` lines; a part missing or bad is the default's: `PLAYER`
+and four digits of the id, blue, the great helm, no symbol). It goes to the others in the next room: in the guest's
 hello, and in the host's roster to everyone, so the feed, the watching line and the public list
-name players by it and each knight is drawn in its player's colour and helmet. A profile is not
+name players by it and each knight is drawn in its player's colour, helmet and symbol. A profile is not
 changed inside a room.
 
 The rules are `port/ext/coop_profile.h` (unit-tested) and the menu's pages libverdite's.

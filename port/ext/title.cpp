@@ -91,10 +91,11 @@ std::vector<verdite::TitleSave> read_saves() {
     return saves;
 }
 
-// The player's profile as the menu shows it: the colours' and helmets' counts are coop's.
+// The player's profile as the menu shows it: the colours', helmets' and symbols' counts are coop's.
 verdite::TitleProfile read_profile() {
     const CoopProfile profile = coop_own_profile();
-    return {profile.name, profile.colour, coop_colour_count, profile.helmet, online_player_helmet_count};
+    return {profile.name, profile.colour, coop_colour_count, profile.helmet, online_player_helmet_count,
+            profile.symbol, online_player_symbol_count};
 }
 
 verdite::TitleModState mod_state(const verdite::ModInfo &mod) {
@@ -239,7 +240,7 @@ std::optional<TitleStart> take(const verdite::TitleChoice &choice) {
         break;
     case TitleAction::Profile:
         coop_set_own_profile({choice.profile.name, static_cast<std::uint8_t>(choice.profile.colour),
-            static_cast<std::uint8_t>(choice.profile.helmet)});
+            static_cast<std::uint8_t>(choice.profile.helmet), static_cast<std::uint8_t>(choice.profile.symbol)});
         break;
     case TitleAction::EnableMod:
         mods_set_enabled(choice.code, true);
@@ -313,7 +314,7 @@ constexpr Words continue_word{"CONTINUE", "つづきから"}, new_game_word{"NEW
     empty_word{"EMPTY", "データなし"}, damaged_word{"DAMAGED", "こわれています"},
     experience_word{"EXP", "けいけんち"}, share_word{"TELL YOUR FRIENDS THIS CODE", "このコードをともだちに"},
     profile_word{"PROFILE", "プレイヤー"}, name_word{"NAME", "なまえ"}, colour_word{"COLOUR", "いろ"},
-    helmet_word{"HELMET", "かぶと"}, done_word{"DONE", "おわり"}, mods_word{"MODS", "かいぞう"},
+    helmet_word{"HELMET", "かぶと"}, symbol_word{"SYMBOL", "しるし"}, done_word{"DONE", "おわり"}, mods_word{"MODS", "かいぞう"},
     on_word{"ON", "オン"}, off_word{"OFF", "オフ"}, error_word{"ERROR", "エラー"}, held_word{"HELD", "ていし"},
     no_mods_word{"NO MODS YET", "かいぞうはありません"}, held_note_word{"OFF IN CLASSIC MODE", "クラシックではていし"},
     warning_word{"WARNING", "ちゅうい"}, load_anyway_word{"LOAD ANYWAY", "それでもロード"}, back_word{"BACK", "もどる"},
@@ -439,6 +440,7 @@ std::string row_text(const verdite::TitleRowView &row, std::size_t index, Langua
     case TitleRowKind::ProfileName: return std::string(name_word.in(language));
     case TitleRowKind::ProfileColour: return std::string(colour_word.in(language));
     case TitleRowKind::ProfileHelmet: return std::string(helmet_word.in(language));
+    case TitleRowKind::ProfileSymbol: return std::string(symbol_word.in(language));
     case TitleRowKind::Done: return std::string(done_word.in(language));
     }
     return {};
@@ -453,6 +455,9 @@ std::string row_value(const verdite::TitleView &view, const verdite::TitleRowVie
         return profile.colour < coop_colour_count ? profile_words(coop_colours()[profile.colour].name, language) : std::string();
     case TitleRowKind::ProfileHelmet:
         return profile.helmet < online_player_helmet_count ? profile_words(coop_helmet_names()[profile.helmet], language)
+                                                           : std::string();
+    case TitleRowKind::ProfileSymbol:
+        return profile.symbol < online_player_symbol_count ? profile_words(coop_symbol_names()[profile.symbol], language)
                                                            : std::string();
     case TitleRowKind::NewPrivateWorld: return std::string(private_word.in(language));
     case TitleRowKind::NewPublicWorld: return std::string(public_word.in(language));
@@ -587,8 +592,13 @@ TitleText title_text(Language language) {
         text.code = view.code;
     if (view.page == verdite::TitlePage::NameEntry)
         text.code = view.code;
-    if (view.page == verdite::TitlePage::Profile)
-        text.helmet = TitleHelmet{static_cast<u8>(view.profile.helmet), static_cast<u8>(view.profile.colour)};
+    if (view.page == verdite::TitlePage::Profile) {
+        const auto on_symbol = [](const verdite::TitleRowView &row) { return row.selected && row.kind == verdite::TitleRowKind::ProfileSymbol; };
+        if (std::ranges::any_of(view.rows, on_symbol))
+            text.symbol = TitleSymbol{static_cast<u8>(view.profile.symbol), static_cast<u8>(view.profile.colour)};
+        else
+            text.helmet = TitleHelmet{static_cast<u8>(view.profile.helmet), static_cast<u8>(view.profile.colour)};
+    }
     return text;
 }
 

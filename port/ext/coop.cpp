@@ -949,10 +949,10 @@ std::string coop_json() {
     std::string profiles;
     for (const CoopRoster::Player &player : coop_floors_room())
         profiles += (profiles.empty() ? "[\"" : ",[\"") + player.profile.name + "\"," + std::to_string(player.profile.colour) +
-                    "," + std::to_string(player.profile.helmet) + "]";
+                    "," + std::to_string(player.profile.helmet) + "," + std::to_string(player.profile.symbol) + "]";
     return "\"role\":\"" + std::string(role) + "\",\"inPlay\":" + (coop.in_play ? "true" : "false") + ",\"name\":\"" +
            coop.profile.name + "\",\"colour\":" + std::to_string(coop.profile.colour) + ",\"helmet\":" +
-           std::to_string(coop.profile.helmet) + ",\"roster\":[" + profiles + "],\"pack\":{" + pack + "},\"gold\":" + std::to_string(player_state.gold) + ",\"worn\":" +
+           std::to_string(coop.profile.helmet) + ",\"symbol\":" + std::to_string(coop.profile.symbol) + ",\"roster\":[" + profiles + "],\"pack\":{" + pack + "},\"gold\":" + std::to_string(player_state.gold) + ",\"worn\":" +
            worn_json(game_worn()) + ",\"othersWear\":[" + others + "],\"feed\":[" + feed_rows + "],\"highestFloor\":" +
            std::to_string(kf::coop_highest_floor(kf_enum_encode<u8>(player_state.progress_state.highest_floor))) +
            ",\"floor\":" + std::to_string(kf_enum_encode<int>(player_state.progress_state.current_floor)) + ",\"cell\":[" +

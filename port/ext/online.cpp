@@ -543,7 +543,7 @@ std::vector<OnlinePlayer> online_players_on_floor(int floor) {
             const ext::CoopProfile profile = ext::coop_profile_of_peer(peer);
             players.push_back({static_cast<u32>(peer), pose->x, pose->z, pose->yaw, pose->weapon,
                 pose->attack_phase, pose->pitch, pose->foot_height, known.stride.phase, known.stride.amount,
-                peer == eyes, profile.colour, profile.helmet, profile.name});
+                peer == eyes, profile.colour, profile.helmet, profile.symbol, profile.name});
         }
 #else
     (void)floor;

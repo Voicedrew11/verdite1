@@ -163,8 +163,8 @@ def main():
         a.choose("COOP")
         a.choose("PROFILE")
         rows = a.title()["rows"]
-        check("PROFILE shows the name, colour and helmet",
-              [(row["text"], row["value"]) for row in rows][1:] == [("COLOUR", "BLUE"), ("HELMET", "GREAT HELM")]
+        check("PROFILE shows the name, colour, helmet and symbol",
+              [(row["text"], row["value"]) for row in rows][1:] == [("COLOUR", "BLUE"), ("HELMET", "GREAT HELM"), ("SYMBOL", "NONE")]
               and rows[0]["text"] == "NAME" and rows[0]["value"].startswith("PLAYER"), rows)
         a.choose("NAME")
         for _ in range(len(a.title()["code"])):
@@ -175,9 +175,9 @@ def main():
         a.choose("COLOUR")   # Confirm steps it, as Right does
         rows = a.title()["rows"]
         check("the profile has the new name and the next colour",
-              [row["value"] for row in rows] == ["ALICE", "RED", "GREAT HELM"], rows)
+              [row["value"] for row in rows] == ["ALICE", "RED", "GREAT HELM", "NONE"], rows)
         kept = a.home / "Verdite" / "Verdite1" / "coop.profile"   # SDL's pref path under XDG_DATA_HOME
-        check("the profile is kept", kept.exists() and kept.read_text() == "name=ALICE\ncolour=1\nhelmet=0\n")
+        check("the profile is kept", kept.exists() and kept.read_text() == "name=ALICE\ncolour=1\nhelmet=0\nsymbol=0\n")
         a.tap("back")
         a.choose("SETTINGS")
         rows = a.wait("the co-op settings", a.title, lambda t: t["rows"])["rows"]

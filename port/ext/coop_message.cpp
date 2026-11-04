@@ -11,7 +11,7 @@
 namespace kf::ext {
 namespace {
 
-constexpr std::uint8_t message_version = 2;
+constexpr std::uint8_t message_version = 3;
 constexpr std::uint8_t cause_count = 4;
 constexpr std::size_t players_most = 64;
 
@@ -64,12 +64,14 @@ void write_profile(CoopByteWriter &out, const CoopProfile &profile) {
     out.name(profile.name);
     out.u8(profile.colour);
     out.u8(profile.helmet);
+    out.u8(profile.symbol);
 }
 
 bool read_profile(CoopByteReader &in, CoopProfile &profile) {
     profile.name = in.name();
     profile.colour = in.u8();
     profile.helmet = in.u8();
+    profile.symbol = in.u8();
     return in.ok() && coop_profile_valid(profile);
 }
 

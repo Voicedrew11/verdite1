@@ -28,7 +28,8 @@ struct OnlinePlayer {
     float stride;       // 0 standing .. 1 a full stride
     bool eyes;          // this player, down, sees through theirs: their knight is not drawn here
     u8 colour;          // the player's profile (port/ext/coop_profile.h): an index of the colours
-    u8 helmet;          // and of the helmets, each below its count
+    u8 helmet;          // and of the helmets
+    u8 symbol;          // and of the tabard's symbols, each below its count
     std::string name;   // and their name, in what menu_spell spells
 };
 
@@ -89,8 +90,17 @@ SVECTOR online_player_model_right_wrist();
 // parts, its vertices relative to the head's pivot, drawn with the head.
 inline constexpr std::size_t online_player_helmet_count = 2;
 u16 online_player_model_helmet_object(u8 helmet);
+// The symbols a tabard's chest can carry, front and back, the first none. Each is the whole chest:
+// a TMD object after the helmets, its vertices relative to the torso's pivot, drawn with the torso.
+inline constexpr std::size_t online_player_symbol_count = 2;
+u16 online_player_model_tabard_object(u8 symbol);
+// What to sort a tabard by, nearer than it is: the breastplate's large faces would draw over its
+// small ones.
+s16 online_player_model_tabard_depth_bias();
 // Where the TMD's primitives drawn in the player's colour hold it: each the offset of an R, G, B.
 std::span<const u32> online_player_model_colour_offsets();
+// And those drawn in the ink of the symbol on the tabard (CoopColour::ink).
+std::span<const u32> online_player_model_ink_offsets();
 // The knight's TMD in one of the profile's colours (port/ext/coop_profile.h; the first past them
 // is the first), made the first time it is asked for and kept, since the renderer reads it until
 // the frame is drawn.

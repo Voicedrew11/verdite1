@@ -142,7 +142,8 @@ def rot_x(a):
 def render(tmd, vram, verts=None, obj=0, yaw=0.0, pitch=0.2, size=384, extent=None, center=None,
            bg=(40, 40, 48), light=(0.4, -0.7, -0.6), point_sample=True, cull=True, painter=False):
     """Orthographic render. The game's +Y is down; the picture is drawn with -Y up. With painter,
-    each face has one depth, its corners' average, as the game's ordering table sorts them."""
+    each face has one depth, its corners' average, as the game's ordering table sorts them, plus
+    its primitive's 'depth_bias' (in these units, as the game's render_enqueue_tmd takes one)."""
     o = tmd.objects[obj]
     v = (o['verts'] if verts is None else verts).astype(np.float64)
     R = rot_x(pitch) @ rot_y(yaw)
@@ -167,7 +168,7 @@ def render(tmd, vram, verts=None, obj=0, yaw=0.0, pitch=0.2, size=384, extent=No
         for t in tris:
             a, b, c = (idx[t[0]], idx[t[1]], idx[t[2]])
             X = np.array([sx[a], sx[b], sx[c]]); Y = np.array([sy[a], sy[b], sy[c]]); Z = np.array([sz[a], sz[b], sz[c]])
-            if painter: Z[:] = np.mean(sz[idx])
+            if painter: Z[:] = np.mean(sz[idx]) + p.get('depth_bias', 0)
             area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0])
             if abs(area) < 1e-9: continue
             x0, x1 = int(max(0, np.floor(X.min()))), int(min(size - 1, np.ceil(X.max())))

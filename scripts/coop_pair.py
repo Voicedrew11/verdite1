@@ -131,7 +131,7 @@ def main():
         a.run("give 20 1")   # a Knight Plate found
         a.wait("the plate", lambda s: s["pack"].get("20") == 1)
 
-        b = Game("b", PORTS[1], profile="name=BOB7\ncolour=3\n")
+        b = Game("b", PORTS[1], profile="name=BOB7\ncolour=3\nsymbol=1\n")
         try:
             own = b.coop()
             guest = b.wait("the guest's arrival", lambda s: s["inPlay"])
@@ -143,9 +143,9 @@ def main():
             check("B sees the party's pack", b.wait("the pack", lambda s: s["pack"] == host["pack"])["gold"] == 300)
             check("B arrived beside A", guest["floor"] == host["floor"] and guest["cell"] == host["cell"])
             check("each plays as its profile", (host["name"], host["colour"]) == ("ALICE", 1)
-                  and (b.coop()["name"], b.coop()["colour"], b.coop()["helmet"]) == ("BOB7", 3, 0))
-            check("each sees the other's profile", ["BOB7", 3, 0] in host["roster"]
-                  and ["ALICE", 1, 0] in b.coop()["roster"])
+                  and (b.coop()["name"], b.coop()["colour"], b.coop()["helmet"], b.coop()["symbol"]) == ("BOB7", 3, 0, 1))
+            check("each sees the other's profile", ["BOB7", 3, 0, 1] in host["roster"]
+                  and ["ALICE", 1, 0, 0] in b.coop()["roster"])
             check("each sees the other's sword", host["othersWear"] == [[0, 255, 255, 255, 255, 255, 255]]
                   and b.coop()["othersWear"] == [[0, 255, 255, 255, 255, 255, 255]])
 

@@ -15,7 +15,7 @@ of a walk and a swing is drawn, on the height they stand at.
 | `knight.py` | The knight's part table, its helmets, and the rig that poses it. |
 | `arm.py` | The weapon hold: a first-person weapon model's gauntlet and weapon in the knight's hand, at rest and through an attack. |
 | `walk.py` | The stance and the walk: legs and free arm standing ready, breathing and through a cycle, and how far the body drops onto the planted foot. |
-| `preview.py` | The command: `survey`, `floor N`, `knight`, `helmet H`, `swing W`, `rest W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight, its helmets and its colour offsets into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
+| `preview.py` | The command: `survey`, `floor N`, `knight`, `helmet H`, `symbol S`, `swing W`, `rest W`, `walk [W]`, `gltf`, `tmd OUT`, and `cpp`, which writes the knight, its helmets, its tabards and its colour offsets into `port/ext/online_player_model.cpp`. Pictures go to `build/player_model/`. |
 | `gltf.py` | Writes a posed model as `knight.glb`, to turn around in Blender. |
 
 After changing the knight, run `preview.py cpp` and rebuild; the part order is
@@ -50,16 +50,16 @@ So the knight costs no texture memory and looks the same on every floor.
 
 ## The knight
 
-461 vertices in 13 parts (pelvis, torso, head, upper arms, forearms, thighs, shins, hands), each
+445 vertices in 13 parts (pelvis, torso, head, upper arms, forearms, thighs, shins, hands), each
 its own TMD object with its vertices relative to its pivot, about 1850 tall (the player's collision
-height is 1700), then the helmets. Grey metal from page 151 for the armour, page 142's darker metal
+height is 1700), then the helmets and tabards. Grey metal from page 151 for the armour, page 142's darker metal
 for the gauntlets, as the weapons' own gauntlet, leather belt and boots. Tabard, sleeves, knee
 bands and crest are in the player's colour, to tell players apart.
 
 - **The colour** is the player's profile's ([COOP_PLAN.md](COOP_PLAN.md), "The profile"). Those
   faces are flat-coloured primitives written in the first colour (`PLAYER` in `body.py`), and the
-  model lists where each holds its R, G, B (155 of them); `online_player_tmd_in` paints a copy
-  of the TMD per colour the first time one is drawn, 33 KB each, 8 at most.
+  model lists where each holds its R, G, B (205 of them); `online_player_tmd_in` paints a copy
+  of the TMD per colour the first time one is drawn, 36 KB each, 8 at most.
 - **The helmet** is a TMD object of its own after the parts (`helmets()` in `knight.py`, in
   `online_player_helmet_count`'s order), its vertices relative to the head's pivot, drawn with
   the head; the head keeps only the mail coif. A new helmet is an entry at the end of `knight.py`'s
@@ -80,14 +80,32 @@ bands and crest are in the player's colour, to tell players apart.
     teeth. Six skull sections are the fewest that stay round; the neck's corner faces forward so that
     in the game's depth order it does not draw over the chin.
 
+- **The symbol** is a mark on the tabard's chest, the same front and back. The chest is a TMD object
+  of its own per symbol after the helmets (`tabards()` in `knight.py`, in
+  `online_player_symbol_count`'s order; the first has no mark), its vertices relative to the torso's
+  pivot, drawn with the torso. A new symbol is an entry at the end of `knight.py`'s `SYMBOLS`
+  (rectangles across the chest, as seen from outside, so a letter reads the right way round), its name
+  in `port/ext/coop_profile.cpp`, and the count raised; `preview.py cpp` refuses a count that differs.
+  `preview.py symbol S` draws it round about, in the game's depth order and from above and below.
+  - The mark is the chest's own faces, cut along the rectangles' edges, as the great helm's cross is.
+    **The ink** is the colour's (`CoopColour::ink`): white, black on the white tabard. Its faces are
+    listed like the colour's, as `online_player_model_ink_offsets`, and painted with it.
+  - **The depth bias**: cut into small faces, the chest lost pieces to the breastplate's large ones
+    in the game's depth order, from any angle but head on. So a tabard sorts 104 units nearer than it
+    is (`TABARD_DEPTH_BIAS`), more than the breastplate's faces lead it by, less than an arm in front
+    of the chest does.
+  - **Cross** (60 primitives for the chest, against 12 with none).
+
 ## The helmet on the title's PROFILE page
 
 The PROFILE page shows the chosen helmet in the player's colour, turning once in 8 seconds under the
-rows (`render_title_helmet`, called from `menu_title_draw`), within x 73 to 247 and y 118 to 228 of
+rows (`render_title_helmet`, called from `menu_title_draw`), within x 81 to 239 and y 130 to 230 of
 the 320 by 240 screen for the fluted helm through a whole turn, lit by the menu's item light. The logo (320, 256 to 640, 496) overlaps page 151, so `menu_title_prepare` copies only the metal
 square the helmets use, as `online_player_title_texture_moves` lists, to x 160, y 129, which no TIM
 on the disc touches, and the helmet is drawn from a copy of the TMD with its page changed
-(`online_player_title_tmd_in`). A new helmet using another material adds its square there.
+(`online_player_title_tmd_in`). A new helmet using another material adds its square there. On the
+SYMBOL row the same place shows the torso and its tabard instead (`render_title_chest`), x 103 to 217
+and y 126 to 217.
 
 ## The weapon
 

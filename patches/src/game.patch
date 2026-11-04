@@ -4073,10 +4073,10 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +}
 diff --git a/src/game/menu_title.cpp b/src/game/menu_title.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a88db2a13c0200f41db8c7449a87b7cba2dcb738
+index 0000000000000000000000000000000000000000..b4bcff37e97351ce9200e6002ab75585b00ac695
 --- /dev/null
 +++ b/src/game/menu_title.cpp
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,187 @@
 +// PC extension: the title menu (kf/platform/title.h) over the opening's logo, drawn with the
 +// menu's own boxes, cursor and font as the port's SETTINGS page is. The top page is a line of words
 +// across the bottom of the picture, with no boxes; the others fill the picture as the menu's pages do, over the logo dimmed.
@@ -4260,6 +4260,8 @@ index 0000000000000000000000000000000000000000..a88db2a13c0200f41db8c7449a87b7cb
 +        title_draw_centred(menu_spell(text.note, language), 0, TITLE_SCREEN_WIDTH, TITLE_NOTE_Y, 1.0f);
 +    if (text.helmet)
 +        render_title_helmet(text.helmet->helmet, text.helmet->colour);
++    if (text.symbol)
++        render_title_chest(text.symbol->symbol, text.symbol->colour);
 +    return top;
 +}
 diff --git a/src/game/message_render.cpp b/src/game/message_render.cpp
@@ -4402,10 +4404,10 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..190e714d8f0d6fa56ca3a4cad0dfb19cf000d0ce
+index 0000000000000000000000000000000000000000..6e2089463800f27c6aec46def7b85f6c3de87436
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,602 @@
+@@ -0,0 +1,631 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
 +// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
@@ -4773,7 +4775,7 @@ index 0000000000000000000000000000000000000000..190e714d8f0d6fa56ca3a4cad0dfb19c
 +};
 +
 +static void online_player_draw_object(const KfTmdResource &tmd, u16 object_index,
-+    std::span<const SVECTOR> vertices, const OnlinePlayerPlacement &placement)
++    std::span<const SVECTOR> vertices, const OnlinePlayerPlacement &placement, s16 depth_bias = 0)
 +{
 +    SVECTOR relative_position;
 +    MATRIX composed;
@@ -4794,36 +4796,41 @@ index 0000000000000000000000000000000000000000..190e714d8f0d6fa56ca3a4cad0dfb19c
 +    else
 +        context.current_vertices = vertices;
 +    tmd_project_vertices(static_cast<s32>(object.vertex_count), &composed, game_graphics_runtime.render_state.projection);
-+    render_enqueue_tmd(object_index, 0, &light);
++    render_enqueue_tmd(object_index, depth_bias, &light);
 +}
 +
 +// One turn in this time, by the clock: the title's loop runs at the display's rate. Its middle is on
 +// the view's axis, which is moved down the screen, so it swells evenly as the beak comes round.
 +static constexpr std::uint64_t TITLE_HELMET_TURN_NS = 8'000'000'000;
 +enum {
-+    TITLE_HELMET_SCREEN_Y = 170,
++    TITLE_HELMET_SCREEN_Y = 178,
 +    TITLE_HELMET_TRANSLATION_Y = 157,
-+    TITLE_HELMET_TRANSLATION_Z = 680,
++    TITLE_HELMET_TRANSLATION_Z = 740,
++    TITLE_CHEST_TRANSLATION_Y = 222,
++    TITLE_CHEST_TRANSLATION_Z = 1350,
 +    TITLE_HELMET_DEPTH_BIAS = 1000,
 +    TITLE_HELMET_AMBIENT = 64
 +};
 +
-+void render_title_helmet(u8 helmet, u8 colour)
++struct TitleTurningObject {
++    u16 object_index;
++    s16 depth_bias;
++};
++
++// The objects of the painted knight, about one pivot, turning on the view's axis at this distance.
++static void render_title_turning(std::span<const TitleTurningObject> objects, u8 colour, s32 translation_y, s32 translation_z)
 +{
 +    const auto painted = kf::online_player_title_tmd_in(colour);
 +    auto context = tmd_context();
 +    context.current_tmd = tmd_resource_view(painted.data(), painted.size());
-+    const u16 object_index = kf::online_player_model_helmet_object(helmet < kf::online_player_helmet_count ? helmet : 0);
-+    const auto object = tmd_read_object(context, object_index);
-+    tmd_select_object_vertices(context, object_index);
 +
 +    const auto turn_ns = kf::host_clock_ns() % TITLE_HELMET_TURN_NS;
 +    const SVECTOR rotation = {0, static_cast<s16>(turn_ns * 4096 / TITLE_HELMET_TURN_NS), 0, 0};
 +    MATRIX model;
 +    kf::matrix_set_rotation_xyz(rotation, model);
 +    model.t[0] = 0;
-+    model.t[1] = TITLE_HELMET_TRANSLATION_Y;
-+    model.t[2] = TITLE_HELMET_TRANSLATION_Z;
++    model.t[1] = translation_y;
++    model.t[2] = translation_z;
 +
 +    // The menu's light on an item (menu_preview_light_source): fixed in the view as the helmet turns.
 +    constexpr s16 LIT = -KF_FIXED12_ONE;
@@ -4838,9 +4845,29 @@ index 0000000000000000000000000000000000000000..190e714d8f0d6fa56ca3a4cad0dfb19c
 +    lighting.ambient = {TITLE_HELMET_AMBIENT, TITLE_HELMET_AMBIENT, TITLE_HELMET_AMBIENT};
 +    kf::Projection projection;
 +    projection.center_y = TITLE_HELMET_SCREEN_Y;
-+    tmd_project_vertices(static_cast<s32>(object.vertex_count), &model, projection);
-+    render_enqueue_tmd(object_index, TITLE_HELMET_DEPTH_BIAS, &light);
++    for (const TitleTurningObject &turning : objects) {
++        const auto object = tmd_read_object(context, turning.object_index);
++        tmd_select_object_vertices(context, turning.object_index);
++        tmd_project_vertices(static_cast<s32>(object.vertex_count), &model, projection);
++        render_enqueue_tmd(turning.object_index, TITLE_HELMET_DEPTH_BIAS + turning.depth_bias, &light);
++    }
 +    lighting = saved_lighting;
++}
++
++void render_title_helmet(u8 helmet, u8 colour)
++{
++    const u16 object_index = kf::online_player_model_helmet_object(helmet < kf::online_player_helmet_count ? helmet : 0);
++    const std::array<TitleTurningObject, 1> objects = {{{object_index, 0}}};
++    render_title_turning(objects, colour, TITLE_HELMET_TRANSLATION_Y, TITLE_HELMET_TRANSLATION_Z);
++}
++
++void render_title_chest(u8 symbol, u8 colour)
++{
++    const u16 tabard = kf::online_player_model_tabard_object(symbol < kf::online_player_symbol_count ? symbol : 0);
++    const std::array<TitleTurningObject, 2> objects = {{
++        {kf_enum_encode<u8>(kf::OnlinePlayerPart::Torso), 0},
++        {tabard, kf::online_player_model_tabard_depth_bias()}}};
++    render_title_turning(objects, colour, TITLE_CHEST_TRANSLATION_Y, TITLE_CHEST_TRANSLATION_Z);
 +}
 +
 +static VECTOR online_player_offset(const MATRIX &rotation, const SVECTOR &to, const SVECTOR &from)
@@ -4870,10 +4897,11 @@ index 0000000000000000000000000000000000000000..190e714d8f0d6fa56ca3a4cad0dfb19c
 +void render_online_player(const kf::OnlinePlayer &player)
 +{
 +    using Part = kf::OnlinePlayerPart;
-+    // In the player's colour, wearing their helmet (port/ext/coop_profile.h).
++    // In the player's colour, wearing their helmet and symbol (port/ext/coop_profile.h).
 +    const auto painted = kf::online_player_tmd_in(player.colour);
 +    const auto knight = tmd_resource_view(painted.data(), painted.size());
 +    const u8 helmet = player.helmet < kf::online_player_helmet_count ? player.helmet : 0;
++    const u8 symbol = player.symbol < kf::online_player_symbol_count ? player.symbol : 0;
 +    const auto &joints = kf::online_player_model_joints();
 +    const auto pose = online_player_pose(player);
 +    const VECTOR feet = {
@@ -4928,6 +4956,9 @@ index 0000000000000000000000000000000000000000..190e714d8f0d6fa56ca3a4cad0dfb19c
 +        online_player_draw_object(knight, static_cast<u16>(i), {}, placement);
 +        if (i == kf_enum_encode<u8>(Part::Head))
 +            online_player_draw_object(knight, kf::online_player_model_helmet_object(helmet), {}, placement);
++        if (i == kf_enum_encode<u8>(Part::Torso))
++            online_player_draw_object(knight, kf::online_player_model_tabard_object(symbol), {}, placement,
++                kf::online_player_model_tabard_depth_bias());
 +    }
 +    if (weapon)
 +        online_player_draw_held(*weapon, body, held, placements[forearm_right]);

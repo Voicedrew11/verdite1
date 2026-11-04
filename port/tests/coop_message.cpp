@@ -116,6 +116,7 @@ TEST_CASE("an item, stack, floor, cell, cause or name out of range is refused") 
     CHECK_FALSE(coop_message_decode(encoded(CoopHello{0, {"HOST", 0, 0}})));
     CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, {"HOST", coop_colour_count, 0}})));
     CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, {"HOST", 0, kf::online_player_helmet_count}})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopHello{1, {"HOST", 0, 0, kf::online_player_symbol_count}})));
     CHECK_FALSE(coop_message_decode(encoded(CoopRoster{{{1, 2, {"HOST", coop_colour_count, 0}}}})));
     CHECK_FALSE(coop_message_decode(encoded(CoopPackRequest{1, {80, 1}, CoopCause::Found})));
     CHECK_FALSE(coop_message_decode(encoded(CoopCharacterUpdate{1, {}, 6})));

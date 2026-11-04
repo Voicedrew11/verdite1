@@ -1,11 +1,12 @@
 """The knight: its part table (builder space, see body.py) and the rig that poses it."""
 import math
 import numpy as np
-from body import Part, PLAYER
+from body import Part, PLAYER, INK
 
 DARK = (24, 22, 20)
 LEATHER = 'leather'
 HEAD_PIVOT = (0, 1530, 0)
+TORSO_PIVOT = (0, 1080, 0)
 
 # The helmets, in kf::online_player_helmet_count's order: each builds its pieces on a part that
 # follows the head. A new helmet is a new entry here and its name in port/ext/coop_profile.cpp.
@@ -94,9 +95,31 @@ def helmets(colour=PLAYER):
         out.append(helm)
     return out
 
-def knight(helmet=0, colour=PLAYER):
-    """The knight's parts; with a helmet (an index of HELMETS) it follows them, as a picture
-    shows it; with None the parts alone, as the game's model has them."""
+# The marks a tabard's chest can carry, in kf::online_player_symbol_count's order, the same front
+# and back: rectangles across it (left, top, right, bottom, 0 to 1). The first is none. A new symbol
+# is a new entry at the end and its name in port/ext/coop_profile.cpp.
+CROSS = ((0.39, 0.12, 0.61, 0.88), (0.14, 0.28, 0.39, 0.46), (0.61, 0.28, 0.86, 0.46))
+SYMBOLS = [(), CROSS]
+
+# How much nearer than it is the game sorts a tabard, in model units (online_player_draw_object's
+# depth bias): the breastplate's large faces would otherwise draw over its small ones. Under what
+# an arm in front of the chest leads it by.
+TABARD_DEPTH_BIAS = 104
+
+def tabards(colour=PLAYER, ink=INK):
+    """The tabard's chest once per symbol, each a part of its own on the torso's pivot."""
+    out = []
+    for i, marks in enumerate(SYMBOLS):
+        tabard = Part(f'tabard_{i}', 'torso', TORSO_PIVOT)
+        tabard.panel([(-130, 1420, 152), (130, 1420, 152), (-134, 1090, 131), (134, 1090, 131)], 10, colour, marks=marks, ink=ink)
+        tabard.panel([(130, 1425, -136), (-130, 1425, -136), (134, 1090, -126), (-134, 1090, -126)], 10, colour, marks=marks, ink=ink)
+        out.append(tabard)
+    return out
+
+def knight(helmet=0, colour=PLAYER, symbol=0, ink=INK):
+    """The knight's parts; with a symbol (an index of SYMBOLS) and a helmet (an index of HELMETS)
+    those follow them, as a picture shows it; with None the parts alone, as the game's model has
+    them."""
     parts = []
     def part(name, parent, pivot):
         p = Part(name, parent, pivot); parts.append(p); return p
@@ -109,12 +132,10 @@ def knight(helmet=0, colour=PLAYER):
     pelvis.panel([(-135, 1050, 138), (135, 1050, 138), (-165, 590, 158), (165, 590, 158)], 16, colour)
     pelvis.panel([(135, 1050, -134), (-135, 1050, -134), (165, 590, -154), (-165, 590, -154)], 16, colour)
 
-    # Torso: breastplate, the tabard's chest, pauldrons.
-    torso = part('torso', 'pelvis', (0, 1080, 0))
+    # Torso: breastplate, pauldrons; the tabard's chest is a part of its own (tabards()).
+    torso = part('torso', 'pelvis', TORSO_PIVOT)
     torso.loft([((0, 1075, 0), 182, 122), ((0, 1220, 6), 212, 140), ((0, 1380, 8), 236, 146),
                 ((0, 1480, 0), 214, 126), ((0, 1530, 0), 100, 78)], 8, M)
-    torso.panel([(-130, 1420, 152), (130, 1420, 152), (-134, 1090, 131), (134, 1090, 131)], 10, colour)
-    torso.panel([(130, 1425, -136), (-130, 1425, -136), (134, 1090, -126), (-134, 1090, -126)], 10, colour)
     for s in (1, -1):
         torso.loft([((s * 190, 1470, 0), 108, 138), ((s * 290, 1485, 0), 104, 134), ((s * 356, 1440, 0), 70, 96)],
                    6, M, axis='x', phase=0)
@@ -145,6 +166,8 @@ def knight(helmet=0, colour=PLAYER):
     for side, s in (('r', 1), ('l', -1)):
         hand = part('hand_' + side, 'forearm_' + side, (s * 278, 900, 8))
         hand.loft([((s * 278, 900, 10), 54, 46), ((s * 278, 820, 14), 52, 40), ((s * 278, 755, 18), 40, 30)], 6, 'plate')
+    if symbol is not None:
+        parts.append(tabards(colour, ink)[symbol])
     if helmet is not None:
         parts.append(helmets(colour)[helmet])
     return parts

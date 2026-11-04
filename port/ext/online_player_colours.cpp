@@ -34,6 +34,13 @@ std::vector<u8> paint(u8 colour) {
         tmd[offset + 1] = wanted.g;
         tmd[offset + 2] = wanted.b;
     }
+    for (const u32 offset : online_player_model_ink_offsets()) {
+        if (offset + 3 > tmd.size())
+            continue;
+        tmd[offset] = wanted.ink.r;
+        tmd[offset + 1] = wanted.ink.g;
+        tmd[offset + 2] = wanted.ink.b;
+    }
     return tmd;
 }
 
