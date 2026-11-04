@@ -175,7 +175,8 @@ void on_event(const vo_event &event) {
     switch (event.kind) {
     case VO_EVENT_JOINED: {
         const RoomRole found = event.older == 0 ? RoomRole::First : RoomRole::Later;
-        if (online.expected && *online.expected != found) {
+        const bool may_not_host = found == RoomRole::First && !online_may_host();
+        if (may_not_host || (online.expected && *online.expected != found)) {
             online.failure = found == RoomRole::First ? OnlineFailure::NoHost : OnlineFailure::InUse;
             online.leave_after_poll = found == RoomRole::First ? "No one is hosting that room." : "Someone is already in that room.";
             break;
@@ -272,6 +273,14 @@ std::uint64_t online_name_bars_drawn() {
     return name_bars_drawn;
 }
 
+bool online_may_host() {
+#ifdef __ANDROID__
+    return false;
+#else
+    return std::getenv("KF_TEST_NO_HOSTING") == nullptr;
+#endif
+}
+
 #if KF_ONLINE
 
 std::string online_service_url() {
@@ -279,8 +288,18 @@ std::string online_service_url() {
 }
 
 void online_start() {
+#ifdef __ANDROID__
+    online_trust_system_roots();
+#endif
     if (!start_room.empty())
         join(start_room);
+}
+
+// In the background the game stops but the library's threads go on answering, so the others would
+// never see this player drop, and a floor it runs would stand still for them.
+void online_went_to_background() {
+    if (online.session)
+        leave("The app went to the background.");
 }
 
 void online_poll() {
@@ -436,6 +455,8 @@ void online_start() {
     if (!start_room.empty())
         std::printf("[online] this build has no online play (built without libdatachannel)\n");
 }
+
+void online_went_to_background() {}
 
 void online_poll() {}
 

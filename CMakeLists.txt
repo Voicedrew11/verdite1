@@ -25,6 +25,8 @@ add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
 # On Android the game is a shared library (libmain.so), and every static library goes into it.
 if(ANDROID)
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  # Plain char is unsigned on arm64 and signed on the PS1, x86-64 and so the other players' machines.
+  add_compile_options(-fsigned-char)
 endif()
 option(KF_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
 # Crash reports name the shipped binary's stack from its own line tables (libverdite/crash.h).
@@ -191,7 +193,7 @@ endif()
 # versions the desktop links; they would not be found as packages under the NDK's sysroot.
 if(ANDROID)
   foreach(source KF_SDL3_SOURCE KF_VULKAN_HEADERS_SOURCE KF_VOLK_SOURCE KF_VMA_SOURCE KF_VK_BOOTSTRAP_SOURCE
-      KF_CPPTRACE_SOURCE KF_LIBARCHIVE_SOURCE)
+      KF_CPPTRACE_SOURCE KF_LIBARCHIVE_SOURCE KF_LIBDATACHANNEL_SOURCE KF_OPENSSL_SOURCE)
     if(NOT DEFINED ENV{${source}})
       message(FATAL_ERROR "${source} is not set: configure Android in the android shell (nix develop .#android)")
     endif()
@@ -211,6 +213,8 @@ if(ANDROID)
     set(ENABLE_${off} OFF CACHE BOOL "" FORCE)
   endforeach()
   set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
+  # Named outright: nix's cmake does not look in /usr/include, even under the NDK's sysroot.
+  set(ZLIB_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/include CACHE PATH "" FORCE)
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)   # its option defaults on, and libchdr reads it too
   add_subdirectory($ENV{KF_LIBARCHIVE_SOURCE} libarchive EXCLUDE_FROM_ALL SYSTEM)
   target_sources(kf_support PRIVATE port/platform/patch_unpack_libarchive.cpp port/platform/patch_download_android.cpp)
@@ -258,11 +262,14 @@ add_library(kf_imgui STATIC
   ${KF_IMGUI}/backends/imgui_impl_sdl3.cpp)
 target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
 target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
-# Online play (online/client) where libdatachannel's source is at hand: the nix shell, desktop only
-# for now. Without it, port/ext/online.cpp says the build has none.
+# Online play (online/client) where libdatachannel's source is at hand: the nix shells. Without it,
+# port/ext/online.cpp says the build has none.
 set(KF_ONLINE OFF)
-if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE} AND NOT ANDROID)
+if(DEFINED ENV{KF_LIBDATACHANNEL_SOURCE})
   set(KF_ONLINE ON)
+endif()
+if(ANDROID)
+  include(cmake/android_openssl.cmake)
 endif()
 # The modding API's raw layer (docs/RAW_LAYER_PLAN.md): tables of every global and field, generated
 # from the patched headers and the listed file by clang's AST, so a pin move or a patch regenerates
@@ -302,6 +309,9 @@ target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERS
 target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CMAKE_SOURCE_DIR}/port/ext)
 if(KF_ONLINE)
   target_link_libraries(kf_ext PRIVATE verdite_online)
+  if(ANDROID)
+    target_sources(kf_ext PRIVATE port/ext/online_android_roots.cpp)
+  endif()
 endif()
 
 # libverdite: nothing from the game on its include path.

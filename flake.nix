@@ -22,7 +22,7 @@
         hash = "sha256-vUH4dUyahAl9MRQoudWAAWv2f2jUJ8rtrJR2KSCpNgQ=";
       };
       # libdatachannel with its submodules (libjuice, usrsctp, plog): nixpkgs' build uses libnice,
-      # and online/client wants libjuice, as Windows and Android will build it.
+      # and online/client wants libjuice, as Windows and Android build it.
       libdatachannelSource = pkgs.fetchFromGitHub {
         owner = "paullouisageneau";
         repo = "libdatachannel";
@@ -57,7 +57,7 @@
         abiVersions = [ "x86_64" ];
       }).androidsdk;
       androidShell = withEmulator: let androidHome = "${androidSdk withEmulator}/libexec/android-sdk"; in pkgs.mkShell {
-        packages = with pkgs; [ cmake ninja python3 git glslang gradle jdk17 android-tools libarchive ];
+        packages = with pkgs; [ cmake ninja python3 git glslang gradle jdk17 android-tools libarchive perl gnumake ];
         ANDROID_HOME = androidHome;
         ANDROID_SDK_ROOT = androidHome;
         ANDROID_NDK_ROOT = "${androidHome}/ndk/${androidNdkVersion}";
@@ -70,6 +70,8 @@
         KF_VK_BOOTSTRAP_SOURCE = "${pkgs.vk-bootstrap.src}";
         KF_CPPTRACE_SOURCE = "${pkgs.cpptrace.src}";
         KF_LIBARCHIVE_SOURCE = "${pkgs.libarchive.src}"; # unpacks the English patch's .rar in the game
+        KF_LIBDATACHANNEL_SOURCE = "${libdatachannelSource}";
+        KF_OPENSSL_SOURCE = "${pkgs.openssl.src}"; # a tarball; cmake/android_openssl.cmake builds it
         KF_ENGLISH_PATCH = "${englishDelta}";
       };
     in {

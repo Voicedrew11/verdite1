@@ -116,6 +116,15 @@ void online_start();   // joins the room given on the command line, if any
 void online_poll();    // on every host poll: the session's events (our pose goes out from online_update)
 void online_stop();    // leaves the room
 void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
+#ifdef __ANDROID__
+// Points OpenSSL at the phone's root certificates (online_android_roots.cpp), for the service's wss://.
+void online_trust_system_roots();
+#endif
+// Whether this platform may be a room's first, its host: not Android (docs/COOP_PLAN.md, "Fixed").
+// KF_TEST_NO_HOSTING=1 refuses it anywhere.
+bool online_may_host();
+// Leaves the room as the app goes to the background (docs/COOP_PLAN.md, "Fixed").
+void online_went_to_background();
 // The other players in the room who are up, as last heard from, for the automap.
 std::vector<OnlinePose> online_players();
 // Every other player in the room as last played back, down or up, by peer.

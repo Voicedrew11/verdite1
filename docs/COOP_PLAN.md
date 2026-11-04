@@ -29,6 +29,7 @@ The test of the design: if a rule needs more than a line here, it is too complic
 - Joining sets your own game aside, and leaving puts it back where you stood.
 - A room is private, joined by its code, or public, listed for anyone to join; each keeps its own
   world. Both are hosted and joined from CO-OP on the title screen.
+- A phone can join any room but not host one, and putting the app away leaves the room.
 - A name floats above each other player. The host chooses the room's speed, how long the fallen
   wait, and whether new players may join, and can send a player away.
 
@@ -42,6 +43,14 @@ The test of the design: if a rule needs more than a line here, it is too complic
   sets the guest's `gameplay.tick_rate` to the host's for the session.
 - **Not a summon.** Joining the host's floor with the guest's own world set aside (Dark Souls)
   makes the guest a visitor, not a member of the playthrough.
+- **Android does not host.** It joins any room, private or public, but cannot be a room's first:
+  CO-OP has no HOST row there, and any other way into an empty room (`online_may_host`) leaves it
+  with "no one is hosting that room". The host's machine keeps the world and everyone's session
+  ends with it, and a phone is put away and killed at any moment. Its player is a guest in every
+  other way, and can still own a floor.
+- **Going to the background leaves the room.** The game stops there while the library's threads go
+  on answering, so the others would never see the player drop and a floor it runs would stand
+  still for them. Leaving lets the floor pass on as for any drop; the player comes back by the code.
 - **The coop world is the host's save,** separate from their single-player saves. It holds the
   world, the party's pack and purse, and a character slot for every guest who has joined; a
   guest's character lives there and nowhere else (the guest's machine keeps only an export of
@@ -966,6 +975,7 @@ What a room costs each player, for N players:
   the danger now lives in everyone falling.
 
 ## Changes
+- 2026-11-03: Android joins rooms but does not host, and leaves when put in the background (Fixed).
 
 - 2026-10-26: first draft, from the discussion that ruled out the summon model and lockstep.
 - 2026-10-26: decided: the coop world is the host's save, guests' characters live in it, the host

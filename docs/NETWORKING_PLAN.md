@@ -195,6 +195,10 @@ get online play by writing only their own game layer.
   and the service keeps a lobby per game and build (a Durable Object) whose list it pushes to every
   open `/v1/lobby` socket when it changes. The client draws the public code. Joined from the title
   menu ([COOP_PLAN.md](COOP_PLAN.md), "The title menu").
+- 2026-11-03: the APK has online play, built as the desktop's is; Android joins rooms but does not
+  host them ([COOP_PLAN.md](COOP_PLAN.md), "Fixed"). OpenSSL has no root certificates of its own on a
+  phone: `online_android_roots.cpp` gathers the system's into a file at each start and names it in
+  `SSL_CERT_FILE`.
 - 2026-10-30: messages planned in [MESSAGES_PLAN.md](MESSAGES_PLAN.md): signed 118-byte records,
   a D1 table under a Durable Object per floor, a floor mesh of 2 to 4 links a player gossiping
   them, a rated random sample shown, 10 out per player. Shared by every build and language.

@@ -12,8 +12,9 @@ line about game data stays where it was: **no package holds any.** The game read
 disc at first launch (`verdite-port.md`), and the English translation is the translator's own patch,
 downloaded then; `-DKF_ENGLISH_PATCH=/nonexistent` keeps the delta out of every package.
 
-Co-op and the messages are in the AppImage and the Windows build (`KF_ONLINE`, libdatachannel built
-from source with OpenSSL linked in). The APK has none yet, as `CMakeLists.txt` says.
+Co-op and the messages are in every package (`KF_ONLINE`, libdatachannel built from source with
+OpenSSL linked in). On Android, OpenSSL is built while configuring (`cmake/android_openssl.cmake`),
+once per build folder, and a phone joins rooms but does not host them ([COOP_PLAN.md](COOP_PLAN.md)).
 
 ## The packages
 

@@ -356,6 +356,8 @@ touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has un
   (`settings_save` in the overlay's event handler). Exit had not saved either:
   it marked the settings dirty and then asked for a debounced save, which waits
   500 ms from the mark.
+- Leave a coop room on `WILL_ENTER_BACKGROUND`. Done 2026-11-03 ([COOP_PLAN.md](COOP_PLAN.md), "Fixed"),
+  where a phone joining but not hosting is too.
 - Audio pauses with focus (already) and with audio focus loss (a call).
 - Process death in the background loses the game since the last save point.
   See question 3.

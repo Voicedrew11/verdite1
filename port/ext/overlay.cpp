@@ -469,6 +469,8 @@ bool process_event(const SDL_Event &event) {
     // Android may end the process in the background without an exit; the game sees the event too.
     if (event.type == SDL_EVENT_WILL_ENTER_BACKGROUND && running && !settings_page_holding())
         settings_save();
+    if (event.type == SDL_EVENT_WILL_ENTER_BACKGROUND)
+        online_went_to_background();
     if (!running || !imgui)
         return false;
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {

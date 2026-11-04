@@ -54,7 +54,7 @@ std::uint64_t random_seed() {
 // Made at the first open, with the seed new rooms' codes are drawn from.
 verdite::TitleMenu &menu() {
     if (!title.menu)
-        title.menu.emplace(random_seed());
+        title.menu.emplace(random_seed(), online_may_host() ? verdite::TitleHosting::Offered : verdite::TitleHosting::Refused);
     return *title.menu;
 }
 

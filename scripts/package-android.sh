@@ -26,6 +26,11 @@ nix develop .#android -c bash -euc '
   cp third_party/libchdr/deps/zstd-1.5.7/LICENSE "$licenses/zstd.txt"
   cp "$KF_SDL3_SOURCE/LICENSE.txt" "$licenses/SDL3.txt"
   cp "$KF_LIBARCHIVE_SOURCE/COPYING" "$licenses/libarchive.txt"
+  cp "$KF_LIBDATACHANNEL_SOURCE/LICENSE" "$licenses/libdatachannel.txt"
+  cp "$KF_LIBDATACHANNEL_SOURCE/deps/libjuice/LICENSE" "$licenses/libjuice.txt"
+  cp "$KF_LIBDATACHANNEL_SOURCE/deps/usrsctp/LICENSE.md" "$licenses/usrsctp.txt"
+  cp "$KF_LIBDATACHANNEL_SOURCE/deps/plog/LICENSE" "$licenses/plog.txt"
+  cp build/android-release/openssl/source/LICENSE.txt "$licenses/OpenSSL.txt"
   chmod -R u+w "$KF_ANDROID_ASSETS_DIR"
   gradle -p android --no-daemon assembleRelease
 '
