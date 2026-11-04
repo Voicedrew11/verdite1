@@ -1540,13 +1540,58 @@ index 65164aefead2a91a95ff06ba688ab6e0f5f2783c..d121e1ae1bfd1ce73cdc712b7ead8a6b
      kf::restore_initial_value<game_result>();
  }
 diff --git a/src/game/geometry_render.cpp b/src/game/geometry_render.cpp
-index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe77d71614b 100644
+index f58a963c5e5f732356d11c95dce5045be497cba6..1242f0e9bf7b1da4e3ec03a11a65d3580880c5e6 100644
 --- a/src/game/geometry_render.cpp
 +++ b/src/game/geometry_render.cpp
-@@ -78,6 +78,18 @@ void render_weapon(void)
-     }
- }
+@@ -49,33 +49,48 @@ enum {
+     WEAPON_BASE_DEPTH_BIAS = 50
+ };
  
+-void render_weapon(void)
++// PC extension (coop): the held weapon's model, drawn from the TMD that is current, its vertices bound.
++void render_weapon_model(const KfWeaponRecord &weapon, u32 vertex_count)
+ {
+     MATRIX model;
+-    KfWeaponRecord *weapon;
+     s32 depth_bias;
+ 
++    auto projection = game_graphics_runtime.render_state.projection;
++    projection.distance = weapon.projection_distance;
++    model.t[0] = weapon.render_translation.x;
++    model.t[1] = weapon.render_translation.y;
++    model.t[2] = weapon.render_translation.z;
++    kf::matrix_set_rotation_xyz(weapon.render_rotation, model);
++    tmd_project_vertices_depth_shift(tmd_context(), vertex_count, WEAPON_PROJECTED_DEPTH_SHIFT, &model, projection);
++    depth_bias = weapon.render_translation.z >> WEAPON_DEPTH_BIAS_SHIFT;
++    render_enqueue_tmd(0, -depth_bias + WEAPON_BASE_DEPTH_BIAS, &render_light_matrices[KF_RENDER_LIGHT_WEAPON]);
++}
++
++void render_weapon(void)
++{
+     if (player_state.weapon_attack_phase == KF_WEAPON_ATTACK_INACTIVE) {
+         return;
+     }
+-    auto projection = game_graphics_runtime.render_state.projection;
+-    projection.distance = player_state.equipped_weapon_record->projection_distance;
+-    weapon = player_state.equipped_weapon_record;
+-    model.t[0] = weapon->render_translation.x;
+-    model.t[1] = weapon->render_translation.y;
+-    model.t[2] = weapon->render_translation.z;
+-    kf::matrix_set_rotation_xyz(weapon->render_rotation, model);
+     asset_registry_select(KF_ASSET_WEAPON);
+     const auto object = tmd_read_object(tmd_context(), 0);
+     if (render_bind_instance_vertices(
+             &player_state.weapon_animation_cache, KF_ASSET_WEAPON, KF_ANIMATION_CLIP_FIRST,
+             player_state.weapon_attack_phase,
+             object.vertex_count)) {
+-        tmd_project_vertices_depth_shift(tmd_context(), object.vertex_count, WEAPON_PROJECTED_DEPTH_SHIFT, &model, projection);
+-        depth_bias =
+-            player_state.equipped_weapon_record->render_translation.z >> WEAPON_DEPTH_BIAS_SHIFT;
+-        render_enqueue_tmd(0, -depth_bias + WEAPON_BASE_DEPTH_BIAS, &render_light_matrices[KF_RENDER_LIGHT_WEAPON]);
++        render_weapon_model(*player_state.equipped_weapon_record, object.vertex_count);
++    }
++}
++
 +// PC extension (widescreen, HUD at the screen edges): how far a HUD record at
 +// screen X moves, out by the widescreen columns towards its side of the middle.
 +// By X rather than the middle, so a gauge whose width changes never changes side.
@@ -1554,15 +1599,13 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
 +{
 +    if (!kf::render_hud_at_edges) {
 +        return 0;
-+    }
+     }
 +    const s32 columns = kf::host_extra_columns();
 +    return x < kf::render_width / 2 ? -columns : columns;
-+}
-+
+ }
+ 
  void render_hud_models(const MATRIX *lights)
- {
-     MATRIX model;
-@@ -91,7 +103,7 @@ void render_hud_models(const MATRIX *lights)
+@@ -91,7 +106,7 @@ void render_hud_models(const MATRIX *lights)
      scale.vz = KF_FIXED12_ONE;
      entry = hud_models.data();
      while (entry->state == KF_SPRITE_VISIBLE) {
@@ -1571,7 +1614,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
          model.t[1] = entry->translation_y;
          model.t[2] = entry->translation_z;
          kf::matrix_set_rotation_xyz(entry->rotation, model);
-@@ -106,6 +118,12 @@ void render_hud_models(const MATRIX *lights)
+@@ -106,6 +121,12 @@ void render_hud_models(const MATRIX *lights)
                  entry->animation_clip, entry->animation_phase,
                  object.vertex_count)) {
              tmd_transform_vertices(tmd_context(), object.vertex_count, &model);
@@ -1584,7 +1627,7 @@ index f58a963c5e5f732356d11c95dce5045be497cba6..4b2241b98bcb77181d49344e9c7c0fe7
              render_enqueue_tmd(0, 0, lights);
          }
          entry++;
-@@ -123,10 +141,16 @@ void render_hud_sprites(KfHudSprite *table)
+@@ -123,10 +144,16 @@ void render_hud_sprites(KfHudSprite *table)
      }
      do {
          if (entry->state == KF_SPRITE_VISIBLE) {
@@ -4404,10 +4447,10 @@ index 0000000000000000000000000000000000000000..b7bc9be8d382e0478267a079044fff36
 +}
 diff --git a/src/game/online_player_render.cpp b/src/game/online_player_render.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c5bc40852
+index 0000000000000000000000000000000000000000..a0b500f06a8f39a0f98d7b6b0da00ff02a565cc9
 --- /dev/null
 +++ b/src/game/online_player_render.cpp
-@@ -0,0 +1,654 @@
+@@ -0,0 +1,690 @@
 +// PC extension (online play): another player in the room, drawn in the world as the knight
 +// (docs/PLAYER_MODEL.md). In their right hand is the gauntlet and weapon of the game's own
 +// first-person model (WEPON/WEPxx.MIM), turned by its clip at their attack phase so others see the
@@ -4417,6 +4460,7 @@ index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c
 +#include <kf/game/equipment.h>
 +#include <kf/game/graphics.h>
 +#include <kf/game/menu_text.h>
++#include <kf/game/player.h>
 +#include <kf/game/render.h>
 +#include <kf/lib/animation.h>
 +#include <kf/lib/byte_reader.h>
@@ -4433,6 +4477,7 @@ index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c
 +#include <kf/platform/host.h>
 +#include <kf/platform/language_runtime.h>
 +#include <kf/platform/online_name_bar.h>
++#include <kf/platform/online_watched_weapon.h>
 +#include <kf/platform/online_weapon_hold.h>
 +
 +#include <algorithm>
@@ -4508,6 +4553,7 @@ index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c
 +
 +struct OnlineWeaponSlot {
 +    bool tried;
++    bool held;   // the model has its hold, so a player can carry it
 +    std::optional<OnlineWeaponModel> model;
 +};
 +
@@ -4654,7 +4700,8 @@ index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c
 +    return true;
 +}
 +
-+static const OnlineWeaponModel *online_weapon_model(u8 weapon)
++// The weapon's model, loaded the first time it is asked for; nullptr when it cannot be.
++static OnlineWeaponModel *online_weapon_loaded(u8 weapon)
 +{
 +    if (weapon >= ONLINE_PLAYER_WEAPON_COUNT)
 +        return nullptr;
@@ -4662,10 +4709,17 @@ index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c
 +    if (!slot.tried) {
 +        slot.tried = true;
 +        slot.model = online_weapon_load(weapon);
-+        if (slot.model && !online_weapon_prepare(*slot.model, weapon))
-+            slot.model.reset();
++        if (slot.model)
++            slot.held = online_weapon_prepare(*slot.model, weapon);
 +    }
 +    return slot.model ? &*slot.model : nullptr;
++}
++
++// The model as a knight holds it: nullptr when it has no hold.
++static const OnlineWeaponModel *online_weapon_model(u8 weapon)
++{
++    const OnlineWeaponModel *model = online_weapon_loaded(weapon);
++    return model && online_weapon_slots[weapon].held ? model : nullptr;
 +}
 +
 +// A leg at a phase of the walk, scaled by the stride (KF_FIXED12_ONE a full one).
@@ -5019,6 +5073,31 @@ index 0000000000000000000000000000000000000000..a8c371bc012f142e8f46d51813af6c6c
 +    face.over_world = !kf::online_name_bar_depth_tested(place.shown);
 +    render_carry_sprite(face, corners, place.model);
 +    render_face_submit(&face, {&colour, 1}, kf::FaceShading::Flat, depth);
++}
++
++// PC extension (coop): while this player is down, the first-person weapon of the player whose eyes
++// they see through, at that player's swing. The game's own weapon is not drawn then.
++void render_watched_weapon(void)
++{
++    const auto players = kf::online_players_on_floor(kf_enum_encode<s32>(player_state.progress_state.current_floor));
++    const auto watched = kf::online_watched_weapon(players);
++    if (!watched)
++        return;
++    const OnlineWeaponModel *model = online_weapon_loaded(watched->weapon);
++    if (!model)
++        return;
++    const auto vertices = std::span(game_graphics_runtime.morph_scratch).first(model->rest.size());
++    online_weapon_sample(*model, watched->phase, vertices);
++    // The draw takes the current TMD and vertices; they are this weapon's for the draw only.
++    const KfTmdResource saved_tmd = game_graphics_runtime.tmd_state.current_tmd;
++    const auto saved_vertices = game_graphics_runtime.current_tmd_vertices;
++    game_graphics_runtime.tmd_state.current_tmd = model->tmd;
++    game_graphics_runtime.current_tmd_vertices = vertices;
++    kf::render_entity_identity = watched->identity;
++    render_weapon_model(weapon_records.entries[watched->weapon], static_cast<u32>(vertices.size()));
++    kf::render_entity_identity = 0;
++    game_graphics_runtime.tmd_state.current_tmd = saved_tmd;
++    game_graphics_runtime.current_tmd_vertices = saved_vertices;
 +}
 +
 +void render_online_player_name(const kf::OnlinePlayer &player)
@@ -6454,10 +6533,10 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
  }
  
 diff --git a/src/game/render_frame.cpp b/src/game/render_frame.cpp
-index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045fff294d8 100644
+index 73c6900e478aa3769791136fbf65a88230b2c272..a1b7708ee3b55adf2be8662190f23120db8e804d 100644
 --- a/src/game/render_frame.cpp
 +++ b/src/game/render_frame.cpp
-@@ -1,6 +1,7 @@
+@@ -1,16 +1,19 @@
  #include <kf/platform/prelude.h>
  #include <kf/game/animation_cache.h>
  #include <kf/game/graphics.h>
@@ -6465,7 +6544,11 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045
  #include <kf/game/notify.h>
  #include <kf/game/resources.h>
  #include <kf/game/player.h>
-@@ -11,6 +12,7 @@
+ #include <kf/game/render.h>
+ #include <kf/game/state.h>
++#include <kf/platform/coop.h>
+ #include <kf/game/system.h>
+ #include <kf/lib/geometry_types.h>
  #include <kf/lib/math.h>
  
  #include <array>
@@ -6473,7 +6556,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045
  
  enum {
      HUD_GAUGE_WIDTH = 50,
-@@ -71,9 +73,19 @@ std::array<MATRIX, KF_RENDER_LIGHT_COUNT> render_light_matrices = {
+@@ -71,9 +74,19 @@ std::array<MATRIX, KF_RENDER_LIGHT_COUNT> render_light_matrices = {
      },
  };
  
@@ -6493,7 +6576,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045
      MATRIX model;
      SVECTOR spin;
      KfHudSprite *poison_icon;
-@@ -83,6 +95,16 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -83,6 +96,16 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
  
      render_set_view_transform(game_graphics_runtime.render_state, position_or_null, rotation_or_null);
      display_begin_frame(game_graphics_runtime.display_state);
@@ -6510,7 +6593,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045
      animation_cache_mark_stale();
      render_map_cells();
      poison_icon = &hud_sprites[KF_HUD_POISON_ICON];
-@@ -102,10 +124,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -102,10 +125,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
          hud_sprites[KF_HUD_MAGIC_PANEL].state = KF_SPRITE_VISIBLE;
          hud_sprites[KF_HUD_HP_GAUGE].sprite.w = (player_state.vitals.current_hp * HUD_GAUGE_WIDTH
                                     + (player_state.vitals.maximum_hp - 1) / HUD_GAUGE_WIDTH)
@@ -6523,7 +6606,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045
          hud_sprites[KF_HUD_ATTACK_GAUGE].sprite.w = player_state.attack_charge_state.current / HUD_CHARGE_UNITS_PER_PIXEL;
          hud_sprites[KF_HUD_MAGIC_GAUGE].sprite.w = player_state.magic_charge / HUD_CHARGE_UNITS_PER_PIXEL;
          flags = player_state.status_effect_flags;
-@@ -140,6 +162,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -140,6 +163,10 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      game_graphics_runtime.active_render_color.g = game_graphics_runtime.hud_brightness;
      game_graphics_runtime.active_render_color.r = game_graphics_runtime.hud_brightness;
      render_hud_sprites(compass_sprite - KF_HUD_COMPASS);
@@ -6534,7 +6617,7 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045
  
      notify_effect_update();
  
-@@ -153,24 +179,35 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
+@@ -153,24 +180,40 @@ void render_frame(const VECTOR *position_or_null, const SVECTOR *rotation_or_nul
      kf::matrix_set_rotation_xyz(spin, model);
  
      game_graphics_runtime.active_render_material = game_graphics_runtime.notification_text_material;
@@ -6561,10 +6644,16 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..085a9ea860aaa6a0dcdabf8bdf937045
 +    kf::render_camera_fixed = false;
  
      render_entities();
+-    render_weapon();
 +    kf::render_camera_fixed = true;   // the held weapon moves with the camera
 +    kf::render_entity_tag = KF_RENDER_TAG_WEAPON;   // PC extension (frame smoothing): its swing
 +    kf::render_entity_identity = 0;
-     render_weapon();
++    // PC extension (coop): a player who is down draws the weapon of the player whose eyes they see through.
++    if (kf::coop_player_down()) {
++        render_watched_weapon();
++    } else {
++        render_weapon();
++    }
 +    kf::render_entity_tag = 0;
 +    kf::render_camera_fixed = false;
      display_present_frame(game_graphics_runtime.display_state);
