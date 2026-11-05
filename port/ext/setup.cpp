@@ -82,15 +82,15 @@ std::vector<SetupPreset> presets() {
     const std::string aspect = suggested_aspect();
     const std::string wide_summary = aspect_name(aspect) + " / Native resolution / Display refresh";
     return {
-        {"original", "Original", "The game as the PlayStation ran it: its picture and its D-pad controls.", "original",
+        {"original", "Original", "The game as the PlayStation ran it: its picture, and one stick that walks and turns as its D-pad did.", "original",
          preset_values("4:3", 1, 20), "4:3 / 320x240 / One frame per update"},
         {"balanced", "Balanced",
          "The PlayStation's look and feel with its rendering artifacts (texture warping, vertex jitter) corrected, "
          "and analog controls.",
          "balanced", preset_values(aspect, 0, 0), wide_summary},
         {"modern", "Modern",
-         "Every enhancement the port adds: smoother motion, sharper textures, torchlight, shadows and ambient "
-         "occlusion, anti-aliasing and twin-stick controls.",
+         "Every enhancement the port adds: smoother motion, sharper textures, ambient occlusion, anti-aliasing and "
+         "twin-stick controls.",
          "modern", preset_values(aspect, 0, 0), wide_summary},
         {"custom", "Custom", "Start from your current settings.", "", {{"gameplay.classic_mode", false}}, ""},
     };
@@ -149,20 +149,17 @@ SetupPage presentation_page() {
     }};
     const SetupGroup lighting{"lighting", "Lighting and fog", "", {
         choice("Corner lighting",
-               "Light and fog worked out at each polygon's corners, as the console did. No ambient occlusion, no light "
-               "from torches or spells.",
+               "Light and fog worked out at each polygon's corners, as the console did. No ambient occlusion.",
                {"original"},
-               {{"display.pixel_lighting", false}, {"display.ao", 0.0}, {"display.dynamic_light", 0.0}, {"display.fog", 0.0}}),
+               {{"display.pixel_lighting", false}, {"display.ao", 0.0}, {"display.fog", 0.0}}),
         choice("Smooth lighting and fog",
-               "Per-pixel lighting, and fog by distance from the eye. No ambient occlusion, no light from torches or "
-               "spells.",
+               "Per-pixel lighting, and fog by distance from the eye. No ambient occlusion.",
                {"balanced"},
-               {{"display.pixel_lighting", true}, {"display.ao", 0.0}, {"display.dynamic_light", 0.0}, {"display.fog", 2.0}}),
+               {{"display.pixel_lighting", true}, {"display.ao", 0.0}, {"display.fog", 2.0}}),
         costly(choice("Smooth, with soft shadows",
-                      "Per-pixel lighting and fog, plus ambient occlusion, and torches and spells that light and shadow "
-                      "their surroundings.",
-                      {"modern"},
-                      {{"display.pixel_lighting", true}, {"display.ao", 2.0}, {"display.dynamic_light", 2.0}, {"display.fog", 2.0}})),
+                      "Per-pixel lighting and fog, plus ambient occlusion: soft shadowing in corners, where walls meet "
+                      "floors and under ledges.",
+                      {"modern"}, {{"display.pixel_lighting", true}, {"display.ao", 2.0}, {"display.fog", 2.0}})),
     }};
     const SetupGroup edges{"edges", "Edges", "", {
         choice("Jagged", "No anti-aliasing.", {"original", "balanced"}, {{"display.antialiasing", 0.0}}),
@@ -182,10 +179,8 @@ SetupPage presentation_page() {
 
 SetupPage turning_page() {
     const SetupGroup sticks{"sticks", "Controls", "", {
-        choice("D-pad only", "The D-pad only, as the PlayStation had. The analog sticks work as the D-pad.", {"original"},
-               {{"analog.style", 0.0}}),
         choice("Tank controls (3D)", "One stick walks and turns, as the D-pad does; L1 and R1 strafe. You turn at the original rate.",
-               {}, {{"analog.style", 1.0}}),
+               {"original"}, {{"analog.style", 1.0}}),
         choice("Twin stick (2D)",
                "The left stick walks and strafes, the right stick turns and looks, at the D-pad's rate. You turn at the "
                "original rate.",
@@ -216,21 +211,6 @@ SetupPage turning_page() {
             SetupPageTiers::Hidden};
 }
 
-SetupPage gameplay_page() {
-    const SetupGroup keys{"keys", "Locked doors and chests", "", {
-        choice("Choose the key yourself", "As released: a key is chosen from the item menu to open its lock.", {"original"},
-               {{"gameplay.auto_use_keys", false}}),
-        choice("Use a carried key", "Examining a lock opens it when you carry its key.", {"balanced", "modern"},
-               {{"gameplay.auto_use_keys", true}}),
-    }};
-    const SetupGroup descriptions{"descriptions", "Item descriptions", "", {
-        choice("None", "The item menu as released.", {"original"}, {{"overlay.item_descriptions", false}}),
-        choice("Under the item preview", "What the item does, such as healing or an equipment effect.",
-               {"balanced", "modern"}, {{"overlay.item_descriptions", true}}),
-    }};
-    return {"gameplay", "Gameplay", tiers_intro, {keys, descriptions}, SetupPageTiers::Offered};
-}
-
 verdite::SetupWelcome welcome_words() {
     constexpr const char *prompt =
         "Choose a starting point. Every choice it makes is shown on the pages that follow, where you can change any of them.";
@@ -251,7 +231,7 @@ SetupSpec kf1_spec() {
                   {"balanced", "Balanced", "That look and feel, with steady polygons and smooth colour."},
                   {"modern", "Modern", "Every enhancement the port adds."}};
     spec.presets = presets();
-    spec.pages = {display_page(), controls_page(), presentation_page(), turning_page(), gameplay_page()};
+    spec.pages = {display_page(), controls_page(), presentation_page(), turning_page()};
     return spec;
 }
 

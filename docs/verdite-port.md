@@ -600,8 +600,12 @@ Dear ImGui window `port/ext/setup_overlay.cpp`, and Android's Material views
   display it picks, and Custom under them. Each is a starting point: it fills the pages, and the
   player walks every page to a summary before anything is set.
 - **Pages**: Display (window, resolution, aspect, frame rate; suggested for the monitor), Controls,
-  Presentation, Turning and difficulty, Gameplay. A group is one row with a choice per tier; Controls,
-  Presentation and Gameplay offer "Set everything to". A group the settings match no choice of offers
+  Presentation, Turning and difficulty. A group is one row with a choice per tier; Controls and
+  Presentation offer "Set everything to".
+- **Only what the SETTINGS page shows.** Since 2026-11-05 the setup leaves out what left that page
+  (above): the Gameplay page (auto keys, item text) is gone, Lighting and fog no longer sets dynamic
+  light, and the Controls list has no D-pad, so Original picks tank controls (3D). Those settings keep
+  their defaults or what the overlay set. A group the settings match no choice of offers
   "Keep as is".
 - **Verdite2's rows KF1 has no setting for are left out**: Water, Motion (the frame rate covers it),
   Sound, Rumble and gyro (the phone has Vibration in its place), Comparing gear, On death. Movement is
@@ -627,7 +631,7 @@ Dear ImGui window `port/ext/setup_overlay.cpp`, and Android's Material views
 - At start, `[setup] check: N value(s), M problem(s)` holds the spec to the option table.
 
 What each tier picks is a first judgement, to be played: Balanced keeps the original's lighting model
-on smoothed pixels, with no AO, torchlight or anti-aliasing, and its HUD in the 4:3 box; Modern is the
+on smoothed pixels, with no AO or anti-aliasing, and its HUD in the 4:3 box; Modern is the
 defaults. Android's defaults are still to be measured on the phones (`ANDROID_PLAN.md`, B6).
 
 ## Automatic enemy turn
