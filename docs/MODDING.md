@@ -536,6 +536,7 @@ cheating.
 | `move_speed`, `turn_speed` | number, 0.25–8 |
 | `top_speed` | number, 0.25–8: the walking speed limit, as a sprint or run would raise it (1.6 is the usual value). Not while slowed |
 | `fly` | boolean: the player's height stays where it is. No falls, no pit or fatal-drop death, and the height is not pulled to the floor; walls still block unless `noclip` is on. Move up and down with `kf.move_player` |
+| `no_look_lead` | boolean: the picture shows the view as the game's updates leave it, and does not show the mouse's turn ahead of them. For a mod that eases the view itself, which writes `kf.player.yaw` and `pitch` in `kf.hook.after.player_update`, before the update's camera is taken; the lead and easing together judder |
 
 Each mod's `kf.play` and `kf.game` values are its own; the game combines them.
 A switch is on when any mod turns it on, speeds multiply, and the product is
@@ -1162,7 +1163,7 @@ mods are off in coop (decided 2026-10-31).
 
 13. ~~Declare 1.1 (2026-11-04): a flying debug mod's needs. `kf.play.fly`,
     `kf.move_player`, `kf.world.standing_y`, invincibility over falls and drops,
-    `kf.items.slot`, `kf.magic.selected` and `select`, and the ui's tabs, collapsing
+    `kf.play.no_look_lead`, `kf.items.slot`, `kf.magic.selected` and `select`, and the ui's tabs, collapsing
     headers, scroll areas, text boxes and int boxes. The new names raise the minor version.~~
 
 ### Open questions

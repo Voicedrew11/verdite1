@@ -31,6 +31,7 @@ local panel_open = false   -- not saved: closed at start
 local function apply()
   kf.play.noclip = config.noclip or flight.holds_height()
   kf.play.fly = flight.holds_height()
+  kf.play.no_look_lead = config.cinematic
   kf.play.invincible = config.invincible
   kf.play.peaceful = config.peaceful
   kf.play.move_speed = config.move_speed

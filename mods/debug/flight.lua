@@ -18,6 +18,7 @@ local need_start = false
 local last_floor = nil
 local last_cinematic = false
 local last_time = 0
+local last_look_time = 0
 local fx, fy, fz = 0, 0, 0
 local wx, wy, wz = 0, 0, 0   -- what we last wrote, to see a move from outside
 local vx, vy, vz = 0, 0, 0
@@ -67,6 +68,7 @@ local function reseed()
   last_floor = kf.player.floor
   last_cinematic = config.cinematic
   last_time = kf.time()
+  last_look_time = last_time
   local yaw, pitch = kf.player.yaw, kf.player.pitch
   look.yaw_target, look.yaw_smooth, look.yaw_written = yaw, yaw, yaw
   look.pitch_target, look.pitch_smooth, look.pitch_written = pitch, pitch, pitch
@@ -177,9 +179,23 @@ local function moved_elsewhere()
   return kf.player.x ~= wx or kf.player.y ~= wy or kf.player.z ~= wz
 end
 
+local function disturbed()
+  return kf.player.floor ~= last_floor or config.cinematic ~= last_cinematic or moved_elsewhere()
+end
+
+-- After the game's look and before the update's camera, so the camera has only the eased view:
+-- from on_update the camera would carry each update's raw mouse turn on top of it.
+local function ease_view_after_player_update()
+  if not flight.eases_view() or not was_on or need_start or kf.context() ~= "gameplay" then return end
+  if disturbed() then reseed() end
+  local now = kf.time()
+  local dt = clamp(now - last_look_time, 0, MAX_STEP)
+  last_look_time = now
+  turn_view(dt)
+end
+
 local function fly_step(dt)
   local input = flight._input()
-  if config.cinematic then turn_view(dt) end
   local want_x, want_y, want_z = wanted_velocity(input)
   ease_velocity(dt, want_x, want_y, want_z)
   fx = fx + vx * dt
@@ -208,9 +224,7 @@ function flight.update()
     return
   end
   if need_start then remember_start() end
-  if kf.player.floor ~= last_floor or config.cinematic ~= last_cinematic or moved_elsewhere() then
-    reseed()
-  end
+  if disturbed() then reseed() end
   local now = kf.time()
   local dt = clamp(now - last_time, 0, MAX_STEP)
   last_time = now
@@ -242,6 +256,11 @@ function flight.toggle_film()
   config.peaceful = not on
   config.fly = not on
   mod.save_config()
+end
+
+-- The cinematic camera eases only in flight.
+function flight.eases_view()
+  return config.fly == true and config.cinematic == true
 end
 
 function flight.is_flying()
@@ -302,5 +321,7 @@ function flight.draw()
   cinematic_controls()
   flight_buttons()
 end
+
+kf.hook.after.player_update(ease_view_after_player_update)
 
 return flight

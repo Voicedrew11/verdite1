@@ -40,6 +40,9 @@ u32 host_actions_held();
 // What the mods hold and block, laid over the player's actions at each read.
 struct ActionOverrides { u32 held = 0, blocked = 0; };
 void host_set_action_overrides(ActionOverrides overrides);
+// Whether the picture shows the mouse's turn ahead of the update that applies it. On unless a mod
+// eases the view itself: its easing and the lead would pull the view opposite ways.
+void host_set_look_lead(bool shown);
 // Actions the game's next host_read_buttons sees held, once.
 void host_press_actions(u32 actions);
 void host_wait_buttons_released(u32 mask = ~u32(0));

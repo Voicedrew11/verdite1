@@ -384,6 +384,8 @@ const std::vector<verdite::ModField> &play_fields() {
         switch_field<&ModPlay::fly>(
             "fly",
             "The player flies: the height stays where it is, with no falls, pits or fatal drops."),
+        switch_field<&ModPlay::no_look_lead>(
+            "no_look_lead", "The picture does not show the mouse's turn ahead of the update; for a mod easing the view."),
         speed_field<&ModPlay::move_speed>("move_speed", "Walking distance, 0.25 to 8."),
         speed_field<&ModPlay::turn_speed>("turn_speed", "Turning speed, 0.25 to 8."),
         speed_field<&ModPlay::top_speed>("top_speed",
@@ -441,6 +443,7 @@ void refresh_mod_play() {
     combined_play = combine_mod_play(values);
     host_set_game_speed(combined_play.game_speed);
     host_set_action_overrides({combined_play.held_actions, combined_play.blocked_actions});
+    host_set_look_lead(combined_play.look_lead);
 }
 
 // The host discarded a mod's Lua state (reload, disable, failure, or the host's own destruction).

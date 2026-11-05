@@ -138,6 +138,13 @@ TEST_CASE("the mouse is taken when any mod takes it") {
     CHECK(combine_mod_play(mods).takes_mouse);
 }
 
+TEST_CASE("the picture leads the mouse until any mod eases the view") {
+    std::array<ModPlay, 2> mods{};
+    CHECK(combine_mod_play(mods).look_lead);
+    mods[1].no_look_lead = true;
+    CHECK_FALSE(combine_mod_play(mods).look_lead);
+}
+
 TEST_CASE("no mod holds or blocks an action by default") {
     const ModPlayCombined combined = combine_mod_play(std::span<const ModPlay>{});
     CHECK(combined.held_actions == 0);

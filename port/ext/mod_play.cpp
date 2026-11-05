@@ -25,6 +25,7 @@ ModPlayCombined combine_mod_play(std::span<const ModPlay> mods) {
     bool paused = false;
     bool silencing = false;   // a mod pauses without keeping the music
     bool takes_mouse = false;
+    bool no_look_lead = false;
     u32 held_actions = 0;
     u32 blocked_actions = 0;
     float move_speed = 1.0f;
@@ -39,6 +40,7 @@ ModPlayCombined combine_mod_play(std::span<const ModPlay> mods) {
         paused = paused || mod.paused;
         silencing = silencing || (mod.paused && !mod.music_while_paused);
         takes_mouse = takes_mouse || mod.takes_mouse;
+        no_look_lead = no_look_lead || mod.no_look_lead;
         held_actions |= mod.held_actions;
         blocked_actions |= mod.blocked_actions;
         move_speed *= mod.move_speed;
@@ -59,6 +61,7 @@ ModPlayCombined combine_mod_play(std::span<const ModPlay> mods) {
     combined.paused = paused;
     combined.music_while_paused = paused && !silencing;
     combined.takes_mouse = takes_mouse;
+    combined.look_lead = !no_look_lead;
     combined.held_actions = held_actions;
     combined.blocked_actions = blocked_actions;
     return combined;

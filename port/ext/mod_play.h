@@ -17,6 +17,7 @@ struct ModPlay {
     bool invincible = false;
     bool peaceful = false;
     bool fly = false;
+    bool no_look_lead = false;         // the mod eases the view; the picture does not lead the mouse
     float move_speed = 1.0f;
     float turn_speed = 1.0f;
     float top_speed = 1.0f;
@@ -35,6 +36,7 @@ struct ModPlayCombined {
     // Paused only by mods that keep the music: one that pauses without it silences the game.
     bool music_while_paused = false;
     bool takes_mouse = false;
+    bool look_lead = true;    // no mod eases the view
     u32 held_actions = 0;     // action_bit bits held by any mod
     u32 blocked_actions = 0;  // action_bit bits blocked by any mod
 };

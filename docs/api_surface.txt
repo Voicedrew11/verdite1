@@ -117,6 +117,7 @@ kf.play
 kf.play.fly
 kf.play.invincible
 kf.play.move_speed
+kf.play.no_look_lead
 kf.play.noclip
 kf.play.peaceful
 kf.play.top_speed

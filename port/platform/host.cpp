@@ -67,6 +67,7 @@ struct HostState {
     u32 quick_pressed;
     u32 test_held;      // KF_TEST_INPUT's actions at the last read
     ActionOverrides overrides;   // the mods' holds and blocks
+    bool no_look_lead;           // a mod eases the view, so the picture does not lead the mouse
     u32 mod_pressed;             // the mods' presses, taken by the next read
     u32 mod_held_read;           // the mods' holds at the last read, for their new holds
     bool opening_load_pressed;
@@ -740,6 +741,8 @@ bool host_action_held(Action action) {
 
 void host_set_action_overrides(ActionOverrides overrides) { host.overrides = overrides; }
 
+void host_set_look_lead(bool shown) { host.no_look_lead = !shown; }
+
 void host_press_actions(u32 actions) { host.mod_pressed |= actions; }
 
 u32 host_action_overrides_blocked() { return host.overrides.blocked; }
@@ -1120,7 +1123,7 @@ void apply_frontend_options() {
 // pitch limit the game will clamp it to: what the game has not taken, plus what
 // the update in progress took (it waits for the next tick before submitting).
 SVECTOR pending_look() {
-    if (host.input_context != InputContext::Gameplay)
+    if (host.input_context != InputContext::Gameplay || host.no_look_lead)
         return {0, 0, 0};
     const double x = look_units(host.input.pending.look_x, host.look_remainder_x, Action::turn_right, Action::turn_left);
     const double y = look_units(host.input.pending.look_y, host.look_remainder_y, Action::look_down, Action::look_up);
@@ -1136,7 +1139,7 @@ SVECTOR pending_look() {
 // The look this update applied: what the game took, but pitch no further than
 // the camera actually tilted (the game clamps it at the limit).
 SVECTOR look_applied(const std::optional<CameraPose> &camera) {
-    if (!camera || !frontend_output.last_camera)
+    if (!camera || !frontend_output.last_camera || host.no_look_lead)
         return {0, 0, 0};
     const int tilted = angle_delta(frontend_output.last_camera->rotation.vx, camera->rotation.vx);
     const s32 pitch = std::clamp(host.look_consumed.pitch, std::min(0, tilted), std::max(0, tilted));
