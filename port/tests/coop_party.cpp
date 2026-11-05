@@ -300,8 +300,9 @@ TEST_CASE("a guest's save is made at once when none was made lately") {
     CHECK_FALSE(asks.due(5000));
     asks.ask({2, 3, 4});
     const auto due = asks.due(5000);
-    REQUIRE(due);
-    CHECK((due->floor == 2 && due->cell_x == 3 && due->cell_z == 4));
+    REQUIRE(due.has_value());
+    const CoopSavePoint point = due.value_or(CoopSavePoint{});
+    CHECK((point.floor == 2 && point.cell_x == 3 && point.cell_z == 4));
 }
 
 TEST_CASE("saves asked for in a flood write once a second, and the last is not lost") {
@@ -312,8 +313,8 @@ TEST_CASE("saves asked for in a flood write once a second, and the last is not l
     asks.ask({3, 7, 8});
     CHECK_FALSE(asks.due(5999));
     const auto due = asks.due(6000);
-    REQUIRE(due);
-    CHECK(due->floor == 3);
+    REQUIRE(due.has_value());
+    CHECK(due.value_or(CoopSavePoint{}).floor == 3);
     asks.saved(6000);
     CHECK_FALSE(asks.due(9000));
 }
