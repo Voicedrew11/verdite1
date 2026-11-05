@@ -8,6 +8,7 @@
 namespace verdite::crash_report {
 
 inline constexpr std::string_view helper_flag = "--verdite-crash-helper";
+inline constexpr std::string_view window_flag = "--verdite-crash-window";
 inline constexpr std::string_view file_name = "report.txt";
 // Header lines ("name: value") the helper reads back.
 inline constexpr std::string_view pid_name = "pid";

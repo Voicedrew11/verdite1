@@ -6,8 +6,15 @@
 
 #include <cpptrace/basic.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#include <array>
 #include <charconv>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -103,6 +110,54 @@ std::vector<cpptrace::object_frame> parse_frames(std::string_view body) {
     return frames;
 }
 
+#ifdef _WIN32
+// cpptrace wants an address as the module has it, from its preferred base, and a path in the code
+// page. This helper is the crashed binary, so its own name and file serve for its frames.
+std::uintptr_t preferred_base(const std::string &path) {
+    std::ifstream file(path, std::ios::binary);
+    std::array<char, 4> offset_bytes{};
+    file.seekg(0x3c);
+    file.read(offset_bytes.data(), offset_bytes.size());
+    std::uint32_t offset = 0;
+    std::memcpy(&offset, offset_bytes.data(), sizeof offset);
+    constexpr std::uint32_t optional_header_at = 24, image_base_at = 24;
+    file.seekg(offset + optional_header_at + image_base_at);
+    std::uint64_t base = 0;
+    std::array<char, 8> base_bytes{};
+    file.read(base_bytes.data(), base_bytes.size());
+    if (!file)
+        return 0;
+    std::memcpy(&base, base_bytes.data(), sizeof base);
+    return static_cast<std::uintptr_t>(base);
+}
+
+void place_frames(std::vector<cpptrace::object_frame> &frames, const std::string &binary) {
+    std::array<char, MAX_PATH * 2> own{};
+    if (GetModuleFileNameA(nullptr, own.data(), static_cast<DWORD>(own.size())) == 0)
+        return;
+    const std::string own_path(own.data());
+    const std::uintptr_t base = preferred_base(own_path);
+    for (cpptrace::object_frame &frame : frames) {
+        if (frame.object_path != binary)
+            continue;
+        frame.object_path = own_path;
+        frame.object_address += base;
+    }
+}
+#else
+// The crashed process waits for this one, so its own image is still at /proc/<pid>/exe, even if
+// the binary has been rebuilt since it started.
+void place_frames(std::vector<cpptrace::object_frame> &frames, const std::string &binary, std::string_view pid) {
+    const std::string image = "/proc/" + std::string(pid) + "/exe";
+    std::error_code error;
+    if (binary.empty() || !std::filesystem::exists(image, error))
+        return;
+    for (cpptrace::object_frame &frame : frames)
+        if (frame.object_path == binary)
+            frame.object_path = image;
+}
+#endif
+
 std::string stack_text(const cpptrace::stacktrace &trace) {
     std::string text;
     int index = 0;
@@ -132,16 +187,12 @@ bool name_report(const std::filesystem::path &path) {
         return false;
     std::vector<cpptrace::object_frame> frames =
         parse_frames(std::string_view(*text).substr(frames_at, frames_length));
-    // The crashed process waits for this one, so its own image is still at /proc/<pid>/exe,
-    // even if the binary has been rebuilt since it started.
     const std::string binary(header_value(*text, crash_report::binary_name));
-    const std::string image =
-        "/proc/" + std::string(header_value(*text, crash_report::pid_name)) + "/exe";
-    std::error_code error;
-    if (!binary.empty() && std::filesystem::exists(image, error))
-        for (cpptrace::object_frame &frame : frames)
-            if (frame.object_path == binary)
-                frame.object_path = image;
+#ifdef _WIN32
+    place_frames(frames, binary);
+#else
+    place_frames(frames, binary, header_value(*text, crash_report::pid_name));
+#endif
     const std::string named = stack_text(cpptrace::object_trace{std::move(frames)}.resolve());
     const auto [stack_at, stack_length] = section_body(*text, crash_report::stack_heading);
     if (stack_at == std::string_view::npos)
@@ -158,7 +209,11 @@ std::string crash_report::named_stack_here(std::size_t skip) {
 std::optional<int> crash_helper_run(int argc, char **argv) {
     if (argc != 3 || std::string_view(argv[1]) != crash_report::helper_flag)
         return std::nullopt;
-    return name_report(std::filesystem::path(argv[2])) ? 0 : 1;
+    // SDL's main hands in UTF-8 on Windows; the bytes are the file system's elsewhere.
+    const std::string_view file(argv[2]);
+    return name_report(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(file.data()), file.size())))
+               ? 0
+               : 1;
 }
 
 } // namespace verdite

@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -86,6 +88,12 @@ TEST_CASE("the writer formats numbers, hex and triples") {
     CHECK(written([](CrashWriter &out) { out.triple("pos", 1, -2, 3); }) == "pos: 1, -2, 3\n");
     CHECK(written([](CrashWriter &out) { out.line("floor", "Western Shore"); }) ==
           "floor: Western Shore\n");
+}
+
+TEST_CASE("a folder becomes a file address the system can open") {
+    CHECK(crash_file_url("/home/a b/crashes") == "file:///home/a%20b/crashes");
+    CHECK(crash_file_url("C:\\Users\\Ana\\crashes") == "file:///C:/Users/Ana/crashes");
+    CHECK(crash_file_url("/home/\xc3\xa9") == "file:///home/%C3%A9");
 }
 
 TEST_CASE("the writer drops what does not fit") {
@@ -173,7 +181,149 @@ int crash_in_child(const fs::path &directory, std::vector<CrashSection> sections
 }
 } // namespace
 
+// Runs body in a child with the handlers installed and the hang watch on, and returns the
+// report once it is named and holds what it must. The child is killed; a test ends either way.
+fs::path hang_report_of(const fs::path &directory, void (*body)(), std::string_view must_hold) {
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        if (!crash_install(config_in(directory, {{"player", write_player}})) || !crash_hang_watch_start(200))
+            _exit(2);
+        crash_hang_beat();
+        body();
+        _exit(3);
+    }
+    fs::path found;
+    for (int waited_ms = 0; waited_ms < 20000 && found.empty(); waited_ms += 50) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::error_code error;
+        for (const auto &entry : fs::directory_iterator(directory, error))
+            if (read_text(entry.path() / "report.txt").find(must_hold) != std::string::npos)
+                found = entry.path();
+    }
+    kill(child, SIGKILL);
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    REQUIRE_FALSE(found.empty());
+    return found;
+}
+
+[[gnu::noinline]] void spin_on_a_hung_door() {
+    for (volatile int forever = 0; forever == 0;) {
+    }
+}
+
+void hang_then_come_back() {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (std::chrono::steady_clock::now() < until) {
+    }
+    crash_hang_beat();
+    spin_on_a_hung_door();
+}
+
 #ifndef CRASH_TEST_ASAN
+TEST_CASE("a game thread that stops beating gets a hang report from its own stack") {
+    const fs::path directory = fresh_directory("hang");
+    const fs::path folder = hang_report_of(directory, spin_on_a_hung_door, "spin_on_a_hung_door");
+    CHECK(fs::path(folder).filename().string().starts_with("hang-"));
+    CHECK(crash_report_kind(folder.string()) == CrashReportKind::Hang);
+    const std::string report = read_text(folder / "report.txt");
+    CHECK(report.find("fault: hang: no frame for ") != std::string::npos);
+    CHECK(report.find("thread: the game's\n") != std::string::npos);
+    CHECK(report.find("== registers\n") != std::string::npos);
+    CHECK(report.find("== player\nhp: 12\n") != std::string::npos);
+    CHECK(fs::exists(folder / "unseen"));
+    fs::remove_all(directory);
+}
+
+TEST_CASE("a hang the game comes back from says so, and the player is not told") {
+    const fs::path directory = fresh_directory("hang-over");
+    const fs::path folder = hang_report_of(directory, hang_then_come_back, "== recovered\nframes came back after ");
+    CHECK_FALSE(fs::exists(folder / "unseen"));
+    fs::remove_all(directory);
+}
+
+void pause_and_wait() {
+    crash_hang_pause();
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    crash_hang_resume();
+    crash_report_soft("still alive after the pause");
+    _exit(0);
+}
+
+TEST_CASE("a pause is not a hang") {
+    const fs::path directory = fresh_directory("hang-pause");
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        if (!crash_install(config_in(directory)) || !crash_hang_watch_start(200))
+            _exit(2);
+        crash_hang_beat();
+        pause_and_wait();
+    }
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    CHECK(fs::path(only_report(directory)).filename().string().starts_with("crash-"));
+    fs::remove_all(directory);
+}
+
+void crash_with_window() {
+    crash_window_enable();
+    fault_on_purpose();
+}
+
+TEST_CASE("a crash becomes the window, which ends as the crash would have") {
+    const fs::path directory = fresh_directory("window");
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        if (!crash_install(config_in(directory)))
+            _exit(2);
+        crash_with_window();
+        _exit(3);
+    }
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 128 + SIGSEGV);
+    const fs::path folder = only_report(directory);
+    CHECK(fs::exists(folder / "window-started"));
+    // The stack is named before the window: the crashed image is gone after it.
+    CHECK(read_text(folder / "report.txt").find("fault_on_purpose") != std::string::npos);
+    fs::remove_all(directory);
+}
+
+TEST_CASE("only the newest reports are kept, and the next launch hears of the newest unseen") {
+    const fs::path directory = fresh_directory("keep");
+    fs::create_directories(directory);
+    for (int at = 0; at < 25; ++at) {
+        const fs::path folder = directory / ("crash-" + std::to_string(at));
+        fs::create_directory(folder);
+        fs::last_write_time(folder, fs::file_time_type::clock::now() - std::chrono::hours(100 - at));
+    }
+    std::ofstream(directory / "crash-24" / "unseen") << "";
+    std::ofstream(directory / "crash-23" / "unseen") << "";
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        if (!crash_install(config_in(directory)))
+            _exit(2);
+        const auto first = crash_take_unseen_report();
+        const auto second = crash_take_unseen_report();
+        _exit(first && first->ends_with("crash-24") && !second ? 0 : 4);
+    }
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    CHECK(WEXITSTATUS(status) == 0);
+    int count = 0;
+    for ([[maybe_unused]] const auto &entry : fs::directory_iterator(directory))
+        ++count;
+    CHECK(count == 20);
+    CHECK_FALSE(fs::exists(directory / "crash-4"));
+    CHECK(fs::exists(directory / "crash-5"));
+    fs::remove_all(directory);
+}
+
 TEST_CASE("a fault is reported with its stack named by the helper") {
     const fs::path directory = fresh_directory("fault");
     CHECK(crash_in_child(directory, {{"damaged", write_damaged}, {"after", write_after}},
