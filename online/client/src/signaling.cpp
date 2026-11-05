@@ -55,6 +55,30 @@ std::optional<PeerId> peer_field(const cJSON *object, const char *name) {
     return hex ? parse_peer(*hex) : std::nullopt;
 }
 
+// Whether text is written as an IP address, IPv4 or IPv6: only such digits and separators.
+bool is_address_text(std::string_view text) {
+    const auto ipv4 = [](char c) { return (c >= '0' && c <= '9') || c == '.'; };
+    const auto ipv6 = [&](char c) { return ipv4(c) || c == ':' || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); };
+    if (text.empty())
+        return false;
+    return text.find(':') != std::string_view::npos ? std::ranges::all_of(text, ipv6) : std::ranges::all_of(text, ipv4);
+}
+
+// Whether every candidate an SDP lists gives an address.
+bool sdp_candidates_are_addresses(std::string_view sdp) {
+    constexpr std::string_view candidate_line = "a=candidate:";
+    while (!sdp.empty()) {
+        const std::size_t end = sdp.find('\n');
+        std::string_view line = sdp.substr(0, end);
+        sdp = end == std::string_view::npos ? std::string_view{} : sdp.substr(end + 1);
+        if (line.ends_with('\r'))
+            line.remove_suffix(1);
+        if (line.starts_with(candidate_line) && !candidate_is_address(line))
+            return false;
+    }
+    return true;
+}
+
 std::optional<Signal> parse_signal(const cJSON *data) {
     if (!cJSON_IsObject(data))
         return std::nullopt;
@@ -73,7 +97,7 @@ std::optional<Signal> parse_signal(const cJSON *data) {
     if (*kind == "offer" || *kind == "answer") {
         signal.kind = *kind == "offer" ? Signal::Kind::Offer : Signal::Kind::Answer;
         auto sdp = string_field(data, "sdp");
-        if (!sdp)
+        if (!sdp || !sdp_candidates_are_addresses(*sdp))
             return std::nullopt;
         signal.sdp = std::move(*sdp);
         return signal;
@@ -81,7 +105,7 @@ std::optional<Signal> parse_signal(const cJSON *data) {
     if (*kind == "candidate") {
         auto candidate = string_field(data, "candidate");
         auto mid = string_field(data, "mid");
-        if (!candidate || !mid)
+        if (!candidate || !mid || !candidate_is_address(*candidate))
             return std::nullopt;
         signal.kind = Signal::Kind::Candidate;
         signal.candidate = std::move(*candidate);
@@ -259,6 +283,21 @@ std::string print(const cJSON *json) {
 }
 
 } // namespace
+
+bool candidate_is_address(std::string_view candidate) {
+    // foundation, component, transport, priority, then the address
+    constexpr int address_field = 4;
+    std::size_t at = 0;
+    for (int field = 0; field < address_field; ++field) {
+        at = candidate.find(' ', at);
+        if (at == std::string_view::npos)
+            return false;
+        at = candidate.find_first_not_of(' ', at);
+        if (at == std::string_view::npos)
+            return false;
+    }
+    return is_address_text(candidate.substr(at, candidate.find(' ', at) - at));
+}
 
 std::optional<PeerId> parse_peer(std::string_view hex) {
     if (hex.size() != 16)

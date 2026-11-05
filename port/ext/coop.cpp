@@ -710,9 +710,15 @@ std::optional<CoopTurnedAwayWhy> refusal_of(CoopPlayerId id) {
 void host_receives(std::uint64_t peer, const CoopMessage &message) {
     HostSide &host = coop.host;
     if (const auto *hello = std::get_if<CoopHello>(&message)) {
-        if (hello->id == coop.self || host.guests.contains(peer))
+        const auto waiting_from = [&](const auto &each) { return each.first == peer; };
+        if (hello->id == coop.self || host.guests.contains(peer) || std::ranges::any_of(host.waiting, waiting_from))
             return;
-        if (const auto refused = refusal_of(hello->id))
+        // One character, one player: a second connection may not take over one in the room.
+        const bool in_use = std::ranges::any_of(host.guests, [&](const auto &guest) { return guest.second == hello->id; })
+            || std::ranges::any_of(host.waiting, [&](const auto &each) { return each.second.id == hello->id; });
+        if (in_use)
+            send(peer, CoopTurnedAway{CoopTurnedAwayWhy::RoomClosed});
+        else if (const auto refused = refusal_of(hello->id))
             send(peer, CoopTurnedAway{*refused});
         else
             host.waiting.emplace_back(peer, *hello);

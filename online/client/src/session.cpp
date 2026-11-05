@@ -25,6 +25,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -41,6 +42,8 @@ constexpr std::size_t state_queue_bytes = std::size_t{16} * 1024; // a STATE pac
 constexpr auto turn_retry_delay = std::chrono::seconds(10);
 constexpr auto renew_margin_most = std::chrono::minutes(15);
 constexpr auto move_timeout = std::chrono::seconds(30); // a next connection not open by then is dropped
+constexpr std::size_t candidates_most = 64;      // a connection's from a peer: relays have a handful
+constexpr auto move_least_apart = std::chrono::seconds(5); // a peer asking faster is not heard: each makes a connection
 constexpr std::string_view moved_marker = "moved";
 constexpr std::string_view seen_marker = "seen";
 constexpr auto describe_every = std::chrono::seconds(1);    // the service counts no more
@@ -145,6 +148,7 @@ struct Connection {
     std::array<bool, 2> channel_open{};
     bool remote_described = false;
     std::vector<Signal> waiting; // signals that came before they could be applied
+    std::size_t candidates_heard = 0;
 
     bool open() const {
         return channel_open[VO_CHANNEL_CONTROL] && channel_open[VO_CHANNEL_STATE];
@@ -165,6 +169,7 @@ struct Link {
     Connection current;
     std::optional<Move> move;
     std::optional<Clock::time_point> retry_move_at;
+    std::optional<Clock::time_point> move_begun_at;
     std::uint32_t newest_generation = 0; // never reused, so a gone one's late news is ignored
     std::vector<Event> early; // packets that came before PEER_OPEN
     std::size_t early_bytes = 0;
@@ -406,13 +411,21 @@ struct vo_session {
 
         if (offer)
             connection.peer_connection->setLocalDescription(rtc::Description::Type::Offer);
-        for (auto &signal : std::exchange(connection.waiting, {}))
+        for (auto &signal : std::exchange(connection.waiting, {})) {
+            if (signal.kind == Signal::Kind::Candidate)
+                --connection.candidates_heard;   // counted when it first came
             apply(connection, std::move(signal));
+        }
     }
 
     // Applies a peer's offer, answer or candidate, or keeps it until it can be applied.
     void apply(Connection &connection, Signal signal) {
         const bool candidate = signal.kind == Signal::Kind::Candidate;
+        // Thrown to on_signal or the connecting caller, which drop the peer.
+        if (candidate && ++connection.candidates_heard > candidates_most)
+            throw std::runtime_error("too many candidates");
+        if (connection.waiting.size() >= candidates_most)
+            throw std::runtime_error("too many signals before the connection could take them");
         if (!connection.peer_connection || (candidate && !connection.remote_described)) {
             connection.waiting.push_back(std::move(signal));
             return;
@@ -435,8 +448,11 @@ struct vo_session {
         if (offer)
             peer_connection.setLocalDescription(rtc::Description::Type::Answer);
         connection.remote_described = true;
-        for (auto &waiting : std::exchange(connection.waiting, {}))
+        for (auto &waiting : std::exchange(connection.waiting, {})) {
+            if (waiting.kind == Signal::Kind::Candidate)
+                --connection.candidates_heard;   // counted when it first came
             apply(connection, std::move(waiting));
+        }
     }
 
     void connect_waiting() {
@@ -458,6 +474,7 @@ struct vo_session {
 
     void begin_move(PeerId peer, Link &link, std::uint32_t generation) {
         link.newest_generation = generation;
+        link.move_begun_at = Clock::now();
         Move &move = link.move.emplace();
         move.next.generation = generation;
         move.deadline = Clock::now() + move_timeout;
@@ -508,10 +525,14 @@ struct vo_session {
         link.retry_move_at = now + move_timeout;
     }
 
+    static bool peer_moves_too_soon(const Link &link) {
+        return link.move_begun_at && Clock::now() - *link.move_begun_at < move_least_apart;
+    }
+
     // The offerer's signal for a generation after the current one starts our side of a move.
     Connection *answer_move(PeerId peer, Link &link, const Signal &signal) {
         if (link.older || signal.kind != Signal::Kind::Offer || !link.announced ||
-            signal.generation <= link.newest_generation)
+            signal.generation <= link.newest_generation || peer_moves_too_soon(link))
             return nullptr;
         if (link.move) {
             if (link.move->handover.sending_on_new())
@@ -562,7 +583,7 @@ struct vo_session {
         try {
             if (signal.kind == Signal::Kind::Restart) {
                 if (link.older && !link.move && link.announced &&
-                    signal.generation > link.current.generation)
+                    signal.generation > link.current.generation && !peer_moves_too_soon(link))
                     begin_move(peer, link, std::max(signal.generation, link.newest_generation + 1));
                 return;
             }

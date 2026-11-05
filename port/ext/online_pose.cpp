@@ -34,7 +34,7 @@ float get_float(const std::uint8_t *at) {
 }
 
 bool on_map(float value, int cells) {
-    return std::isfinite(value) && value >= 0.0f && value <= static_cast<float>(cells);
+    return std::isfinite(value) && value >= 0.0f && value < static_cast<float>(cells);
 }
 
 bool known_weapon(std::uint8_t weapon) {

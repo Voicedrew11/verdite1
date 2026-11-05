@@ -88,6 +88,9 @@ a new credential"):
 | `candidate` | `gen`, `candidate`, `mid` | a trickled ICE candidate |
 | `restart` | `gen` | from the older peer: please offer a new generation, at least `gen` |
 
+A candidate, in a `candidate` or in an SDP, gives an IP address, never a name: a client drops a signal
+with a name, since looking it up would tell the name's DNS server about the player's resolver.
+
 So the peer that joined later always offers, and two peers never offer to each other at once.
 A generation is never reused between a pair, and signals for one that is gone are ignored.
 

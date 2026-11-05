@@ -64,6 +64,9 @@ TEST_CASE("a pose off the map or not finite is refused") {
     const float infinity = std::numeric_limits<float>::infinity();
     CHECK_FALSE(online_pose_decode(online_pose_encode({1, -0.5f, 10.0f, 0.0f})));
     CHECK_FALSE(online_pose_decode(online_pose_encode({1, 10.0f, 100.5f, 0.0f})));
+    // Exactly the far edge is a cell past the grid: a player down looks from there and stands there.
+    CHECK_FALSE(online_pose_decode(online_pose_encode({1, 100.0f, 10.0f, 0.0f})));
+    CHECK_FALSE(online_pose_decode(online_pose_encode({1, 10.0f, 100.0f, 0.0f})));
     CHECK_FALSE(online_pose_decode(online_pose_encode({1, nan, 10.0f, 0.0f})));
     CHECK_FALSE(online_pose_decode(online_pose_encode({1, 10.0f, 10.0f, infinity})));
 }

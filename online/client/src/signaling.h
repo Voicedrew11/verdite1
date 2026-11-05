@@ -16,6 +16,10 @@ constexpr int protocol_version = 1;
 constexpr std::size_t frame_bytes = std::size_t{64} * 1024;
 
 // A peer id is 16 lowercase hex digits on the wire.
+// Whether an ICE candidate line names an IP address. A name is refused: libdatachannel would look it
+// up, on a thread of its own each, so a peer's DNS server would hear from this player's resolver.
+bool candidate_is_address(std::string_view candidate);
+
 std::optional<PeerId> parse_peer(std::string_view hex);
 std::string peer_hex(PeerId peer);
 

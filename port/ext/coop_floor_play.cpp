@@ -23,6 +23,7 @@ namespace {
 
 constexpr std::uint32_t frame_delay_updates = 3;   // as the knights' playback, to ride out late frames
 constexpr std::uint64_t record_period_ms = 1000;    // an owner's record goes to the host at most this often
+constexpr std::size_t inbox_most = 1024;            // messages held between updates: a flood is dropped
 
 // What this machine does with the floor its player is on.
 enum class Part {
@@ -198,7 +199,9 @@ void act_on(const CoopRunFromRecord &order) {
     if (!is_host()) {
         const auto record = floors.host_records.find(order.floor);
         const auto bytes = record != floors.host_records.end() ? record->second : coop_floor_record(order.floor);
-        reload(bytes, {});
+        // Refused, the actors here may still be another machine's frames, which are never run.
+        if (!reload(bytes, {}))
+            return;
     }
     run();
     std::printf("[coop] running floor %d from its record\n", order.floor);
@@ -369,7 +372,7 @@ void coop_floors_receive(std::uint64_t peer, const CoopMessage &message) {
     if (!floors.on)
         return;
     const auto player = floors.players.find(peer);
-    if (player != floors.players.end())
+    if (player != floors.players.end() && floors.inbox.size() < inbox_most)
         floors.inbox.emplace_back(player->second, message);
 }
 

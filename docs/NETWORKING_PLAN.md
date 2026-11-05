@@ -202,3 +202,8 @@ get online play by writing only their own game layer.
 - 2026-10-30: messages planned in [MESSAGES_PLAN.md](MESSAGES_PLAN.md): signed 118-byte records,
   a D1 table under a Durable Object per floor, a floor mesh of 2 to 4 links a player gossiping
   them, a rated random sample shown, 10 out per player. Shared by every build and language.
+- 2026-11-05: a security review of what players can send each other. A floor write's link is now checked against
+  the action running on the receiving machine (a forged one drove a door's swing and a copy region past their arrays);
+  a candidate must give an IP address, since a name made libdatachannel look it up, telling the name's DNS server
+  about the player's resolver; a peer's candidates, moves and queued messages are capped; a second connection cannot
+  take a character already in the room.

@@ -17,6 +17,8 @@
 namespace kf::ext {
 namespace {
 
+constexpr std::size_t inbox_most = 1024;   // held until the world next updates: a flood is dropped
+
 struct Hits {
     std::vector<std::pair<CoopPlayerId, CoopMessage>> inbox;
     int swings_felt = 0;
@@ -120,7 +122,7 @@ bool coop_hits_message(const CoopMessage &message) {
 }
 
 void coop_hits_receive(CoopPlayerId from, const CoopMessage &message) {
-    if (from != 0 && coop_floors_self() != 0)
+    if (from != 0 && coop_floors_self() != 0 && hits.inbox.size() < inbox_most)
         hits.inbox.emplace_back(from, message);
 }
 

@@ -26,6 +26,23 @@ TEST_CASE("a peer id is 16 lowercase hex digits, never zero") {
     CHECK_FALSE(parse_peer("000000000000000g"));
 }
 
+TEST_CASE("a candidate must give an address, never a name to look up") {
+    CHECK(candidate_is_address("candidate:1 1 UDP 2122 104.30.1.2 3478 typ relay raddr 0.0.0.0 rport 0"));
+    CHECK(candidate_is_address("a=candidate:1 1 UDP 2122 2606:4700::6810:84e5 3478 typ relay"));
+    CHECK_FALSE(candidate_is_address("candidate:1 1 UDP 2122 evil.example.net 3478 typ relay"));
+    CHECK_FALSE(candidate_is_address("candidate:1 1 UDP 2122 abcdef 3478 typ relay"));
+    CHECK_FALSE(candidate_is_address("candidate:1 1 UDP 2122"));
+    CHECK_FALSE(candidate_is_address(""));
+
+    const auto signal_with = [](std::string_view data) {
+        return parse_service_frame(R"({"type":"signal","from":"00000000000000ff","data":{"gen":0,)" + std::string(data) + "}}");
+    };
+    CHECK(signal_with(R"("kind":"candidate","mid":"0","candidate":"candidate:1 1 UDP 1 1.2.3.4 9 typ relay")"));
+    CHECK_FALSE(signal_with(R"("kind":"candidate","mid":"0","candidate":"candidate:1 1 UDP 1 a.example 9 typ relay")"));
+    CHECK(signal_with(R"("kind":"offer","sdp":"v=0\r\na=candidate:1 1 UDP 1 1.2.3.4 9 typ relay\r\n")"));
+    CHECK_FALSE(signal_with(R"("kind":"offer","sdp":"v=0\r\na=candidate:1 1 UDP 1 a.example 9 typ relay\r\n")"));
+}
+
 TEST_CASE("a room's address follows the service's scheme and checks the names") {
     CHECK(room_url("https://online.example.net/", "kf1", "sign-1", "kf1-0.1.0+ab") ==
           "wss://online.example.net/v1/rooms/kf1/sign-1?protocol=1&build=kf1-0.1.0%2Bab");
@@ -125,7 +142,7 @@ TEST_CASE("a signal carries an offer, an answer or a candidate, and nothing else
     CHECK(offer.signal.sdp == "v=0");
 
     const ServiceFrame candidate = parsed(
-        R"({"type":"signal","from":"000000000000000b","data":{"gen":0,"kind":"candidate","candidate":"a=c","mid":"0"}})");
+        R"({"type":"signal","from":"000000000000000b","data":{"gen":0,"kind":"candidate","candidate":"a=candidate:1 1 UDP 1 1.2.3.4 9 typ relay","mid":"0"}})");
     CHECK(candidate.signal.kind == Signal::Kind::Candidate);
     CHECK(candidate.signal.mid == "0");
 
@@ -168,7 +185,7 @@ TEST_CASE("a signal names its generation; one without is refused") {
 TEST_CASE("a signal written is a signal read back") {
     Signal sent;
     sent.kind = Signal::Kind::Candidate;
-    sent.candidate = "a=candidate:1 \"q\"";
+    sent.candidate = "a=candidate:1 1 UDP 1 1.2.3.4 9 typ \"q\"";
     sent.mid = "0";
     sent.generation = 2;
     const std::string frame = signal_frame(0xb, sent);

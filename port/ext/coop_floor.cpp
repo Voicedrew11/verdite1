@@ -163,6 +163,10 @@ bool event_valid(const KfMapEvent &event) {
         && event.dialogue.stage != 0 && cell_valid(event.cell_x, event.cell_z);
 }
 
+bool is_door(KfMapObjectOperation action) {
+    return action == KF_MAP_OBJECT_OP_HINGED_DOOR || action == KF_MAP_OBJECT_OP_LIFT_DOOR;
+}
+
 // map_object_pool_update runs every slot by its action, whatever its id: an emptied slot keeps its
 // action (a taken pickup, floor 5's copy regions), and a falling drop reads the grid at its cell. A
 // door's link names its partner's slot, which the door's swing writes, and a door's collision edge
@@ -170,7 +174,7 @@ bool event_valid(const KfMapEvent &event) {
 bool object_valid(const KfMapObject &object) {
     if (!map_saved_link_valid(object.action, object.link))
         return false;
-    const bool door = object.action == KF_MAP_OBJECT_OP_HINGED_DOOR || object.action == KF_MAP_OBJECT_OP_LIFT_DOOR;
+    const bool door = is_door(object.action);
     if (object.object_id == KF_OBJECT_NONE)
         return object.action == KF_MAP_OBJECT_OP_NONE || (!door && cell_valid(object.cell_x, object.cell_z));
     return kf_enum_encode<u8>(object.object_id) < KF_MAP_OBJECT_DEFINITION_COUNT
@@ -552,13 +556,20 @@ void apply_object(std::size_t index, const KfMapObject &sent) {
         }
         return;
     }
-    object.object_id = sent.object_id;
-    if (link_id_only(object.action))
-        object.link.link_id = sent.link.link_id;
+    // What runs on is this machine's action, not the one the sender named, so the link is checked
+    // against that too: a door swinging here would write to whatever slot a forged link names.
+    KfMapObject after = object;
+    after.object_id = sent.object_id;
+    if (link_id_only(after.action))
+        after.link.link_id = sent.link.link_id;
     else
-        object.link = sent.link;
+        after.link = sent.link;
     if (sent.action != KF_MAP_OBJECT_OP_NONE)
-        map_object_start_action_if_idle(&object, sent.action);
+        map_object_start_action_if_idle(&after, sent.action);
+    if (after.object_id == KF_OBJECT_NONE && is_door(after.action))
+        after.action = KF_MAP_OBJECT_OP_NONE;
+    if (object_write_valid(index, after))
+        object = after;
 }
 
 void apply_event(std::span<const std::uint8_t> write) {
@@ -783,7 +794,7 @@ std::optional<Puppet> read_puppet(CoopByteReader &in) {
     puppet.position = {in.s32(), in.s32(), in.s32()};
     puppet.rotation = {static_cast<s16>(in.u16()), static_cast<s16>(in.u16()), static_cast<s16>(in.u16())};
     if (!in.ok() || puppet.index >= KF_ACTOR_CAPACITY || puppet.definition_id >= KF_ACTOR_DEFINITION_COUNT
-        || !cell_valid(puppet.cell_x, puppet.cell_z))
+        || !cell_valid(puppet.cell_x, puppet.cell_z) || !position_valid(puppet.position))
         return std::nullopt;
     return puppet;
 }

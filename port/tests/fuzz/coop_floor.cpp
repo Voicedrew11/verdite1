@@ -122,6 +122,12 @@ void seed_floor() {
     for (KfEffectRecord &effect : effect_state.records)
         effect.type = KF_EFFECT_SLOT_FREE;
     map_object_pool_clear();
+    // The kinds of object a floor's table holds; left zero, every definition would be a hinged door.
+    static constexpr std::array behaviours = {KF_MAP_OBJECT_OP_HINGED_DOOR, KF_MAP_OBJECT_OP_LIFT_DOOR,
+        KF_MAP_OBJECT_OP_HINGED_CONTAINER, KF_MAP_OBJECT_OP_COPY_REGION, KF_MAP_OBJECT_OP_RESTORE_POINT,
+        KF_MAP_OBJECT_OP_ITEM_PICKUP, KF_MAP_OBJECT_OP_PROJECTILE_EMITTER, KF_MAP_OBJECT_OP_EFFECT_SWITCH};
+    for (std::size_t i = 0; i < KF_MAP_OBJECT_DEFINITION_COUNT; ++i)
+        map_object_state.definitions.entries[i].behavior_type = behaviours[i % behaviours.size()];
 }
 
 void start_on(int floor) {
@@ -130,6 +136,33 @@ void start_on(int floor) {
     player_state.progress_state.current_floor = kf_enum_decode<KfFloorId>(static_cast<u8>(floor));
     player_state.progress_state.highest_floor = player_state.progress_state.current_floor;
     player_state.vitals.maximum_hp = player_state.vitals.maximum_mp = 1;
+}
+
+// A write starting a hinged door with a fair link, then one in the same packet naming a slot past the
+// pool under the swing it started: valid each alone, as the sender's own action is none. The door's
+// update writes to the slot its link names, so that link may never reach it.
+void check_forged_door_refused() {
+    start_on(1);
+    constexpr std::size_t lift_door_definition = 1;   // seed_floor's: its link is not limited
+    KfMapObject fair{};
+    fair.object_id = kf_enum_decode<KfObjectId>(static_cast<u8>(lift_door_definition));
+    fair.cell_x = fair.cell_z = 10;
+    fair.link.action_parameter = KF_MAP_OBJECT_PARAMETER_NONE;
+    fair.action = KF_MAP_OBJECT_OP_HINGED_DOOR;
+    KfMapObject forged = fair;
+    forged.link.action_parameter = KF_MAP_OBJECT_CAPACITY + 10;
+    forged.action = KF_MAP_OBJECT_OP_NONE;
+    std::vector<std::uint8_t> writes = {2, static_cast<std::uint8_t>(sizeof(KfMapObject)), 2};
+    for (const KfMapObject &object : {fair, forged}) {
+        writes.push_back(0);   // the slot
+        const auto *bytes = reinterpret_cast<const std::uint8_t *>(&object);
+        writes.insert(writes.end(), bytes, bytes + sizeof object);
+    }
+    writes.insert(writes.end(), {0, 0});   // no events, no flags
+    if (!coop_floor_apply_writes(writes) || map_object_state.objects[0].link.action_parameter != KF_MAP_OBJECT_PARAMETER_NONE) {
+        std::fprintf(stderr, "a forged link reached a door's swing\n");
+        std::abort();
+    }
 }
 
 } // namespace
@@ -143,6 +176,7 @@ extern "C" int LLVMFuzzerInitialize(int *, char ***) {
             std::abort();
         }
     }
+    check_forged_door_refused();
     return 0;
 }
 
@@ -157,7 +191,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data, std::size_t size
         snapshot(rest);
         break;
     case 1:
-        (void)coop_floor_apply_writes(rest);
+        // Run too: a write can leave an object's action and link at odds, which only its update reads.
+        if (coop_floor_apply_writes(rest))
+            run_world();
         break;
     case 2:
         (void)coop_floor_show_frame(rest);
