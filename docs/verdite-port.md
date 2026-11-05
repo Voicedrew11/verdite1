@@ -273,7 +273,7 @@ the player walks 1.58 times as far in 1.5 seconds from the start.
 `KF_TEST_NO_PAUSE=1` keeps the game running while its window is unfocused, which it otherwise
 pauses: for two windows on one machine in an online room, so each shows the other moving.
 
-`KF_TEST_CRASH=fault|abort|soft@<gameplay polls>` crashes the game once on purpose,
+`KF_TEST_CRASH=fault|abort|soft|hang@<gameplay polls>` crashes the game once on purpose,
 to check crash reports ([CRASH_REPORTS.md](CRASH_REPORTS.md)).
 
 `KF_TEST_BACKGROUND=<polls>` sends Android's "going to the background" event once,
@@ -451,7 +451,7 @@ branch point.
 | rumble, gyro aim | Verdite Core `Rumble.cs`, `GyroAim.cs` | SDL3 has both |
 | debug: flight, noclip, god mode, infinite MP, peaceful, speed, warp, editors | `Menu/`, `Warp.cs` | done as `mods/debug` (Lua), on a par with Verdite3's `mods/kf3debug` (2026-11-04) |
 | message text (dialogue pictures as glyph text) | `Text/` | may be moot if the decomp's English resources are text already |
-| crash reports, hang watchdog, focus pause | Verdite Core | crash reports done (2026-10-24, [CRASH_REPORTS.md](CRASH_REPORTS.md)): `verdite/crash.h` in libverdite, the stack named by a helper process with cpptrace, KF1's sections (player, the actor being updated, the last effect, settings), the last 64 events and copies of the saves from `port/platform/crash.cpp`. Not yet: hang watchdog, focus pause |
+| crash reports, hang watchdog, focus pause | Verdite Core | crash reports done (2026-10-24, [CRASH_REPORTS.md](CRASH_REPORTS.md)): `verdite/crash.h` in libverdite, the stack named by a helper process with cpptrace, KF1's sections (player, the actor being updated, the last effect, settings), the last 64 events and copies of the saves from `port/platform/crash.cpp`. The crash window, the hang watchdog and Android's share sheet 2026-11-05. Not yet: focus pause |
 | modding API (Verdite's C# runtime mods) | Verdite Core | done (2026-11-02): Lua API 1.0, [MODDING.md](MODDING.md#api-10): whole game reachable, sandboxed, host in libverdite |
 | state beacon + command channel (port 27901) | `AgentBeacon.cs`, `AgentServer.cs` | what lets an agent drive and measure the game |
 | fuzzer: seeded headless turbo play, invariants, report | `Fuzz.cs`, `scripts/fuzz.py` | done (2026-10-25, "Fuzzing" above): `verdite/fuzz.h` and `verdite/state_trace.h` in libverdite, KF1's tables in `port/platform/fuzz.cpp`, exact replay, a state trace, the `fuzz` preset and libFuzzer targets ([FUZZING_PLAN.md](FUZZING_PLAN.md)) |

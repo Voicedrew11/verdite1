@@ -23,6 +23,14 @@
 
 #include "build_info.h"
 
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
+
+#ifndef _WIN32
+extern char **environ;
+#endif
+
 namespace kf {
 namespace {
 constexpr std::uint64_t ns_per_ms = 1000000;
@@ -155,6 +163,22 @@ void write_effect(verdite::CrashWriter &out) {
     out.triple("position", effect.position.vx, effect.position.vy, effect.position.vz);
 }
 
+// The variables that change how the game runs: what the player's own settings do not show.
+void write_environment(verdite::CrashWriter &out) {
+#ifdef _WIN32
+    char **variables = _environ;
+#else
+    char **variables = environ;
+#endif
+    for (; variables && *variables; ++variables) {
+        const std::string_view variable(*variables);
+        if (!variable.starts_with("KF_"))
+            continue;
+        out.text(variable);
+        out.text("\n");
+    }
+}
+
 std::string reports_directory() {
     const auto &folder = user_folder();
     const auto directory = (folder.empty() ? std::filesystem::path("crashes") : folder / "crashes").u8string();
@@ -171,7 +195,85 @@ void note(const std::string &text) {
     *target = 1;
 }
 
-// KF_TEST_CRASH=fault|abort|soft@<gameplay polls>: one crash on purpose, for automated tests.
+// Through a volatile, so the compiler cannot call the loop undefined and drop it.
+[[gnu::noinline]] void hang_on_purpose() {
+    for (volatile int forever = 0; forever == 0;) {
+    }
+}
+
+// What the player is told, by what the report is of and when.
+struct Telling {
+    const char *title;
+    const char *body;
+};
+constexpr Telling telling_crash_later = {"The game stopped last time",
+                                         "The game ran into an error it could not recover from and stopped last time."};
+constexpr Telling telling_hang_later = {"The game stopped responding last time",
+                                        "The game stopped responding last time, and had to be closed."};
+constexpr const char *report_saved =
+    "A report was saved. Sending it, along with what you were doing, helps get this fixed:";
+
+Telling telling_later(const std::string &folder) {
+    return verdite::crash_report_kind(folder) == verdite::CrashReportKind::Hang ? telling_hang_later
+                                                                                : telling_crash_later;
+}
+
+#ifdef __ANDROID__
+// Hands the report to the activity, whose dialog runs on the UI thread: a phone has no folder a
+// player can open, so it offers to share the report instead.
+void tell(const Telling &telling, const std::string &folder) {
+    auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity)
+        return;
+    jclass type = env->GetObjectClass(activity);
+    const jmethodID method = env->GetMethodID(type, "showCrashNotice",
+                                              "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+    jstring title = env->NewStringUTF(telling.title);
+    jstring body = env->NewStringUTF((std::string(telling.body) + "\n\n" + report_saved).c_str());
+    jstring path = env->NewStringUTF(folder.c_str());
+    if (method && title && body && path)
+        env->CallVoidMethod(activity, method, title, body, path);
+    if (env->ExceptionCheck())
+        env->ExceptionClear();
+    env->DeleteLocalRef(path);
+    env->DeleteLocalRef(body);
+    env->DeleteLocalRef(title);
+    env->DeleteLocalRef(type);
+    env->DeleteLocalRef(activity);
+}
+#else
+constexpr Telling telling_now = {"The game stopped",
+                                 "The game ran into an error it could not recover from and has stopped."};
+
+std::string telling_text(const Telling &telling, const std::string &folder) {
+    return std::string(telling.body) + "\n\n" + report_saved + "\n\n" + folder;
+}
+
+// Blocks until the player closes it. False if no box could be shown, so they are told next time.
+bool tell(const Telling &telling, const std::string &folder, const char *close_label) {
+    enum Button { Close, OpenFolder };
+    const std::array<SDL_MessageBoxButtonData, 2> buttons = {
+        {{0, OpenFolder, "Open the report's folder"}, {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, Close, close_label}}};
+    const std::string text = telling_text(telling, folder);
+    const SDL_MessageBoxData box{SDL_MESSAGEBOX_ERROR, nullptr, telling.title, text.c_str(),
+                                 static_cast<int>(buttons.size()), buttons.data(), nullptr};
+    for (;;) {
+        int pressed = Close;
+        if (!SDL_ShowMessageBox(&box, &pressed)) {
+            std::fprintf(stderr, "[crash] cannot show the crash window: %s\n", SDL_GetError());
+            return false;
+        }
+        if (pressed != OpenFolder)
+            return true;
+        const std::string url = verdite::crash_file_url(folder);
+        if (!SDL_OpenURL(url.c_str()))
+            std::fprintf(stderr, "[crash] cannot open %s: %s\n", url.c_str(), SDL_GetError());
+    }
+}
+#endif
+
+// KF_TEST_CRASH=fault|abort|soft|hang@<gameplay polls>: one crash on purpose, for automated tests.
 void test_crash() {
     static const char *spec = std::getenv("KF_TEST_CRASH");
     static long polls = 0;
@@ -187,6 +289,22 @@ void test_crash() {
         std::abort();
     else if (kind == "soft")
         verdite::crash_report_soft("KF_TEST_CRASH");
+    else if (kind == "hang")
+        hang_on_purpose();
+}
+
+// On a callback SDL runs where the event is raised: on a phone it stops the game's thread inside
+// its event pump as the app goes to the background, before the game sees the event.
+bool SDLCALL watch_background(void *, SDL_Event *event) {
+    static bool in_background = false;   // a first foreground event may come with no background before it
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND && !in_background) {
+        in_background = true;
+        verdite::crash_hang_pause();
+    } else if (event->type == SDL_EVENT_DID_ENTER_FOREGROUND && in_background) {
+        in_background = false;
+        verdite::crash_hang_resume();
+    }
+    return true;
 }
 } // namespace
 
@@ -202,11 +320,52 @@ void crash_start() {
 #if KF_EXT
     config.sections.push_back({"settings", ext::crash_write_settings});
 #endif
-    if (!verdite::crash_install(std::move(config)))
+    config.sections.push_back({"environment", write_environment});
+    if (!verdite::crash_install(std::move(config))) {
         std::fprintf(stderr, "[crash] crash reports are off\n");
+        return;
+    }
+    // A copy of the log in each report: the next launch starts kf.log again.
+    const auto log = (user_folder() / "kf.log").u8string();
+    verdite::crash_keep_file({reinterpret_cast<const char *>(log.data()), log.size()});
+}
+
+std::optional<int> crash_window_run(int argc, char **argv) {
+    const auto request = verdite::crash_window_request(argc, argv);
+    if (!request)
+        return std::nullopt;
+#ifndef __ANDROID__
+    if (tell(telling_now, request->folder, "Quit"))
+        verdite::crash_report_seen(request->folder);
+#endif
+    return request->exit_code;
+}
+
+void crash_tell_player() {
+    const char *window = std::getenv("KF_CRASH_WINDOW");
+    if (window && std::strcmp(window, "0") == 0)
+        return;
+    verdite::crash_window_enable();
+    const auto folder = verdite::crash_take_unseen_report();
+    if (!folder)
+        return;
+#ifdef __ANDROID__
+    tell(telling_later(*folder), *folder);
+#else
+    tell(telling_later(*folder), *folder, "Continue");
+#endif
+}
+
+void crash_watch_hangs(int hang_s) {
+    if (const char *seconds = std::getenv("KF_HANG"))
+        hang_s = std::atoi(seconds);
+    constexpr int ms_per_s = 1000;
+    if (hang_s > 0 && verdite::crash_hang_watch_start(hang_s * ms_per_s) && !SDL_AddEventWatch(watch_background, nullptr))
+        std::fprintf(stderr, "[crash] cannot watch for the app going to the background: %s\n", SDL_GetError());
 }
 
 void crash_poll() {
+    verdite::crash_hang_beat();
     const InputContext context = host_input_context();
     if (context != watched.context) {
         watched.context = context;

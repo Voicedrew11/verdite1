@@ -27,6 +27,8 @@ if(ANDROID)
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
   # Plain char is unsigned on arm64 and signed on the PS1, x86-64 and so the other players' machines.
   add_compile_options(-fsigned-char)
+  # A crash report walks them (libverdite/src/crash.cpp): nothing else can in a signal handler here.
+  add_compile_options(-fno-omit-frame-pointer)
 endif()
 option(KF_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
 # Crash reports name the shipped binary's stack from its own line tables (libverdite/crash.h).

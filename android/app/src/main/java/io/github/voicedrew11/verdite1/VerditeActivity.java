@@ -16,16 +16,22 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import org.libsdl.app.SDLActivity;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 // SDL's activity, which loads libSDL3.so and libmain.so and runs the game's main on its own thread.
 public class VerditeActivity extends SDLActivity {
     private static final int DOWNLOAD_TRIES = 3;
     private static final int CONNECT_TIMEOUT_MS = 20_000;
     private static final int READ_TIMEOUT_MS = 60_000;
+    // What an intent can carry stays well under Android's limit of about a megabyte.
+    private static final int REPORT_SHARED_BYTES = 128 * 1024;
+    private static final int LOG_SHARED_BYTES = 64 * 1024;
 
     private SettingsPanel settings;
     private SetupPanel setup;
@@ -69,6 +75,46 @@ public class VerditeActivity extends SDLActivity {
                 .setNeutralButton("Later", null)
                 .setOnDismissListener(dialog -> mSurface.requestFocus())
                 .show());
+    }
+
+    // From the game thread (port/platform/crash.cpp): the last run crashed or hung. A phone has no
+    // folder a player can open, so the report goes out through the system's share sheet.
+    public void showCrashNotice(String title, String message, String folder) {
+        runOnUiThread(() -> new MaterialAlertDialogBuilder(new ContextThemeWrapper(this, R.style.Theme_Verdite_Settings))
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("Share report", (dialog, which) -> shareReport(folder))
+                .setNeutralButton("Close", null)
+                .setOnDismissListener(dialog -> mSurface.requestFocus())
+                .show());
+    }
+
+    private void shareReport(String folder) {
+        String text = tailOf(new File(folder, "report.txt"), REPORT_SHARED_BYTES)
+                + "\n== kf.log (the end)\n" + tailOf(new File(folder, "kf.log"), LOG_SHARED_BYTES);
+        Intent send = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "Verdite1 crash report")
+                .putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            startActivity(Intent.createChooser(send, "Share report"));
+        } catch (ActivityNotFoundException e) {
+            Log.w("Verdite1", "nothing to share the report with: " + e);
+        }
+    }
+
+    // The last mostBytes of a file, as text; a line saying so if it cannot be read.
+    private static String tailOf(File file, int mostBytes) {
+        try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
+            long length = in.length();
+            int size = (int) Math.min(length, mostBytes);
+            byte[] bytes = new byte[size];
+            in.seek(length - size);
+            in.readFully(bytes);
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "(cannot read " + file.getName() + ": " + e + ")";
+        }
     }
 
     private void openPage(String url) {

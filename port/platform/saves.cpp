@@ -190,8 +190,10 @@ static std::string earlier_name(SaveSlot slot) {
 #ifndef __EMSCRIPTEN__
 // Each crash report carries a copy of the saves, so it can be replayed from the player's state.
 static void keep_saves_in_crash_reports(const char *directory) {
-    for (const SaveCard card : {SaveCard::Game, SaveCard::Quick, SaveCard::Aside})
-        verdite::crash_keep_file((std::filesystem::path(reinterpret_cast<const char8_t *>(directory)) / card_name(card)).string());
+    for (const SaveCard card : {SaveCard::Game, SaveCard::Quick, SaveCard::Aside}) {
+        const auto kept = (std::filesystem::path(reinterpret_cast<const char8_t *>(directory)) / card_name(card)).u8string();
+        verdite::crash_keep_file({reinterpret_cast<const char *>(kept.data()), kept.size()});
+    }
 }
 #endif
 

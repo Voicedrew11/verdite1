@@ -68,9 +68,13 @@ scripts/release.sh 0.1.0     # tags HEAD; commits nothing, pushes nothing, and r
 git push origin HEAD && git push origin v0.1.0
 ```
 
-The tag starts `.github/workflows/release.yml`, which builds all four packages and opens a **draft**
+The tag starts `.github/workflows/release.yml`, which builds all four packages and the Android symbols and opens a **draft**
 release. Publishing the draft is what players see: GitHub's `releases/latest` skips drafts and
 prereleases, so nothing is announced until then.
+
+A fifth file, `Verdite1-V-android-arm64-symbols.zip`, is the APK's `libmain.so` before it was
+stripped: nothing for players, and what names a phone's crash report (`CRASH_REPORTS.md`). A preview's
+stays with the workflow run, as an artifact.
 
 ## Previews
 
@@ -101,8 +105,9 @@ Notify only, as the C# ports: nothing is downloaded. `verdite/update_check.h` ha
 - **Asked** once a launch on its own thread, in a build for players (`-DKF_RELEASE=ON`, which all the
   packages set), through the same download as the English patch (curl on the desktop, Java on a
   phone). The answer of `api.github.com/repos/Voicedrew11/verdite1/releases/latest` is kept in
-  `update.json` in the user folder, and the network is asked at most once in 24 hours. Offline or
-  rate-limited, the kept answer stands.
+  `update.json` in the user folder, and the network is asked at most once an hour, as in Verdite2 and
+  Verdite3: at once a day, a release went unannounced for up to a day. Offline or rate-limited, the
+  kept answer stands.
 - **Shown** once a launch, when the title menu is up and nothing else covers the game, never in play.
   A desktop draws a window (Download page, Skip this version, Later) that holds the game while it is
   open, and a gold "Update available!" badge in the F1 menu bar. Android shows a dialog with the same

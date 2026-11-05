@@ -355,6 +355,9 @@ int main(int argc, char **argv) {
     // Started again by a crash to name the stack in its report.
     if (const auto code = verdite::crash_helper_run(argc, argv))
         return *code;
+    // And by a crash to tell the player.
+    if (const auto code = kf::crash_window_run(argc, argv))
+        return *code;
 #if KF_EXT
     kf::ext::console_start();
 #endif
@@ -445,6 +448,8 @@ int main(int argc, char **argv) {
         if (extract_only)
             return 0;
     }
+    if (!host_options.headless)
+        kf::crash_tell_player();
     // Explicit folders first; the library beside the game fills in the rest and
     // receives languages added later.
     if (data)
@@ -479,6 +484,7 @@ int main(int argc, char **argv) {
     kf::host_configure(host_options);
     if (!kf::host_start())
         return 1;
+    kf::crash_watch_hangs(host_options.headless ? 0 : kf::crash_player_hang_s);
     // Settings are loaded now: honour the player's language unless one was given.
     if (!language_selected && kf::language_preference != kf::game_language() &&
         kf::language_available(kf::language_preference)) {

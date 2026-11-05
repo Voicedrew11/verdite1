@@ -37,3 +37,6 @@ nix develop .#android -c bash -euc '
 mkdir -p dist
 cp android/app/build/outputs/apk/release/app-release.apk "dist/Verdite1-$version-android-arm64.apk"
 echo "dist/Verdite1-$version-android-arm64.apk"
+# The APK's libraries are stripped; these name a phone's crash report (scripts/name-android-report.py).
+zip -j "dist/Verdite1-$version-android-arm64-symbols.zip" build/android-release/jni/arm64-v8a/libmain.so
+echo "dist/Verdite1-$version-android-arm64-symbols.zip"

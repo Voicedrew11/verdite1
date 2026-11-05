@@ -8,7 +8,8 @@ lighting, an automap, quick saves, a settings overlay and Lua mods.
 Project page, updates and bug reports:
   https://github.com/Voicedrew11/verdite1
 
-Please attach kf.log (see below) to bug reports.
+Please attach the crash report, if there is one, or kf.log (see below) to bug
+reports.
 
 
 WHAT YOU NEED
@@ -26,7 +27,7 @@ UPDATES
 -------
 The game tells you on the title screen when a new version is out, and opens its
 download page if you ask. Nothing is downloaded by itself. It asks GitHub at most
-once a day; turn that off in F1 > Settings > Interface. To update, run the new
+once an hour; turn that off in F1 > Settings > Interface. To update, run the new
 installer, or replace the .AppImage or the unpacked folder. Your saves stay.
 
 
@@ -82,6 +83,9 @@ FILES
 Saves, settings, mods and kf.log are in:
   Windows: %APPDATA%\Verdite\Verdite1
   Linux:   ~/.local/share/Verdite/Verdite1
+If the game crashes or stops responding it says so, and saves a report in the
+"crashes" folder there (the newest 20 are kept). Each report's folder holds
+report.txt, kf.log and copies of your saves, so send the whole folder.
 If you played King's Field Enhanced, its folder (KingsField\SLPS00017 beside
 it) is copied there on the first launch, and left as it was.
 Saves are BISLPS-00017KF, the PlayStation's own save file (the quick save is

@@ -21,6 +21,7 @@
 #include <kf/renderer/projection.h>
 #include <kf/lib/fixed_math.h>
 #include "../renderer/vertex_carry.h"
+#include <verdite/crash.h>
 #include <SDL3/SDL.h>
 #if KF_EXT
 #include <kf/ext/ext.h>
@@ -305,9 +306,11 @@ void host_language_status(const char *message) {
     host_browser_status(message);
 #else
     if (host.window && !options.headless) {
+        verdite::crash_report_soft(message);
+        verdite::crash_hang_pause();   // the box holds this thread for as long as it is open
         SDL_SetWindowRelativeMouseMode(host.window, false);
         sound_set_paused(true);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "King's Field — Error", message, host.window);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, product_name, message, host.window);
     }
 #endif
     host_shutdown();

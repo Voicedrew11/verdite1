@@ -126,7 +126,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: verdite1-android
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/*-symbols.zip
           if-no-files-found: error
 
   release:
@@ -149,7 +151,7 @@ jobs:
 
             - **Windows:** `...-setup.exe` installs it (no administrator needed), or unpack the `.zip` anywhere.
             - **Linux:** make the `.AppImage` executable and run it. It adds itself to your desktop's menu.
-            - **Android:** install the `.apk` (arm64, Android 10 or later).
+            - **Android:** install the `.apk` (arm64, Android 10 or later). The `-symbols.zip` is for reading crash reports; players do not need it.
 
             The game asks for your disc on first launch, and offers to add the English translation to a Japanese disc. It tells you when a new version is out.
 
