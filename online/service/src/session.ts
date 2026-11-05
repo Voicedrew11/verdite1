@@ -1,10 +1,16 @@
 // What a room and a floor's mesh share: the frames, the sockets' attachments, the frame limit and
 // a peer's TURN credentials (online/protocol/PROTOCOL.md). Holds no state of its own.
 import type { Env } from "./index";
+import { addressKey } from "./quota";
 import { credentialSeconds, issue, revoke } from "./turn";
 import { FRAME_BYTES, FRAMES_PER_SECOND, type ErrorCode, type ServerFrame } from "./wire";
 
 const TURN_CREDENTIALS_KEPT = 2;
+
+// The address a request counts as for the per-address limits and quotas.
+export function clientAddress(request: Request): string {
+  return addressKey(request.headers.get("CF-Connecting-IP") ?? "local");
+}
 
 // A socket's address, for the per-address limits.
 export interface Client {
@@ -123,8 +129,10 @@ export async function grantTurn(env: Env, ws: WebSocket, self: Member, connectab
     fail(ws, "rate_limited", "too many TURN credentials from this address");
     return;
   }
-  if (!(await env.BUDGET.get(env.BUDGET.idFromName("turn")).allowed())) {
-    fail(ws, "unavailable", "the service is over its TURN budget for the month");
+  const budget = env.BUDGET.get(env.BUDGET.idFromName("turn"));
+  const verdict = await budget.verdict(self.ip, (self.turnUsers ?? []).length > 0);
+  if (verdict !== "ok") {
+    fail(ws, "unavailable", verdict === "address" ? "too much TURN traffic from this address" : "the service is over its TURN budget");
     return;
   }
   let credential;
@@ -135,8 +143,10 @@ export async function grantTurn(env: Env, ws: WebSocket, self: Member, connectab
     fail(ws, "unavailable", "no TURN credentials");
     return;
   }
+  if (credential.username) await budget.issued(self.ip, credential.username, Date.now() + credentialSeconds(env) * 1000);
   const latest = attachment<Member>(ws);
   if (ws.readyState !== WebSocket.OPEN || !latest) {
+    if (credential.username) await budget.ended(self.ip, [credential.username]);
     if (credential.username) await revoke(env, credential.username);
     return;
   }
@@ -145,9 +155,12 @@ export async function grantTurn(env: Env, ws: WebSocket, self: Member, connectab
   store(ws, { ...latest, turnUsers: live.slice(-TURN_CREDENTIALS_KEPT) });
   send(ws, { type: "turn", iceServers: credential.iceServers, seconds: credentialSeconds(env) });
   for (const username of retired) await revoke(env, username);
+  if (retired.length) await budget.ended(self.ip, retired);
 }
 
 // Revokes a peer's TURN credentials when it leaves.
 export async function revokeTurn(env: Env, member: Member): Promise<void> {
-  for (const username of member.turnUsers ?? []) await revoke(env, username);
+  const usernames = member.turnUsers ?? [];
+  for (const username of usernames) await revoke(env, username);
+  if (usernames.length) await env.BUDGET.get(env.BUDGET.idFromName("turn")).ended(member.ip, usernames);
 }

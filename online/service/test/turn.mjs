@@ -33,7 +33,7 @@ a.ws.close(1000);
 b.ws.close(1000);
 
 assert.equal(reply.type, "turn", `got ${reply.type} ${reply.code ?? ""}`);
-assert.equal(reply.seconds, 3600);
+assert.equal(reply.seconds, 1800);
 const turn = reply.iceServers.filter((server) =>
   [server.urls].flat().some((url) => /^turns?:/.test(url)),
 );

@@ -54,7 +54,7 @@ frames over 64 KiB are an error. The first frame from the service is `welcome` o
 | `join` | `peer` | a peer joined after you |
 | `leave` | `peer` | a peer left |
 | `signal` | `from`, `data` | a peer sent you `data` |
-| `turn` | `iceServers`, `seconds` | the answer to your `turn`: the RTCIceServer list to connect with, good for `seconds` (3600). Empty when the service has no TURN key (local testing) |
+| `turn` | `iceServers`, `seconds` | the answer to your `turn`: the RTCIceServer list to connect with, good for `seconds` (1800). Empty when the service has no TURN key (local testing) |
 | `error` | `code`, `message` | see below; `full`, `build_mismatch` and `unavailable` close the socket after it |
 
 Error codes after the upgrade:
@@ -65,7 +65,7 @@ Error codes after the upgrade:
 | `build_mismatch` | the room's peers have another build |
 | `bad_message` | a frame is not JSON, not an object, of an unknown type, binary or too long |
 | `unknown_peer` | a `signal` names a peer not in the room |
-| `rate_limited` | more than 50 frames in a second, or more than 10 `turn` requests a minute from one address; the frame is dropped |
+| `rate_limited` | more than 50 frames in a second, or more than 10 `turn` requests a minute from one address (an IPv4 address or an IPv6 /64, as every limit counts them); the frame is dropped |
 | `alone` | a `turn` request with no other peer in the room |
 | `unavailable` | the service could not get a TURN credential, or is over its TURN budget for the month; try again later |
 
@@ -123,7 +123,7 @@ gone ends: the coop world is the host's). `players` counts its peers; a full roo
 - **Two data channels** per pair of peers, negotiated out of band (`negotiated`, created by both peers) with fixed
   ids: `0` reliable and ordered (`control`), `1` unreliable and unordered (`state`, no retransmits).
 - **TURN credentials on request.** A client asks with `turn` when it is about to connect to a
-  peer (on its `welcome` with peers, or on a `join`), not before. A credential lasts an hour
+  peer (on its `welcome` with peers, or on a `join`), not before. A credential lasts half an hour
   (`seconds`); a client asks again halfway through it, or 15 minutes before its end if sooner.
 
 ## Moving to a new credential
@@ -151,8 +151,12 @@ before that, or both when the peer leaves).
 A move whose new connection does not open within 30 seconds is dropped and tried again; one that
 fails after a side has sent `moved` loses the peer. Text messages on `control` are only these
 markers: the game's packets are binary.
-- **The budget.** The service stops issuing credentials once the month's TURN traffic passes its
-  budget (`TURN_BUDGET_GB`, 500 by default), checked every 10 minutes.
+- **The budget.** Checked every minute (`src/quota.ts`). An address (an IPv4 address, or an IPv6 /64)
+  over its quota, 100 MB in a minute or 10 GB in a day, has its credentials revoked and is refused
+  for a week. A day past three times its even share of the month's budget (`TURN_BUDGET_GB`, 500 by
+  default), or the budget itself, stops new connections; a peer that already holds a credential can
+  still renew. Past the hard cap (`TURN_HARD_GB`, 900) every credential is revoked. All refusals are
+  `unavailable`.
 
 ## Records
 

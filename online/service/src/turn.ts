@@ -2,7 +2,8 @@
 // key is the service's secret; without it there are no ICE servers (local testing).
 
 const API = "https://rtc.live.cloudflare.com/v1/turn/keys";
-const CREDENTIAL_SECONDS = 60 * 60; // a longer session asks again
+// A longer session asks again. Short, since billing stops when a credential ends, however it is used.
+const CREDENTIAL_SECONDS = 30 * 60;
 
 export interface TurnKey {
   TURN_KEY_ID?: string;
@@ -10,7 +11,7 @@ export interface TurnKey {
   TURN_CREDENTIAL_SECONDS?: string;
 }
 
-// How long a credential lasts: an hour, or TURN_CREDENTIAL_SECONDS (60 to 3600) to test renewal.
+// How long a credential lasts: half an hour, or TURN_CREDENTIAL_SECONDS (60 to 1800) to test renewal.
 export function credentialSeconds(key: TurnKey): number {
   const seconds = Number(key.TURN_CREDENTIAL_SECONDS);
   return Number.isInteger(seconds) && seconds >= 60 && seconds <= CREDENTIAL_SECONDS

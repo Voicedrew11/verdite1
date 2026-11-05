@@ -5,6 +5,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 import {
   attachment,
+  clientAddress,
   fail,
   freshPeerId,
   grantTurn,
@@ -51,7 +52,7 @@ export class Room extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const build = new URL(request.url).searchParams.get("build") ?? "";
-    const ip = request.headers.get("CF-Connecting-IP") ?? "local";
+    const ip = clientAddress(request);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     const present = this.peers();
 

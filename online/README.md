@@ -42,7 +42,7 @@ only against a local service; `vo_board_trio --service https://...` runs the tri
 Without a TURN key, rooms hand out no ICE servers, which is enough for two instances on one
 machine; local development never needs the key.
 
-`TURN_CREDENTIAL_SECONDS` (60 to 3600, default 3600) shortens the credentials a room hands out, to
+`TURN_CREDENTIAL_SECONDS` (60 to 1800, default 1800) shortens the credentials a room hands out, to
 test their renewal; it is never set on the live service except for such a test. Locally:
 `npx wrangler dev --ip 127.0.0.1 --port 8787 --var TURN_CREDENTIAL_SECONDS:60`, then
 `TURN_CREDENTIAL_SECONDS=60 npm test` and `vo_pair --seconds 120` (a move every 30 seconds).
@@ -92,7 +92,7 @@ the other two by gossip, is rated, and retires the first of ten more.
 
 The TURN key (`TURN_KEY_ID`, `TURN_KEY_API_TOKEN`) lives only in Cloudflare, as the deployed
 Worker's secrets. It is never in a file in this repo, not even an ignored one, and never reaches a
-client: a client gets a TURN credential only when it has a peer to connect to, for an hour,
+client: a client gets a TURN credential only when it has a peer to connect to, for half an hour,
 revoked when it leaves or asks again.
 
 ## Abuse and cost
@@ -100,13 +100,16 @@ revoked when it leaves or asks again.
 The URL is public and anything can speak the protocol, so the service cannot tell the game from
 another program; it limits what anyone can take instead:
 
-- credentials only to a peer with another peer in its room, for an hour, revoked on leaving;
-- per address: 30 joins, 10 credentials, 10 posts, 30 ratings and 60 `mine` requests a minute
-  (approximate, per Cloudflare location);
-- the month's budget: a scheduled check every 10 minutes reads the TURN key's egress (what
-  Cloudflare bills, $0.05/GB past 1,000 GB a month) from the analytics API, and past
-  `TURN_BUDGET_GB` (500) rooms get `unavailable` instead of credentials. Cloudflare itself has
-  no cap and offers no usage alert on an account without usage-based billing.
+- credentials only to a peer with another peer in its room, for half an hour, revoked on leaving;
+- per address (an IPv4 address or an IPv6 /64): 30 joins, 10 credentials, 10 posts, 30 ratings and
+  60 `mine` requests a minute (approximate, per Cloudflare location), and 32 live credentials;
+- what a credential relays, which only watching can limit (`service/src/quota.ts`): a check every
+  minute reads the TURN key's egress (what Cloudflare bills, $0.05/GB past 1,000 GB a month) in all
+  and per credential from the analytics API. An address past 100 MB in a minute or 10 GB in a day
+  loses its credentials and is refused for a week. A day past three times its even share of what is
+  left of `TURN_BUDGET_GB` (500), or the budget itself, stops new connections, not games in
+  progress. Past `TURN_HARD_GB` (900) every credential is revoked. Cloudflare itself has no cap and
+  offers no usage alert on an account without usage-based billing.
 
 Still to come: a key per install, so limits and bans apply per player (`docs/NETWORKING_PLAN.md`).
 

@@ -30,6 +30,7 @@ import {
 } from "./record";
 import {
   attachment,
+  clientAddress,
   fail,
   freshPeerId,
   grantTurn,
@@ -96,7 +97,7 @@ export class Floor extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const ip = request.headers.get("CF-Connecting-IP") ?? "local";
+    const ip = clientAddress(request);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     if (url.pathname.endsWith("/mesh")) {
       this.joinMesh(server, ip);

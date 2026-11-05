@@ -4,6 +4,7 @@ import { Budget, checkBudget } from "./budget";
 import { Floor } from "./floor";
 import { Lobby } from "./lobby";
 import { Room } from "./room";
+import { clientAddress } from "./session";
 import { FLOOR_AREA_MOST, HOST_NAME, PROTOCOL, PUBLIC_ROOM, lobbyName, refusal } from "./wire";
 
 export { Budget, Floor, Lobby, Room };
@@ -19,8 +20,9 @@ export interface Env {
   POST_LIMIT: RateLimit; // record posts per address
   RATE_LIMIT: RateLimit; // ratings per address: each can come from a fresh key
   MINE_LIMIT: RateLimit; // mine requests per address
-  TURN_BUDGET_GB?: string;
-  TURN_CREDENTIAL_SECONDS?: string; // 3600 when unset; shorter only to test renewal
+  TURN_BUDGET_GB?: string; // past this month's, no new connections
+  TURN_HARD_GB?: string; // past this month's, every credential ends
+  TURN_CREDENTIAL_SECONDS?: string; // 1800 when unset; shorter only to test renewal
   // secrets (online/README.md, "Secrets")
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
@@ -43,8 +45,7 @@ async function refusedUpgrade(request: Request, env: Env, game: string, build?: 
     return refusal(400, "protocol", `this service speaks protocol ${PROTOCOL}`);
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
     return refusal(400, "bad_request", "expected a WebSocket upgrade");
-  const ip = request.headers.get("CF-Connecting-IP") ?? "local";
-  if (!(await env.JOIN_LIMIT.limit({ key: ip })).success)
+  if (!(await env.JOIN_LIMIT.limit({ key: clientAddress(request) })).success)
     return refusal(429, "rate_limited", "too many joins from this address");
   return null;
 }

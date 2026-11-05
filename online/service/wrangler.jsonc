@@ -34,8 +34,9 @@
     { "name": "RATE_LIMIT", "namespace_id": "1004", "simple": { "limit": 30, "period": 60 } },
     { "name": "MINE_LIMIT", "namespace_id": "1005", "simple": { "limit": 60, "period": 60 } }
   ],
-  // the month's TURN egress (what Cloudflare bills) above which no credentials are issued
-  "vars": { "TURN_BUDGET_GB": "500" },
-  "triggers": { "crons": ["*/10 * * * *"] },
+  // the month's TURN egress (what Cloudflare bills): past the budget no new connections, past the
+  // hard cap, below Cloudflare's free 1000 GB, every credential ends (src/budget.ts)
+  "vars": { "TURN_BUDGET_GB": "500", "TURN_HARD_GB": "900" },
+  "triggers": { "crons": ["* * * * *"] },
   "observability": { "enabled": true }
 }

@@ -207,3 +207,7 @@ get online play by writing only their own game layer.
   a candidate must give an IP address, since a name made libdatachannel look it up, telling the name's DNS server
   about the player's resolver; a peer's candidates, moves and queued messages are capped; a second connection cannot
   take a character already in the room.
+- 2026-11-05: the TURN budget against someone burning it (a credential relays anything until it ends): limits count an
+  IPv6 /64 as one address, credentials last 30 minutes, usage is read per credential each minute, an address over its
+  quota loses its credentials for a week, a day has a share of what is left of the month so an attack stops new
+  connections only until tomorrow, and a hard cap below Cloudflare's free tier ends everything (`online/service/src/quota.ts`).
