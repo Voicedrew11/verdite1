@@ -20,6 +20,7 @@ import coop_pair  # noqa: E402
 
 PORTS = (27941, 27942)  # not coop_pair.py's, title_pair.py's nor coop_floors.py's
 FIGHT = (41, 65)  # two of floor 1's enemies wake here
+LIGHTNING_LANDED = {32, 33}  # KF_EFFECT_KIND_LIGHTNING_IMPACT, _RADIAL_BLAST
 # A walk among floor 2's casters that wakes them and comes into reach of their fire balls.
 CASTERS = ((92, 4), (92, 12), (96, 14), (88, 16))
 SWUNG_AT = (25, 12)  # where the three at (24..26, 10..11) reach a player and swing
@@ -172,7 +173,6 @@ def main():
                 time.sleep(0.05)
             check(f"{name}'s Fire Ball is drawn on the other machine (kinds {sorted(seen)})", FIRE_BALL in seen)
 
-
         # Floor 2's casters, which A runs: B draws their effects in flight.
         a.run("warp 2")
         coop_floors.wait_part(a, "running", 2)
@@ -194,10 +194,22 @@ def main():
                 time.sleep(0.1)
         check(f"B draws the effects A's actors launch (kinds {sorted(seen)})", bool(seen))
         check(f"their projectiles, meeting B on A, are felt on B's machine ({felt})", felt > 0)
+
+        # A bolt's impact and blast are kinds past the magic table: once refused with everything
+        # sent beside them, an honest player's spells and a floor's actors.
+        b.wait("B up to cast", lambda s: not s["down"], 90)
+        b.run("cast lightning")
+        seen = set()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and not seen & LIGHTNING_LANDED:
+            seen |= {effect["kind"] for effect in a.run("effects")["effects"] if effect["from"] == "another player"}
+            time.sleep(0.03)
+        check(f"B's Lightning Bolt lands on the other machine too (kinds {sorted(seen)})", bool(seen & LIGHTNING_LANDED))
     finally:
         for game in games:
             game.quit()
 
+    coop_pair.check_nothing_refused(check)
     failed = [what for what, ok in checks if not ok]
     if failed:
         for log in sorted(coop_pair.WORK.glob("*/log.txt")):

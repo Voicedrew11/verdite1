@@ -57,6 +57,8 @@ std::string setup_command(std::string_view line);
 // The coop session for the agent channel, as JSON fields: the role, whether its world is in
 // play, the pack (item: count), the purse, what this player wears and what the others wear.
 std::string coop_json();
+// For tests: sends the room what a modified client might; false for a kind it does not know.
+bool coop_forge(std::string_view what);
 // The floor's shown messages, the prompt, the open box and the notices, as JSON fields (the agent's).
 std::string messages_json();
 // Leaves a message on the player's cell. False when no floor is entered or the message is invalid.

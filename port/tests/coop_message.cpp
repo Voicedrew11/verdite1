@@ -224,6 +224,8 @@ TEST_CASE("a hit or an aim on a slot past the actors is refused") {
     CHECK_FALSE(coop_message_decode(encoded(CoopActorHit{1, 128, 0, 0, {}, 0, false})));
     CHECK_FALSE(coop_message_decode(encoded(CoopActorAim{1, 200, 0})));
     CHECK_FALSE(coop_message_decode(encoded(CoopKill{0, 1})));
+    CHECK(coop_message_decode(encoded(CoopKill{1, coop_kill_experience_most})));
+    CHECK_FALSE(coop_message_decode(encoded(CoopKill{1, coop_kill_experience_most + 1})));
     auto credited = encoded(CoopActorHit{1, 1, 0, 0, {}, 0, true});
     credited.back() = 2;
     CHECK_FALSE(coop_message_decode(credited));

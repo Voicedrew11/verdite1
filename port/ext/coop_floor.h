@@ -22,7 +22,8 @@ std::vector<std::uint8_t> coop_floor_capture();
 
 // On a machine that has loaded the same floor from its record: puts the live floor in place of
 // the record's. False, and nothing changed, when the bytes are not a snapshot of this floor in
-// this layout, or a slot holds a table index or cell out of range.
+// this layout, or a slot holds a table index or cell out of range. An effect whose model this
+// machine does not hold is left out, not refused.
 bool coop_floor_restore(std::span<const std::uint8_t> bytes);
 
 // A floor's lasting record and its story flags (floor 1's, 3's or 5's), as this machine's world

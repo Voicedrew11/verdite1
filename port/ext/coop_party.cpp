@@ -32,6 +32,7 @@ constexpr std::array<std::uint8_t, 8> file_magic = {'K', 'F', 'C', 'O', 'O', 'P'
 constexpr std::uint32_t file_version = 3;   // 1: no save point; 2: no times played
 constexpr std::size_t file_header_bytes = file_magic.size() + 12;
 constexpr std::uint32_t crc32_reflected_polynomial = 0xedb88320u;
+constexpr std::uint64_t save_period_ms = 1000;
 
 int clamp_floor(int floor) {
     return std::clamp(floor, 1, coop_floor_count);
@@ -159,6 +160,25 @@ bool coop_worn_valid(const CoopWorn &worn) {
         if (!coop_item_fits(slot, worn[slot]))
             return false;
     return true;
+}
+
+void CoopSaveAsks::ask(const CoopSavePoint &at) {
+    asked_ = at;
+}
+
+void CoopSaveAsks::saved(std::uint64_t now_ms) {
+    saved_ms_ = now_ms;
+    asked_.reset();
+}
+
+std::optional<CoopSavePoint> CoopSaveAsks::due(std::uint64_t now_ms) const {
+    if (saved_ms_ && now_ms - *saved_ms_ < save_period_ms)
+        return std::nullopt;
+    return asked_;
+}
+
+void CoopSaveAsks::forget() {
+    asked_.reset();
 }
 
 CoopParty::CoopParty(std::vector<CoopCharacter> characters, const CoopItems &pack, std::uint32_t gold)

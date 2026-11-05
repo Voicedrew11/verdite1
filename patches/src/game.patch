@@ -7543,7 +7543,7 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..7a4bfe8df90b27471a786cfd686c8958
  
  u8 *map_resource_load_file(const char *filename, std::size_t *loaded_size)
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff3ebf2dd3 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e902d5a444 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
 @@ -1,4 +1,6 @@
@@ -7936,7 +7936,9 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff
 +static bool card_decode(SaveCard &card, std::size_t entry, SavedGameState &state) {
 +    SaveCodec io{card.data(), card_entry_offset(entry) + card_entry_bytes, card_entry_offset(entry),
 +                 SaveCodecMode::Read, true, SaveLayout::Card};
-+    save_state_fields(io, state);
+     save_state_fields(io, state);
+-    return io.valid && io.position == size && save_state_valid(state)
+-        ? kf::SaveFileResult::Ok : kf::SaveFileResult::Invalid;
 +    return io.valid;
 +}
 +
@@ -7953,9 +7955,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff
 +        return false;
 +    SaveCodec io{card.data(), card_entry_offset(target) + card_entry_bytes, card_entry_offset(target),
 +                 SaveCodecMode::Write, true, SaveLayout::Card};
-     save_state_fields(io, state);
--    return io.valid && io.position == size && save_state_valid(state)
--        ? kf::SaveFileResult::Ok : kf::SaveFileResult::Invalid;
++    save_state_fields(io, state);
 +    if (!io.valid)
 +        return false;
 +    const std::size_t previous = card_entry_of(card, slot);
@@ -7990,7 +7990,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff
  }
  
  static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
-@@ -418,76 +624,256 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
+@@ -418,76 +624,261 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
  
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries) {
      summaries = {};
@@ -8207,6 +8207,11 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff
 +    return coop_encode(coop_world_fields);
 +}
 +
++bool save_system_coop_character_valid(std::span<const u8> character) {
++    SavedGameState state = save_live_state();
++    return coop_decode(character, coop_character_fields, state) && save_state_valid(state);
++}
++
 +bool save_system_coop_apply(std::span<const u8> character, std::span<const u8> world,
 +                            const std::array<u8, KF_ITEM_COUNT> &pack, u32 gold) {
 +    SavedGameState state = save_live_state();
@@ -8283,7 +8288,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff
  void menu_play_input_sound(KfMenuSoundCue cue)
  {
      SoundRef sound;
-@@ -542,7 +928,7 @@ void screen_show_image_until_input(const char *path)
+@@ -542,7 +933,7 @@ void screen_show_image_until_input(const char *path)
      const auto alternate = comparison_image_read(path, game_graphics_runtime.display_state.asset_load_capacity);
      // Transparent glyph pixels need the original backdrop when replacing a page.
      kf::Image backdrop{};
@@ -8292,7 +8297,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff
          kf::host_fail("Cannot capture the dialogue background.");
      bool showing_alternate = false;
      bool reported_unavailable = false;
-@@ -552,7 +938,7 @@ void screen_show_image_until_input(const char *path)
+@@ -552,7 +943,7 @@ void screen_show_image_until_input(const char *path)
          const bool compare = kf::host_action_held(kf::Action::compare_language);
          const bool show_alternate = compare && !alternate.empty();
          if (show_alternate != showing_alternate) {
@@ -8301,7 +8306,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..3bdf9e87728227d9a60de753478d69ff
                  kf::host_fail("Cannot restore the dialogue background.");
              if (show_alternate)
                  tim_upload_images(alternate.data(), alternate.size());
-@@ -597,11 +983,13 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
+@@ -597,11 +988,13 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
          kf_enum_encode<s32>(character_id) % 10 + '0';
      talk_image_path_template[talk_stage_offset] = stage + '0';
      talk_image_path_template[talk_page_offset] = page + '0';

@@ -33,6 +33,12 @@ constexpr std::array<std::uint32_t, 6> layout = {
     sizeof(KfActor), sizeof(KfActorDefinitionTable), sizeof(KfEffectRecord), sizeof(KfMapEvent),
     sizeof(KfMapObjectState), sizeof(KfMapGrid)};
 
+// What a snapshot may hold was read field by field against what the game does with it (2026-11-05:
+// docs/COOP_PLAN.md, "What is refused"). A struct that grows has a field no one has: read it, check
+// it in the _valid functions if it indexes anything or points anywhere, then change its number here.
+static_assert(sizeof(KfActor) == 80 && sizeof(KfEffectRecord) == 120 && sizeof(KfMapEvent) == 80
+    && sizeof(KfMapObject) == 44);
+
 struct Header {
     std::array<std::uint8_t, 4> magic;
     std::uint8_t version;
@@ -146,13 +152,23 @@ bool floor_deformation_valid(const KfEffectRecord &effect) {
         && floor.first_segment + floor.segment_count <= KF_FLOOR_DEFORM_SEGMENT_COUNT;
 }
 
-// Its render id now and the one its frames count from: the sprite table and the models index by them.
 bool effect_valid(const KfEffectRecord &effect) {
     if (effect.type == KF_EFFECT_SLOT_FREE)
         return true;
-    const bool shown = (!effect_has_visual(effect) || drawable(effect))
-        && drawable(effect.base_render_id, effect.animation_clip);
-    return effect.parent_effect_index < KF_EFFECT_CAPACITY && shown && floor_deformation_valid(effect);
+    return effect.parent_effect_index < KF_EFFECT_CAPACITY && floor_deformation_valid(effect);
+}
+
+// Its render id now and the one its frames count from: the sprite table and the models index by them.
+bool shown_here(const KfEffectRecord &effect) {
+    return (!effect_has_visual(effect) || drawable(effect)) && drawable(effect.base_render_id, effect.animation_clip);
+}
+
+// An effect whose model this machine does not hold goes, not the whole floor: a machine in another
+// of floor 5's variants holds other models, and an honest snapshot from one is no forgery.
+void free_effects_not_shown_here(Floor &floor) {
+    for (KfEffectRecord &effect : floor.effects)
+        if (effect.type != KF_EFFECT_SLOT_FREE && !shown_here(effect))
+            effect.type = KF_EFFECT_SLOT_FREE;
 }
 
 // As save_world_valid checks a saved event: a stage of 0 would read the page limits before their first.
@@ -281,6 +297,7 @@ std::optional<Floor> snapshot_floor(std::span<const std::uint8_t> bytes) {
     if (!keep_own_placements(floor) || !floor_valid(floor))
         return std::nullopt;
     fit_clips(floor);
+    free_effects_not_shown_here(floor);
     return floor;
 }
 
@@ -885,12 +902,21 @@ bool read_effect(CoopByteReader &in, std::array<KfEffectRecord, KF_EFFECT_CAPACI
     effect.scale_x = in.u16();
     effect.scale_y = in.u16();
     effect.scale_z = in.u16();
-    if (!in.ok() || index >= KF_EFFECT_CAPACITY || kf_enum_encode<u8>(effect.kind) >= KF_MAGIC_RECORD_COUNT
-        || !drawable(effect))
+    if (!in.ok() || index >= KF_EFFECT_CAPACITY)
         return false;
+    if (!drawable(effect))   // another of floor 5's variants holds other models: the rest still shows
+        return true;
     effect.animation_cache = shown[index].animation_cache;
     shown[index] = effect;
     return true;
+}
+
+// A lightning bolt's impact and blast are kinds past the magic table (KF_EFFECT_KIND_LIGHTNING_IMPACT),
+// with no sounds of their own there.
+void play_effect_sound(const KfEffectRecord &effect, std::size_t sound) {
+    if (kf_enum_encode<u8>(effect.kind) < KF_MAGIC_RECORD_COUNT)
+        audio_play_spatial_default_range(&effect_state.magic.entries[kf_enum_encode<u8>(effect.kind)].sounds[sound],
+            &effect.position, KF_AUDIO_MAX_VOLUME);
 }
 
 // The launch and impact sounds of the owner's effects, as they come and go between two frames.
@@ -900,11 +926,9 @@ void play_effect_sounds(const std::array<KfEffectRecord, KF_EFFECT_CAPACITY> &wa
         const bool came = now[i].type != KF_EFFECT_SLOT_FREE && (was[i].type == KF_EFFECT_SLOT_FREE || was[i].kind != now[i].kind);
         const bool went = was[i].type != KF_EFFECT_SLOT_FREE && (now[i].type == KF_EFFECT_SLOT_FREE || was[i].kind != now[i].kind);
         if (went)
-            audio_play_spatial_default_range(&effect_state.magic.entries[kf_enum_encode<u8>(was[i].kind)].sounds[1],
-                &was[i].position, KF_AUDIO_MAX_VOLUME);
+            play_effect_sound(was[i], 1);
         if (came)
-            audio_play_spatial_default_range(&effect_state.magic.entries[kf_enum_encode<u8>(now[i].kind)].sounds[0],
-                &now[i].position, KF_AUDIO_MAX_VOLUME);
+            play_effect_sound(now[i], 0);
     }
 }
 

@@ -957,6 +957,46 @@ What a room costs each player, for N players:
   other player at 15 updates, sent to everyone and kept only on the owner's floor. A handover or
   an arrival's snapshot is about 40 KB, once.
 
+## What is refused
+
+A rule that matters is checked on the machine it protects, since a modified client ignores its own
+(2026-11-05). Each thing a player can send was read against who may send it, when, and what the game
+then does with its bytes.
+
+- **No one is disconnected for what they sent.** A bug or a rare game state can look the same as a
+  forgery, so a refusal drops the thing and nothing else. Removing someone stays the host's choice.
+- **Who and when** were already checked: only the host's orders, records and rosters are heard, a
+  snapshot only as ordered or from the floor's last owner, a welcome only when waiting for one, and
+  a guest's requests only from a peer that said hello. A floor's frames come only from whoever this
+  machine watches.
+- **Refused, the game goes on.** A taken floor whose snapshot or record is refused runs from what this
+  machine holds; a shown one still draws the owner's frames over the floor as it is here. It used to
+  stand still until someone left. A player loses that sender's latest state and nothing more.
+- **What the host keeps.** A guest's character is checked as a load would before it is kept (a bad one
+  would otherwise fail that guest's next join), and saves a guest asks for write once a second at most,
+  the latest kept, since each writes the world's file. A kill's experience may not be negative.
+- **Whole structs in a snapshot.** Read field by field rather than rewritten as a new format: every
+  field but the three animation caches is needed to carry on the same fight, so copying them one by one
+  would take the same bytes. What matters is that the pointers are dropped and what indexes anything is
+  checked. Fields left as sent were read and are bounded where they are used: an effect's kind has a
+  guard on the magic table, a homing target is looked up, an effect's position is checked by its
+  collision, a dialogue page only names a file and a missing one shows nothing. Sizes are asserted in
+  `coop_floor.cpp`, so a struct that grows is read too.
+- **What was refusing honest play, now fixed.** A Lightning Bolt's impact and blast are kinds past the
+  magic table, and one of them in a frame or pose dropped all of it, actors included. An effect whose
+  model this machine lacks (another of floor 5's variants) refused a whole frame or snapshot; now only
+  that effect goes.
+- **Counted, to tell.** `port/ext/coop_refusals.h` counts every refusal and logs a kind once a second at
+  most. The agent's `coop` shows the counts, and each coop script ends by checking they are all 0: a count
+  there is a legitimate message dropped.
+- **Checked:** `scripts/coop_forged.py` sends each forgery between real instances (the agent's `forge`):
+  each is counted, everyone stays in the room, and a floor whose snapshot is damaged goes on.
+- **Not stopped, and why:** hits and kills from a player who does not run the floor, since the sender's
+  floor is only its word and an owner check refuses honest hits while ownership moves between machines;
+  they can only grieve, and the host can send that player away. Taking another's character by its id, and
+  new characters for the starting gold, want the identity in NETWORKING_PLAN.md first. What is valid
+  but unfair, as a pack emptied, cannot be told from play here.
+
 ## To do, from the online test
 
 Noted by the user after an online test (2026-11-04). The spectating viewmodel and nametags through
@@ -1000,7 +1040,7 @@ walls are fixed (Death, Multiplayer settings). So are the host's crown, the comp
   players, the more it costs. Taken for the simplicity (no takeover, no merge); if it proves
   common, reconnecting into the same room within a grace period is the fix, not a second copy of
   the world.
-- **Trust, now that rooms can be public:** hits judged by whoever feels them let a modified
+- **Trust, now that rooms can be public** (and "What is refused"): hits judged by whoever feels them let a modified
   client never be hit, and a stranger can sell the pack's unique finds. Only that public world
   suffers, since it is its own, and the host can send them away; a modified client's own
   invulnerability is accepted, as it spoils only its own player's game. Names are capitals and

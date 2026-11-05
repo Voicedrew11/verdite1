@@ -22,6 +22,9 @@ void coop_floors_start(CoopPlayerId self, CoopPlayerId host);
 // The world left play, or the room ended.
 void coop_floors_stop();
 
+// For tests: every snapshot this machine gives from now on is damaged, as a modified client's might be.
+void coop_floors_forge_snapshots();
+
 // Who is in the room and their peers, the host first: the host's own, or as it last sent it.
 void coop_floors_roster(const CoopRoster &roster);
 // Who is in the room and their peers, the host first, as the roster last said.

@@ -294,3 +294,33 @@ TEST_CASE("a coop world with a stack over 99, a bad name, a shared id or a floor
     CHECK(refused({{1, "HOST", {}, wearing(80), 1}}, {}));
     CHECK(refused({{1, "HOST", {}, wearing(herb), 1}}, {}));
 }
+
+TEST_CASE("a guest's save is made at once when none was made lately") {
+    CoopSaveAsks asks;
+    CHECK_FALSE(asks.due(5000));
+    asks.ask({2, 3, 4});
+    const auto due = asks.due(5000);
+    REQUIRE(due);
+    CHECK((due->floor == 2 && due->cell_x == 3 && due->cell_z == 4));
+}
+
+TEST_CASE("saves asked for in a flood write once a second, and the last is not lost") {
+    CoopSaveAsks asks;
+    asks.saved(5000);
+    CHECK_FALSE(asks.due(5000));
+    asks.ask({1, 1, 1});
+    asks.ask({3, 7, 8});
+    CHECK_FALSE(asks.due(5999));
+    const auto due = asks.due(6000);
+    REQUIRE(due);
+    CHECK(due->floor == 3);
+    asks.saved(6000);
+    CHECK_FALSE(asks.due(9000));
+}
+
+TEST_CASE("a wipe forgets a save not yet made") {
+    CoopSaveAsks asks;
+    asks.ask({1, 1, 1});
+    asks.forget();
+    CHECK_FALSE(asks.due(5000));
+}

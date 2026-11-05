@@ -150,6 +150,7 @@ struct CoopKill {
     int floor = 1;
     std::uint16_t experience = 0;
 };
+inline constexpr std::uint16_t coop_kill_experience_most = 32767;   // player_add_experience takes an s16
 
 // A floor's owner to a player its actor swung at: the victim runs actor_swing_reaches_player against
 // its own position and the actor as it draws it, and feels it only if the swing lands there.
@@ -212,7 +213,7 @@ inline constexpr std::size_t coop_message_most = 65536;   // VO_CONTROL_BYTES
 std::optional<std::vector<std::uint8_t>> coop_message_encode(const CoopMessage &message);
 // Nothing when the bytes are not a message: the wrong version or kind, a length past the end or
 // bytes left over, an item, stack, floor or cell out of range, a name outside the font, a wipe's
-// life of 0, a rule outside its choices.
+// life of 0, a rule outside its choices, a kill's experience that would take experience away.
 std::optional<CoopMessage> coop_message_decode(std::span<const std::uint8_t> bytes);
 
 }

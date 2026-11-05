@@ -5,6 +5,7 @@
 #include "coop_floor_frames.h"
 #include "coop_death_play.h"
 #include "coop_floor_play.h"
+#include "coop_refusals.h"
 #include "internal.hpp"
 #include "online_playback.h"
 #include "online_pose.h"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -173,6 +175,12 @@ OnlineFailure failure_of(vo_error error) {
     }
 }
 
+void refused_pose(vo_peer peer) {
+    using namespace std::chrono;
+    coop_refused(CoopRefusal::Pose, peer, static_cast<std::uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count()));
+}
+
 void on_event(const vo_event &event) {
     switch (event.kind) {
     case VO_EVENT_JOINED: {
@@ -213,6 +221,8 @@ void on_event(const vo_event &event) {
         }
         if (const auto pose = online_pose_decode(std::span(event.data, event.size)))
             known->second.playback.receive(*pose);
+        else
+            refused_pose(event.peer);
         break;
     }
     case VO_EVENT_ERROR:
@@ -239,7 +249,7 @@ void send_pose(const OnlinePlayerPose &own) {
 
 // What another player on this floor does that is seen and heard: their spells and their knight's
 // sounds.
-void show_deeds(Peer &known, const OnlinePose &next, int floor) {
+void show_deeds(vo_peer peer, Peer &known, const OnlinePose &next, int floor) {
     const bool here = next.floor == floor;
     if (known.shown && here && known.shown->floor == floor)
         online_sounds_play(*known.shown, next);
@@ -248,7 +258,7 @@ void show_deeds(Peer &known, const OnlinePose &next, int floor) {
     if (!here)
         coop_floor_hide_player_effects(*known.spells);
     else if (!coop_floor_show_player_effects(*known.spells, next.effects))
-        std::printf("[online] spells that are not ones this machine can draw were dropped\n");
+        refused_pose(peer);
 }
 
 void play_on(vo_peer peer, Peer &known, int floor) {
@@ -259,7 +269,7 @@ void play_on(vo_peer peer, Peer &known, int floor) {
         std::printf("[online] %s is on floor %d\n", hex(peer).c_str(), next->floor);
     if (known.shown)
         known.stride = online_stride_step(known.stride, *known.shown, *next);
-    show_deeds(known, *next, floor);
+    show_deeds(peer, known, *next, floor);
     known.shown = next;
 }
 

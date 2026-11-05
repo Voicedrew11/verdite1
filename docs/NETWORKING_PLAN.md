@@ -207,6 +207,9 @@ get online play by writing only their own game layer.
   a candidate must give an IP address, since a name made libdatachannel look it up, telling the name's DNS server
   about the player's resolver; a peer's candidates, moves and queued messages are capped; a second connection cannot
   take a character already in the room.
+- 2026-11-05: what a modified client can send is refused on the machine it would harm, and only dropped: no one is
+  disconnected for it, and a floor whose snapshot is refused goes on from what the taker holds. Every refusal is counted
+  and the coop scripts require 0 in honest play ([COOP_PLAN.md](COOP_PLAN.md), "What is refused").
 - 2026-11-05: the TURN budget against someone burning it (a credential relays anything until it ends): limits count an
   IPv6 /64 as one address, credentials last 30 minutes, usage is read per credential each minute, an address over its
   quota loses its credentials for a week, a day has a share of what is left of the month so an attack stops new

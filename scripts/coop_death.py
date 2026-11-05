@@ -136,6 +136,7 @@ def main():
         for game in games:
             game.quit()
 
+    coop_pair.check_nothing_refused(check)
     failed = [what for what, ok in checks if not ok]
     if failed:
         for log in sorted(coop_pair.WORK.glob("*/log.txt")):

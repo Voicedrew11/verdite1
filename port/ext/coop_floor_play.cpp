@@ -2,6 +2,7 @@
 
 #include "coop_floor.h"
 #include "coop_floor_frames.h"
+#include "coop_refusals.h"
 #include "internal.hpp"
 
 #include <kf/game/player.h>
@@ -63,6 +64,7 @@ struct Floors {
     std::uint64_t record_sent_ms = 0;
     bool world_changed = false;
     bool reloading = false;
+    bool forge_snapshots = false;   // for tests: what this machine gives is damaged
 };
 Floors floors;
 
@@ -132,13 +134,26 @@ bool reload(std::span<const std::uint8_t> record, std::span<const std::uint8_t> 
     floors.reloading = true;
     const bool done = coop_floor_reload(record, live);
     floors.reloading = false;
-    if (!done)
-        std::printf("[coop] floor %d's state from another player was refused\n", floors.floor);
     return done;
 }
 
+std::uint64_t peer_of(CoopPlayerId player) {
+    const auto peer = floors.peers.find(player);
+    return peer != floors.peers.end() ? peer->second : 0;
+}
+
+// What another player sent was refused, so this machine runs the floor from what it holds itself:
+// the floor goes on without that player's latest, and no one waits on a floor that stands still.
+bool reload_own_record(CoopPlayerId sender) {
+    coop_refused(CoopRefusal::FloorState, peer_of(sender), now_ms());
+    return reload(coop_floor_record(floors.floor), {});
+}
+
 CoopFloorSnapshot snapshot_for(CoopSnapshotFor purpose) {
-    return {floors.floor, purpose, coop_floor_record(floors.floor), coop_floor_capture()};
+    CoopFloorSnapshot snapshot{floors.floor, purpose, coop_floor_record(floors.floor), coop_floor_capture()};
+    if (floors.forge_snapshots)
+        snapshot.live.front() ^= 0xff;
+    return snapshot;
 }
 
 // ---- the host's side ----
@@ -200,7 +215,7 @@ void act_on(const CoopRunFromRecord &order) {
         const auto record = floors.host_records.find(order.floor);
         const auto bytes = record != floors.host_records.end() ? record->second : coop_floor_record(order.floor);
         // Refused, the actors here may still be another machine's frames, which are never run.
-        if (!reload(bytes, {}))
+        if (!reload(bytes, {}) && !reload_own_record(floors.host))
             return;
     }
     run();
@@ -257,15 +272,17 @@ void put_in_held() {
     switch (snapshot.purpose) {
     case CoopSnapshotFor::Handover:
     case CoopSnapshotFor::Take:
-        if (reload(snapshot.record, snapshot.live)) {
+        if (reload(snapshot.record, snapshot.live) || reload_own_record(from)) {
             run();
             send_to(floors.host, CoopFloorTaken{snapshot.floor});
-            std::printf("[coop] took floor %d live\n", snapshot.floor);
+            std::printf("[coop] took floor %d\n", snapshot.floor);
         }
         return;
     case CoopSnapshotFor::Show:
-        if (reload(snapshot.record, snapshot.live))
-            watch(from);
+        // Refused, the owner's frames still draw its actors over the floor as it is here.
+        if (!reload(snapshot.record, snapshot.live))
+            coop_refused(CoopRefusal::FloorState, peer_of(from), now_ms());
+        watch(from);
         return;
     }
 }
@@ -291,7 +308,7 @@ void act_on_message(CoopPlayerId from, const CoopMessage &message) {
         if (from == floors.self || writes->floor != floors.floor)
             return;
         if (!coop_floor_apply_writes(writes->writes))
-            std::printf("[coop] writes to floor %d that are not writes were dropped\n", writes->floor);
+            coop_refused(CoopRefusal::FloorWrites, peer_of(from), now_ms());
         else if (floors.part == Part::Running)
             floors.record_due = true;
     }
@@ -380,7 +397,10 @@ void coop_floors_state_packet(std::uint64_t peer, std::span<const std::uint8_t> 
     const auto player = floors.players.find(peer);
     if (!floors.on || floors.part != Part::Watching || player == floors.players.end() || player->second != floors.watching)
         return;
-    if (auto part = coop_frame_decode(bytes); part && part->floor == floors.floor)
+    auto part = coop_frame_decode(bytes);
+    if (!part)
+        coop_refused(CoopRefusal::Frame, peer, now_ms());
+    else if (part->floor == floors.floor)
         floors.playback.receive(*part);
 }
 
@@ -412,7 +432,7 @@ void coop_floors_world_update() {
             online_broadcast_state(packet);
     } else if (floors.part == Part::Watching) {
         if (const auto frame = floors.playback.step(); frame && !coop_floor_show_frame(*frame))
-            std::printf("[coop] a frame from floor %d's owner that is not one was dropped\n", floors.floor);
+            coop_refused(CoopRefusal::Frame, peer_of(floors.watching), now_ms());
     }
 }
 
@@ -487,6 +507,10 @@ std::string_view coop_floors_part() {
         return "waiting";
     }
     return "";
+}
+
+void coop_floors_forge_snapshots() {
+    floors.forge_snapshots = true;
 }
 
 bool coop_floors_world_changed() {

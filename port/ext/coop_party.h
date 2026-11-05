@@ -135,6 +135,23 @@ struct CoopSavePoint {
 // Whether a floor is 1..5 and a cell on the map.
 bool coop_save_point_valid(const CoopSavePoint &point);
 
+// The saves guests ask the host for: each writes the world's file, so one a second at most however
+// many are asked. None is lost: an ask too soon waits, and a later one replaces it, as a later save
+// would have replaced it anyway.
+class CoopSaveAsks {
+public:
+    void ask(const CoopSavePoint &at);
+    // A save was made, by anyone, at `now_ms` on a steady clock.
+    void saved(std::uint64_t now_ms);
+    // The save to make now, if one is asked for and due.
+    std::optional<CoopSavePoint> due(std::uint64_t now_ms) const;
+    void forget();
+
+private:
+    std::optional<CoopSavePoint> asked_;
+    std::optional<std::uint64_t> saved_ms_;
+};
+
 // The coop world as the host's file keeps it: the live state, written as play goes on, and the
 // last save, the whole party and world as when anyone last saved at a save point, with where they
 // saved.

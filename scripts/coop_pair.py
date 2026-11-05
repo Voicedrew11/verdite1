@@ -26,6 +26,7 @@ import smoke  # noqa: E402
 
 PORTS = (27921, 27922)  # not the game's 27901, nor smoke.py's 27911
 BINARY = ""
+REFUSED = []  # each game's refusals, as it quit
 WORK = Path()
 ROOM = ""
 SERVICE = ""
@@ -101,6 +102,7 @@ class Game:
 
     def quit(self):
         try:
+            REFUSED.append((self.name, self.coop().get("refused", {})))
             self.channel.sendall(b"quit\n")
         except OSError:
             pass
@@ -108,6 +110,14 @@ class Game:
             self.process.wait(timeout=20)
         except subprocess.TimeoutExpired:
             self.process.kill()
+
+
+def check_nothing_refused(check):
+    """Honest play refuses nothing: anything counted here would be a legitimate message dropped."""
+    refused = [(name, {k: v for k, v in counts.items() if v}) for name, counts in REFUSED]
+    refused = [entry for entry in refused if entry[1]]
+    counted = bool(REFUSED) and all(counts for _, counts in REFUSED)
+    check(f"no player refused anything from another {refused or ''}", counted and not refused)
 
 
 def show(label, state):
@@ -207,6 +217,7 @@ def main():
         check("the world kept the pack", host["pack"] == {"0": 2, "20": 1, "43": 3} and host["gold"] == 200)
     finally:
         a.quit()
+    check_nothing_refused(check)
     failed = [what for what, ok in checks if not ok]
     if failed:
         for log in sorted(WORK.glob("*/log.txt")):

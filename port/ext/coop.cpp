@@ -5,11 +5,13 @@
 // player's own game aside and leaving puts it back, both between updates. When every player is down,
 // the host sends the party back to its last save (coop_death_play.h).
 #include "coop_death_play.h"
+#include "coop_floor_frames.h"
 #include "coop_floor_play.h"
 #include "coop_hits.h"
 #include "coop_message.h"
 #include "coop_party.h"
 #include "coop_profile.h"
+#include "coop_refusals.h"
 #include "internal.hpp"
 #include "online_sounds.h"
 
@@ -27,6 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -67,6 +70,7 @@ struct HostSide {
     bool pack_changed = false;
     bool file_changed = false;
     std::uint64_t written_ms = 0;
+    CoopSaveAsks save_asks;
     std::uint64_t played_until_ms = 0;   // how far file.played_ms has counted
 };
 
@@ -572,6 +576,7 @@ void host_wipe() {
     host.file.live = {std::move(party), saved.world};
     host.applied_through.clear();
     host.worn_through.clear();
+    host.save_asks.forget();
     others_not_yet_back();
     ++coop.life;
     const CoopParty &now = host.file.live.party;
@@ -613,11 +618,14 @@ void guest_wipe(const CoopWipe &wipe) {
     std::printf("[coop] back at the party's last save (%u)\n", coop.life);
 }
 
+void make_asked_save();
+
 void between_updates_as_host() {
     if (party_down()) {
         host_wipe();
         return;
     }
+    make_asked_save();
     HostSide &host = coop.host;
     for (const auto &[peer, hello] : host.waiting)
         host_welcome(peer, hello);
@@ -693,7 +701,13 @@ void host_save(const CoopSavePoint &at) {
     host.file.last_save = host.file.live;
     host.file.save_point = at;
     write_world_file();
+    host.save_asks.saved(now_ms());
     host_show_message("The party is saved.");
+}
+
+void make_asked_save() {
+    if (const auto at = coop.host.save_asks.due(now_ms()))
+        host_save(*at);
 }
 
 // ---- messages ----
@@ -729,6 +743,11 @@ void host_receives(std::uint64_t peer, const CoopMessage &message) {
         return;
     const CoopPlayerId id = guest->second;
     if (const auto *update = std::get_if<CoopCharacterUpdate>(&message)) {
+        // Kept, it would be given back to this player and written to the world's file.
+        if (!save_system_coop_character_valid(update->state)) {
+            coop_refused(CoopRefusal::Character, peer, now_ms());
+            return;
+        }
         host.file.live.party.store(id, update->state, update->highest_floor);
         host.file_changed = true;
         host.pack_changed = true;   // the highest floor may have risen
@@ -738,7 +757,8 @@ void host_receives(std::uint64_t peer, const CoopMessage &message) {
     } else if (const auto *wear = std::get_if<CoopWearRequest>(&message)) {
         host_wear(id, wear->number, wear->worn);
     } else if (const auto *save = std::get_if<CoopSaveRequest>(&message)) {
-        host_save(save->at);
+        host.save_asks.ask(save->at);
+        make_asked_save();
     }
 }
 
@@ -831,6 +851,7 @@ void coop_room_joined(std::string_view room, std::uint64_t host_peer) {
     const bool first = host_peer == 0;
     know_self();
     reset_session();
+    coop_refused_forget();
     coop.room = room;
     coop.role = first ? Role::Host : Role::Guest;
     coop.guest.room_host = host_peer;
@@ -922,7 +943,7 @@ void coop_peer_closed(std::uint64_t peer) {
 void coop_control_packet(std::uint64_t peer, std::span<const std::uint8_t> bytes) {
     const auto message = coop_message_decode(bytes);
     if (!message) {
-        std::printf("[coop] a message that is not one was dropped\n");
+        coop_refused(CoopRefusal::NotAMessage, peer, now_ms());
         return;
     }
     const CoopPlayerId from = coop_floors_player(peer);
@@ -950,6 +971,8 @@ void coop_room_left() {
     }
     // Written now: leaving may be the game quitting, with no update to come.
     if (coop.role == Role::Host) {
+        if (const auto at = coop.host.save_asks.due(UINT64_MAX))
+            host_save(*at);
         coop.host.file.live.party.store(coop.self, save_system_coop_character(),
             kf_enum_encode<u8>(player_state.progress_state.highest_floor));
         write_world_file();
@@ -1000,7 +1023,7 @@ std::string coop_json() {
            std::to_string(player_state.motion_state.map_cell.x) + "," + std::to_string(player_state.motion_state.map_cell.z) +
            "],\"floorPart\":\"" + std::string(coop_floors_part()) + "\"," + coop_hits_json() + "," +
            coop_death_json() + ",\"tickVblanks\":" + std::to_string(world_update_vblanks) + ",\"reviveWaitS\":" + std::to_string(coop_revive_wait_s()) +
-           ",\"messageStone\":" + (messages_stone_offered() ? "true" : "false") + ",\"nameBarsDrawn\":" + std::to_string(online_name_bars_drawn()) + ",\"crownsDrawn\":" + std::to_string(online_crowns_drawn()) + ",\"compassDotsDrawn\":" + std::to_string(online_compass_dots_drawn()) + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]";
+           ",\"messageStone\":" + (messages_stone_offered() ? "true" : "false") + ",\"nameBarsDrawn\":" + std::to_string(online_name_bars_drawn()) + ",\"crownsDrawn\":" + std::to_string(online_crowns_drawn()) + ",\"compassDotsDrawn\":" + std::to_string(online_compass_dots_drawn()) + ",\"life\":" + std::to_string(coop.life) + ",\"soundsMade\":[" + made + "],\"soundsHeard\":[" + heard + "]," + coop_refused_json();
 }
 
 bool coop_hosting() {
@@ -1046,6 +1069,32 @@ void coop_send_away(std::size_t slot) {
     send(peer, CoopTurnedAway{CoopTurnedAwayWhy::SentAway});
     std::printf("[coop] sent %s away\n", profile_of(guest->second).name.c_str());
     coop_peer_closed(peer);   // at once: from here the party goes on without them
+}
+
+bool coop_forge(std::string_view what) {
+    constexpr std::array<std::uint8_t, 2> not_a_message = {0xff, 0xff};
+    constexpr std::array<std::uint8_t, 3> not_writes = {0xff, 0xff, 0xff};
+    constexpr std::array<std::uint8_t, 1> cut_frame = {coop_frame_tag};
+    constexpr std::array<std::uint8_t, 2> not_a_pose = {0xfe, 0xfe};
+    if (what == "message") {
+        online_broadcast_control(not_a_message);
+    } else if (what == "writes") {
+        broadcast(CoopFloorWrites{coop_floors_floor(), {not_writes.begin(), not_writes.end()}});
+    } else if (what == "frame") {
+        online_broadcast_state(cut_frame);
+    } else if (what == "pose") {
+        online_broadcast_state(not_a_pose);
+    } else if (what == "character") {
+        send(coop.guest.host, CoopCharacterUpdate{++coop.guest.character_number, {1, 2, 3}, 1});
+    } else if (what == "saves") {
+        for (int i = 0; i < 20; ++i)
+            send(coop.guest.host, CoopSaveRequest{standing_here()});
+    } else if (what == "snapshots") {
+        coop_floors_forge_snapshots();
+    } else {
+        return false;
+    }
+    return true;
 }
 
 std::string coop_panel_line() {

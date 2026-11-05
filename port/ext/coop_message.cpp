@@ -411,7 +411,7 @@ void write(CoopByteWriter &out, const CoopKill &kill) {
 bool read(CoopByteReader &in, CoopKill &kill) {
     kill.floor = in.u8();
     kill.experience = in.u16();
-    return in.ok() && floor_valid(kill.floor);
+    return in.ok() && floor_valid(kill.floor) && kill.experience <= coop_kill_experience_most;
 }
 
 void write(CoopByteWriter &out, const CoopSwing &swing) {

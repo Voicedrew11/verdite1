@@ -199,6 +199,7 @@ def main():
     b.quit()
     a.quit()
 
+    coop_pair.check_nothing_refused(check)
     failed = [what for what, ok in checks if not ok]
     print(f"{len(checks) - len(failed)} of {len(checks)} checks passed")
     return 1 if failed else 0

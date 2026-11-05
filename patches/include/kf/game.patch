@@ -481,7 +481,7 @@ index 7719295a3510f44a36c1d9ee37d043c141e41e4a..aefb01f134a43506e546918ff1acc8f0
  kf::Language game_text_language();
  void game_update_language_comparison();
 diff --git a/include/kf/game/save.h b/include/kf/game/save.h
-index 35636457c6d504dfede73c5568fb25701f4a9a9d..4dca54f26568ef171e1b7db5a5c6f4e3a851044d 100644
+index 35636457c6d504dfede73c5568fb25701f4a9a9d..3b2fe92223a4ccfcb468174a2cbd3f1cc317699f 100644
 --- a/include/kf/game/save.h
 +++ b/include/kf/game/save.h
 @@ -3,10 +3,14 @@
@@ -499,7 +499,7 @@ index 35636457c6d504dfede73c5568fb25701f4a9a9d..4dca54f26568ef171e1b7db5a5c6f4e3
  
  enum class KfSaveResult : s32 {
      KF_SAVE_RESULT_FAILED = 0,
-@@ -28,5 +32,23 @@ struct KfSaveSlotSummary {
+@@ -28,5 +32,25 @@ struct KfSaveSlotSummary {
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries);
  KfSaveResult save_system_read_slot(kf::SaveSlot slot);
  KfSaveResult save_system_write_slot(kf::SaveSlot slot);
@@ -513,6 +513,8 @@ index 35636457c6d504dfede73c5568fb25701f4a9a9d..4dca54f26568ef171e1b7db5a5c6f4e3
 +std::vector<u8> save_system_coop_world(void);
 +bool save_system_coop_apply(std::span<const u8> character, std::span<const u8> world,
 +                            const std::array<u8, KF_ITEM_COUNT> &pack, u32 gold);
++// PC extension (coop): whether a character's bytes would load, as the host checks one before keeping it.
++bool save_system_coop_character_valid(std::span<const u8> character);
 +// PC extension (coop): one floor's record checked before it is kept or loaded; NULL definitions
 +// skip its links, which only the loaded floor's definitions can check.
 +bool save_system_floor_record_valid(const KfMapSavedFloor &floor, const KfMapObjectDefinitionTable *definitions);

@@ -43,7 +43,8 @@ std::optional<int> warp_request;                // a floor, applied between upda
 std::optional<int> hurt_request;                // hp lost between updates, as poison takes it
 std::optional<std::size_t> take_request;        // an object slot emptied between updates, as a pickup does
 std::optional<std::size_t> hit_request;         // an actor slot struck between updates, as the sword does
-bool cast_request = false;                      // a Fire Ball launched between updates, as the magic button does
+bool cast_request = false;                      // a spell launched between updates, as the magic button does
+KfEffectKind cast_kind = KfEffectKind::KF_MAGIC_FIRE_BALL;
 
 struct ButtonName { const char *name; Button button; };
 constexpr std::array<ButtonName, 14> button_names = {{
@@ -215,14 +216,23 @@ std::string do_coop(verdite::AgentArgs) {
     return verdite::json_ok("coop", "," + ext::coop_json());
 }
 
-// Launches a Fire Ball at the next update as the magic button does, without its cost.
+// Launches a spell at the next update as the magic button does, without its cost.
 std::string do_cast(verdite::AgentArgs args) {
-    if (!args.empty())
-        return verdite::json_error("cast");
+    const bool lightning = args.size() == 1 && args[0] == "lightning";
+    if (!args.empty() && !lightning)
+        return verdite::json_error("cast [lightning]");
     if (coop_player_down())
         return verdite::json_error("the player is down");
+    cast_kind = lightning ? KfEffectKind::KF_MAGIC_LIGHTNING_BOLT : KfEffectKind::KF_MAGIC_FIRE_BALL;
     cast_request = true;
     return verdite::json_ok("cast");
+}
+
+// Sends the others in the room what a modified client might, for scripts/coop_forged.py.
+std::string do_forge(verdite::AgentArgs args) {
+    if (args.size() != 1 || !ext::coop_forge(args[0]))
+        return verdite::json_error("forge message|writes|frame|pose|character|saves|snapshots");
+    return verdite::json_ok("forge");
 }
 
 // The effects in flight on this floor: this machine's (with what launched them), those it draws
@@ -400,7 +410,8 @@ void agent_start() {
         {"move", "move <cell_x> <cell_z> - put the player on a cell of this floor at the next update", do_move},
         {"actors", "actors - the awake actors on this floor and the player each goes after", do_actors},
         {"effects", "effects - the effects in flight on this floor: this machine's (from an actor, this player or other), the owner's it draws and the other players' spells", do_effects},
-        {"cast", "cast - launch a Fire Ball at the next update as the magic button does, without its cost", do_cast},
+        {"cast", "cast [lightning] - launch a Fire Ball or Lightning Bolt at the next update as the magic button does, without its cost", do_cast},
+        {"forge", "forge message|writes|frame|pose|character|saves|snapshots - send the room what a modified client might", do_forge},
         {"players", "players - the other players in the room on this floor, as drawn", do_players},
         {"warp", "warp <floor> - change floor as a warp does, onto the first open cell, at the next update", do_warp},
         {"object", "object <slot> [take] - an object slot's id on this floor (255 none); take empties it as a pickup does", do_object},
@@ -441,7 +452,7 @@ void agent_between_updates() {
     if (cast_request) {
         cast_request = false;
         const KfEffectKind selected = player_state.selected_magic_id;
-        player_state.selected_magic_id = KfEffectKind::KF_MAGIC_FIRE_BALL;
+        player_state.selected_magic_id = cast_kind;
         effect_spawn_source = KfEffectSource::Player;
         magic_cast();
         effect_spawn_source = KfEffectSource::Other;
