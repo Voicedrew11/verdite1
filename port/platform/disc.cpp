@@ -7,11 +7,13 @@
 
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <new>
 #include <string>
+#include <thread>
 #include <utility>
 #ifdef _WIN32
 #include <filesystem>
@@ -262,18 +264,39 @@ bool resource_tree_write(const AssetTable &assets, const char *destination) {
     const auto root = native_path(destination);
     auto partial = root;
     partial += ".partial";
+    auto old = root;
+    old += ".old";
     std::filesystem::remove_all(partial, error);
     if (std::filesystem::exists(root, error)) {
-        std::fprintf(stderr, "Cannot write %s: it already exists.\n", destination);
-        return false;
+        // Keep the unusable old tree once as ".old", then take its place.
+        std::filesystem::remove_all(old, error);
+        std::filesystem::rename(root, old, error);
+        if (error) {
+            std::fprintf(stderr, "Cannot rename %s to %s.old: %s\n", destination, destination,
+                         error.message().c_str());
+            return false;
+        }
+        std::fprintf(stderr, "Moved the old %s to %s.old\n", destination, destination);
     }
     std::filesystem::create_directories(partial, error);
     bool ok = !error;
+    if (!ok)
+        std::fprintf(stderr, "Cannot create %s.partial: %s\n", destination, error.message().c_str());
     for (std::size_t i = 0; ok && i < assets.size(); ++i)
         ok = write_asset(partial, assets[i]);
-    if (ok) {
+    // Defender or the indexer can hold just-written files for a moment.
+    constexpr int rename_attempts = 20;
+    for (int attempt = 1; ok; ++attempt) {
         std::filesystem::rename(partial, root, error);
-        ok = !error;
+        if (!error)
+            break;
+        if (attempt == rename_attempts) {
+            std::fprintf(stderr, "Cannot rename %s.partial to %s: %s\n", destination, destination,
+                         error.message().c_str());
+            ok = false;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     if (!ok) {
         std::fprintf(stderr, "Cannot write the game files to %s.\n", destination);
