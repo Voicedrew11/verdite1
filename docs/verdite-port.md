@@ -527,12 +527,16 @@ apart, each label in a row box and its value centred in an option box at X 180, 
 
   | page | rows |
   |---|---|
-  | DISPLAY | FULLSCREEN, RESOLUTION, ASPECT, HUD AT EDGES, FRAME RATE, ANTIALIASING, RUN SETUP |
-  | GRAPHICS | WIGGLE, TRUE COLOUR, FILTER, ANISO, PER PIXEL LIGHT, AO |
-  | WORLD | FOG, DETAILED MAP, DYNAMIC LIGHT, FLAME GLOW |
-  | GAMEPLAY | CLASSIC MODE, TICK RATE, ENEMY TURN, AUTO KEYS, ITEM TEXT |
-  | CONTROLS | CONTROLS, PAD BUTTONS, INVERT CAMERA, STICK SENS |
+  | DISPLAY | FULLSCREEN, RESOLUTION, ASPECT, HUD AT EDGES, FRAME RATE, ANTIALIASING, CLASSIC MODE, RUN SETUP |
+  | GRAPHICS | WIGGLE, TRUE COLOUR, FILTER, ANISO, PER PIXEL LIGHT, AO, FOG, DETAILED MAP |
+  | CONTROLS | CONTROLS, PAD BUTTONS, INVERT CAMERA, STICK SENS, ENEMY TURN |
   | SOUND | VOLUME |
+
+  Left off the page for now (2026-11-05), kept in the overlay: tick rate (15; a host still sets the
+  room's), auto keys, item text, dynamic light (with its shadows) and flame glow. With them gone the
+  WORLD and GAMEPLAY pages had too little to stand alone: FOG and DETAILED MAP joined GRAPHICS,
+  CLASSIC MODE joined DISPLAY. ENEMY TURN is on CONTROLS, as its Auto follows the turn speed.
+  CONTROLS steps 2D, 2D ACCEL and 3D, Verdite2's; D-pad is the overlay's alone.
 
   In a coop world a MULTIPLAYER row of its own sits under PORT SETTINGS, with its own pages
   ([COOP_PLAN.md](COOP_PLAN.md), "Multiplayer settings").
@@ -552,8 +556,8 @@ apart, each label in a row box and its value centred in an option box at X 180, 
   only: Depth buffer, Enhanced distance, Show FPS and the stick's Fine tuning.
 - **It fits.** At start, `[settings page] check: N rows, M problem(s)` measures each label (120 pixels)
   and value (94) in both languages with the menu's own widths, counts rows (8 a page), and reports a
-  character the font lacks. The font has no `.` or `-`, so STICK SENS reads as percent, ENEMY TURN
-  has whole steps, and a quarter step from the overlay reads CUSTOM. A custom stick pair is put back
+  character the font lacks. The font has no `.` or `-`, so STICK SENS writes Verdite2's stops (X1/2 to X3) in
+  halves and quarters, ENEMY TURN has whole steps, and a quarter step from the overlay reads CUSTOM. A custom stick pair is put back
   on discard by the page itself, as no row value holds it.
 - **RUN SETUP** is an action row: Right or Confirm presses it, after putting back what is staged.
 - **Pad.** Up/Down the row, Left/Right or Confirm the value (round its ends), L1/R1 the page,

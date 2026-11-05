@@ -90,12 +90,22 @@ std::vector<ValueText> enemy_turn_values() {
     return values;
 }
 
-// STICK SENS's values, as percent for the same reason.
+// STICK SENS's values, Verdite2's X multiples: the font has '/' but no '.', so a fraction is in quarters
+// or halves (X3/4).
+std::string multiple_text(double stop) {
+    const long quarters = std::lround(stop * 4.0);
+    if (quarters % 4 == 0)
+        return std::to_string(quarters / 4);
+    if (quarters % 2 == 0)
+        return std::to_string(quarters / 2) + "/2";
+    return std::to_string(quarters) + "/4";
+}
+
 std::vector<ValueText> stick_sens_values() {
     std::vector<ValueText> values = {{ext::stick_sens_custom, custom_text}};
     for (const double stop : ext::stick_sens_stops) {
-        const std::string percent = std::to_string(std::lround(stop * 100.0));
-        values.push_back({stop, {percent, percent}});
+        const std::string multiple = multiple_text(stop);
+        values.push_back({stop, {"X" + multiple, multiple + "ばい"}});
     }
     return values;
 }
@@ -127,6 +137,7 @@ const std::vector<Page> &pages() {
               {static_cast<double>(ext::frame_rate_unlimited), {"UNLIMITED", "むせいげん"}}}, {}},
             {"display.antialiasing", {"ANTIALIASING", "アンチエイリアス"},
              {{0.0, off_text}, {1.0, {"FXAA", "かんい"}}, {2.0, {"4X SSAA", "4ばい"}}, {3.0, {"9X SSAA", "9ばい"}}}, {}},
+            {"gameplay.classic_mode", {"CLASSIC MODE", "オリジナルのまま"}, {}, {}},
             {"overlay.run_setup", {"RUN SETUP", "はじめのせつてい"}, {}, {}},
         }});
         made.push_back({"graphics", {"GRAPHICS", "がしつ"}, {
@@ -141,30 +152,21 @@ const std::vector<Page> &pages() {
             {"display.pixel_lighting", {"PER PIXEL LIGHT", "ピクセルのひかり"}, {}, {}},
             {"display.ao", {"AO", "すみのかげ"},
              {{0.0, off_text}, {1.0, {"LOW", "ひくい"}}, {2.0, {"MEDIUM", "ふつう"}}, {3.0, {"HIGH", "たかい"}}}, {}},
-        }});
-        made.push_back({"world", {"WORLD", "せかい"}, {
             {"display.fog", {"FOG", "きり"},
              {{0.0, {"CORNERS", "かど"}}, {1.0, {"DEPTH", "ふかさ"}}, {2.0, {"DISTANCE", "とおさ"}}}, {}},
             {"display.detailed_map", {"DETAILED MAP", "とおくのかべ"}, {}, {}},
-            {"display.dynamic_light", {"DYNAMIC LIGHT", "うごくひかり"},
-             {{0.0, off_text}, {1.0, on_text}, {2.0, {"SHADOWS", "かげあり"}}}, {}},
-            {"display.flame_glow", {"FLAME GLOW", "ほのおのかがやき"}, {}, {}},
-        }});
-        made.push_back({"gameplay", {"GAMEPLAY", "ゲーム"}, {
-            {"gameplay.classic_mode", {"CLASSIC MODE", "オリジナルのまま"}, {}, {}},
-            tick_rate_row(),
-            {"gameplay.enemy_turn_speed", {"ENEMY TURN", "てきのふりむき"}, enemy_turn_values(),
-             {ext::enemy_turn_automatic, 1.0, 2.0, 3.0, 4.0}},
-            {"gameplay.auto_use_keys", {"AUTO KEYS", "かぎのじどうしよう"}, {}, {}},
-            {"overlay.item_descriptions", {"ITEM TEXT", "アイテムのせつめい"}, {}, {}},
         }});
         made.push_back({"controls", {"CONTROLS", "そうさ"}, {
+            // D-pad only shows, for a file that chose it in the overlay.
             {"analog.style", {"CONTROLS", "そうさ"},
-             {{0.0, {"DPAD", "じゆうじ"}}, {1.0, {"3D", "ひとつ"}}, {2.0, {"2D", "ふたつ"}}, {3.0, {"2D ACCEL", "ふたつかそく"}}}, {}},
+             {{0.0, {"DPAD", "じゆうじ"}}, {1.0, {"3D", "ひとつ"}}, {2.0, {"2D", "ふたつ"}}, {3.0, {"2D ACCEL", "ふたつかそく"}}},
+             {2.0, 3.0, 1.0}},
             {"controls.pad_layout", {"PAD BUTTONS", "ボタンはいち"},
              {{std::string("west"), {"WEST", "かいがい"}}, {std::string("jp"), {"JAPANESE", "にほん"}}}, {}},
             {"analog.invert_pitch", {"INVERT CAMERA", "カメラのはんてん"}, {}, {}},
             {"analog.stick_sens", {"STICK SENS", "レバーのはやさ"}, stick_sens_values(), stick_sens_page_stops()},
+            {"gameplay.enemy_turn_speed", {"ENEMY TURN", "てきのふりむき"}, enemy_turn_values(),
+             {ext::enemy_turn_automatic, 1.0, 2.0, 3.0, 4.0}},
         }});
         made.push_back({"sound", {"SOUND", "おと"}, {
             {"audio.volume", {"VOLUME", "おとのおおきさ"}, {},

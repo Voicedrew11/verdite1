@@ -84,6 +84,8 @@ TEST_CASE("stick sens sets both speeds and is custom when they are apart") {
     CHECK(settings.analog.turn_sensitivity == 1.25f);
     CHECK(settings.analog.pitch_sensitivity == 1.25f);
     CHECK(stick_sens(settings) == 1.25);
+    set_stick_sens(settings, 3.0);
+    CHECK(stick_sens(settings) == 3.0);
     settings.analog.pitch_sensitivity = 0.75f;
     CHECK(stick_sens(settings) == stick_sens_custom);
     settings.analog.turn_sensitivity = settings.analog.pitch_sensitivity = 0.65f;

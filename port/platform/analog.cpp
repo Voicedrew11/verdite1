@@ -13,7 +13,7 @@ namespace kf {
 namespace {
 
 constexpr float sensitivity_min = 0.1f;
-constexpr float sensitivity_max = 2.0f;
+constexpr float sensitivity_max = 3.0f;
 // How far past the D-pad's rate the look may go: the sensitivity times the ramp.
 constexpr s32 look_overspeed = 4;
 // Tank reads each axis of the left stick on its own deadzone, so a thumb a

@@ -36,7 +36,8 @@ void set_enemy_turn_choice(Settings &settings, double choice);
 // Turn and look speed together. Custom when fine tuning set them apart or off these stops: only
 // read, as no row can choose it.
 inline constexpr double stick_sens_custom = -1.0;
-inline constexpr std::array<double, 6> stick_sens_stops = {0.5, 0.75, 1.0, 1.25, 1.5, 2.0};
+// Verdite2's stops.
+inline constexpr std::array<double, 9> stick_sens_stops = {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0};
 double stick_sens(const Settings &settings);
 void set_stick_sens(Settings &settings, double sens);
 

@@ -409,10 +409,10 @@ OptionSection controls_fine_tuning() {
     auto in_analog = [](OptionRow made) { return enabled_if(std::move(made), analog_on); };
     auto acceleration_on = [] { return twin_stick() && settings().analog.look_acceleration; };
     return gamepad_section({"Fine tuning", {
-        in_analog(number("analog.turn_sensitivity", "Turn speed", "", a.turn_sensitivity, {0.1, 2.0, 0.05, "%.2fx"},
+        in_analog(number("analog.turn_sensitivity", "Turn speed", "", a.turn_sensitivity, {0.1, 3.0, 0.05, "%.2fx"},
                          apply_control_settings)),
         in_analog(number("analog.pitch_sensitivity", "Look up/down speed", "", a.pitch_sensitivity,
-                         {0.1, 2.0, 0.05, "%.2fx"}, apply_control_settings)),
+                         {0.1, 3.0, 0.05, "%.2fx"}, apply_control_settings)),
         in_analog(number("analog.move_sensitivity", "Walk speed", "1x at full deflection is the D-pad's speed.", a.move_sensitivity,
                          {0.1, 1.0, 0.05, "%.2fx"}, apply_control_settings)),
         enabled_if(combined<LookResponse>("analog.look_response", "Look response",
