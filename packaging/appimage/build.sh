@@ -14,11 +14,12 @@ name="Verdite1-$version-x86_64.AppImage"
 # the game needs only glibc and the libraries every desktop has. No English delta is embedded:
 # builds that carry it are never distributed. libstdc++ 12's stable_sort calls a function clang 21
 # calls deprecated, which is the header's matter, not the code's.
-cmake -S "$repo" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/deps \
+cmake -S "$repo" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_PREFIX_PATH=/opt/deps \
   -DCMAKE_CXX_FLAGS=-Wno-error=deprecated-declarations \
   -DKF_RELEASE=ON -DPython3_EXECUTABLE=/usr/bin/python3.11 -DKF_HOST_CLANG=clang++-21 -DKF_ENGLISH_PATCH=/nonexistent -DOPENSSL_USE_STATIC_LIBS=ON -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -fuse-ld=lld-21" \
   -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib'
 cmake --build "$build" --target verdite1 -- -k 0
+ccache --show-stats
 
 rm -rf "$appdir"
 cmake --install "$build" --prefix "$appdir/usr"

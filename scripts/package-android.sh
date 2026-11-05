@@ -14,8 +14,10 @@ version="${1:-$(scripts/version.sh)}"
 export VERDITE_VERSION="$version" KF_ANDROID_JNI_DIR="$root/build/android-release/jni"
 export KF_ANDROID_ASSETS_DIR="$root/build/android-release/assets"
 nix develop .#android -c bash -euc '
-  cmake --preset android-arm64 -B build/android-release -DCMAKE_BUILD_TYPE=Release -DKF_RELEASE=ON -DKF_ENGLISH_PATCH=/nonexistent
+  cmake --preset android-arm64 -B build/android-release -DCMAKE_BUILD_TYPE=Release -DKF_RELEASE=ON -DKF_ENGLISH_PATCH=/nonexistent \
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
   cmake --build build/android-release --target verdite1
+  ccache --show-stats
   licenses="$KF_ANDROID_ASSETS_DIR/licenses"
   mkdir -p "$licenses"
   cp LICENSE "$licenses/Verdite1-MIT.txt"

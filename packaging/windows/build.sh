@@ -12,13 +12,14 @@ stage="/out/$name"
 # Release: line tables only, so a crash report names the stack. -static: the C++ runtime is in the
 # exe and SDL3.dll is the one library beside it. No English delta is embedded: builds that carry it
 # are never distributed.
-cmake -S "$repo" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/opt/toolchain.cmake \
+cmake -S "$repo" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_TOOLCHAIN_FILE=/opt/toolchain.cmake \
   -DCMAKE_PREFIX_PATH=/opt/win-deps -DKF_RELEASE=ON -DPython3_EXECUTABLE=/usr/bin/python3.11 -DKF_ENGLISH_PATCH=/nonexistent \
   -DKF_HOST_CLANG=/opt/llvm-mingw/bin/x86_64-w64-mingw32-clang++ \
   -DOPENSSL_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR=/opt/win-deps \
   -DZLIB_LIBRARY=/opt/win-deps/lib/libzlibstatic.a -DZLIB_INCLUDE_DIR=/opt/win-deps/include \
   -DCMAKE_EXE_LINKER_FLAGS=-static
 cmake --build "$build" --target verdite1 -- -k 0
+ccache --show-stats
 
 rm -rf "$stage"
 mkdir -p "$stage/licenses"

@@ -57,7 +57,7 @@
         abiVersions = [ "x86_64" ];
       }).androidsdk;
       androidShell = withEmulator: let androidHome = "${androidSdk withEmulator}/libexec/android-sdk"; in pkgs.mkShell {
-        packages = with pkgs; [ cmake ninja python3 git glslang gradle jdk17 android-tools libarchive perl gnumake ];
+        packages = with pkgs; [ cmake ninja python3 git glslang gradle jdk17 android-tools libarchive perl gnumake ccache ];
         ANDROID_HOME = androidHome;
         ANDROID_SDK_ROOT = androidHome;
         ANDROID_NDK_ROOT = "${androidHome}/ndk/${androidNdkVersion}";

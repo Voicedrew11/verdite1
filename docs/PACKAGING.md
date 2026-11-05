@@ -123,3 +123,18 @@ Notify only, as the C# ports: nothing is downloaded. `verdite/update_check.h` ha
 build carries the version. It has no disc, so it boots nothing; that stays `scripts/check.sh`'s, before a
 push. `release.yml` also checks each package names the right version, and installs and uninstalls the
 setup on a real Windows runner.
+
+A run of `release.yml` was about ten minutes (2026-11-04), half of it building the same things again
+on a fresh runner, so it keeps three things between runs:
+
+- **The builder images** go to `ghcr.io/<owner>/verdite1-<name>-builder:<hash>` (`scripts/builder-image.sh`), the hash being
+  the Containerfile's and the files it copies. A run pulls the image and builds it only when that
+  recipe changed. Unchanged, a Containerfile never takes newer Ubuntu packages; edit it to move them.
+  Locally the image is built as before, with podman's or docker's own layer cache.
+- **ccache**, in all three builds. A package script keeps it in `build/ccache/<name>` (`KF_CCACHE_DIR`
+  moves the desktop ones), and CI keeps it through `actions/cache`, at most 500 MB each.
+  The repository is at the same path on every runner, so hits survive between runs; each build prints
+  its hit rate after compiling.
+- **Android's OpenSSL**, keyed on `cmake/android_openssl.cmake` and the flake.
+
+What is left is the android nix shell's download (about three minutes) and Gradle.

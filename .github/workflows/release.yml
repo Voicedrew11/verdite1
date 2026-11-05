@@ -16,6 +16,11 @@ on:
 
 permissions:
   contents: write
+  packages: write  # the builder images, kept on ghcr.io (scripts/builder-image.sh)
+
+# Compiler caches, kept between runs by actions/cache; small enough that the three fit GitHub's 10 GB.
+env:
+  CCACHE_MAXSIZE: 500M
 
 jobs:
   # The tag is the version. A tag that is not MAJOR.MINOR.PATCH could never be announced, so it is
@@ -46,6 +51,16 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
+      # The builder image is pulled, and built and pushed only when its recipe changed.
+      - name: Log in to the image registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "KF_BUILDER_REGISTRY=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: build/ccache/appimage
+          key: ccache-appimage-${{ github.sha }}
+          restore-keys: ccache-appimage-
       - name: Package
         run: scripts/package-linux.sh "${{ needs.version.outputs.version }}"
       - name: Assert it carries the version
@@ -69,6 +84,16 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
+      # The builder image is pulled, and built and pushed only when its recipe changed.
+      - name: Log in to the image registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "KF_BUILDER_REGISTRY=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: build/ccache/windows
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
       - name: Package
         run: scripts/package-windows.sh "${{ needs.version.outputs.version }}"
       - uses: actions/upload-artifact@v4
@@ -114,8 +139,21 @@ jobs:
           fetch-depth: 0
           submodules: true
       - uses: cachix/install-nix-action@v31
+      - uses: actions/cache@v4
+        with:
+          path: build/ccache/android
+          key: ccache-android-${{ github.sha }}
+          restore-keys: ccache-android-
+      # OpenSSL for Android is its own build, done again only when its recipe or the flake's pin moves.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            build/android-release/openssl/install
+            build/android-release/openssl/source/LICENSE.txt
+          key: android-openssl-${{ hashFiles('cmake/android_openssl.cmake', 'flake.nix', 'flake.lock') }}
       - name: Package
         env:
+          CCACHE_DIR: ${{ github.workspace }}/build/ccache/android
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KF_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
