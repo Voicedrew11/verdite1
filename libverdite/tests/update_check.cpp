@@ -9,7 +9,7 @@
 using namespace verdite;
 
 namespace {
-constexpr std::int64_t hour_s = 60 * 60;
+constexpr std::int64_t hour_s = 3600;
 const std::string release_020 = R"({"tag_name":"v0.2.0","html_url":"https://github.com/o/r/releases/tag/v0.2.0"})";
 
 // A state file of its own, gone afterwards.
