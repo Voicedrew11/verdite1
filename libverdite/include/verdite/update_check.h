@@ -1,7 +1,7 @@
 #ifndef VERDITE_UPDATE_CHECK_H
 #define VERDITE_UPDATE_CHECK_H
 // Whether a newer release of the game exists: notify only, nothing is downloaded. The answer of the
-// network is kept in a small state file, so it is asked at most once a day and a player who launches
+// network is kept in a small state file, so it is asked at most once an hour and a player who launches
 // twice still hears about the release; a player can skip one release, and a later one is announced
 // again.
 //
@@ -29,7 +29,7 @@ bool version_is_newer(std::string_view tag, std::string_view running);
 std::optional<UpdateRelease> update_release_from_json(std::string_view answer);
 
 enum class UpdatePace : std::uint8_t {
-    Daily,   // the network at most once in 24 hours, the kept answer otherwise
+    Hourly,  // the network at most once an hour, the kept answer otherwise
     Now,     // the network whatever the time
 };
 
@@ -37,7 +37,7 @@ struct UpdateCheckRequest {
     std::string_view running_version;
     std::filesystem::path state_file;
     std::int64_t now_s = 0;   // seconds since the epoch
-    UpdatePace pace = UpdatePace::Daily;
+    UpdatePace pace = UpdatePace::Hourly;
     // The text of /releases/latest; nullopt when offline, rate-limited or the service is down, and
     // the kept answer then stands.
     std::function<std::optional<std::string>()> fetch_latest;

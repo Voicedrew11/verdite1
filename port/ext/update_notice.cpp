@@ -156,7 +156,7 @@ void update_notice_start() {
         return;
     const char *url = std::getenv("KF_TEST_UPDATE_URL");
     found = std::make_shared<Found>();
-    std::thread(run_check, found, state_file(), forced ? verdite::UpdatePace::Now : verdite::UpdatePace::Daily,
+    std::thread(run_check, found, state_file(), forced ? verdite::UpdatePace::Now : verdite::UpdatePace::Hourly,
                 std::string(url ? url : latest_release_url))
         .detach();
 }

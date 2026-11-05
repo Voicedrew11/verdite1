@@ -9,7 +9,7 @@
 using namespace verdite;
 
 namespace {
-constexpr std::int64_t day_s = std::int64_t{24} * 60 * 60;
+constexpr std::int64_t hour_s = 60 * 60;
 const std::string release_020 = R"({"tag_name":"v0.2.0","html_url":"https://github.com/o/r/releases/tag/v0.2.0"})";
 
 // A state file of its own, gone afterwards.
@@ -29,7 +29,7 @@ struct Run {
     int fetches = 0;
     std::optional<std::string> answer = release_020;
 
-    std::optional<UpdateRelease> at(std::int64_t now_s, UpdatePace pace = UpdatePace::Daily) {
+    std::optional<UpdateRelease> at(std::int64_t now_s, UpdatePace pace = UpdatePace::Hourly) {
         return update_check_run({"0.1.0", file.path, now_s, pace, [this] {
                                      ++fetches;
                                      return answer;
@@ -71,16 +71,16 @@ TEST_CASE("the release comes from GitHub's answer") {
     CHECK_FALSE(update_release_from_json(R"({"tag_name":"v1.0.0","html_url":"file:///etc/passwd"})"));
 }
 
-TEST_CASE("the network is asked at most once a day, and the answer is kept") {
-    const StateFile file("verdite-update-daily.json");
+TEST_CASE("the network is asked at most once an hour, and the answer is kept") {
+    const StateFile file("verdite-update-hourly.json");
     Run run{file};
     CHECK(run.at(100'000));
     CHECK(run.fetches == 1);
-    CHECK(run.at(100'000 + day_s - 1));   // a second launch still hears about it
+    CHECK(run.at(100'000 + hour_s - 1));   // a second launch still hears about it
     CHECK(run.fetches == 1);
-    CHECK(run.at(100'000 + day_s + 1));
+    CHECK(run.at(100'000 + hour_s + 1));
     CHECK(run.fetches == 2);
-    CHECK(run.at(100'000 + day_s + 2, UpdatePace::Now));
+    CHECK(run.at(100'000 + hour_s + 2, UpdatePace::Now));
     CHECK(run.fetches == 3);
 }
 
@@ -102,7 +102,7 @@ TEST_CASE("a failed fetch leaves the kept answer and asks again next time") {
     run.answer = release_020;
     CHECK(run.at(100'002));
     run.answer = "garbage";
-    CHECK(run.at(100'002 + day_s + 1));
+    CHECK(run.at(100'002 + hour_s + 1));
 }
 
 TEST_CASE("a release no newer than the running one is not announced") {
