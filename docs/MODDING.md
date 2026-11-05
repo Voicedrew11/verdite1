@@ -990,12 +990,14 @@ does not break the game's interface: the frame ends the open ones, innermost fir
 
 ## Examples
 
-`mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and `mods/crypt`
+`mods/debug` (`kf.play`, `kf.game`, `kf.warp`, bookmarks) and `examples/mods/crypt`
 (`kf.content`, `kf.hook`, `kf.call`,
 `kf.raw`, `exports` and `mod.raise`: a sigil, a floor, a kind of monster and what it drops; the floor comes from
 your own disc by `tools/mod_floor_from_disc.py`, and without it the sigil rouses the monsters where you stand) in
-this repository. `scripts/example_mod_crypt.py` plays `mods/crypt` through. The
-build puts them beside the executable, and the game copies each one into the
+this repository. `scripts/example_mod_crypt.py` plays the crypt through. Only `mods/` ships: the crypt
+is an example to read and copy into a mods folder by hand, and since 2026-11-05 a copy the game gave
+a player moves to `mods_removed`, as the other retired examples do. The
+build puts `mods/` beside the executable, and the game copies each one into the
 mods folder the first time it sees it, disabled unless it says
 `default_enabled`; `mods/.examples` lists those
 already offered, so an example you delete stays deleted.

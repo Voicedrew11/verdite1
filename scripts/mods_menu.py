@@ -242,8 +242,8 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         home = Path(temp)
         mods = home / "Verdite" / "Verdite1" / "mods"
-        for name in ("debug", "crypt"):
-            shutil.copytree(ROOT / "mods" / name, mods / name)
+        shutil.copytree(ROOT / "mods" / "debug", mods / "debug")
+        shutil.copytree(ROOT / "examples" / "mods" / "crypt", mods / "crypt")
         (mods / "watcher").mkdir()
         (mods / "watcher/mod.json").write_text('{"id": "watcher", "name": "Watcher", "default_enabled": true}')
         (mods / "watcher/main.lua").write_text(WATCHER)

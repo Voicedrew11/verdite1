@@ -1685,7 +1685,7 @@ void write_offered_examples(const std::filesystem::path &list, const std::set<st
 // disabled unless its mod.json says default_enabled.
 // The examples no longer shipped. A player's copy, one the game put there, moves to mods_removed
 // beside the mods folder rather than being deleted, as the player may have changed it.
-constexpr std::array<const char *, 7> retired_examples{"bestiary", "hardmode", "killcount", "map",
+constexpr std::array<const char *, 8> retired_examples{"bestiary", "crypt", "hardmode", "killcount", "map",
                                                        "quickheal", "run", "stathud"};
 
 void move_retired_examples() {

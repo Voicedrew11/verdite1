@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Play mods/crypt, the example of the layers that change the game, through its whole loop, headless.
+"""Play examples/mods/crypt, the example of the layers that change the game, through its whole loop, headless.
 
 Copies the mod and a floor made from the disc to a fresh user folder, with a second mod that watches it
 through mods.get and mods.on. Uses the sigil from the Use list, kills the brutes in the crypt, uses their
@@ -231,7 +231,7 @@ def run(binary, data, playing, with_floor):
     with tempfile.TemporaryDirectory() as temp:
         home = Path(temp)
         mods = home / "Verdite" / "Verdite1" / "mods"
-        shutil.copytree(ROOT / "mods" / "crypt", mods / "crypt")
+        shutil.copytree(ROOT / "examples" / "mods" / "crypt", mods / "crypt")
         if with_floor:
             subprocess.check_call([sys.executable, str(ROOT / "tools/mod_floor_from_disc.py"),
                                    str(Path(data) / "KF" / "B1"), str(mods / "crypt/floors/crypt")])
