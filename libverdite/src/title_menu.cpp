@@ -538,7 +538,7 @@ bool TitleMenu::wants_room_list() const {
 void TitleMenu::set_mods(std::vector<TitleMod> mods) {
     mods_ = std::move(mods);
     if (page_ == TitlePage::Mods)
-        row_ = std::min(row_, mods_.empty() ? std::size_t{0} : mods_.size() - 1);
+        row_ = std::min(row_, mods_.size());   // the last row is BACK, after the mods
     if (page_ != TitlePage::ModSettings)
         return;
     const TitleMod *mod = shown_mod();
@@ -674,6 +674,7 @@ TitleView TitleMenu::view() const {
             rows.push_back(row(TitleRowKind::Mod));
             rows.back().mod = &mod;
         }
+        rows.push_back(row(TitleRowKind::GoBack));
         break;
     case TitlePage::ModSettings:
         if (const TitleMod *mod = shown_mod())

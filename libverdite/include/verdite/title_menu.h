@@ -175,7 +175,7 @@ enum class TitleRowKind : std::uint8_t {
     CoopSetting,                                   // CoopSettings, RoomSettings: setting. Left and Right step, as Confirm does
     LoadAnyway, SaveMod,                           // LoadWarning: save_mod is dimmed
     EnterCoop,                                     // CoopWarning
-    GoBack,                                        // LoadWarning, CoopWarning, DeleteWarning
+    GoBack,                                        // LoadWarning, CoopWarning, DeleteWarning, Mods
 };
 
 struct TitleRowView {
