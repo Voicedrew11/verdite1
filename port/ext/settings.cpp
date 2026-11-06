@@ -168,6 +168,7 @@ void settings_load() {
     current.language = read_string(gameplay, "language", current.language);
     current.classic = read_bool(gameplay, "classic_mode", current.classic);
     current.auto_keys = read_bool(gameplay, "auto_use_keys", current.auto_keys);
+    current.reload_on_death = read_bool(gameplay, "reload_on_death", current.reload_on_death);
     current.tick_rate = static_cast<int>(read_number(gameplay, "tick_rate", current.tick_rate));
     current.enemy_turn_auto = read_bool(gameplay, "enemy_turn_auto", current.enemy_turn_auto);
     current.enemy_turn = std::clamp(static_cast<float>(read_number(gameplay, "enemy_turn", current.enemy_turn)), 1.0f, 4.0f);
@@ -249,6 +250,7 @@ void settings_save() {
     write_value(gameplay, "language", cJSON_CreateString(current.language.c_str()));
     write_value(gameplay, "classic_mode", cJSON_CreateBool(current.classic));
     write_value(gameplay, "auto_use_keys", cJSON_CreateBool(current.auto_keys));
+    write_value(gameplay, "reload_on_death", cJSON_CreateBool(current.reload_on_death));
     write_value(gameplay, "tick_rate", cJSON_CreateNumber(current.tick_rate));
     write_value(gameplay, "enemy_turn_auto", cJSON_CreateBool(current.enemy_turn_auto));
     write_value(gameplay, "enemy_turn", cJSON_CreateNumber(current.enemy_turn));
@@ -320,6 +322,7 @@ const Settings &effective_settings() {
     classic.tick_rate = 20;
     classic.look_limit = 17;
     classic.auto_keys = false;
+    classic.reload_on_death = false;
     classic.enemy_turn_auto = false;
     classic.enemy_turn = 1.0f;
     classic.analog.enabled = false;   // the game came out before the DualShock
@@ -450,6 +453,7 @@ void crash_write_settings(verdite::CrashWriter &out) {
     out.line("enemy turn percent", static_cast<std::int64_t>(s.enemy_turn * 100.0f));
     out.line("fix ceiling fall", s.fix_ceiling_fall);
     out.line("auto keys", s.auto_keys);
+    out.line("reload on death", s.reload_on_death);
     out.line("aspect", s.aspect);
     out.line("resolution", s.resolution);
     out.line("antialiasing", s.antialiasing);

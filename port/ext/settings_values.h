@@ -59,6 +59,7 @@ struct Settings {
     bool shadows = true;
     bool touch_haptics = true;  // the on-screen buttons click the phone's vibrator
     bool auto_keys = true;          // interacting with a lock uses a carried key
+    bool reload_on_death = true;    // a death reloads the last save, not a New Game
     bool enemy_turn_auto = true;    // the enemy turn follows how fast the last input to turn can turn
     bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump
     bool fix_spatial_panning = true; // bug fix: flagged sounds get their panning adjustment
