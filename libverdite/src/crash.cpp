@@ -1376,8 +1376,9 @@ std::optional<std::string> crash_take_unseen_report() {
         std::error_code found;
         if (!fs::exists(entry.path() / unseen_name, found))
             continue;
+        // Before the marker goes: removing it moves the folder's time to now.
+        const auto written = fs::last_write_time(entry.path(), found);
         fs::remove(entry.path() / unseen_name, found);
-        const auto written = entry.last_write_time(found);
         if (!newest || written > newest_time) {
             newest = entry.path();
             newest_time = written;

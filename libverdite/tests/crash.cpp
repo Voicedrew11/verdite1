@@ -299,10 +299,11 @@ TEST_CASE("only the newest reports are kept, and the next launch hears of the ne
     for (int at = 0; at < 25; ++at) {
         const fs::path folder = directory / ("crash-" + std::to_string(at));
         fs::create_directory(folder);
+        if (at >= 23)
+            std::ofstream(folder / "unseen") << "";
+        // After the marker, which would move the folder's time to now.
         fs::last_write_time(folder, fs::file_time_type::clock::now() - std::chrono::hours(100 - at));
     }
-    std::ofstream(directory / "crash-24" / "unseen") << "";
-    std::ofstream(directory / "crash-23" / "unseen") << "";
     const pid_t child = fork();
     REQUIRE(child >= 0);
     if (child == 0) {
