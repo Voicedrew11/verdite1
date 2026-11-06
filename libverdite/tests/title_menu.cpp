@@ -135,7 +135,7 @@ TEST_CASE("MODS lists the mods, and Confirm asks for each one's switch the other
     auto menu = open_menu();
     go_to(menu, TitleRowKind::Mods);
     REQUIRE(menu.view().page == TitlePage::Mods);
-    REQUIRE(menu.view().rows.size() == 3);
+    REQUIRE(menu.view().rows.size() == 4);
     CHECK(menu.view().rows[1].mod->name == "TWO");
 
     menu.press(TitleInput::Confirm);
@@ -148,20 +148,35 @@ TEST_CASE("MODS lists the mods, and Confirm asks for each one's switch the other
     CHECK(taken(menu).action == TitleAction::DisableMod);
 
     menu.press(TitleInput::Up);
+    CHECK(menu.view().rows[3].kind == TitleRowKind::GoBack);
+    menu.press(TitleInput::Up);
     CHECK(menu.view().rows[2].selected);
     menu.press(TitleInput::Confirm);
     choice = taken(menu);
     CHECK(choice.action == TitleAction::DisableMod);
     CHECK(choice.code == "bad");
 
+    // The cursor was on the third mod, now gone: it lands on BACK, the row after the mods.
     menu.set_mods({{"one", "ONE", TitleModState::On, {}}});
-    CHECK(menu.view().rows[0].selected);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
     menu.set_mods({});
-    CHECK(menu.view().rows.empty());
+    CHECK(menu.view().rows.size() == 1);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
     menu.press(TitleInput::Confirm);
     CHECK_FALSE(menu.take_choice());
+    CHECK(menu.view().page == TitlePage::Top);
+    CHECK(selected(menu) == TitleRowKind::Mods);
+}
 
-    menu.press(TitleInput::Back);
+TEST_CASE("MODS ends with BACK, and confirming it returns to the top page on MODS") {
+    auto menu = open_mods({{"one", "ONE", TitleModState::Off, {}}, {"two", "TWO", TitleModState::Off, {}}});
+    go_to(menu, TitleRowKind::Mods);
+    REQUIRE(menu.view().page == TitlePage::Mods);
+    REQUIRE(menu.view().rows.size() == 3);
+    CHECK(menu.view().rows.back().kind == TitleRowKind::GoBack);
+    menu.point(2);
+    menu.press(TitleInput::Confirm);
+    CHECK_FALSE(menu.take_choice());
     CHECK(menu.view().page == TitlePage::Top);
     CHECK(selected(menu) == TitleRowKind::Mods);
 }
@@ -381,7 +396,8 @@ TEST_CASE("set_mods takes ModSettings back to MODS when the mod is gone") {
     REQUIRE(menu.view().page == TitlePage::ModSettings);
     menu.set_mods({});
     CHECK(menu.view().page == TitlePage::Mods);
-    CHECK(menu.view().rows.empty());
+    CHECK(menu.view().rows.size() == 1);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
 }
 
 TEST_CASE("rows wrap, and Back returns to the row that led to the page") {
