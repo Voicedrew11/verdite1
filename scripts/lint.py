@@ -10,11 +10,18 @@
   decomp/, third_party/, the decomp's own lines: never
 
 Needs a configured build (compile_commands.json) whose decomp_src/ has the current patches, so
-run it after a build. Usage: scripts/lint.py [--build build/linux] [--base REF] [--all-port]
+run it after a build. Usage: scripts/lint.py [--build build/linux] [--base REF] [--all-port] [--fresh]
+
+A job that came out clean is remembered in <build>/lint-cache.json under a key made from the file,
+every file it includes (ninja's dependency lists from the last build), its compile command, the
+lines linted, the checks, .clang-tidy, clang-tidy's version and this script. A later run skips a
+job whose key is remembered. A job whose includes are unknown, or stale because a file changed
+since the last build, always runs. --fresh ignores the cache.
 """
 
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import os
 import re
@@ -103,11 +110,150 @@ def tidy(build, path, lines, checks):
     return "\n".join(kept)
 
 
+class Includes:
+    """What each source and header depends on, from the build's compile database and ninja's
+    dependency lists. A path's dependencies are those of every object that includes it: for a
+    source its own object, for a header every object that includes it (a superset of the header's
+    own includes, which is safe for a cache key)."""
+
+    def __init__(self, build):
+        self.build = build
+        self.commands = {}  # object path -> compile command
+        for entry in json.loads((build / "compile_commands.json").read_text()):
+            output = entry.get("output")
+            if output:
+                self.commands[str(Path(entry["directory"], output))] = entry.get(
+                    "command") or " ".join(entry.get("arguments", []))
+        self.objects_of = {}  # included path -> [object path, ...]
+        self.deps_of = {}     # object path -> [included path, ...]
+        self.stale = set()    # objects ninja marks as having an out-of-date dependency list
+        self.mtimes = {}
+        self.read_ninja_deps()
+
+    def read_ninja_deps(self):
+        result = subprocess.run(["ninja", "-C", str(self.build), "-t", "deps"],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"lint: no ninja dependency lists, so no cache: {result.stderr.strip()}")
+            return
+        target = None
+        for row in result.stdout.splitlines():
+            if not row.strip():
+                continue
+            if not row.startswith(" "):
+                name, _, status = row.partition(": #deps")
+                target = str((self.build / name).resolve())
+                self.deps_of[target] = []
+                if "(VALID)" not in status:
+                    self.stale.add(target)
+                continue
+            if target is not None:
+                path = row.strip()
+                self.deps_of[target].append(path)
+                self.objects_of.setdefault(path, []).append(target)
+
+    def objects(self, path):
+        """The objects whose dependencies cover path. The game is compiled from hook_src/, a
+        renamed copy of decomp_src/, so a decomp_src/ source counts as its hook_src/ copy."""
+        found = self.objects_of.get(path, [])
+        decomp_src = str(self.build / "decomp_src") + os.sep
+        if not found and path.startswith(decomp_src):
+            copy = str(self.build / "hook_src") + os.sep + path.removeprefix(decomp_src)
+            found = self.objects_of.get(copy, [])
+        return found
+
+    def out_of_date(self, obj):
+        """True when obj's dependency list may be wrong: ninja says so, or a file it names (an
+        edit may have added an include) changed after obj was built."""
+        if obj in self.stale:
+            return True
+        built = self.mtime(obj)
+        return built is None or any(self.mtime(dep) is None or self.mtime(dep) > built
+                                    for dep in self.deps_of[obj] if not dep.startswith("/nix/store/"))
+
+    def mtime(self, path):
+        if path not in self.mtimes:
+            try:
+                self.mtimes[path] = os.stat(path).st_mtime_ns
+            except OSError:
+                self.mtimes[path] = None
+        return self.mtimes[path]
+
+    def key_parts(self, path):
+        """[(dependency, compile command), ...] for path, or None when it cannot be trusted."""
+        objects = sorted(set(self.objects(path)))
+        if not objects or any(self.out_of_date(obj) for obj in objects):
+            return None
+        parts = set()
+        for obj in objects:
+            parts.add(("command", self.commands.get(obj, "")))
+            parts.update(("file", dep) for dep in self.deps_of[obj])
+        return sorted(parts)
+
+
+class LintCache:
+    """The keys of the jobs that came out clean; see the module docstring."""
+
+    def __init__(self, build, includes, ignore_saved):
+        self.path = build / "lint-cache.json"
+        self.includes = includes
+        self.digests = {}
+        tidy_version = subprocess.run(["clang-tidy", "--version"], capture_output=True,
+                                      text=True).stdout
+        self.salt = "\n".join([tidy_version, self.digest(str(ROOT / ".clang-tidy")),
+                               self.digest(__file__)])
+        self.saved = set()
+        if not ignore_saved:
+            try:
+                self.saved = set(json.loads(self.path.read_text())["clean"])
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        self.clean = set()
+
+    def digest(self, path):
+        """A file's content hash. Nix store paths are named by their content, so the path will do."""
+        if path.startswith("/nix/store/"):
+            return path
+        if path not in self.digests:
+            try:
+                self.digests[path] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            except OSError:
+                self.digests[path] = "missing"
+        return self.digests[path]
+
+    def key(self, path, lines, checks):
+        """The job's key, or None when it must run every time."""
+        parts = self.includes.key_parts(path)
+        if parts is None:
+            return None
+        text = [self.salt, path, self.digest(path), json.dumps(lines), checks or ""]
+        for kind, value in parts:
+            text.append(f"{kind} {value} {self.digest(value) if kind == 'file' else ''}")
+        return hashlib.sha256("\n".join(text).encode()).hexdigest()
+
+    def hit(self, key):
+        if key is not None and key in self.saved:
+            self.clean.add(key)
+            return True
+        return False
+
+    def mark_clean(self, key):
+        if key is not None:
+            self.clean.add(key)
+
+    def save(self):
+        """Keeps only this run's clean keys, so the file does not grow."""
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"clean": sorted(self.clean)}))
+        temporary.replace(self.path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--build", default="build/linux", help="the configured build directory")
     parser.add_argument("--base", default="HEAD", help="port/ is linted on the lines changed since this")
     parser.add_argument("--all-port", action="store_true", help="lint all of port/, not just changes")
+    parser.add_argument("--fresh", action="store_true", help="ignore the cache of clean results")
     args = parser.parse_args()
 
     build = (ROOT / args.build).resolve()
@@ -139,15 +285,23 @@ def main():
     android_build = "android" in build.name
     jobs = [job for job in jobs if android_build or not job[0].endswith("_android.cpp")]
 
+    cache = LintCache(build, Includes(build), args.fresh)
+    keyed = [(job, cache.key(*job)) for job in jobs]
+    to_run = [(job, key) for job, key in keyed if not cache.hit(key)]
+
     failed = 0
     workers = os.cpu_count() or 4
     with concurrent.futures.ThreadPoolExecutor(workers) as pool:
-        results = pool.map(lambda job: (job[0], tidy(build, *job)), jobs)
-        for path, findings in results:
+        results = pool.map(lambda item: (item[1], tidy(build, *item[0])), to_run)
+        for key, findings in results:
             if findings:
                 failed += 1
                 print(findings, flush=True)
-    print(f"lint: {len(jobs)} files, {failed} with findings")
+            else:
+                cache.mark_clean(key)
+    cache.save()
+    skipped = len(jobs) - len(to_run)
+    print(f"lint: {len(jobs)} files ({skipped} unchanged since a clean run), {failed} with findings")
     return 1 if failed else 0
 
 

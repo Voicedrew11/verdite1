@@ -93,7 +93,9 @@ the bug checks run on patch lines.
 - `libverdite/` tests (doctest, `libverdite/tests/`); new logic in `libverdite/` comes with tests;
 - `scripts/lint.py`: clang-tidy on all of `libverdite/`, on the changed lines of `port/` (it is
   carried code: old lines are cleaned up on purpose, not as a side effect), and on the lines the
-  patches add, with only the bug checks;
+  patches add, with only the bug checks. A file that came out clean is skipped next time unless it,
+  anything it includes, its flags, the checks or clang-tidy changed (`build/<preset>/lint-cache.json`,
+  keyed on the last build's include lists; `--fresh` ignores it);
 - `scripts/smoke.py`: boot headless at turbo, walk, quit, plain and under ASan and UBSan.
 
 Checks turned off in `.clang-tidy`, and why:
