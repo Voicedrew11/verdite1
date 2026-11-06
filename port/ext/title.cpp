@@ -693,10 +693,12 @@ std::string note(const verdite::TitleView &view, Language language) {
             return std::string(connecting_word.in(language));
         return view.rows.empty() ? std::string(no_rooms_word.in(language)) : std::string();
     case TitlePage::Mods: {
-        if (view.rows.empty())
+        const auto is_mod = [](const verdite::TitleRowView &row) { return row.kind == verdite::TitleRowKind::Mod; };
+        if (std::ranges::none_of(view.rows, is_mod))
             return std::string(no_mods_word.in(language));
         const auto on = std::ranges::find(view.rows, true, &verdite::TitleRowView::selected);
-        const bool held = on != view.rows.end() && on->mod->state == verdite::TitleModState::Held;
+        const bool held = on != view.rows.end() && on->kind == verdite::TitleRowKind::Mod &&
+                          on->mod->state == verdite::TitleModState::Held;
         return held ? std::string(held_note_word.in(language)) : std::string();
     }
     case TitlePage::LoadWarning: return std::string(other_mods_word.in(language));
