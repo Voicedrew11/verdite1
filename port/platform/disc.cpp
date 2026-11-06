@@ -413,15 +413,29 @@ bool disc_extract(const char *source, const char *destination, Language language
     return import_image(source, language, false, assets) && write_resource_tree(destination, assets, language);
 }
 
+// The release files of the language, or a modified disc's files, which the import keeps as they
+// are (DiscMatch::Modified); never the other language's release. With a Japanese base allowed,
+// English may start from the Japanese release, to be converted.
+static bool tree_fits(AssetTable &assets, Language language, bool japanese_base_allowed,
+                      Language *detected) {
+    *detected = language;
+    if (assets_match_language(assets, language))
+        return true;
+    const auto match = assets_classify(assets);
+    if (match == DiscMatch::Modified)
+        return true;
+    if (match != DiscMatch::Japanese || language != Language::English || !japanese_base_allowed)
+        return false;
+    *detected = Language::Japanese;
+    return true;
+}
+
 #ifdef _WIN32
 bool disc_verify_directory(const char *directory, Language language, Language *actual) {
     AssetTable assets;
     bool ok = resource_tree_read(directory, assets);
     Language detected = language;
-    if (ok && !assets_match_language(assets, language)) {
-        ok = actual && language == Language::English && assets_match_language(assets, Language::Japanese);
-        detected = Language::Japanese;
-    }
+    ok = ok && tree_fits(assets, language, actual != nullptr, &detected);
     if (ok && actual)
         *actual = detected;
     if (!ok)
@@ -526,10 +540,7 @@ bool disc_verify_directory(const char *directory, Language language, Language *a
     unsigned directories = 0;
     bool ok = root >= 0 && read_resource_tree(root, "", assets, &total, &directories);
     Language detected = language;
-    if (ok && !assets_match_language(assets, language)) {
-        ok = actual && language == Language::English && assets_match_language(assets, Language::Japanese);
-        detected = Language::Japanese;
-    }
+    ok = ok && tree_fits(assets, language, actual != nullptr, &detected);
     if (root >= 0 && ::close(root) != 0)
         ok = false;
     if (ok && actual)

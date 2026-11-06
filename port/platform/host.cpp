@@ -299,6 +299,17 @@ void host_language_status(const char *message) {
 #endif
 }
 
+// Ends the process after host_shutdown. On Android the activity's render thread (hwui) still
+// runs, so std::exit's static destructors pull its locks from under it: it aborts.
+[[noreturn]] static void host_exit(int code) {
+    std::fflush(nullptr);
+#ifdef __ANDROID__
+    std::_Exit(code);
+#else
+    std::exit(code);
+#endif
+}
+
 [[noreturn]] void host_fail(const char *message) {
     std::fprintf(stderr, "%s\n", message);
     std::fflush(stderr);
@@ -314,7 +325,7 @@ void host_language_status(const char *message) {
     }
 #endif
     host_shutdown();
-    std::exit(1);
+    host_exit(1);
 }
 
 static bool mouse_is_captured() {
@@ -394,7 +405,7 @@ static void process_event(const SDL_Event &event) {
     case SDL_EVENT_QUIT:
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
         host_shutdown();
-        std::exit(0);
+        host_exit(0);
     case SDL_EVENT_WILL_ENTER_BACKGROUND:
         // Android takes the window's surface while the app is in the background.
         renderer_release_window();
@@ -1196,7 +1207,7 @@ void capture_picture_if_requested() {
         std::printf("[capture] saved %s (%ux%u)\n", path, picture->width, picture->height);
     }
     host_shutdown();
-    std::exit(0);
+    host_exit(0);
 }
 #endif
 } // namespace
