@@ -5634,12 +5634,13 @@ index 33680f578d7627d7bb43b29b77f58b843371198a..0d19a7f9e48cd235e7dc66791ca9471b
      player_state.previous_map_cell.z = entry->z;
      player_state.camera_position.vx = player_state.previous_map_cell.x * KF_MAP_TILE_SIZE + KF_MAP_TILE_CENTER;
 diff --git a/src/game/player_death.cpp b/src/game/player_death.cpp
-index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3c5a009ca 100644
+index a85c41405b551858ed7cb706b062dbee0826b2a9..dfdad935b995ccf80e213caf95884ed966348d98 100644
 --- a/src/game/player_death.cpp
 +++ b/src/game/player_death.cpp
-@@ -1,4 +1,9 @@
+@@ -1,4 +1,10 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/death_reload.h>
 +#include <kf/platform/messages.h>
 +#include <kf/platform/mod_events.h>
 +#include <kf/platform/online_players.h>
@@ -5647,7 +5648,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
-@@ -51,7 +56,7 @@ s32 player_death_saved_fog_near;
+@@ -51,7 +57,7 @@ s32 player_death_saved_fog_near;
  
  MATRIX player_death_saved_color_matrix;
  
@@ -5656,7 +5657,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
  
  void player_death_begin(void)
  {
-@@ -59,12 +64,16 @@ void player_death_begin(void)
+@@ -59,12 +65,17 @@ void player_death_begin(void)
      player_state.death_camera_pitch_step = 0;
      player_state.death_visual_blend = 0;
      sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_DEATH], KF_AUDIO_MAX_VOLUME);
@@ -5669,11 +5670,12 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
  void game_state_initialize(void)
  {
 +    kf::automap_reset();
++    kf::death_reload_new_game();   // PC extension (reload on death)
 +    kf::mods_new_game();   // PC extension (mods): a new game's save data starts empty
      player_state.experience = 0;
      player_state.progress_state.level = 1;
      player_state.progress_state.current_floor = KF_FLOOR_1;
-@@ -107,6 +116,7 @@ void game_state_initialize(void)
+@@ -107,6 +118,7 @@ void game_state_initialize(void)
      player_state.darkness_timer = KF_PLAYER_STATUS_TIMER_INACTIVE;
      player_state.curse_timer = KF_PLAYER_STATUS_TIMER_INACTIVE;
      map_runtime_state.world_state = {};
@@ -5681,7 +5683,22 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
      item_stock = {};
      item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_SHORT_SWORD)] = 1;
      item_stock[kf_enum_encode<u8>(KF_ITEM_STOCK_PLAYER)][kf_enum_encode<u8>(KF_ITEM_MEDICINAL_HERB)] = 1;
-@@ -188,6 +198,10 @@ void player_adjust_hp(s32 delta)
+@@ -155,6 +167,14 @@ void player_death_restart(void)
+         player_state.vitals.current_mp = player_state.vitals.maximum_mp;
+         player_state.camera_position.vz = PLAYER_REVIVAL_POSITION_Z;
+         player_state.camera_rotation.vy = 0;
++    } else if (kf::death_reload_last_save()) {
++        // PC extension (reload on death): the last save replaced the game; it fades in from black.
++        player_death_apply_visual_fade(&player_death_saved_color_matrix, KF_FIXED12_ONE);
++        player_state.update_state = KF_PLAYER_UPDATE_RECOVERY_FADE;
++        player_state.death_camera_pitch_step = 0;
++        player_state.death_visual_blend = 0;
++        game_graphics_runtime.hud_brightness = 0;
++        return;
+     } else {
+         player_state.camera_position.vx = PLAYER_RESTART_POSITION_X;
+         player_state.camera_position.vz = PLAYER_RESTART_POSITION_Z;
+@@ -188,6 +208,10 @@ void player_adjust_hp(s32 delta)
  {
      s32 value = player_state.vitals.current_hp;
  
@@ -5692,7 +5709,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
      value += delta;
  
      if (value <= 0) {
-@@ -223,125 +237,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
+@@ -223,125 +247,136 @@ static void player_learn_trained_magic(KfEffectKind spell, s32 required_base_mag
      }
  }
  
@@ -5893,15 +5910,15 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
 +    }
 +    if ((p.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
 +        p.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
-+    }
-+    if (p.physical_power >= KF_PLAYER_POWER_MAX + 1) {
-+        p.physical_power = KF_PLAYER_POWER_MAX;
      }
 -    if ((player_state.status_effect_flags & KF_PLAYER_STATUS_FIRE_DEFENSE_BOOST) != KF_PLAYER_STATUS_NONE) {
 -        player_state.fire_defense += FIRE_DEFENSE_STATUS_BONUS;
++    if (p.physical_power >= KF_PLAYER_POWER_MAX + 1) {
++        p.physical_power = KF_PLAYER_POWER_MAX;
+     }
 +    if (p.magic >= KF_PLAYER_POWER_MAX + 1) {
 +        p.magic = KF_PLAYER_POWER_MAX;
-     }
++    }
 +}
 +
 +void player_recalculate_combat_stats(void)
@@ -5918,7 +5935,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
  }
  
  void player_increment_physical_power_training(void)
-@@ -412,6 +437,7 @@ void player_add_experience(s16 amount)
+@@ -412,6 +447,7 @@ void player_add_experience(s16 amount)
          player_state.base_magic = std::min<s32>(player_state.base_magic, KF_PLAYER_POWER_MAX);
          player_recalculate_combat_stats();
          notify_enqueue(KF_NOTIFICATION_LEVEL_UP);
@@ -5926,7 +5943,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
          sound_ref_play(audio_playback(), &player_sound_refs[KF_PLAYER_SOUND_LEVEL_UP], KF_AUDIO_MAX_VOLUME);
      }
  }
-@@ -447,6 +473,12 @@ void player_apply_damage(
+@@ -447,6 +483,12 @@ void player_apply_damage(
      s32 loss;
      s32 remaining;
  
@@ -5939,7 +5956,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
      if ((status_effect_flags & KF_PLAYER_STATUS_CURSE) != KF_PLAYER_STATUS_NONE) {
          player_state.curse_timer = KF_CURSE_DURATION_UPDATES;
          player_state.status_effect_flags |= KF_PLAYER_STATUS_CURSE;
-@@ -495,6 +527,14 @@ void player_apply_damage(
+@@ -495,6 +537,14 @@ void player_apply_damage(
      damage += KF_DAMAGE_SUBUNITS_PER_HP / 2;
      damage = (scale_q12 * (damage / KF_DAMAGE_SUBUNITS_PER_HP)) >> KF_FIXED12_BITS;
      loss = (multiplier_tenths * damage) / KF_PLAYER_DAMAGE_MULTIPLIER_ONE;
@@ -5954,7 +5971,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
      if (loss != 0) {
          remaining = player_state.vitals.current_hp - loss;
          remaining = std::max<s32>(remaining, 0);
-@@ -505,6 +545,28 @@ void player_apply_damage(
+@@ -505,6 +555,28 @@ void player_apply_damage(
      }
  }
  
@@ -5983,7 +6000,7 @@ index a85c41405b551858ed7cb706b062dbee0826b2a9..667cfdc9471904752b4ef27e53888cf3
  void player_apply_radial_damage(
      const VECTOR *origin,
      u32 radius,
-@@ -520,6 +582,9 @@ void player_apply_radial_damage(
+@@ -520,6 +592,9 @@ void player_apply_radial_damage(
      s32 distance;
      u16 attenuation;
  
@@ -7543,17 +7560,18 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..7a4bfe8df90b27471a786cfd686c8958
  
  u8 *map_resource_load_file(const char *filename, std::size_t *loaded_size)
 diff --git a/src/game/save_system.cpp b/src/game/save_system.cpp
-index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e902d5a444 100644
+index d3474864ec0f4578414b005ecaa89eae266de167..8f9eb91bc996b3446e8fc2fd0b8d806e2ac49a70 100644
 --- a/src/game/save_system.cpp
 +++ b/src/game/save_system.cpp
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,7 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/content.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/death_reload.h>
  #include <kf/game/audio.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
-@@ -7,13 +9,17 @@
+@@ -7,13 +10,17 @@
  #include <kf/lib/null.h>
  #include <kf/lib/resource_file.h>
  #include <kf/platform/assets.h>
@@ -7571,7 +7589,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  
  namespace {
  constexpr int save_no_equipment_id = 255;
-@@ -54,15 +60,19 @@ void screen_show_image_until_input(const char *path);
+@@ -54,15 +61,19 @@ void screen_show_image_until_input(const char *path);
  struct SavedGameState {
      KfPlayerState player;
      KfMapSavedWorld world;
@@ -7592,7 +7610,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  };
  
  template <typename T, typename Wire>
-@@ -102,6 +112,37 @@ static void save_padding(SaveCodec &io, std::size_t count) {
+@@ -102,6 +113,37 @@ static void save_padding(SaveCodec &io, std::size_t count) {
      }
  }
  
@@ -7630,7 +7648,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  // Each floor slot starts with KF_MAP_SAVED_RECORDS_OFFSET script bytes.
  static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId floor) {
      std::size_t used = 0;
-@@ -131,8 +172,24 @@ static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId f
+@@ -131,8 +173,24 @@ static void save_floor_script(SaveCodec &io, KfMapSavedWorld &world, KfFloorId f
      save_padding(io, KF_MAP_SAVED_RECORDS_OFFSET - used);
  }
  
@@ -7657,7 +7675,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  #define SAVE_FIELD(type, name) save_field<type>(io, p.name)
  #define SAVE_BYTES(name) save_bytes(io, p.name)
      SAVE_FIELD(s32, experience);
-@@ -182,14 +239,23 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+@@ -182,14 +240,23 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
      SAVE_FIELD(u32, equipment_effect_ticks);
      SAVE_FIELD(u8, selected_magic_id);
      SAVE_BYTES(unknown_5d);
@@ -7681,7 +7699,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
      SAVE_FIELD(u8, equipped_head_armor_id);
      SAVE_FIELD(u8, equipped_body_armor_id);
      SAVE_FIELD(u8, equipped_shield_id);
-@@ -203,24 +269,25 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+@@ -203,24 +270,25 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
      SAVE_FIELD(s16, view_rotation_offset.vx);
      SAVE_FIELD(s16, view_rotation_offset.vy);
      SAVE_FIELD(s16, view_rotation_offset.vz);
@@ -7711,7 +7729,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
      SAVE_BYTES(unknown_ce);
      SAVE_FIELD(s16, view_bob_offset);
      SAVE_FIELD(u16, view_bob_phase);
-@@ -231,14 +298,33 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
+@@ -231,14 +299,33 @@ static void save_state_fields(SaveCodec &io, SavedGameState &state) {
      SAVE_BYTES(unknown_df);
  #undef SAVE_FIELD
  #undef SAVE_BYTES
@@ -7748,7 +7766,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  }
  
  static u32 save_checksum(const u8 *data, std::size_t size) {
-@@ -251,7 +337,9 @@ static u32 save_checksum(const u8 *data, std::size_t size) {
+@@ -251,7 +338,9 @@ static u32 save_checksum(const u8 *data, std::size_t size) {
      return ~crc;
  }
  
@@ -7759,7 +7777,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
      static_assert(sizeof(KfMapObjectLink) == 8, "Update the floor record boundary when the compact link representation changes");
      for (const auto &floor : world.floors) {
          if (floor.records[0] == 0)
-@@ -275,10 +363,11 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+@@ -275,10 +364,11 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
          const u8 *object_ids = floor.records.data() + position;
          for (std::size_t i = 0; i < KF_MAP_OBJECT_CAPACITY; ++i) {
              const auto id = floor.records[position++];
@@ -7773,7 +7791,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
                      return false;
              }
          }
-@@ -297,7 +386,7 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+@@ -297,7 +387,7 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
                  return false;
              KfMapObjectLink link{};
              std::memcpy(&link, floor.records.data() + position + 1, sizeof link);
@@ -7782,7 +7800,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
                  return false;
          }
          for (std::size_t group = 0; group < 3; ++group) {
-@@ -311,6 +400,13 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
+@@ -311,6 +401,13 @@ static bool save_world_valid(const KfMapSavedWorld &world) {
      return true;
  }
  
@@ -7796,7 +7814,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  static bool save_state_valid(const SavedGameState &state) {
      const auto &p = state.player;
      const auto floor = kf_enum_encode<u8>(p.progress_state.current_floor);
-@@ -318,7 +414,8 @@ static bool save_state_valid(const SavedGameState &state) {
+@@ -318,7 +415,8 @@ static bool save_state_valid(const SavedGameState &state) {
      const auto weapon = kf_enum_encode<u8>(p.equipped_weapon_id);
      const auto magic = kf_enum_encode<u8>(p.selected_magic_id);
      if (p.vitals.maximum_hp == 0 || p.vitals.maximum_mp == 0
@@ -7806,7 +7824,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
              || (weapon != save_no_equipment_id && weapon >= KF_WEAPON_RECORD_COUNT)
              || (magic != save_no_equipment_id && magic >= KF_MAGIC_PLAYER_COUNT)
              || p.camera_position.vx < 0 || p.camera_position.vx >= KF_MAP_COLUMNS * KF_MAP_TILE_SIZE
-@@ -326,6 +423,11 @@ static bool save_state_valid(const SavedGameState &state) {
+@@ -326,6 +424,11 @@ static bool save_state_valid(const SavedGameState &state) {
              || p.motion_state.map_cell.x >= KF_MAP_COLUMNS
              || p.motion_state.map_cell.z >= KF_MAP_ROWS)
          return false;
@@ -7818,7 +7836,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
      const std::array<KfObjectId, 5> armor = {p.equipped_head_armor_id, p.equipped_body_armor_id,
          p.equipped_shield_id, p.equipped_arm_armor_id, p.equipped_leg_armor_id};
      for (const auto id : armor) {
-@@ -368,41 +470,145 @@ static void save_state_apply(const SavedGameState &state) {
+@@ -368,41 +471,145 @@ static void save_state_apply(const SavedGameState &state) {
      // The existing load-return path reloads the floor, weapon and selected magic.
  }
  
@@ -7990,7 +8008,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  }
  
  static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
-@@ -418,76 +624,261 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
+@@ -418,76 +625,265 @@ static KfSaveResult save_failure(kf::SaveFileResult result, bool writing) {
  
  KfSaveResult save_system_read_catalog(std::array<KfSaveSlotSummary, KF_SAVE_SLOT_COUNT> &summaries) {
      summaries = {};
@@ -8070,6 +8088,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
 +    // No live game state is touched until the slot is decoded and validated.
      save_state_apply(state);
 +    kf::automap_load(slot);
++    kf::death_reload_note_save(slot);   // PC extension (reload on death)
 +    kf::mods_game_loaded(slot);   // PC extension (mods)
      return KF_SAVE_RESULT_OK;
  }
@@ -8131,6 +8150,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
 +        save_catalog_read = true;
 +    }
 +    kf::automap_save(slot);
++    kf::death_reload_note_save(slot);   // PC extension (reload on death)
 +    kf::mods_game_saved(slot);   // PC extension (mods): on_save
      return KF_SAVE_RESULT_OK;
  }
@@ -8143,6 +8163,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
 +        std::printf("[quicksave] save failed (%d)\n", static_cast<int>(result));
 +    if (result == kf::SaveFileResult::Ok) {
 +        kf::automap_save(kf::SaveSlot::Quick);
++        kf::death_reload_note_save(kf::SaveSlot::Quick);   // PC extension (reload on death)
 +        kf::mods_game_saved(kf::SaveSlot::Quick);   // PC extension (mods): on_save
 +    }
 +    return result == kf::SaveFileResult::Ok;
@@ -8161,6 +8182,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
 +    }
 +    save_state_apply(state);
 +    kf::automap_load(kf::SaveSlot::Quick);
++    kf::death_reload_note_save(kf::SaveSlot::Quick);   // PC extension (reload on death)
 +    kf::mods_game_loaded(kf::SaveSlot::Quick);   // PC extension (mods): on_load_game
 +    return true;
 +}
@@ -8288,7 +8310,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
  void menu_play_input_sound(KfMenuSoundCue cue)
  {
      SoundRef sound;
-@@ -542,7 +933,7 @@ void screen_show_image_until_input(const char *path)
+@@ -542,7 +938,7 @@ void screen_show_image_until_input(const char *path)
      const auto alternate = comparison_image_read(path, game_graphics_runtime.display_state.asset_load_capacity);
      // Transparent glyph pixels need the original backdrop when replacing a page.
      kf::Image backdrop{};
@@ -8297,7 +8319,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
          kf::host_fail("Cannot capture the dialogue background.");
      bool showing_alternate = false;
      bool reported_unavailable = false;
-@@ -552,7 +943,7 @@ void screen_show_image_until_input(const char *path)
+@@ -552,7 +948,7 @@ void screen_show_image_until_input(const char *path)
          const bool compare = kf::host_action_held(kf::Action::compare_language);
          const bool show_alternate = compare && !alternate.empty();
          if (show_alternate != showing_alternate) {
@@ -8306,7 +8328,7 @@ index d3474864ec0f4578414b005ecaa89eae266de167..35403bad4efc9e090a0063e4902eb9e9
                  kf::host_fail("Cannot restore the dialogue background.");
              if (show_alternate)
                  tim_upload_images(alternate.data(), alternate.size());
-@@ -597,11 +988,13 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
+@@ -597,11 +993,13 @@ void talk_show_dialogue_page(KfFloorId floor, u8 stage, KfCharacterId character_
          kf_enum_encode<s32>(character_id) % 10 + '0';
      talk_image_path_template[talk_stage_offset] = stage + '0';
      talk_image_path_template[talk_page_offset] = page + '0';

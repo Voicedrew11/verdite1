@@ -504,6 +504,10 @@ OptionSection gameplay_world() {
                "Interacting with a lock unlocks it (with the unlock sound) when you carry its key, instead of having "
                "to choose the key from the item menu.",
                s.auto_keys, apply_control_settings),
+        toggle("gameplay.reload_on_death", "Reload the last save on death",
+               "A death loads the save you last made or loaded, instead of starting a new game. A Dragon Tree "
+               "Fruit still revives you at the fountain once it flows. With no save yet, the game starts over.",
+               s.reload_on_death, store_only),
     }});
     // In a room everyone runs at the host's speed.
     section.rows.front() = enabled_if(std::move(section.rows.front()), [] { return !coop_follows_host(); });

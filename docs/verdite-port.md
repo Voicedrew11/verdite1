@@ -447,6 +447,7 @@ branch point.
 | analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | done (2026-10-23): the shaping in libverdite (`verdite/stick.h`), the options and per-axis state in `port/platform/analog.cpp`, and a line in each of the player update's four velocity branches asking it for the velocity (`host_analog_velocity`), so nothing is pre-loaded to steer the game's own branch; centred, the D-pad's branches run. Twin stick by default; off in Classic mode. Not carried: `AnalogProbe` |
 | pad layout `jp`/`west` | `PadLayout.cs` | done (2026-10-23): two face-button tables in `port/platform/host.cpp`, chosen by `controls.pad_layout` (West by default); only the gamepad's bindings change, so the keyboard, mouse and agent need no subtraction |
 | mouse on the menus | Verdite2's `patches/MenuMouse.cs` (KF2; KF1's main had none) | done (2026-10-25): `verdite/menu_pointer.h` in libverdite (game-agnostic, unit-tested), `port/platform/menu_pointer.cpp` (SDL to game pixels, the presses into `host_read_buttons`), Controls > *Mouse in menus* (`controls.menu_pointer`, on, kept in Classic mode as mouse look is). See "The mouse on the menus" below |
+| reload on death | Verdite2's `AutoReload.cs`, Verdite3's `patches/AutoReload.cs` | done (2026-11-06): see "Reload on death" below |
 | enemy turn speed | Verdite2's `EnemyTurn.cs` (KF2, `81c02db` there) | done (2026-10-23), reworked for KF1: its enemies already turn 60-80 a tick (32, 48 and 10 for a few) against the D-pad's 28, so the turn rate alone was not what let a player circle them; the pursuit re-aims at the player on only one update in eight, and a retreat only as it starts. Gameplay > *Enemy turn speed* (x1-x4, x1.5 by default, x1 in Classic mode, `gameplay.enemy_turn`; since 2026-10-26 the Fixed mode beside the default Automatic, "Automatic enemy turn" below) multiplies the turn of a pursuit or a retreat, not a wander or the way home; above x1 the enemy keeps the player in sight (no setting since 2026-11-03), re-aiming both every update, the random draw kept so the sequence is the game's. Staged on floor 1 (an enemy of turn 80 put 2,500 ahead, the player strafing round it at 180 a tick, three runs each): at x1 it lost the player in every run and wandered off, with 4-5 melee attacks; at x1.5 with tracking it stayed at about 2,550 and started 8-10, at x2 7-15; x1.5 without tracking lost the player too. Not carried: V2's tracking while standing, since a KF1 enemy near the player is pursuing, not standing |
 | rumble, gyro aim | Verdite Core `Rumble.cs`, `GyroAim.cs` | SDL3 has both |
 | debug: flight, noclip, god mode, infinite MP, peaceful, speed, warp, editors | `Menu/`, `Warp.cs` | done as `mods/debug` (Lua), on a par with Verdite3's `mods/kf3debug` (2026-11-04) |
@@ -608,7 +609,7 @@ Dear ImGui window `port/ext/setup_overlay.cpp`, and Android's Material views
   their defaults or what the overlay set. A group the settings match no choice of offers
   "Keep as is".
 - **Verdite2's rows KF1 has no setting for are left out**: Water, Motion (the frame rate covers it),
-  Sound, Rumble and gyro (the phone has Vibration in its place), Comparing gear, On death. Movement is
+  Sound, Rumble and gyro (the phone has Vibration in its place), Comparing gear. On death is a SETTINGS row but not asked by the setup. Movement is
   part of the turning page's Controls list, and Enemy turn speed one list there. There is no
   run key or map in the setup: both were mods, and neither ships.
 - **Summary** ("Ready"): every answer, page by page, not only what changes.
@@ -645,6 +646,39 @@ x3. Held to x1..x3, keeping the player in sight above x1. Of the inputs that tur
 fastest counts, applied between updates, so keys and the mouse together do not flip it each
 update. Checked headless 2026-10-26: the D-pad stays x1, `KF_TEST_SPIN` goes to x3 with tracking,
 and the two at once switch once. The x3 is not judged in play.
+
+## Reload on death
+
+Gameplay > *Reload the last save on death* (`gameplay.reload_on_death`, on; off in Classic mode),
+ON DEATH (RELOAD / RESTART) on the game menu's CONTROLS page. At the end of the death fade the game's
+`player_death_restart` does one of two things: with the Dragon Fountain flowing
+(`world_state.floor1.revival_enabled`) and a Dragon Tree Fruit carried, it uses one and revives the
+player at the fountain with everything else kept; otherwise it starts a New Game. The patch leaves
+the fruit's branch first and untouched, a rule of play as Verdite3 leaves its DRAGON CRYSTAL, and
+puts `kf::death_reload_last_save()` (`port/ext/death_reload.cpp`) in front of the New Game:
+
+| at the end of the death fade | result |
+|---|---|
+| the fountain flows and a fruit is carried | the game's revival at the fountain |
+| setting off, Classic mode, or a coop world in play | the game's New Game (coop has its own death) |
+| no save made or loaded since the game started | the game's New Game |
+| otherwise | the last save made or loaded (slot 1-3 or the quick save), faded in from black |
+| that save fails to load | the game's New Game and "That save could not be loaded." |
+
+The save is noted where the save system writes or reads one (`save_system_write_slot`, `_read_slot`,
+`quick_write`, `quick_read`), forgotten by `game_state_initialize`, and loaded through
+`player_replace_game`, as the quick load is, so the automap and the mods' `on_load_game` follow. The
+timing is the game's own: the fall and the fade run, and the reload lands where the restart would,
+so there is no delay to set (Verdite3 has one because it holds its death clock). The rule is
+`port/ext/death_reload_rule.cpp`, tested in `port/tests/death_reload.cpp`.
+
+Checked headless 2026-11-06 (`hurt 100`): with no save, the game's restart at (31000, 5000); after a
+menu Load of slot 1, walking off and dying put the player back at the save's place, HP and MP
+(16/20), and walking worked after the fade-in; a fruit carried with the fountain dry reloads too (the
+game alone would start over); with the fountain flowing (set from a test mod's `on_death`) the fruit
+revived at (64000, 20000) with MP full, the fruit gone from the pack and nothing reloaded, and the
+next death without a fruit reloaded. Not run: a death after a quick save (F2 has no agent command).
+The fade is not judged by eye.
 
 ## Open questions
 

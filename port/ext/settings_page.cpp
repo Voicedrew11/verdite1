@@ -167,6 +167,8 @@ const std::vector<Page> &pages() {
             {"analog.stick_sens", {"STICK SENS", "レバーのはやさ"}, stick_sens_values(), stick_sens_page_stops()},
             {"gameplay.enemy_turn_speed", {"ENEMY TURN", "てきのふりむき"}, enemy_turn_values(),
              {ext::enemy_turn_automatic, 1.0, 2.0, 3.0, 4.0}},
+            {"gameplay.reload_on_death", {"ON DEATH", "しんだとき"},
+             {{true, {"RELOAD", "ロード"}}, {false, {"RESTART", "はじめから"}}}, {}},
         }});
         made.push_back({"sound", {"SOUND", "おと"}, {
             {"audio.volume", {"VOLUME", "おとのおおきさ"}, {},
