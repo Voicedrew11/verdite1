@@ -686,12 +686,14 @@ std::string note(const verdite::TitleView &view, Language language) {
     switch (view.page) {
     case TitlePage::HostCode: return std::string(share_word.in(language));
     case TitlePage::Waiting: return verdite::room_code_is_public(view.code) ? std::string() : view.code;
-    case TitlePage::RoomList:
+    case TitlePage::RoomList: {
         if (view.list_state == verdite::RoomListState::Failed)
             return std::string(no_list_word.in(language));
         if (view.list_state == verdite::RoomListState::Connecting)
             return std::string(connecting_word.in(language));
-        return view.rows.empty() ? std::string(no_rooms_word.in(language)) : std::string();
+        const auto is_room = [](const verdite::TitleRowView &row) { return row.kind == verdite::TitleRowKind::Room; };
+        return std::ranges::none_of(view.rows, is_room) ? std::string(no_rooms_word.in(language)) : std::string();
+    }
     case TitlePage::Mods: {
         const auto is_mod = [](const verdite::TitleRowView &row) { return row.kind == verdite::TitleRowKind::Mod; };
         if (std::ranges::none_of(view.rows, is_mod))
