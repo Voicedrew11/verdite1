@@ -153,7 +153,7 @@ private:
     std::unique_ptr<VulkanSwapchain> swapchain_;
     PictureOptions options_;
     int logical_width_ = render_width, scale_ = 1;
-    VkFormat depth_format_ = VK_FORMAT_D32_SFLOAT;
+    VkFormat depth_format_ = VK_FORMAT_UNDEFINED;
     std::unique_ptr<WorldPipelines> pipelines_;
     std::unique_ptr<Downsample> downsample_;   // window only
     bool downsampled_ = false;                 // the window shows downsample_'s picture
@@ -189,6 +189,28 @@ bool format_supports(VkPhysicalDevice physical, VkFormat format, VkFormatFeature
     return (properties.optimalTilingFeatures & features) == features;
 }
 
+struct DepthCandidate {
+    VkFormat format;
+    const char *name;
+};
+// Depth-only formats, best first. No stencil formats: the layout transitions
+// use the depth aspect alone, which is invalid for depth/stencil formats.
+constexpr std::array<DepthCandidate, 3> depth_candidates = {{
+    {VK_FORMAT_D32_SFLOAT, "D32_SFLOAT"},
+    {VK_FORMAT_X8_D24_UNORM_PACK32, "X8_D24_UNORM"},
+    {VK_FORMAT_D16_UNORM, "D16_UNORM"},
+}};
+
+// The first candidate the device can attach as a depth buffer, or null.
+const DepthCandidate *pick_depth_format(VkPhysicalDevice physical) {
+    const VkFormatFeatureFlags depth_features = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    for (const DepthCandidate &candidate : depth_candidates) {
+        if (format_supports(physical, candidate.format, depth_features))
+            return &candidate;
+    }
+    return nullptr;
+}
+
 VulkanBackend::VulkanBackend(std::unique_ptr<VulkanDevice> device, SDL_Window *window)
     : device_(std::move(device)), window_(window) {}
 
@@ -216,9 +238,13 @@ VulkanBackend::~VulkanBackend() {
 }
 
 bool VulkanBackend::start(std::string &error) {
-    const VkFormatFeatureFlags depth_features = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    if (!format_supports(device_->physical(), depth_format_, depth_features))
-        depth_format_ = VK_FORMAT_D16_UNORM;
+    const DepthCandidate *depth = pick_depth_format(device_->physical());
+    if (!depth) {
+        error = "depth format";
+        return false;
+    }
+    depth_format_ = depth->format;
+    std::printf("[vulkan] depth %s\n", depth->name);
     if (window_) {
         swapchain_ = std::make_unique<VulkanSwapchain>(*device_, window_, device_->take_surface());
         downsample_ = Downsample::create(*device_);

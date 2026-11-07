@@ -111,7 +111,7 @@ void begin_pass(VkCommandBuffer commands, const RenderPass &pass, const Framebuf
                 VkClearColorValue clear_color) {
     std::array<VkClearValue, 2> clears{};
     clears[0].color = clear_color;
-    clears[1].depthStencil = {1.0f, 0};
+    clears[1].depthStencil = {0.0f, 0};
     const VkExtent2D extent = framebuffer.extent();
     VkRenderPassBeginInfo info{};
     info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

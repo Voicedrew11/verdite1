@@ -32,8 +32,10 @@ layout(location = 6) flat out float out_cue_scale;   // 0: not cued
 layout(location = 7) out vec4 out_normal;        // model space, and its length
 layout(location = 8) flat out uvec4 out_light;   // light set, tint
 
-// Perspective depth for the depth test: 0 at the near plane, 1 at the far one.
-const float near_w = 16.0, far_w = 65536.0;
+// Reversed infinite depth: clip z is the constant near_w, so NDC depth is
+// near_w / w: 1 at the near plane, approaching 0 far away. Vulkan keeps 0 <= z <= w,
+// so the near plane is w = near_w and there is no far plane.
+const float near_w = 16.0;
 
 vec4 to_clip(vec2 screen, float w) {
     vec2 ndc = vec2((screen.x + draw.view_columns.x) / draw.view_columns.y - 1.0, screen.y / 120.0 - 1.0);
@@ -41,8 +43,7 @@ vec4 to_clip(vec2 screen, float w) {
         return vec4(ndc, 0.0, 1.0);
     // Scaling by w keeps the position but makes the rasterizer interpolate
     // perspective-correctly.
-    float z = far_w / (far_w - near_w) * w - far_w * near_w / (far_w - near_w);
-    return vec4(ndc * w, z, w);
+    return vec4(ndc * w, near_w, w);
 }
 
 // to_clip of the camera-space point's projection, multiplied out so it stays
@@ -51,8 +52,7 @@ vec4 to_clip(vec2 screen, float w) {
 vec4 clip_of_camera(vec3 camera) {
     vec2 xy = vec2((camera.x * draw.projection_distance + (draw.center.x + draw.view_columns.x) * camera.z) / draw.view_columns.y,
                    (camera.y * draw.projection_distance + draw.center.y * camera.z) / 120.0) - camera.z;
-    float z = far_w / (far_w - near_w) * camera.z - far_w * near_w / (far_w - near_w);
-    return vec4(xy, z, camera.z);
+    return vec4(xy, near_w, camera.z);
 }
 
 bool saturated(vec2 screen) {
