@@ -676,6 +676,31 @@ TEST_CASE("the room list follows the service, keeps the cursor on its room, and 
     CHECK(choice.code == "PBBBBBBB");
 }
 
+TEST_CASE("the room list ends with BACK, which stays put as the list changes and returns to CO-OP") {
+    auto menu = open_menu();
+    go_to(menu, TitleRowKind::Coop);
+    go_to(menu, TitleRowKind::RoomList);
+    REQUIRE(menu.view().rows.size() == 1);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
+    CHECK(menu.view().pinned_rows == 1);
+
+    // Rooms arriving into an empty list put the cursor on the first room.
+    menu.set_rooms({{"PAAAAAAA", "ONE", 1, 1, 4}}, RoomListState::Listing);
+    CHECK(selected(menu) == TitleRowKind::Room);
+    menu.press(TitleInput::Down);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
+    menu.set_rooms({{"PCCCCCCC", "NEW", 1, 1, 4}, {"PAAAAAAA", "ONE", 1, 1, 4}}, RoomListState::Listing);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
+    menu.set_rooms({}, RoomListState::Listing);
+    CHECK(selected(menu) == TitleRowKind::GoBack);
+
+    menu.press(TitleInput::Confirm);
+    CHECK_FALSE(menu.take_choice());
+    CHECK(menu.view().page == TitlePage::Coop);
+    CHECK(selected(menu) == TitleRowKind::RoomList);
+    CHECK_FALSE(menu.wants_room_list());
+}
+
 TEST_CASE("a failed join goes back to its page saying why; Back while waiting cancels it") {
     auto menu = open_menu();
     go_to(menu, TitleRowKind::Coop);

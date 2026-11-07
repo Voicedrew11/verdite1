@@ -140,7 +140,7 @@ enum class TitlePage : std::uint8_t {
     HostOptions,   // ROOM SETTINGS, and DELETE while any world is kept
     HostCode,   // a new private world's code, to read out before START
     JoinCode,   // the code typed so far, and a grid of the digits with DELETE and JOIN
-    RoomList,   // the public rooms
+    RoomList,   // the public rooms, then BACK, which stays on screen
     Waiting,    // joining; Back cancels
     Profile,    // NAME, COLOUR, HELMET, SYMBOL, and DONE while the profile is being set up
     NameEntry,  // the name typed so far, and a grid of name_letters with DELETE and DONE
@@ -175,7 +175,7 @@ enum class TitleRowKind : std::uint8_t {
     CoopSetting,                                   // CoopSettings, RoomSettings: setting. Left and Right step, as Confirm does
     LoadAnyway, SaveMod,                           // LoadWarning: save_mod is dimmed
     EnterCoop,                                     // CoopWarning
-    GoBack,                                        // LoadWarning, CoopWarning, DeleteWarning, Mods
+    GoBack,                                        // LoadWarning, CoopWarning, DeleteWarning, Mods, RoomList
 };
 
 struct TitleRowView {
