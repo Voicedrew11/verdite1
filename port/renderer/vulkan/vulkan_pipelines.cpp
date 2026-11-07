@@ -294,7 +294,7 @@ VkPipeline WorldPipelines::build(PipelineKey key) const {
     depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth.depthTestEnable = key.depth_test ? VK_TRUE : VK_FALSE;
     depth.depthWriteEnable = key.depth_write ? VK_TRUE : VK_FALSE;
-    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
 
     const VkPipelineColorBlendAttachmentState attachment = blend_state(key.blend);
     VkPipelineColorBlendStateCreateInfo blend{};

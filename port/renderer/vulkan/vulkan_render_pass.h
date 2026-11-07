@@ -74,7 +74,7 @@ private:
 };
 
 // Begins the pass over the whole framebuffer and sets the viewport and scissor
-// to it. clear_color is used by ColorLoad::Clear; depth clears to 1 (far).
+// to it. clear_color is used by ColorLoad::Clear; depth clears to 0 (far).
 void begin_pass(VkCommandBuffer commands, const RenderPass &pass, const Framebuffer &framebuffer,
                 VkClearColorValue clear_color = {});
 } // namespace kf

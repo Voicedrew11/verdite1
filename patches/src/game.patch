@@ -3876,10 +3876,10 @@ index 84568fbc30be24df408e7e38a1bfd6c1dcae8457..4ce1f0a0c0edbb1c337b086273e4c687
          switch (equipment_category) {
 diff --git a/src/game/menu_settings.cpp b/src/game/menu_settings.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a4687a3ee727
+index 0000000000000000000000000000000000000000..987c6beaf4f50f0679e8d1a395014540a4d399cb
 --- /dev/null
 +++ b/src/game/menu_settings.cpp
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,458 @@
 +// PC extension: the port's SETTINGS page under System, drawn with the menu's own
 +// boxes, cursor, font and sounds (kf/platform/settings_page.h has the settings).
 +#include <kf/platform/prelude.h>
@@ -4184,28 +4184,30 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +}
 +
 +// The title with the page number in its box, then the rows: each label in a row
-+// box, its value in an option box, lit on the cursor's row.
++// box, its value in an option box, lit on the cursor's row. All of it slide_x
++// pixels right of its place, as a swipe moves the page.
 +void settings_draw(const std::string &title, s32 page_number, s32 page_count,
-+    const std::vector<SettingsRowText> &rows, s32 selected_row, kf::Language language)
++    const std::vector<SettingsRowText> &rows, s32 selected_row, s32 slide_x, kf::Language language)
 +{
 +    const auto &assets = menu_resources().assets;
 +    const s32 box_width = assets.row_background.width;
-+    const MenuPoint title_at{SETTINGS_TITLE_X, SETTINGS_TITLE_Y};
++    const s32 title_x = SETTINGS_TITLE_X + slide_x;
++    const MenuPoint title_at{static_cast<s16>(title_x), SETTINGS_TITLE_Y};
 +    menu_blit_sprite_translucent(&assets.row_background, &title_at);
-+    menu_draw_text(menu_spell(title, language), MenuPoint{SETTINGS_TITLE_X + SETTINGS_TEXT_INSET - SETTINGS_BOX_X_OFFSET, SETTINGS_TITLE_Y}, 1.0f);
++    menu_draw_text(menu_spell(title, language), MenuPoint{static_cast<s16>(title_x + SETTINGS_TEXT_INSET - SETTINGS_BOX_X_OFFSET), SETTINGS_TITLE_Y}, 1.0f);
 +    if (page_count > 1) {
 +        const auto pages = menu_spell(std::to_string(page_number) + "/" + std::to_string(page_count), language);
-+        const s32 right = SETTINGS_TITLE_X - SETTINGS_BOX_X_OFFSET + box_width - SETTINGS_TEXT_INSET;
++        const s32 right = title_x - SETTINGS_BOX_X_OFFSET + box_width - SETTINGS_TEXT_INSET;
 +        menu_draw_text(pages, MenuPoint{static_cast<s16>(right - menu_text_width(pages)), SETTINGS_TITLE_Y}, 1.0f);
 +    }
 +
 +    kf::host_menu_widget(kf::MenuWidget::Window, selected_row);
 +    for (s32 i = 0; i < static_cast<s32>(rows.size()); i++) {
-+        const MenuPoint at{SETTINGS_ROW_X, static_cast<s16>(SETTINGS_FIRST_ROW_Y + i * SETTINGS_ROW_STEP)};
++        const MenuPoint at{static_cast<s16>(SETTINGS_ROW_X + slide_x), static_cast<s16>(SETTINGS_FIRST_ROW_Y + i * SETTINGS_ROW_STEP)};
 +        const auto label = menu_spell(rows[i].label, language);
 +        const s32 label_width = std::max(box_width, menu_text_width(label) + 2 * SETTINGS_TEXT_INSET);
 +        const bool held = kf::host_menu_row(i, at.x - SETTINGS_BOX_X_OFFSET,
-+            at.y - SETTINGS_BOX_Y_OFFSET, SETTINGS_VALUE_X + SETTINGS_VALUE_WIDTH - at.x,
++            at.y - SETTINGS_BOX_Y_OFFSET, SETTINGS_VALUE_X - SETTINGS_ROW_X + SETTINGS_VALUE_WIDTH,
 +            assets.row_background.height);
 +        menu_blit_box_translucent(held ? assets.row_confirmed_background : assets.row_background, at, label_width);
 +        if (i == selected_row)
@@ -4214,10 +4216,11 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +        menu_draw_text(label, MenuPoint{static_cast<s16>(at.x + SETTINGS_TEXT_INSET - SETTINGS_BOX_X_OFFSET), at.y}, shade);
 +        if (rows[i].value.empty())
 +            continue;
-+        const MenuPoint value_at{SETTINGS_VALUE_X, at.y};
++        const s32 value_x = SETTINGS_VALUE_X + slide_x;
++        const MenuPoint value_at{static_cast<s16>(value_x), at.y};
 +        menu_blit_box_translucent(i == selected_row ? assets.option_highlight : assets.option_background,
 +            value_at, SETTINGS_VALUE_WIDTH);
-+        settings_draw_centred(menu_spell(rows[i].value, language), SETTINGS_VALUE_X, SETTINGS_VALUE_WIDTH,
++        settings_draw_centred(menu_spell(rows[i].value, language), value_x, SETTINGS_VALUE_WIDTH,
 +            at.y, shade);
 +    }
 +    menu_enqueue_background();
@@ -4233,7 +4236,9 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +            selected = static_cast<s32>(rows.size());
 +        rows.push_back({row.label, row.value, row.enabled});
 +    }
-+    settings_draw(view.title, view.page_number, view.page_count, rows, selected, language);
++    kf::host_menu_pages(view.page_count);
++    settings_draw(view.title, view.page_number, view.page_count, rows, selected, kf::host_menu_page_offset_px(),
++        language);
 +}
 +
 +// The question on leaving with changes: 0 saves, 1 discards.
@@ -4242,7 +4247,7 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +    const kf::SettingsPageView view = kf::settings_page_view(language);
 +    settings_draw(view.title, view.page_number, view.page_count,
 +        {{kf::settings_page_save_text(language), {}, true}, {kf::settings_page_discard_text(language), {}, true}},
-+        answer, language);
++        answer, 0, language);
 +}
 +
 +enum class SettingsLeave : u8 { Stay, Leave };
@@ -4271,6 +4276,9 @@ index 0000000000000000000000000000000000000000..7ec42cefc8729d10bcd881c46580a468
 +        if (!kf::settings_page_changed())
 +            return SettingsLeave::Leave;
 +        *asking = true;
++    } else if (const s32 turn = kf::host_menu_swiped_page()) {
++        menu_play_input_sound(MENU_SOUND_CURSOR);
++        kf::settings_page_move_page(turn);
 +    } else if (const auto pointed = kf::host_menu_pointed_row(kf::MenuWidget::Window)) {
 +        menu_play_input_sound(MENU_SOUND_CURSOR);
 +        kf::settings_page_select_row(*pointed);
