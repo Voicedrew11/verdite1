@@ -520,6 +520,8 @@ void TitleMenu::set_rooms(std::vector<TitleRoom> rooms, RoomListState state) {
     std::string on;
     if (page_ == TitlePage::RoomList && row_ < rooms_.size())
         on = rooms_[row_].code;
+    // BACK, after the rooms, keeps the cursor; while the list was empty it starts on the first room.
+    const bool on_back = page_ == TitlePage::RoomList && !rooms_.empty() && row_ == rooms_.size();
     rooms_ = std::move(rooms);
     list_state_ = state;
     if (page_ != TitlePage::RoomList)
@@ -527,8 +529,10 @@ void TitleMenu::set_rooms(std::vector<TitleRoom> rooms, RoomListState state) {
     const auto found = std::ranges::find(rooms_, on, &TitleRoom::code);
     if (found != rooms_.end())
         row_ = static_cast<std::size_t>(found - rooms_.begin());
+    else if (on_back)
+        row_ = rooms_.size();
     else
-        row_ = std::min(row_, rooms_.empty() ? std::size_t{0} : rooms_.size() - 1);
+        row_ = std::min(row_, rooms_.size());
 }
 
 bool TitleMenu::wants_room_list() const {
@@ -668,6 +672,8 @@ TitleView TitleMenu::view() const {
             rows.push_back(row(TitleRowKind::Room, room.players < room.most));
             rows.back().room = &room;
         }
+        rows.push_back(row(TitleRowKind::GoBack));
+        view.pinned_rows = 1;
         break;
     case TitlePage::Mods:
         for (const TitleMod &mod : mods_) {
