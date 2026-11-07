@@ -4,15 +4,20 @@
 #include <kf/renderer/constants.h>
 #include <kf/renderer/frontend.h>
 #include <verdite/menu_pointer.h>
+#include <verdite/page_swipe.h>
 
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <cmath>
+#include <cstdint>
 
 namespace kf {
 namespace {
 
 verdite::MenuPointer pointer;
+verdite::PageSwipe swipe;
+int building_pages = 0;   // what this frame's drawing said
 
 // A drag this far (game pixels, about a row) is a step of the list, not a press.
 constexpr float touch_step = 16;
@@ -20,8 +25,11 @@ struct TouchDrag {
     float down_y = 0;
     int steps = 0;
     bool scrolling = false;
+    bool swiping = false;   // sideways: turning the page, not pointing
 };
 TouchDrag touch;
+
+std::uint64_t now_ms() { return SDL_GetTicks(); }
 
 // A window position (SDL's, in points) in the original 320 x 240 pixels.
 std::array<float, 2> game_position(SDL_Window *window, float x, float y) {
@@ -96,12 +104,19 @@ void host_menu_pointer_event(SDL_Window *window, const SDL_Event &event) {
 
 void host_menu_touch_down(SDL_Window *window, float x, float y) {
     const auto [game_x, game_y] = game_position(window, x, y);
-    touch = {game_y, 0, false};
+    touch = {game_y, 0, false, false};
     pointer.pressed(game_x, game_y);
+    swipe.pressed(game_x, game_y, now_ms());
 }
 
 void host_menu_touch_moved(SDL_Window *window, float x, float y) {
     const auto [game_x, game_y] = game_position(window, x, y);
+    if (!touch.scrolling && swipe.moved(game_x, game_y, now_ms())) {
+        if (!touch.swiping)
+            pointer.gone();
+        touch.swiping = true;
+        return;
+    }
     // Up the screen is down the list, as a list dragged by the finger moves.
     const int steps = static_cast<int>((touch.down_y - game_y) / touch_step);
     if (steps != touch.steps) {
@@ -116,9 +131,10 @@ void host_menu_touch_moved(SDL_Window *window, float x, float y) {
 }
 
 void host_menu_touch_up(SDL_Window *window, float x, float y) {
-    if (touch.scrolling)
-        return;
     const auto [game_x, game_y] = game_position(window, x, y);
+    swipe.released(game_x, game_y, now_ms());
+    if (touch.scrolling || touch.swiping)
+        return;
     pointer.released(game_x, game_y);
 }
 
@@ -127,13 +143,26 @@ bool host_menu_has_rows() { return !pointer.shown_rows().empty(); }
 void host_menu_pointer_gone() {
     pointer = {};
     touch = {};
+    swipe = {};
 }
 
 verdite::MenuPointer &host_menu_pointer() { return pointer; }
 
-void host_menu_frame_begin() { pointer.begin_frame(); }
+void host_menu_pages(s32 page_count) { building_pages = page_count; }
 
-void host_menu_frame_shown() { pointer.frame_shown(); }
+s32 host_menu_swiped_page() { return swipe.take_turn(now_ms()); }
+
+s32 host_menu_page_offset_px() { return static_cast<s32>(std::lround(swipe.offset_px(now_ms()))); }
+
+void host_menu_frame_begin() {
+    pointer.begin_frame();
+    building_pages = 0;
+}
+
+void host_menu_frame_shown() {
+    pointer.frame_shown();
+    swipe.set_page_count(building_pages);
+}
 
 u32 host_menu_pointer_buttons() {
     switch (pointer.take_press()) {

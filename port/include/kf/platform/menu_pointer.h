@@ -22,16 +22,26 @@ enum class MenuWidget : u8 { Window, List, Choice };
 // the row, for the drawing to show it pressed.
 void host_menu_widget(MenuWidget widget, s32 cursor_row);
 bool host_menu_row(s32 row, s32 x, s32 y, s32 width, s32 height);
+// While drawing a paged menu: its pages, so a finger swiping sideways turns
+// them (verdite/page_swipe.h). A frame that says none takes no swipe.
+void host_menu_pages(s32 page_count);
+// Where to draw the paged part now, game pixels right of its place: it follows
+// the finger, then slides off or back, and the next page slides in.
+s32 host_menu_page_offset_px();
 
 // In a menu loop: the row the pointer took, once, if this widget is the one
 // on screen taking input.
 std::optional<s32> host_menu_pointed_row(MenuWidget widget);
+// In a paged menu's loop: the page a swipe turned to, once its page has slid
+// off: 1 on (swiped left), -1 back, 0 none.
+s32 host_menu_swiped_page();
 
 // The host's side. Mouse events while a menu is up and the mouse is free; SDL's
 // mouse events made from touches are left to the touch controls.
 void host_menu_pointer_event(SDL_Window *window, const SDL_Event &event);
 // A finger, in window points (SDL's): it points and presses as the left
-// button does, and a drag up or down moves the cursor a row a step instead.
+// button does, a drag up or down moves the cursor a row a step instead, and on a
+// paged menu a drag sideways turns the page.
 void host_menu_touch_down(SDL_Window *window, float x, float y);
 void host_menu_touch_moved(SDL_Window *window, float x, float y);
 void host_menu_touch_up(SDL_Window *window, float x, float y);
