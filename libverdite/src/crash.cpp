@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #ifdef __APPLE__
+#include <TargetConditionals.h>
 #include <sys/ucontext.h>
 #else
 #include <ucontext.h>
@@ -939,7 +940,7 @@ void write_frames(Report &report, std::span<const cpptrace::frame_ptr> frames) {
 
 // Starts this binary again as the helper and waits for it to name the stack in the report.
 void name_stack(const char *report_file) {
-#ifdef KF_IOS
+#if defined(__APPLE__) && TARGET_OS_IPHONE
     // iOS cannot spawn a crash helper. Keep raw frames for offline symbolication.
     (void)report_file;
 #else
@@ -991,7 +992,7 @@ const char *signal_what(int number) {
 // Becomes the crash window, in this process: its window and mouse grab go, and it is still the
 // child an AppImage's runtime waits on, so the mount stays. Returns only if it cannot.
 void become_window(const char *folder, int exit_code) {
-#ifdef KF_IOS
+#if defined(__APPLE__) && TARGET_OS_IPHONE
     (void)folder;
     (void)exit_code;
 #else
