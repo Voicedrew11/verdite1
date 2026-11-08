@@ -10,12 +10,18 @@ namespace {
 std::string note;
 
 std::filesystem::path pref_path() {
+#ifdef KF_IOS
+    // Files/Finder expose Documents, so the player can import data and back up saves.
+    const char *documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    return documents ? std::filesystem::path(documents) : std::filesystem::path{};
+#else
     char *pref = SDL_GetPrefPath("Verdite", "Verdite1");
     if (!pref)
         return {};
     std::filesystem::path path(reinterpret_cast<const char8_t *>(pref));
     SDL_free(pref);
     return path;
+#endif
 }
 
 std::string utf8(const std::filesystem::path &path) {

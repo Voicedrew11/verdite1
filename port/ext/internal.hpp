@@ -281,7 +281,7 @@ bool slider_input(const char *label, int *value, int min, int max, const char *f
                   bool *committed = nullptr);
 inline constexpr float hud_font_size = 18.0f;   // mod drawing ignores the interface scale
 struct ViewRect { float x, y, w, h; };
-ViewRect game_view();             // the whole presented picture (wider than 4:3 in widescreen)
+ViewRect game_view();             // the whole presented picture, in ImGui/window points
 ViewRect original_view();         // the original 320x240 area within it
 bool overlay_captures_input();
 // The keys belong to the overlay, or to a mod's text box that has the keyboard.

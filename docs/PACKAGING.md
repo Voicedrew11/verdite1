@@ -54,6 +54,104 @@ once per build folder, and a phone joins rooms but does not host them ([COOP_PLA
   **Losing it means every player reinstalls and loses their app data; back it up.** A debug build
   has another key, so going between one and the other needs an uninstall too.
 
+## Local macOS build
+
+The macOS preset builds the C/C++ port natively for Apple Silicon. SDL3 owns the
+window, input and audio; the Vulkan renderer uses bundled MoltenVK to draw through
+Metal. This local build targets macOS 27 or later to match the Homebrew libraries
+used to build it. Earlier macOS releases and Intel Macs have not been validated.
+Crash-report symbolication and recovery still need macOS support: five existing
+crash-report tests fail on this platform.
+
+Install Xcode command-line tools and the build dependencies, then build and launch:
+
+```sh
+brew install cmake ninja sdl3 vulkan-headers vulkan-volk glslang molten-vk
+git submodule update --init decomp
+./script/build_and_run.sh
+```
+
+The script creates `dist/Verdite1.app`, bundles SDL3 and MoltenVK, signs it locally,
+and opens it through Launch Services. `--build-only` only builds and packages;
+`--verify` also checks that the launched process stays alive.
+This is an ad-hoc signed local build, not a notarized release.
+Online play is not included in this build configuration.
+
+Game data, settings and saves live under
+`~/Library/Application Support/Verdite/Verdite1/`, outside the app. To import an
+already English-patched v1.0 BIN/CUE pair without changing the original files:
+
+```sh
+mkdir -p "$HOME/Library/Application Support/Verdite/Verdite1/data/en"
+dist/Verdite1.app/Contents/MacOS/verdite1 \
+  --disc "/path/to/King's Field (Japan) [English Patched v1.0].cue" \
+  --language en \
+  --extract-to "$HOME/Library/Application Support/Verdite/Verdite1/data/en" \
+  --extract-only
+```
+
+Keep the CUE and its named BIN together for import. Extracted data is verified
+against the game's known digest; neither disc data nor the translation is bundled
+in the app. Launching the app normally then finds the imported English data.
+
+## Local iOS device build
+
+The iOS target builds SDL3, the game and its dependencies for arm64, and embeds
+MoltenVK's signed iOS framework. It requires iOS 17 or newer. CMake generates an
+Xcode project in `build/ios/kings_field.xcodeproj`; do not edit that generated project.
+The asset catalog includes an opaque 1024px version of the repository's sword icon.
+Regenerate it with:
+
+```sh
+swift scripts/render_apple_icon.swift packaging/appimage/verdite1.svg \
+  ios/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+```
+
+```sh
+# Build without signing, for compile verification:
+./script/build_ios.sh build
+
+# Build with your Apple development team, install and launch on a paired iPhone:
+KF_IOS_TEAM=YOUR_TEAM ./script/build_ios.sh install YOUR_DEVICE_ID
+```
+
+Xcode must have the team's signing identity and account configured, and the phone
+must be unlocked with Developer Mode enabled. The script enables Xcode's automatic
+provisioning. The default bundle ID is `io.github.voicedrew11.verdite1`; set
+`KF_IOS_BUNDLE_ID` to use your own registered identifier. The override persists in
+the ignored CMake build cache. Keep the same identifier when updating an installed
+app to preserve its saves. A development build can only be installed on devices
+included in its provisioning profile. Simulator builds are not supported yet.
+
+The app uses landscape orientation and sizes its touch layout from SDL's current
+safe area on every frame. The left stick walks and strafes; dragging the right side
+looks around. Attack, Magic, Examine, Menu and the settings gear are separate touch
+targets. Save and Load provide quick saves without a keyboard. Button haptics can
+be disabled in settings. Connected gamepads can also
+take over, hiding the touch overlay until the next screen touch.
+On compact landscape windows (under 600 points tall), the left control inset is
+capped at 16 points for thumb reach. Vertical and right-side insets are preserved;
+the larger unfolded/tablet layout continues using the full safe area. Drawing uses
+window points, while touch hit testing uses framebuffer pixels, including Retina scaling.
+
+On first launch, import a BIN/ISO/CHD through Files. For a CUE, select both the CUE and
+its named BIN together. This local build accepts the already English-patched v1.0
+disc and does not download translation patches. The files are copied into the app,
+verified and extracted. Original files are kept. Documents is exposed in Files and
+Finder file sharing, with extracted game data under `data/en` and saves beside it.
+
+To transfer an already verified English data folder while installing, set
+`KF_IOS_ENGLISH_DATA` to the folder containing `GAME.EXE`. That folder is copied into
+the app's Documents/data/en; no game data is included in the built application.
+Do not delete the app without backing up Documents if you want to keep saves.
+Online multiplayer is not enabled in this build.
+
+If command-line provisioning reports "No Accounts" even though Xcode shows a
+signed-in account, open the generated project in Xcode, select scheme `verdite1`
+and the connected device, then build once. Xcode's account window can also refresh
+manual profiles. The resulting cached profile must include the target device;
+a successful generic-device signature alone does not prove installability.
+
 ## The tag is the version
 
 As Verdite3: there is no version file, and `scripts/version.sh` is the one rule. `VERDITE_VERSION` if

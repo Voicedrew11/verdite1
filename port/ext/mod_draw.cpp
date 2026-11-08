@@ -244,7 +244,7 @@ int ui_game_to_screen(lua_State *L) {
     return 2;
 }
 
-// A world point through the camera the frame shows, in window pixels, or nil.
+// A world point through the camera the frame shows, in window points, or nil.
 int ui_world_to_screen(lua_State *L) {
     ui_require_frame(L);
     const std::array<double, 3> world{luaL_checknumber(L, 1), luaL_checknumber(L, 2), luaL_checknumber(L, 3)};

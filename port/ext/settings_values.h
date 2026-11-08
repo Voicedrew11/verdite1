@@ -4,7 +4,7 @@
 #include <string>
 
 namespace kf::ext {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(KF_IOS)
 // A phone: the whole screen, with no status or navigation bar over the picture.
 inline constexpr bool default_fullscreen = true;
 inline constexpr const char *default_aspect = "window";

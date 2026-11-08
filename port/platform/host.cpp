@@ -224,7 +224,22 @@ static bool start_window() {
     }
     // Phones: SDL would otherwise allow portrait for a resizable window, over the manifest.
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
-    host.window = SDL_CreateWindow(product_name, 960, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
+#ifdef __APPLE__
+    flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    // A packaged app carries its driver, so launching from Finder needs no SDK environment.
+    if (const char *base = SDL_GetBasePath()) {
+#ifdef KF_IOS
+        const auto driver = std::filesystem::path(base) / "Frameworks" / "MoltenVK.framework" / "MoltenVK";
+#else
+        const auto driver = std::filesystem::path(base) / ".." / "Frameworks" / "libMoltenVK.dylib";
+#endif
+        std::error_code error;
+        if (std::filesystem::is_regular_file(driver, error))
+            SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, driver.c_str());
+    }
+#endif
+    host.window = SDL_CreateWindow(product_name, 960, 720, flags);
     if (!host.window) {
         std::fprintf(stderr, "[renderer] no Vulkan window: %s\n", SDL_GetError());
         return false;

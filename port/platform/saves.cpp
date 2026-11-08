@@ -122,6 +122,11 @@ static bool sync_file(int descriptor) {
     return result == 0;
 }
 static bool sync_directory_path(int directory) {
+#ifdef KF_IOS
+    // iOS creates Documents when installing the app. Its ancestors belong to the
+    // system, outside our sandbox; only our save directory needs flushing here.
+    return sync_file(directory);
+#else
     int child = ::dup(directory);
     if (child < 0)
         return false;
@@ -148,6 +153,7 @@ static bool sync_directory_path(int directory) {
         }
         child = parent;
     }
+#endif
 }
 #endif
 
@@ -229,6 +235,7 @@ bool save_storage_start(const char *directory) {
     // SDL may have created several preference directories. Publish their parent
     // entries before claiming that a first save in the leaf can be durable.
     if (!directory && save_directory >= 0 && !sync_directory_path(save_directory)) {
+        std::fprintf(stderr, "Cannot sync save directory: %s\n", std::strerror(errno));
         ::close(save_directory);
         save_directory = -1;
     }

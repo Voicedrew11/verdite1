@@ -1,5 +1,5 @@
 diff --git a/src/audio/sound.cpp b/src/audio/sound.cpp
-index 46a90d2eae092e35736a2b9aad0caa49559facfd..c52693449a7326a3119a5c07003c207a071db739 100644
+index 46a90d2eae092e35736a2b9aad0caa49559facfd..2f198da37818c43a7cdb80ef5364c15ebf72e301 100644
 --- a/src/audio/sound.cpp
 +++ b/src/audio/sound.cpp
 @@ -122,8 +122,14 @@ struct SoundState {
@@ -17,6 +17,15 @@ index 46a90d2eae092e35736a2b9aad0caa49559facfd..c52693449a7326a3119a5c07003c207a
  
  static float volume(s16 value) { return std::clamp<int>(value, 0, midi_value_max) / midi_value_scale; }
  static void pan_levels(float &left, float &right, u8 pan) {
+@@ -299,7 +305,7 @@ static void play_note(SoundBank *bank, unsigned program, unsigned note, float le
+     if (!bank || program >= KF_AUDIO_PROGRAM_COUNT || note > midi_value_max)
+         return;
+     const auto &program_data = bank->data.programs[program];
+-    for (std::size_t i = 0; i < program_data.tone_count; ++i) {
++    for (unsigned i = 0; i < program_data.tone_count; ++i) {
+         const auto &tone = program_data.tones[i];
+         if (note >= tone.minimum_note && note <= tone.maximum_note)
+             play_tone(bank, program, i, note, left, right, sequence, velocity);
 @@ -386,6 +392,8 @@ static void mix_frame(float &left, float &right) {
      for (auto &voice : sound.voices) {
          if (voice.envelope.phase == EnvelopePhase::Off)
@@ -56,7 +65,32 @@ index 46a90d2eae092e35736a2b9aad0caa49559facfd..c52693449a7326a3119a5c07003c207a
  static void render_elapsed() {
      if (sound.paused || sound.failed)
          return;
-@@ -541,14 +559,37 @@ void sound_poll() {
+@@ -446,12 +464,13 @@ static void render_elapsed() {
+     }
+     std::array<float, mixer_batch_frames * 2> frames;
+     while (sound.rendered_frame < target) {
+-        const unsigned count = std::min<std::uint64_t>(target - sound.rendered_frame, mixer_batch_frames);
++        const auto count = std::min<std::uint64_t>(target - sound.rendered_frame, mixer_batch_frames);
+         for (std::size_t i = 0; i < count; ++i)
+             mix_frame(frames[i * 2], frames[i * 2 + 1]);
+         const auto skip = sound.rendered_frame < keep_from
+             ? std::min<std::uint64_t>(keep_from - sound.rendered_frame, count) : 0;
+-        const int bytes = (count - skip) * sizeof(float) * 2;
++        // At most mixer_batch_frames stereo floats, bounded by this stack buffer.
++        const int bytes = static_cast<int>((count - skip) * sizeof(float) * 2);
+         if (bytes && !SDL_PutAudioStreamData(sound.stream, frames.data() + skip * 2, bytes)) {
+             sound.failed = true;
+             return;
+@@ -472,7 +491,7 @@ static void configure_reverb(ReverbPreset preset, s16 left, s16 right) {
+     sound.reverb = {};
+     constexpr std::array<unsigned, 4> studio = {970, 1116, 1277, 1356};
+     constexpr std::array<unsigned, 4> hall = {1557, 1617, 1491, 1422};
+-    for (std::size_t side = 0; side < sound.reverb.combs.size(); ++side) {
++    for (unsigned side = 0; side < sound.reverb.combs.size(); ++side) {
+         for (std::size_t i = 0; i < sound.reverb.combs[side].size(); ++i)
+             sound.reverb.combs[side][i].length = (preset == ReverbPreset::Hall ? hall[i] : studio[i]) + side * reverb_stereo_spread_frames;
+         sound.reverb.diffusers[side][0].length = reverb_first_diffuser_frames + side * reverb_stereo_spread_frames;
+@@ -541,14 +560,37 @@ void sound_poll() {
  }
  
  void sound_set_paused(bool paused) {
@@ -94,7 +128,7 @@ index 46a90d2eae092e35736a2b9aad0caa49559facfd..c52693449a7326a3119a5c07003c207a
  void sound_reset(ReverbPreset preset, s16 depth_left, s16 depth_right) {
      sound_poll();
      clear();
-@@ -564,6 +605,12 @@ void sound_master_volume(s16 left, s16 right) {
+@@ -564,6 +606,12 @@ void sound_master_volume(s16 left, s16 right) {
      sound.master_right = volume(right);
  }
  

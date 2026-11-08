@@ -97,8 +97,15 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanDevice::on_validation(VkDebugUtilsMessageSe
 }
 
 VulkanDeviceStart VulkanDevice::create(SDL_Window *window, std::filesystem::path pipeline_cache_file) {
-    if (volkInitialize() != VK_SUCCESS)
-        return {nullptr, "no Vulkan loader (libvulkan.so.1)"};
+    if (window) {
+        // Use the driver SDL loaded for this window, including a bundled MoltenVK.
+        const auto get_proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_Vulkan_GetVkGetInstanceProcAddr());
+        if (!get_proc)
+            return {nullptr, std::string("Vulkan loader: ") + SDL_GetError()};
+        volkInitializeCustom(get_proc);
+    } else if (volkInitialize() != VK_SUCCESS) {
+        return {nullptr, "no Vulkan loader"};
+    }
     auto self = std::make_unique<VulkanDevice>(Key{});
 
     vkb::InstanceBuilder instance_builder(vkGetInstanceProcAddr);
