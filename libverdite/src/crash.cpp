@@ -34,6 +34,7 @@
 #include <sys/wait.h>
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <mach-o/dyld.h>
 #include <sys/ucontext.h>
 #else
 #include <ucontext.h>
@@ -809,6 +810,10 @@ std::uint64_t fault_pc(void *context) {
         static_cast<ucontext_t *>(context)->uc_mcontext.gregs[REG_RIP]);
 #elif defined(__linux__) && defined(__aarch64__)
     return static_cast<ucontext_t *>(context)->uc_mcontext.pc;
+#elif defined(__APPLE__) && defined(__aarch64__)
+    return __darwin_arm_thread_state64_get_pc(static_cast<ucontext_t *>(context)->uc_mcontext->__ss);
+#elif defined(__APPLE__) && defined(__x86_64__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext->__ss.__rip;
 #else
     (void)context;
     return 0;
@@ -841,6 +846,39 @@ void write_registers(Report &report, void *context) {
         values[at] = {names[at], machine.regs[at]};
     values[names.size()] = {"sp", machine.sp};
     values[names.size() + 1] = {"pc", machine.pc};
+    report.registers(values);
+#elif defined(__APPLE__) && defined(__aarch64__)
+    static constexpr std::array<const char *, 29> names = {
+        "x0",  "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",  "x8",  "x9",  "x10", "x11", "x12", "x13", "x14",
+        "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"};
+    const auto &thread = static_cast<ucontext_t *>(context)->uc_mcontext->__ss;
+    std::array<RegisterValue, names.size() + 4> values{};
+    for (std::size_t at = 0; at < names.size(); ++at)
+        values[at] = {names[at], thread.__x[at]};
+    values[names.size()] = {"fp", __darwin_arm_thread_state64_get_fp(thread)};
+    values[names.size() + 1] = {"lr", __darwin_arm_thread_state64_get_lr(thread)};
+    values[names.size() + 2] = {"sp", __darwin_arm_thread_state64_get_sp(thread)};
+    values[names.size() + 3] = {"pc", __darwin_arm_thread_state64_get_pc(thread)};
+    report.registers(values);
+#elif defined(__APPLE__) && defined(__x86_64__)
+    const auto &thread = static_cast<ucontext_t *>(context)->uc_mcontext->__ss;
+    const std::array<RegisterValue, 17> values = {{{"rax", thread.__rax},
+                                                   {"rbx", thread.__rbx},
+                                                   {"rcx", thread.__rcx},
+                                                   {"rdx", thread.__rdx},
+                                                   {"rsi", thread.__rsi},
+                                                   {"rdi", thread.__rdi},
+                                                   {"rbp", thread.__rbp},
+                                                   {"rsp", thread.__rsp},
+                                                   {"r8", thread.__r8},
+                                                   {"r9", thread.__r9},
+                                                   {"r10", thread.__r10},
+                                                   {"r11", thread.__r11},
+                                                   {"r12", thread.__r12},
+                                                   {"r13", thread.__r13},
+                                                   {"r14", thread.__r14},
+                                                   {"r15", thread.__r15},
+                                                   {"rip", thread.__rip}}};
     report.registers(values);
 #else
     (void)report;
@@ -1214,8 +1252,8 @@ void prune_reports() {
         fs::remove_all(reports[at].second, error);
 }
 
-// The binary's own path, for the helper; empty where there is no /proc, and on
-// Android, where it is the system's app_process and the game is a library in it.
+// The binary's own path, for the helper; empty on iOS, which cannot start it, and on Android,
+// where it is the system's app_process and the game is a library in it.
 void find_binary() {
     state.binary.clear();
 #ifdef _WIN32
@@ -1228,6 +1266,11 @@ void find_binary() {
     const ssize_t length = readlink("/proc/self/exe", path.data(), path.size() - 1);
     if (length > 0)
         state.binary.add({path.data(), static_cast<std::size_t>(length)});
+#elif defined(__APPLE__) && !TARGET_OS_IPHONE
+    std::array<char, path_capacity> path{};
+    auto size = static_cast<std::uint32_t>(path.size());
+    if (_NSGetExecutablePath(path.data(), &size) == 0)
+        state.binary.add(path.data());
 #endif
 }
 
