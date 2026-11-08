@@ -388,7 +388,13 @@ TEST_CASE("std::terminate is reported with what it was handed") {
     INFO(report);
     CHECK(report.find("fault: SIGABRT (aborted)\n") != std::string::npos);
     CHECK(report.find("message: the chest table ran out\n") != std::string::npos);
+#ifdef __APPLE__
+    // Apple's std::terminate never returns, so it keeps no return address: its caller is not on
+    // the stack, and the one before it is.
+    CHECK(report.find("crash_in_child(") != std::string::npos);
+#else
     CHECK(report.find("terminate_while_handling()") != std::string::npos);
+#endif
     fs::remove_all(directory);
 }
 #endif
