@@ -73,8 +73,13 @@ void write_player(CrashWriter &out) {
     out.triple("position", 1, -2, 3);
 }
 
+// Not a tail call, which arm64 makes of a bare return and so leaves this frame off the stack.
+volatile int after_soft_report = 0;
+
 [[gnu::noinline]] std::optional<std::string> soft_report_from_here() {
-    return crash_report_soft("a door with no key");
+    auto folder = crash_report_soft("a door with no key");
+    after_soft_report = after_soft_report + 1;
+    return folder;
 }
 } // namespace
 

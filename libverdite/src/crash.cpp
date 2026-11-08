@@ -45,8 +45,8 @@
 #include <csignal>
 #endif
 
-// Android's way of taking a stack; VERDITE_CRASH_FRAME_POINTERS tries it on a desktop's tests.
-#if defined(__ANDROID__) || defined(VERDITE_CRASH_FRAME_POINTERS)
+// Android's and Apple's way of taking a stack; VERDITE_CRASH_FRAME_POINTERS tries it on a desktop's tests.
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(VERDITE_CRASH_FRAME_POINTERS)
 #define VERDITE_WALK_FRAME_POINTERS 1
 #include <dlfcn.h>
 #endif
@@ -887,24 +887,43 @@ void write_registers(Report &report, void *context) {
 }
 
 #ifdef VERDITE_WALK_FRAME_POINTERS
+std::uintptr_t fault_frame_pointer(void *context) {
+#if defined(__APPLE__) && defined(__aarch64__)
+    return __darwin_arm_thread_state64_get_fp(static_cast<ucontext_t *>(context)->uc_mcontext->__ss);
+#elif defined(__APPLE__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext->__ss.__rbp;
+#elif defined(__aarch64__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext.regs[29];
+#else
+    return static_cast<std::uintptr_t>(static_cast<ucontext_t *>(context)->uc_mcontext.gregs[REG_RBP]);
+#endif
+}
+
+// arm64's return address while it is still in a register; 0 where calls push it.
+std::uintptr_t fault_link_register(void *context) {
+#if defined(__APPLE__) && defined(__aarch64__)
+    return __darwin_arm_thread_state64_get_lr(static_cast<ucontext_t *>(context)->uc_mcontext->__ss);
+#elif defined(__aarch64__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext.regs[30];
+#else
+    (void)context;
+    return 0;
+#endif
+}
+
 // cpptrace's unwinder is not safe in a signal handler on Android, so it gives no frames at all
-// here: the frame pointers are walked instead (the Android build keeps them, CMakeLists.txt). A
-// damaged chain faults into the same jump a section's does, and the frames so far stand.
+// there, nor does its safe trace on macOS: the frame pointers are walked instead (the Android
+// build keeps them, CMakeLists.txt; Apple's ABIs always do). A damaged chain faults into the same
+// jump a section's does, and the frames so far stand.
 std::span<const cpptrace::frame_ptr> capture_stack(void *context) {
     static std::array<cpptrace::frame_ptr, max_frames> frames{};
     static volatile std::size_t count = 0;
     count = 0;
-    const auto &machine = static_cast<ucontext_t *>(context)->uc_mcontext;
     frames[count] = fault_pc(context);
     count = count + 1;
-#if defined(__aarch64__)
-    std::uintptr_t frame = machine.regs[29];
+    std::uintptr_t frame = fault_frame_pointer(context);
     // A leaf function has not saved its return address yet; one that has repeats it below.
-    const std::uintptr_t link = machine.regs[30];
-#else
-    auto frame = static_cast<std::uintptr_t>(machine.gregs[REG_RBP]);
-    const std::uintptr_t link = 0;
-#endif
+    const std::uintptr_t link = fault_link_register(context);
     if (sigsetjmp(section_jump, 1) == 0) {
         section_thread = pthread_self();
         in_section = 1;
