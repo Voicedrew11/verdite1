@@ -36,3 +36,7 @@ set(OPENSSL_SSL_LIBRARY ${KF_OPENSSL_LIBS}/libssl.a CACHE FILEPATH "" FORCE)
 set(OPENSSL_CRYPTO_LIBRARY ${KF_OPENSSL_LIBS}/libcrypto.a CACHE FILEPATH "" FORCE)
 # FindOpenSSL lists zlib as a static OpenSSL's need; the NDK's is the one the English patch's unpacker uses.
 find_package(ZLIB REQUIRED)
+# FindOpenSSL asks pkg-config for a static OpenSSL's other libraries, and the host's answer is the
+# host's OpenSSL: GitHub's Ubuntu runner's names -l:libjitterentropy.a, which the NDK has not. This
+# build's own .pc files come first.
+set(ENV{PKG_CONFIG_PATH} "${KF_OPENSSL_LIBS}/pkgconfig:$ENV{PKG_CONFIG_PATH}")
