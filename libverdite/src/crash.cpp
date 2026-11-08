@@ -954,9 +954,12 @@ std::span<const cpptrace::frame_ptr> capture_stack(void *context) {
 
 #ifdef __APPLE__
 // Where a Mach-O's own addresses start, its __TEXT segment's (0x100000000 for an executable):
-// cpptrace looks a frame up there, not by its offset from where the image was loaded.
+// cpptrace looks a frame up there, not by its offset from where the image was loaded. Not for a
+// system library in the shared cache, which has no file and is looked up by the offset.
 std::uintptr_t text_segment_start(const void *image) {
     const auto *header = static_cast<const mach_header_64 *>(image);
+    if ((header->flags & MH_DYLIB_IN_CACHE) != 0)
+        return 0;
     const auto *at = reinterpret_cast<const std::uint8_t *>(header + 1);
     for (std::uint32_t command = 0; command < header->ncmds; ++command) {
         const auto *load = reinterpret_cast<const load_command *>(at);
