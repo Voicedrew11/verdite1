@@ -32,7 +32,11 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
+#include <sys/ucontext.h>
+#else
 #include <ucontext.h>
+#endif
 #include <unistd.h>
 
 #include <csetjmp>
@@ -935,6 +939,10 @@ void write_frames(Report &report, std::span<const cpptrace::frame_ptr> frames) {
 
 // Starts this binary again as the helper and waits for it to name the stack in the report.
 void name_stack(const char *report_file) {
+#ifdef KF_IOS
+    // iOS cannot spawn a crash helper. Keep raw frames for offline symbolication.
+    (void)report_file;
+#else
     constexpr int wait_ms = 30000, poll_ms = 20;
     if (state.binary.length == 0)
         return;
@@ -961,6 +969,7 @@ void name_stack(const char *report_file) {
     }
     kill(child, SIGKILL);
     waitpid(child, &status, 0);
+#endif
 }
 
 [[noreturn]] void die(int number) {
@@ -982,6 +991,10 @@ const char *signal_what(int number) {
 // Becomes the crash window, in this process: its window and mouse grab go, and it is still the
 // child an AppImage's runtime waits on, so the mount stays. Returns only if it cannot.
 void become_window(const char *folder, int exit_code) {
+#ifdef KF_IOS
+    (void)folder;
+    (void)exit_code;
+#else
     if (!state.window_enabled || state.binary.length == 0)
         return;
     std::array<char, 32> flag{};
@@ -992,6 +1005,7 @@ void become_window(const char *folder, int exit_code) {
     code.add_number(static_cast<std::uint64_t>(exit_code));
     std::array<char *, 5> arguments = {state.binary.c_str(), flag.data(), target.c_str(), code.c_str(), nullptr};
     execv(arguments[0], arguments.data());
+#endif
 }
 
 void write_context_report(Report &report, std::span<const cpptrace::frame_ptr> stack, void *context) {
