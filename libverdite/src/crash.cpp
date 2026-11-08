@@ -10,10 +10,12 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -35,6 +37,7 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #include <sys/ucontext.h>
 #else
 #include <ucontext.h>
@@ -949,6 +952,25 @@ std::span<const cpptrace::frame_ptr> capture_stack(void *context) {
     return {frames.data(), count};
 }
 
+#ifdef __APPLE__
+// Where a Mach-O's own addresses start, its __TEXT segment's (0x100000000 for an executable):
+// cpptrace looks a frame up there, not by its offset from where the image was loaded.
+std::uintptr_t text_segment_start(const void *image) {
+    const auto *header = static_cast<const mach_header_64 *>(image);
+    const auto *at = reinterpret_cast<const std::uint8_t *>(header + 1);
+    for (std::uint32_t command = 0; command < header->ncmds; ++command) {
+        const auto *load = reinterpret_cast<const load_command *>(at);
+        if (load->cmd == LC_SEGMENT_64) {
+            const auto *segment = reinterpret_cast<const segment_command_64 *>(at);
+            if (std::string_view(segment->segname, strnlen(segment->segname, sizeof segment->segname)) == "__TEXT")
+                return segment->vmaddr;
+        }
+        at += load->cmdsize;
+    }
+    return 0;
+}
+#endif
+
 // dladdr where cpptrace's own needs glibc. It takes the linker's lock, which a crash inside the
 // linker would hold: rare enough, and the watchdog of the system ends such a process.
 void find_object(cpptrace::frame_ptr address, cpptrace::safe_object_frame &object) {
@@ -959,6 +981,9 @@ void find_object(cpptrace::frame_ptr address, cpptrace::safe_object_frame &objec
     if (dladdr(reinterpret_cast<void *>(address), &info) == 0 || !info.dli_fname)
         return;
     object.address_relative_to_object_start = address - reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+#ifdef __APPLE__
+    object.address_relative_to_object_start += text_segment_start(info.dli_fbase);
+#endif
     const std::string_view path(info.dli_fname);
     const std::size_t length = std::min(path.size(), sizeof(object.object_path) - 1);
     std::copy_n(path.begin(), length, object.object_path);
