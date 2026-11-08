@@ -12,6 +12,9 @@
 #include <kf/platform/logcat.h>
 #include <kf/platform/picked_file.h>
 #include <kf/platform/user_folder.h>
+#ifdef KF_IOS
+#include <kf/platform/ios.h>
+#endif
 #include <verdite/crash.h>
 #if KF_EXT
 #include <kf/ext/ext.h>
@@ -108,6 +111,13 @@ int ask(const char *text, std::initializer_list<const char *> labels) {
 
 std::string choose_file(const char *kind, const char *extensions) {
     SDL_InitSubSystem(SDL_INIT_VIDEO);
+#ifdef KF_IOS
+    (void)kind;
+    (void)extensions;
+    auto path = kf::ios_choose_disc();
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    return path;
+#else
     struct Pick { std::string path; bool done = false; } pick;
     const SDL_DialogFileFilter filters[] = {{kind, extensions}};
     SDL_ShowOpenFileDialog([](void *data, const char *const *files, int) {
@@ -122,6 +132,7 @@ std::string choose_file(const char *kind, const char *extensions) {
     }
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     return pick.path.empty() ? pick.path : kf::picked_file_path(pick.path);
+#endif
 }
 
 // Builds English from the Japanese files: `source` is a patch file, "download",
@@ -200,6 +211,7 @@ std::string user_folder() {
     return folder.empty() ? "the user folder" : utf8(folder);
 }
 
+#ifndef __APPLE__
 bool holds_game_files(const std::filesystem::path &library) {
     std::error_code error;
     for (const auto &folder : {library, library / "ja", library / "en"}) {
@@ -226,10 +238,18 @@ std::filesystem::path appimage_library() {
     std::filesystem::create_directories(user, error);
     return user;
 }
+#endif
 
 // "data" beside the game, or in the user folder for an AppImage or when the
 // game's folder cannot be written (Program Files).
 std::filesystem::path release_library() {
+#ifdef __APPLE__
+    // Keep disc data outside the signed app bundle, across rebuilds and app updates.
+    auto library = kf::user_folder() / "data";
+    std::error_code error;
+    std::filesystem::create_directories(library, error);
+    return library;
+#else
     if (std::getenv("APPIMAGE"))
         return appimage_library();
     auto beside = release_directory() / "data";
@@ -243,6 +263,7 @@ std::filesystem::path release_library() {
     auto user = native_path(user_folder().c_str()) / "data";
     std::filesystem::create_directories(user, error);
     return user;
+#endif
 }
 
 std::string disc_beside(const std::filesystem::path &directory) {
@@ -332,6 +353,10 @@ bool prepare_release_data(const char *dropped) {
             offer_english();
         }
     }
+#ifdef KF_IOS
+    // The game files are out of the imported copies now, or the copies could not be used.
+    kf::ios_discard_imports();
+#endif
     return true;
 }
 #endif
@@ -463,7 +488,11 @@ int main(int argc, char **argv) {
         if (!prepared)
             return 1;
     } else {
+#ifdef __APPLE__
+        kf::languages_configure(utf8(release_library()));
+#else
         kf::languages_configure(utf8(std::getenv("APPIMAGE") ? appimage_library() : release_directory() / "data"));
+#endif
     }
 #else
     if (!data_selected && !disc)

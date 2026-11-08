@@ -4,6 +4,9 @@
 #include <kf/platform/input.h>
 #include <kf/platform/menu_pointer.h>
 #include <verdite/touch.h>
+#ifdef KF_IOS
+#include <kf/platform/ios.h>
+#endif
 
 #include <SDL3/SDL.h>
 
@@ -65,7 +68,11 @@ constexpr Kf1Control map_button = {TouchKind::Button, TouchShape::Button, "Map",
 bool shown_only_for_mods(Action action) { return action == Action::run || action == Action::full_map; }
 
 // The first row that holds a point wins: buttons before the stick and the look area.
-constexpr std::array<Kf1Control, 9> walking_controls = {{
+constexpr auto walking_controls = std::to_array<Kf1Control>({
+#ifdef KF_IOS
+    {TouchKind::Button, TouchShape::Button, "Save", Action::quick_save, TouchCommand::None, Edge::Left, 0.10f, 0.29f, 0.06f, {}},
+    {TouchKind::Button, TouchShape::Button, "Load", Action::quick_load, TouchCommand::None, Edge::Left, 0.26f, 0.29f, 0.06f, {}},
+#endif
     {TouchKind::Button, TouchShape::Button, "Attack", Action::attack, TouchCommand::None, Edge::Right, 0.22f, 0.74f, 0.13f, {}},
     {TouchKind::Button, TouchShape::Button, "Examine", Action::interact, TouchCommand::None, Edge::Right, 0.20f, 0.46f, 0.09f, {}},
     {TouchKind::Button, TouchShape::Button, "Magic", Action::magic, TouchCommand::None, Edge::Right, 0.50f, 0.84f, 0.09f, {}},
@@ -75,7 +82,7 @@ constexpr std::array<Kf1Control, 9> walking_controls = {{
     map_button,
     {TouchKind::Stick, TouchShape::Stick, nullptr, no_action, TouchCommand::None, Edge::Left, 0.32f, 0.68f, 0.13f, {0, 0, 0.45f, 1}},
     {TouchKind::Drag, TouchShape::Button, nullptr, no_action, TouchCommand::None, Edge::Left, 0, 0, 0, {0.45f, 0, 0.55f, 1}},
-}};
+});
 static_assert(std::ranges::all_of(walking_controls, [](const Kf1Control &control) {
     return control.kind == TouchKind::Drag || control.y - control.radius >= hud_bottom;
 }), "a control is drawn over the HUD");
@@ -211,6 +218,23 @@ SafeArea safe_area(SDL_Window *window) {
     const float density = SDL_GetWindowPixelDensity(window);
     if (!SDL_GetWindowSafeArea(window, &rect) || rect.w <= 0 || rect.h <= 0 || density <= 0)
         return {0, 0, static_cast<float>(width_px), static_cast<float>(height_px)};
+#ifdef KF_IOS
+    // A compact landscape phone has a deep camera inset halfway down one side.
+    // These edge controls sit above/below that cutout; applying its full inset
+    // to the entire screen pushes the left stick far beyond thumb reach.
+    // Keep vertical/home-indicator safety and the unfolded/tablet layout intact.
+    constexpr float compact_height_points = 600;
+    constexpr int edge_margin_points = 16;
+    if (static_cast<float>(height_px) / density < compact_height_points) {
+        int width = 0, height = 0;
+        if (SDL_GetWindowSize(window, &width, &height) && width > height) {
+            const int left = std::min(rect.x, edge_margin_points);
+            const int right = std::max(0, width - rect.x - rect.w);
+            rect.x = left;
+            rect.w = width - left - right;
+        }
+    }
+#endif
     return {static_cast<float>(rect.x) * density, static_cast<float>(rect.y) * density,
             static_cast<float>(rect.w) * density, static_cast<float>(rect.h) * density};
 }
@@ -245,7 +269,9 @@ void show(const Kf1Control &control, const verdite::TouchState &state) {
 
 // The click a phone's own keys give, through VerditeActivity.feelButtonPress.
 void feel_press() {
-#ifdef __ANDROID__
+#ifdef KF_IOS
+    ios_touch_feedback();
+#elif defined(__ANDROID__)
     auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
     auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
     if (!env || !activity)

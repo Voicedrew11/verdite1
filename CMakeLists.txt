@@ -6,6 +6,11 @@ if(KF_VERSION_FAILED OR NOT KF_RELEASE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]
   message(FATAL_ERROR "scripts/version.sh said '${KF_RELEASE_VERSION}', not MAJOR.MINOR.PATCH")
 endif()
 project(kings_field VERSION ${KF_RELEASE_VERSION} LANGUAGES C CXX)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  set(KF_IOS ON)
+  add_compile_definitions(KF_IOS=1)
+  include(cmake/ios.cmake)
+endif()
 # A build for players, from the packaging: it tells the player about new releases.
 option(KF_RELEASE "A build for players: asks GitHub for new releases" OFF)
 # Verdite1 on the decomp. The layout follows holyland:
@@ -188,7 +193,11 @@ target_compile_options(kf_support PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(kf_support PRIVATE verdite SDL3::SDL3)
 # Getting the English patch: a phone has no curl or bsdtar, and Windows' tar cannot be relied on
 # (patch_archive.h).
-if(NOT ANDROID)
+if(KF_IOS)
+  target_sources(kf_support PRIVATE port/platform/ios.mm port/platform/patch_archive_ios.cpp)
+  set_source_files_properties(port/platform/ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  target_link_libraries(kf_support PRIVATE "-framework UniformTypeIdentifiers")
+elseif(NOT ANDROID)
   target_sources(kf_support PRIVATE port/platform/patch_archive_tools.cpp)
 endif()
 
@@ -212,6 +221,8 @@ if(ANDROID)
   # Named outright: nix's cmake does not look in /usr/include, even under the NDK's sysroot.
   set(ZLIB_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/include CACHE PATH "" FORCE)
   target_sources(kf_support PRIVATE port/platform/patch_download_android.cpp)
+elseif(KF_IOS)
+  # SDL is built for the selected iOS SDK by cmake/ios.cmake.
 elseif(WIN32)
   # Windows: the SDL3 MinGW development package is downloaded unless SDL3 is
   # already on CMAKE_PREFIX_PATH.
@@ -263,6 +274,9 @@ list(FILTER KF_LUA_SOURCES EXCLUDE REGEX "/(lua|luac|ltests|onelua)\\.c$")
 # their destructors (longjmp); its headers are then included without extern "C".
 set_source_files_properties(${KF_LUA_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(lua54 STATIC ${KF_LUA_SOURCES})
+if(KF_IOS)
+  target_compile_options(lua54 PRIVATE -include "${CMAKE_SOURCE_DIR}/ios/lua_platform.h")
+endif()
 target_include_directories(lua54 PUBLIC ${CMAKE_SOURCE_DIR}/third_party/lua)
 add_library(cjson STATIC third_party/cjson/cJSON.c)
 target_include_directories(cjson PUBLIC ${CMAKE_SOURCE_DIR}/third_party/cjson)
@@ -288,10 +302,18 @@ endif()
 file(GLOB_RECURSE KF_RAW_HEADERS CONFIGURE_DEPENDS ${KF_SRC}/include/kf/*.h)
 find_program(KF_HOST_CLANG NAMES clang++ REQUIRED)
 set(KF_RAW_OUT ${CMAKE_BINARY_DIR}/generated)
+set(KF_RAW_COMMANDS ${CMAKE_BINARY_DIR}/compile_commands.json)
+if(KF_IOS AND CMAKE_GENERATOR STREQUAL "Xcode")
+  # Xcode has no compilation database. The generator only needs the host parser's
+  # include paths for the patched game headers, independent of the target SDK.
+  set(KF_RAW_COMMANDS ${CMAKE_BINARY_DIR}/raw_compile_commands.json)
+  file(GENERATE OUTPUT ${KF_RAW_COMMANDS} CONTENT
+    "[{\"directory\":\"${CMAKE_SOURCE_DIR}\",\"file\":\"${CMAKE_SOURCE_DIR}/port/ext/mods.cpp\",\"arguments\":[\"${KF_HOST_CLANG}\",\"-std=c++20\",\"-I\",\"${CMAKE_SOURCE_DIR}/port/include\",\"-I\",\"${KF_SRC}/include\",\"-I\",\"${CMAKE_SOURCE_DIR}/libverdite/include\"]}]")
+endif()
 add_custom_command(OUTPUT ${KF_RAW_OUT}/raw_layer.stamp
   BYPRODUCTS ${KF_RAW_OUT}/raw_layer.cpp ${KF_RAW_OUT}/raw_layer_report.txt ${KF_GAME_SOURCES}
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/raw_layer.py --clang ${KF_HOST_CLANG}
-    --compile-commands ${CMAKE_BINARY_DIR}/compile_commands.json --decomp-src ${KF_SRC}
+    --compile-commands ${KF_RAW_COMMANDS} --decomp-src ${KF_SRC}
     --listed ${CMAKE_SOURCE_DIR}/port/ext/raw_layer.toml --calls-listed ${CMAKE_SOURCE_DIR}/port/ext/call_layer.toml
     --calls-audit ${CMAKE_SOURCE_DIR}/port/ext/call_layer_audit.toml
     --hooks-listed ${CMAKE_SOURCE_DIR}/port/ext/hook_layer.toml
@@ -330,7 +352,11 @@ endif()
 find_package(Threads REQUIRED)
 # cpptrace names a crash report's stack (libverdite/src/crash*.cpp). The nix shell has it; Windows
 # builds it from its release, with libdwarf, to read the line tables the exe carries.
-if(ANDROID)
+if(KF_IOS)
+  set(CPPTRACE_GET_SYMBOLS_WITH_LIBDL ON CACHE BOOL "" FORCE)
+  set(CPPTRACE_UNWIND_WITH_UNWIND ON CACHE BOOL "" FORCE)
+  set(CPPTRACE_DEMANGLE_WITH_CXXABI ON CACHE BOOL "" FORCE)
+elseif(ANDROID)
   # No libdwarf on Android: symbols from the dynamic linker, the stack from the unwinder.
   set(CPPTRACE_GET_SYMBOLS_WITH_LIBDL ON CACHE BOOL "" FORCE)
   set(CPPTRACE_UNWIND_WITH_UNWIND ON CACHE BOOL "" FORCE)
@@ -346,6 +372,8 @@ if(NOT ANDROID AND NOT cpptrace_FOUND)
   FetchContent_Declare(cpptrace GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
     GIT_TAG v1.0.4 GIT_SHALLOW TRUE)
   FetchContent_MakeAvailable(cpptrace)
+  # cpptrace's exception tracing uses typeid even though the game disables RTTI.
+  target_compile_options(cpptrace-lib PRIVATE -frtti)
 endif()
 # libchdr reads CHD disc images (libverdite/src/disc_image.cpp): rtissera/libchdr 47d79415
 # (2026-10-11), vendored unchanged without its tests, docs and contrib, plus the LICENSE its zstd
@@ -415,10 +443,27 @@ if(ANDROID)
   set(VK_BOOTSTRAP_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
   add_subdirectory($ENV{KF_VK_BOOTSTRAP_SOURCE} vk-bootstrap EXCLUDE_FROM_ALL SYSTEM)
 else()
-  find_package(VulkanHeaders CONFIG REQUIRED)
-  find_package(volk CONFIG REQUIRED)
-  find_package(VulkanMemoryAllocator CONFIG REQUIRED)
-  find_package(vk-bootstrap CONFIG REQUIRED)
+  if(NOT KF_IOS)
+    find_package(VulkanHeaders CONFIG REQUIRED)
+    find_package(volk CONFIG REQUIRED)
+  endif()
+  if(APPLE)
+    # Homebrew supplies the loader and shader tools; keep the two header/source
+    # dependencies pinned so a Mac build needs no separate SDK checkout.
+    include(FetchContent)
+    FetchContent_Declare(VulkanMemoryAllocator SYSTEM
+      GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+      GIT_TAG 1d8f600fd424278486eade7ed3e877c99f0846b1)
+    set(VK_BOOTSTRAP_TEST OFF CACHE BOOL "" FORCE)
+    set(VK_BOOTSTRAP_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(vk_bootstrap SYSTEM
+      GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap.git
+      GIT_TAG 522a579912cbeed7b52c948072d87ce001488ded)
+    FetchContent_MakeAvailable(VulkanMemoryAllocator vk_bootstrap)
+  else()
+    find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+    find_package(vk-bootstrap CONFIG REQUIRED)
+  endif()
 endif()
 find_program(KF_GLSLANG glslangValidator REQUIRED)
 set(KF_SHADER_DIR ${CMAKE_SOURCE_DIR}/port/renderer/vulkan/shaders)
@@ -476,6 +521,23 @@ endif()
 target_link_libraries(verdite1 PRIVATE kf_host)
 target_compile_definitions(verdite1 PRIVATE KF_VERSION="${PROJECT_VERSION}")
 target_compile_options(verdite1 PRIVATE -Wall -Wextra)
+if(KF_IOS)
+  target_sources(verdite1 PRIVATE ios/Assets.xcassets)
+  set_source_files_properties(ios/Assets.xcassets PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  set_target_properties(verdite1 PROPERTIES
+    MACOSX_BUNDLE TRUE OUTPUT_NAME Verdite1
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/ios/Info.plist.in"
+    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${KF_IOS_BUNDLE_ID}"
+    XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+    XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME AppIcon
+    XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+    XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${KF_IOS_TEAM}"
+    XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
+    XCODE_EMBED_FRAMEWORKS "${KF_MOLTENVK_FRAMEWORK}"
+    XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY YES
+    XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY YES)
+  target_link_libraries(verdite1 PRIVATE "${KF_MOLTENVK_FRAMEWORK}")
+endif()
 if(NOT ANDROID)
   # The example mods beside the executable, where the game offers them to the user's mods folder.
   add_custom_command(TARGET verdite1 POST_BUILD
@@ -507,7 +569,7 @@ if(WIN32)
   add_custom_command(TARGET verdite1 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:verdite1>)
 endif()
-install(TARGETS verdite1 RUNTIME DESTINATION bin)
+install(TARGETS verdite1 RUNTIME DESTINATION bin BUNDLE DESTINATION .)
 
 # libFuzzer targets, for what comes from outside the game (docs/FUZZING_PLAN.md; run them with
 # python3 scripts/fuzz.py --targets). fuzz_codecs is the decomp's own, built against our patches.

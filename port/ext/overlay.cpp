@@ -397,8 +397,9 @@ ViewRect game_view() {
     if (main_window)
         SDL_GetWindowSizeInPixels(main_window, &width, &height);
     const auto rect = renderer_present_rect(width, height);
-    return {static_cast<float>(rect.x), static_cast<float>(rect.y), static_cast<float>(rect.width),
-            static_cast<float>(rect.height)};
+    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+    return {static_cast<float>(rect.x) / scale.x, static_cast<float>(rect.y) / scale.y,
+            static_cast<float>(rect.width) / scale.x, static_cast<float>(rect.height) / scale.y};
 }
 
 ViewRect original_view() {

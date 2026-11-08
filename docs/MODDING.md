@@ -348,7 +348,7 @@ end
 | `kf.action_hold(name, on)` | while `on` is true, the game sees the action held, as if its key were down |
 | `kf.action_press(name)` | the game's next button read sees the action held, and the one after released: one press |
 | `kf.action_block(name, on)` | while `on` is true, the game does not see the action from the player's keys, pad or touch; a blocked movement or look direction also stops that direction of the stick and the mouse |
-| `kf.view()` | `x, y, w, h` of the whole game picture in window pixels (wider than 4:3 in widescreen) |
+| `kf.view()` | `x, y, w, h` of the whole game picture in window points (wider than 4:3 in widescreen); a point is a pixel on an unscaled display, and every `ui` drawing call uses the same units |
 | `kf.view_original()` | `x, y, w, h` of the original 320×240 area, centred in the picture |
 | `kf.player.<field>` | read/write player state (below) |
 | `kf.player_fields()` | list of field names |
@@ -970,15 +970,15 @@ interface scale.
 | `ui.begin_tab(label)` → visible; `ui.end_tab()` | in a tab bar; call `end_tab` only when `begin_tab` was true |
 | `ui.separator()`, `ui.same_line()`, `ui.spacing()`, `ui.tooltip(s)` | |
 | `ui.begin_window(title [, click_through])` → visible; `ui.end_window()` | always call `end_window` |
-| `ui.draw_text(x, y, s [, r, g, b, a [, size]])` | window pixels, with a shadow; `size` in pixels (default 18) |
+| `ui.draw_text(x, y, s [, r, g, b, a [, size]])` | window points, with a shadow; `size` in points (default 18) |
 | `ui.draw_rect(x, y, w, h [, r, g, b, a [, filled]])` | |
-| `ui.draw_line(x1, y1, x2, y2 [, r, g, b, a [, thickness]])` | thickness in pixels (default 1) |
+| `ui.draw_line(x1, y1, x2, y2 [, r, g, b, a [, thickness]])` | thickness in points (default 1) |
 | `ui.draw_circle(x, y, radius [, r, g, b, a [, filled [, thickness]]])` | filled unless `filled` is false |
 | `ui.draw_polygon({x1, y1, x2, y2, ...} [, r, g, b, a [, filled [, thickness]]])` | 3 to 64 points; filled (the default) must be convex |
 | `ui.push_clip(x, y, w, h)`, `ui.pop_clip()` | clips the layer's drawing; the end of `on_draw` pops any left |
 | `ui.layer(name)` | `"foreground"` (the default each `on_draw`): over everything; `"background"`: over the picture, under the windows |
-| `ui.text_size(s [, size])` → w, h | pixels |
-| `ui.mouse()` → x, y | window pixels; far off screen when there is no mouse |
+| `ui.text_size(s [, size])` → w, h | points |
+| `ui.mouse()` → x, y | window points; far off screen when there is no mouse |
 | `ui.mouse_down(button)` → bool | 1 left, 2 right, 3 middle; false while the overlay is open |
 | `ui.mouse_wheel()` → steps | this frame, up positive; 0 while the overlay is open |
 | `ui.game_to_screen(x, y)` → x, y | converts PS1 320×240 coordinates (the original area, where the game's HUD and menus are) |

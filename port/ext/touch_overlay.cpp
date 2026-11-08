@@ -24,23 +24,35 @@ Palette palette(float opacity) {
             faded(245, 238, 220, 210, opacity)};
 }
 
+// Touch hit testing uses framebuffer pixels; ImGui draws in window points.
+ImVec2 ui_point(float x_px, float y_px) {
+    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+    return {x_px / scale.x, y_px / scale.y};
+}
+
+float ui_radius(const TouchShown &shown) {
+    return shown.radius_px / ImGui::GetIO().DisplayFramebufferScale.y;
+}
+
 void draw_button(ImDrawList *draw, const Palette &colors, const TouchShown &shown) {
-    const ImVec2 at(shown.x_px, shown.y_px);
-    draw->AddCircleFilled(at, shown.radius_px, shown.held ? colors.fill_held : colors.fill);
-    draw->AddCircle(at, shown.radius_px, colors.edge, 0, std::max(1.5f, shown.radius_px * 0.05f));
+    const ImVec2 at = ui_point(shown.x_px, shown.y_px);
+    const float radius = ui_radius(shown);
+    draw->AddCircleFilled(at, radius, shown.held ? colors.fill_held : colors.fill);
+    draw->AddCircle(at, radius, colors.edge, 0, std::max(1.5f, radius * 0.05f));
     if (!shown.label)
         return;
     ImFont *font = ImGui::GetFont();
-    const float size = std::max(12.0f, shown.radius_px * 0.42f);
+    const float size = std::max(12.0f, radius * 0.42f);
     const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, shown.label);
     draw->AddText(font, size, ImVec2(at.x - extent.x * 0.5f, at.y - extent.y * 0.5f), colors.text, shown.label);
 }
 
 void draw_gear(ImDrawList *draw, const Palette &colors, const TouchShown &shown) {
     draw_button(draw, colors, shown);
-    const ImVec2 at(shown.x_px, shown.y_px);
-    const float ring = shown.radius_px * 0.38f;
-    const float thickness = std::max(2.0f, shown.radius_px * 0.12f);
+    const ImVec2 at = ui_point(shown.x_px, shown.y_px);
+    const float radius = ui_radius(shown);
+    const float ring = radius * 0.38f;
+    const float thickness = std::max(2.0f, radius * 0.12f);
     draw->AddCircle(at, ring, colors.text, 0, thickness);
     constexpr int teeth = 8;
     for (int i = 0; i < teeth; ++i) {
@@ -52,10 +64,11 @@ void draw_gear(ImDrawList *draw, const Palette &colors, const TouchShown &shown)
 }
 
 void draw_stick(ImDrawList *draw, const Palette &colors, const TouchShown &shown) {
-    const ImVec2 base(shown.x_px, shown.y_px);
-    draw->AddCircleFilled(base, shown.radius_px, colors.fill);
-    draw->AddCircle(base, shown.radius_px, colors.edge, 0, std::max(1.5f, shown.radius_px * 0.04f));
-    draw->AddCircleFilled(ImVec2(shown.knob_x_px, shown.knob_y_px), shown.radius_px * 0.45f,
+    const ImVec2 base = ui_point(shown.x_px, shown.y_px);
+    const float radius = ui_radius(shown);
+    draw->AddCircleFilled(base, radius, colors.fill);
+    draw->AddCircle(base, radius, colors.edge, 0, std::max(1.5f, radius * 0.04f));
+    draw->AddCircleFilled(ui_point(shown.knob_x_px, shown.knob_y_px), radius * 0.45f,
                           shown.held ? colors.fill_held : colors.edge);
 }
 
