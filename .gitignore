@@ -24,6 +24,10 @@ __pycache__/
 !/libverdite/tests/data/disc/*
 /dist/
 
+# The game's user folder and crash reports when it runs without one (settings.cpp, crash.cpp)
+/user/
+/crashes/
+
 # scripts/fuzz.py runs and reports
 /fuzz/
 # Gradle's output for the Android APK
