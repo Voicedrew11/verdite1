@@ -17,6 +17,18 @@ def dependencies(binary):
             for line in run("otool", "-L", str(binary)).splitlines()[1:]]
 
 
+def minimum_macos(binary):
+    """The lowest macOS the binary runs on, from its LC_BUILD_VERSION."""
+    lines = run("otool", "-l", str(binary)).splitlines()
+    for at, line in enumerate(lines):
+        if line.strip() == "cmd LC_BUILD_VERSION":
+            for following in lines[at + 1:at + 6]:
+                fields = following.split()
+                if fields and fields[0] == "minos":
+                    return tuple(int(part) for part in fields[1].split("."))
+    raise RuntimeError(f"No minimum macOS in {binary}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, default=Path("build/macos"))
@@ -92,6 +104,8 @@ def main():
         if replacements:
             run("install_name_tool", *replacements, str(destination))
 
+    # The app runs where every library in it does: Homebrew's are built for the OS they came from.
+    minimum = max(minimum_macos(destination) for destination in copied.values())
     version = run("sh", str(root / "scripts/version.sh"))
     with (contents / "Info.plist").open("wb") as output:
         plistlib.dump({
@@ -102,7 +116,7 @@ def main():
             "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": version,
             "CFBundleVersion": version,
-            "LSMinimumSystemVersion": "27.0",
+            "LSMinimumSystemVersion": ".".join(str(part) for part in minimum),
             "NSHighResolutionCapable": True,
             "NSPrincipalClass": "NSApplication",
         }, output)

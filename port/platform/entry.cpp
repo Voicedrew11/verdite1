@@ -383,6 +383,11 @@ int main(int argc, char **argv) {
     // And by a crash to tell the player.
     if (const auto code = kf::crash_window_run(argc, argv))
         return *code;
+    // Before the console takes stdout: its thread might not pass the line on before the exit.
+    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
+        std::printf("%s %s\n", kf::product_name, KF_VERSION);
+        return 0;
+    }
 #if KF_EXT
     kf::ext::console_start();
 #endif
@@ -399,10 +404,6 @@ int main(int argc, char **argv) {
     bool language_selected = false;
     kf::Language language = kf::Language::English;
     const char *dropped = nullptr;
-    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("%s %s\n", kf::product_name, KF_VERSION);
-        return 0;
-    }
     if (argc == 4 && std::strcmp(argv[1], "--compare-traces") == 0)
         return kf::fuzz_compare_traces(argv[2], argv[3]);
     for (int i = 1; i < argc; ++i) {

@@ -39,3 +39,46 @@ jobs:
           got="$(build/linux/verdite1 --version)"
           echo "$got"
           test "$got" = "$want" || { echo "expected $want"; exit 1; }
+
+  # The Mac and iOS builds on Apple's own tools (docs/PACKAGING.md). The tests run on the Mac; iOS
+  # is built unsigned, as nothing here can run it.
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install the libraries
+        run: brew install ninja sdl3 vulkan-headers vulkan-volk glslang molten-vk doctest
+
+      - name: Build
+        run: |
+          cmake --preset macos
+          cmake --build --preset macos
+
+      - name: Test
+        run: ctest --preset macos
+
+      - name: Assert the app carries the version
+        run: |
+          python3 scripts/package_macos.py
+          want="Verdite1 $(scripts/version.sh)"
+          got="$(dist/Verdite1.app/Contents/MacOS/verdite1 --version)"
+          echo "$got"
+          test "$got" = "$want" || { echo "expected $want"; exit 1; }
+
+  ios:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install the shader compiler
+        run: brew install glslang
+
+      - name: Build
+        run: scripts/package-ios.sh

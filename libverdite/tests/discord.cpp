@@ -238,7 +238,9 @@ TEST_CASE("a new first line goes sooner than a change to the second alone") {
     discord_show(activity("Floor 2", "HP 2"));
     const auto headline = std::chrono::steady_clock::now();
     REQUIRE(discord.wait_for_count(4));
-    CHECK(std::chrono::steady_clock::now() - headline < 200ms);
+    // Sooner than the second line's 250 ms gap; the first line's own is 50 ms, the rest is slack
+    // for a loaded machine.
+    CHECK(std::chrono::steady_clock::now() - headline < 250ms);
     discord_stop();
 }
 

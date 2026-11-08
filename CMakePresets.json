@@ -73,7 +73,7 @@
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "27.0"
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0"
       }
     },
     {
@@ -132,6 +132,13 @@
     {
       "name": "sanitize",
       "configurePreset": "sanitize",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "macos",
+      "configurePreset": "macos",
       "output": {
         "outputOnFailure": true
       }

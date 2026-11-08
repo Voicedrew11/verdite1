@@ -10,10 +10,12 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -34,6 +36,8 @@
 #include <sys/wait.h>
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #include <sys/ucontext.h>
 #else
 #include <ucontext.h>
@@ -44,8 +48,8 @@
 #include <csignal>
 #endif
 
-// Android's way of taking a stack; VERDITE_CRASH_FRAME_POINTERS tries it on a desktop's tests.
-#if defined(__ANDROID__) || defined(VERDITE_CRASH_FRAME_POINTERS)
+// Android's and Apple's way of taking a stack; VERDITE_CRASH_FRAME_POINTERS tries it on a desktop's tests.
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(VERDITE_CRASH_FRAME_POINTERS)
 #define VERDITE_WALK_FRAME_POINTERS 1
 #include <dlfcn.h>
 #endif
@@ -809,6 +813,10 @@ std::uint64_t fault_pc(void *context) {
         static_cast<ucontext_t *>(context)->uc_mcontext.gregs[REG_RIP]);
 #elif defined(__linux__) && defined(__aarch64__)
     return static_cast<ucontext_t *>(context)->uc_mcontext.pc;
+#elif defined(__APPLE__) && defined(__aarch64__)
+    return __darwin_arm_thread_state64_get_pc(static_cast<ucontext_t *>(context)->uc_mcontext->__ss);
+#elif defined(__APPLE__) && defined(__x86_64__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext->__ss.__rip;
 #else
     (void)context;
     return 0;
@@ -842,6 +850,39 @@ void write_registers(Report &report, void *context) {
     values[names.size()] = {"sp", machine.sp};
     values[names.size() + 1] = {"pc", machine.pc};
     report.registers(values);
+#elif defined(__APPLE__) && defined(__aarch64__)
+    static constexpr std::array<const char *, 29> names = {
+        "x0",  "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",  "x8",  "x9",  "x10", "x11", "x12", "x13", "x14",
+        "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"};
+    const auto &thread = static_cast<ucontext_t *>(context)->uc_mcontext->__ss;
+    std::array<RegisterValue, names.size() + 4> values{};
+    for (std::size_t at = 0; at < names.size(); ++at)
+        values[at] = {names[at], thread.__x[at]};
+    values[names.size()] = {"fp", __darwin_arm_thread_state64_get_fp(thread)};
+    values[names.size() + 1] = {"lr", __darwin_arm_thread_state64_get_lr(thread)};
+    values[names.size() + 2] = {"sp", __darwin_arm_thread_state64_get_sp(thread)};
+    values[names.size() + 3] = {"pc", __darwin_arm_thread_state64_get_pc(thread)};
+    report.registers(values);
+#elif defined(__APPLE__) && defined(__x86_64__)
+    const auto &thread = static_cast<ucontext_t *>(context)->uc_mcontext->__ss;
+    const std::array<RegisterValue, 17> values = {{{"rax", thread.__rax},
+                                                   {"rbx", thread.__rbx},
+                                                   {"rcx", thread.__rcx},
+                                                   {"rdx", thread.__rdx},
+                                                   {"rsi", thread.__rsi},
+                                                   {"rdi", thread.__rdi},
+                                                   {"rbp", thread.__rbp},
+                                                   {"rsp", thread.__rsp},
+                                                   {"r8", thread.__r8},
+                                                   {"r9", thread.__r9},
+                                                   {"r10", thread.__r10},
+                                                   {"r11", thread.__r11},
+                                                   {"r12", thread.__r12},
+                                                   {"r13", thread.__r13},
+                                                   {"r14", thread.__r14},
+                                                   {"r15", thread.__r15},
+                                                   {"rip", thread.__rip}}};
+    report.registers(values);
 #else
     (void)report;
     (void)context;
@@ -849,24 +890,43 @@ void write_registers(Report &report, void *context) {
 }
 
 #ifdef VERDITE_WALK_FRAME_POINTERS
+std::uintptr_t fault_frame_pointer(void *context) {
+#if defined(__APPLE__) && defined(__aarch64__)
+    return __darwin_arm_thread_state64_get_fp(static_cast<ucontext_t *>(context)->uc_mcontext->__ss);
+#elif defined(__APPLE__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext->__ss.__rbp;
+#elif defined(__aarch64__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext.regs[29];
+#else
+    return static_cast<std::uintptr_t>(static_cast<ucontext_t *>(context)->uc_mcontext.gregs[REG_RBP]);
+#endif
+}
+
+// arm64's return address while it is still in a register; 0 where calls push it.
+std::uintptr_t fault_link_register(void *context) {
+#if defined(__APPLE__) && defined(__aarch64__)
+    return __darwin_arm_thread_state64_get_lr(static_cast<ucontext_t *>(context)->uc_mcontext->__ss);
+#elif defined(__aarch64__)
+    return static_cast<ucontext_t *>(context)->uc_mcontext.regs[30];
+#else
+    (void)context;
+    return 0;
+#endif
+}
+
 // cpptrace's unwinder is not safe in a signal handler on Android, so it gives no frames at all
-// here: the frame pointers are walked instead (the Android build keeps them, CMakeLists.txt). A
-// damaged chain faults into the same jump a section's does, and the frames so far stand.
+// there, nor does its safe trace on macOS: the frame pointers are walked instead (the Android
+// build keeps them, CMakeLists.txt; Apple's ABIs always do). A damaged chain faults into the same
+// jump a section's does, and the frames so far stand.
 std::span<const cpptrace::frame_ptr> capture_stack(void *context) {
     static std::array<cpptrace::frame_ptr, max_frames> frames{};
     static volatile std::size_t count = 0;
     count = 0;
-    const auto &machine = static_cast<ucontext_t *>(context)->uc_mcontext;
     frames[count] = fault_pc(context);
     count = count + 1;
-#if defined(__aarch64__)
-    std::uintptr_t frame = machine.regs[29];
+    std::uintptr_t frame = fault_frame_pointer(context);
     // A leaf function has not saved its return address yet; one that has repeats it below.
-    const std::uintptr_t link = machine.regs[30];
-#else
-    auto frame = static_cast<std::uintptr_t>(machine.gregs[REG_RBP]);
-    const std::uintptr_t link = 0;
-#endif
+    const std::uintptr_t link = fault_link_register(context);
     if (sigsetjmp(section_jump, 1) == 0) {
         section_thread = pthread_self();
         in_section = 1;
@@ -892,6 +952,28 @@ std::span<const cpptrace::frame_ptr> capture_stack(void *context) {
     return {frames.data(), count};
 }
 
+#ifdef __APPLE__
+// Where a Mach-O's own addresses start, its __TEXT segment's (0x100000000 for an executable):
+// cpptrace looks a frame up there, not by its offset from where the image was loaded. Not for a
+// system library in the shared cache, which has no file and is looked up by the offset.
+std::uintptr_t text_segment_start(const void *image) {
+    const auto *header = static_cast<const mach_header_64 *>(image);
+    if ((header->flags & MH_DYLIB_IN_CACHE) != 0)
+        return 0;
+    const auto *at = reinterpret_cast<const std::uint8_t *>(header + 1);
+    for (std::uint32_t command = 0; command < header->ncmds; ++command) {
+        const auto *load = reinterpret_cast<const load_command *>(at);
+        if (load->cmd == LC_SEGMENT_64) {
+            const auto *segment = reinterpret_cast<const segment_command_64 *>(at);
+            if (std::string_view(segment->segname, strnlen(segment->segname, sizeof segment->segname)) == "__TEXT")
+                return segment->vmaddr;
+        }
+        at += load->cmdsize;
+    }
+    return 0;
+}
+#endif
+
 // dladdr where cpptrace's own needs glibc. It takes the linker's lock, which a crash inside the
 // linker would hold: rare enough, and the watchdog of the system ends such a process.
 void find_object(cpptrace::frame_ptr address, cpptrace::safe_object_frame &object) {
@@ -902,6 +984,9 @@ void find_object(cpptrace::frame_ptr address, cpptrace::safe_object_frame &objec
     if (dladdr(reinterpret_cast<void *>(address), &info) == 0 || !info.dli_fname)
         return;
     object.address_relative_to_object_start = address - reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+#ifdef __APPLE__
+    object.address_relative_to_object_start += text_segment_start(info.dli_fbase);
+#endif
     const std::string_view path(info.dli_fname);
     const std::size_t length = std::min(path.size(), sizeof(object.object_path) - 1);
     std::copy_n(path.begin(), length, object.object_path);
@@ -1214,8 +1299,8 @@ void prune_reports() {
         fs::remove_all(reports[at].second, error);
 }
 
-// The binary's own path, for the helper; empty where there is no /proc, and on
-// Android, where it is the system's app_process and the game is a library in it.
+// The binary's own path, for the helper; empty on iOS, which cannot start it, and on Android,
+// where it is the system's app_process and the game is a library in it.
 void find_binary() {
     state.binary.clear();
 #ifdef _WIN32
@@ -1228,6 +1313,11 @@ void find_binary() {
     const ssize_t length = readlink("/proc/self/exe", path.data(), path.size() - 1);
     if (length > 0)
         state.binary.add({path.data(), static_cast<std::size_t>(length)});
+#elif defined(__APPLE__) && !TARGET_OS_IPHONE
+    std::array<char, path_capacity> path{};
+    auto size = static_cast<std::uint32_t>(path.size());
+    if (_NSGetExecutablePath(path.data(), &size) == 0)
+        state.binary.add(path.data());
 #endif
 }
 

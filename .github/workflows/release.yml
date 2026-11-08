@@ -1,5 +1,5 @@
 # Builds the packages: the AppImage and the Windows zip in containers, the Windows installer from the
-# zip, the APK in nix. Game data never enters CI: the packages hold the game's code and ask the player
+# zip, the APK in nix, the Mac app and the iOS .ipa on a Mac runner. Game data never enters CI: the packages hold the game's code and ask the player
 # for their own disc. A `v*` tag opens a draft release; started by hand with preview=true
 # (scripts/prerelease.sh), the build replaces the rolling `preview` prerelease. See docs/PACKAGING.md.
 name: release
@@ -169,8 +169,51 @@ jobs:
             dist/*-symbols.zip
           if-no-files-found: error
 
+  # Ad-hoc signed, not notarized: there is no Apple Developer account behind it (docs/PACKAGING.md).
+  macos:
+    needs: version
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the libraries
+        run: brew install ninja sdl3 vulkan-headers vulkan-volk glslang molten-vk
+      - name: Package
+        run: scripts/package-macos.sh "${{ needs.version.outputs.version }}"
+      - name: Assert it carries the version
+        run: |
+          got="$(dist/Verdite1.app/Contents/MacOS/verdite1 --version)"
+          echo "$got"
+          test "$got" = "Verdite1 ${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdite1-macos
+          path: dist/*-macos-arm64.zip
+          if-no-files-found: error
+
+  # Unsigned: a sideloading tool signs it with the player's own Apple ID.
+  ios:
+    needs: version
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the shader compiler
+        run: brew install glslang
+      - name: Package
+        run: scripts/package-ios.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdite1-ios
+          path: dist/*.ipa
+          if-no-files-found: error
+
   release:
-    needs: [linux, windows, windows-installer, android]
+    needs: [linux, windows, windows-installer, android, macos, ios]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -190,6 +233,8 @@ jobs:
             - **Windows:** `...-setup.exe` installs it (no administrator needed), or unpack the `.zip` anywhere.
             - **Linux:** make the `.AppImage` executable and run it. It adds itself to your desktop's menu.
             - **Android:** install the `.apk` (arm64, Android 10 or later). The `-symbols.zip` is for reading crash reports; players do not need it.
+            - **macOS:** unzip `...-macos-arm64.zip` (Apple Silicon, macOS 26 or later). The app is not notarized: open it the first time with right-click > Open.
+            - **iOS:** the `.ipa` is unsigned (iOS 17 or later). Install it with a sideloading tool such as AltStore or Sideloadly, which signs it with your Apple ID.
 
             The game asks for your disc on first launch, and offers to add the English translation to a Japanese disc. It tells you when a new version is out.
 
@@ -198,7 +243,7 @@ jobs:
   # prerelease is never GitHub's "latest", so the update check never announces it, and the tag is no
   # version and starts no workflow. preview-cleanup.yml deletes it when a release is published.
   preview:
-    needs: [linux, windows, windows-installer, android]
+    needs: [linux, windows, windows-installer, android, macos, ios]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.preview
     env:
@@ -215,16 +260,20 @@ jobs:
           test -n "$PREVIEW_PASSWORD" || { echo "the PREVIEW_PASSWORD secret is not set"; exit 1; }
           command -v 7z >/dev/null || { sudo apt-get update && sudo apt-get install -y p7zip-full; }
           sha="${GITHUB_SHA::9}"
-          mkdir -p out stage/linux stage/setup stage/win stage/android
+          mkdir -p out stage/linux stage/setup stage/win stage/android stage/macos stage/ios
           cp dist/*.AppImage "stage/linux/Verdite1-preview-$sha-x86_64.AppImage"
           chmod +x stage/linux/*.AppImage
           cp dist/*setup.exe "stage/setup/Verdite1-preview-$sha-win-x64-setup.exe"
           unzip -q dist/*-win-x64.zip -d stage/win
           cp dist/*.apk "stage/android/Verdite1-preview-$sha-android-arm64.apk"
+          cp dist/*-macos-arm64.zip "stage/macos/Verdite1-preview-$sha-macos-arm64.zip"
+          cp dist/*.ipa "stage/ios/Verdite1-preview-$sha-ios-arm64.ipa"
           (cd stage/linux && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-linux-x86_64.zip . >/dev/null)
           (cd stage/setup && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-win-x64-setup.zip . >/dev/null)
           (cd stage/win && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-win-x64.zip . >/dev/null)
           (cd stage/android && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-android-arm64.zip . >/dev/null)
+          (cd stage/macos && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-macos-arm64.zip . >/dev/null)
+          (cd stage/ios && 7z a -tzip -mem=AES256 "-p$PREVIEW_PASSWORD" ../../out/Verdite1-preview-ios-arm64.zip . >/dev/null)
           for f in out/*.zip; do 7z t "-p$PREVIEW_PASSWORD" "$f" >/dev/null; done
           ls -la out
       - name: Replace the preview prerelease
@@ -232,7 +281,7 @@ jobs:
           cat > notes.md <<'NOTES'
           **Preview builds are password protected.** Join the [Verdite Project Discord](https://discord.gg/R4EKCs8RWH) for access.
 
-          **Always back up your saves before installing a preview build!** They are `BISLPS-00017KF` and `BISLPS-00017KF.quick`, in `%APPDATA%\Verdite\Verdite1` on Windows and `~/.local/share/Verdite/Verdite1` on Linux.
+          **Always back up your saves before installing a preview build!** They are `BISLPS-00017KF` and `BISLPS-00017KF.quick`, in `%APPDATA%\Verdite\Verdite1` on Windows, `~/.local/share/Verdite/Verdite1` on Linux and `~/Library/Application Support/Verdite/Verdite1` on macOS.
           NOTES
           gh release delete preview --cleanup-tag --yes 2>/dev/null || true
           gh release create preview out/*.zip --target "$GITHUB_SHA" --prerelease \

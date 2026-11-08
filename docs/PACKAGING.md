@@ -12,7 +12,7 @@ line about game data stays where it was: **no package holds any.** The game read
 disc at first launch (`verdite-port.md`), and the English translation is the translator's own patch,
 downloaded then; `-DKF_ENGLISH_PATCH=/nonexistent` keeps the delta out of every package.
 
-Co-op and the messages are in every package (`KF_ONLINE`, libdatachannel built from source with
+Co-op and the messages are in every package but the Mac and iOS ones (`KF_ONLINE`, libdatachannel built from source with
 OpenSSL linked in). On Android, OpenSSL is built while configuring (`cmake/android_openssl.cmake`),
 once per build folder, and a phone joins rooms but does not host them ([COOP_PLAN.md](COOP_PLAN.md)).
 
@@ -24,6 +24,20 @@ once per build folder, and a phone joins rooms but does not host them ([COOP_PLA
 | `Verdite1-V-win-x64.zip` | `scripts/package-windows.sh` | podman or docker, `packaging/windows/`: llvm-mingw, cross |
 | `Verdite1-V-win-x64-setup.exe` | `packaging/windows/make-installer.ps1` | Windows, Inno Setup, from the zip |
 | `Verdite1-V-android-arm64.apk` | `scripts/package-android.sh` | the android nix shell |
+| `Verdite1-V-macos-arm64.zip` | `scripts/package-macos.sh` | a Mac: Xcode's tools and Homebrew |
+| `Verdite1-V-ios-arm64.ipa` | `scripts/package-ios.sh` | a Mac: Xcode, unsigned |
+
+- **The Mac and iOS packages are built on GitHub's Mac runners** (`macos-26`), which are free for a
+  public repository, so no one needs a Mac to release them; `ci.yml` builds both on every push and
+  runs libverdite's and port/'s tests on the Mac. Neither is signed by an Apple Developer account.
+  The Mac app is signed ad hoc and not notarized, so a player opens it the first time with
+  right-click > Open. The `.ipa` is unsigned and goes on a phone through a sideloading tool
+  (AltStore, Sideloadly) that signs it with the player's Apple ID; such an install lasts 7 days
+  before the tool renews it. An account ($99 a year) would let CI sign and notarize the Mac app and
+  send iOS builds to TestFlight; that needs its certificate as a secret, and is not set up.
+- **The Mac app's minimum macOS** is the highest any binary in it asks for (`package_macos.py`
+  reads each one's `minos`). Homebrew's SDL3 and MoltenVK are built for the macOS they were
+  installed on, so the runner's macOS is the floor: 26 on `macos-26`.
 
 - **The AppImage** runs on glibc 2.35 or later and carries `libSDL3.so.0`, the C++ runtime, OpenSSL
   linked in, and bsdtar on `PATH` for the English patch's `.rar` (GNU tar cannot read it). Vulkan's
@@ -58,10 +72,11 @@ once per build folder, and a phone joins rooms but does not host them ([COOP_PLA
 
 The macOS preset builds the C/C++ port natively for Apple Silicon. SDL3 owns the
 window, input and audio; the Vulkan renderer uses bundled MoltenVK to draw through
-Metal. This local build targets macOS 27 or later to match the Homebrew libraries
-used to build it. Earlier macOS releases and Intel Macs have not been validated.
-Crash-report symbolication and recovery still need macOS support: five existing
-crash-report tests fail on this platform.
+Metal. It is compiled for macOS 26 or later, and the app asks for whatever its Homebrew
+libraries do (above). Intel Macs have not been validated.
+The crash handler reads the binary's path, the faulting address and the registers the macOS way
+(`libverdite/src/crash.cpp`), so its tests run on the Mac too: `ctest --preset macos`, with
+`brew install doctest`.
 
 Install Xcode command-line tools and the build dependencies, then build and launch:
 
