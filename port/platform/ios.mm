@@ -1,5 +1,6 @@
 #include <kf/platform/ios.h>
 #include <SDL3/SDL.h>
+#include <cstdio>
 #include <memory>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -10,6 +11,22 @@
 @property(nonatomic, copy) NSString *failure;
 @end
 
+static NSURL *import_folder() {
+    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+                                                            inDomains:NSUserDomainMask].firstObject;
+    return [documents URLByAppendingPathComponent:@"Import" isDirectory:YES];
+}
+
+// What the game opens from a pick: a CUE names its BIN, a BIN, ISO or CHD is a disc on its own, a
+// PPF is the English patch.
+static int pick_rank(NSString *extension) {
+    if ([extension isEqualToString:@"cue"])
+        return 3;
+    if ([extension isEqualToString:@"ppf"])
+        return 1;
+    return 2;
+}
+
 @implementation VerditeDiscPicker
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
     (void)controller;
@@ -18,14 +35,20 @@
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     (void)controller;
     NSFileManager *files = NSFileManager.defaultManager;
-    NSURL *documents = [files URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-    NSURL *folder = [documents URLByAppendingPathComponent:@"Import" isDirectory:YES];
+    NSURL *folder = import_folder();
     NSError *error = nil;
+    // An earlier import's copies are not needed again.
+    if ([files fileExistsAtPath:folder.path] && ![files removeItemAtURL:folder error:&error]) {
+        self.failure = error.localizedDescription;
+        self.done = YES;
+        return;
+    }
     if (![files createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:&error]) {
         self.failure = error.localizedDescription;
         self.done = YES;
         return;
     }
+    int selected_rank = 0;
     for (NSURL *url in urls) {
         NSString *extension = url.pathExtension.lowercaseString;
         if (![@[@"bin", @"cue", @"iso", @"chd", @"ppf"] containsObject:extension])
@@ -36,8 +59,9 @@
             self.failure = error.localizedDescription;
         } else if (![files copyItemAtURL:url toURL:destination error:&error]) {
             self.failure = error.localizedDescription;
-        } else if (!self.selected || [extension isEqualToString:@"cue"]) {
+        } else if (pick_rank(extension) > selected_rank) {
             self.selected = destination.path;
+            selected_rank = pick_rank(extension);
         }
         if (access)
             [url stopAccessingSecurityScopedResource];
@@ -76,6 +100,16 @@ std::string ios_choose_disc() {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Disc import", delegate.failure.UTF8String, window.get());
     std::string result = !delegate.failure && delegate.selected ? delegate.selected.UTF8String : "";
     return result;
+}
+
+void ios_discard_imports() {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSURL *folder = import_folder();
+    if (![files fileExistsAtPath:folder.path])
+        return;
+    NSError *error = nil;
+    if (![files removeItemAtURL:folder error:&error])
+        std::fprintf(stderr, "Cannot remove the imported copies: %s\n", error.localizedDescription.UTF8String);
 }
 
 void ios_touch_feedback() {

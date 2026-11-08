@@ -137,7 +137,8 @@ window points, while touch hit testing uses framebuffer pixels, including Retina
 On first launch, import a BIN/ISO/CHD through Files. For a CUE, select both the CUE and
 its named BIN together. This local build accepts the already English-patched v1.0
 disc and does not download translation patches. The files are copied into the app,
-verified and extracted. Original files are kept. Documents is exposed in Files and
+verified and extracted, and the copies are removed once the game files are out of them.
+Original files are kept. Documents is exposed in Files and
 Finder file sharing, with extracted game data under `data/en` and saves beside it.
 
 To transfer an already verified English data folder while installing, set

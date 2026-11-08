@@ -353,6 +353,10 @@ bool prepare_release_data(const char *dropped) {
             offer_english();
         }
     }
+#ifdef KF_IOS
+    // The game files are out of the imported copies now, or the copies could not be used.
+    kf::ios_discard_imports();
+#endif
     return true;
 }
 #endif
