@@ -118,6 +118,7 @@ TEST_CASE("a soft fault writes a named report and the game carries on") {
     const fs::path folder = soft_report_from_here().value_or("");
     REQUIRE_FALSE(folder.empty());
     const std::string report = read_text(folder / "report.txt");
+    INFO(report);
     CHECK(report.starts_with("TEST crash report\nbuild: test build\n"));
     CHECK(report.find("fault: soft: a door with no key\n") != std::string::npos);
     CHECK(report.find("soft_report_from_here") != std::string::npos);
@@ -204,6 +205,11 @@ fs::path hang_report_of(const fs::path &directory, void (*body)(), std::string_v
     kill(child, SIGKILL);
     int status = 0;
     REQUIRE(waitpid(child, &status, 0) == child);
+    std::string seen;
+    std::error_code error;
+    for (const auto &entry : fs::directory_iterator(directory, error))
+        seen += read_text(entry.path() / "report.txt");
+    INFO(seen);
     REQUIRE_FALSE(found.empty());
     return found;
 }
@@ -228,6 +234,7 @@ TEST_CASE("a game thread that stops beating gets a hang report from its own stac
     CHECK(fs::path(folder).filename().string().starts_with("hang-"));
     CHECK(crash_report_kind(folder.string()) == CrashReportKind::Hang);
     const std::string report = read_text(folder / "report.txt");
+    INFO(report);
     CHECK(report.find("fault: hang: no frame for ") != std::string::npos);
     CHECK(report.find("thread: the game's\n") != std::string::npos);
     CHECK(report.find("== registers\n") != std::string::npos);
@@ -289,7 +296,9 @@ TEST_CASE("a crash becomes the window, which ends as the crash would have") {
     const fs::path folder = only_report(directory);
     CHECK(fs::exists(folder / "window-started"));
     // The stack is named before the window: the crashed image is gone after it.
-    CHECK(read_text(folder / "report.txt").find("fault_on_purpose") != std::string::npos);
+    const std::string report = read_text(folder / "report.txt");
+    INFO(report);
+    CHECK(report.find("fault_on_purpose") != std::string::npos);
     fs::remove_all(directory);
 }
 
@@ -330,6 +339,7 @@ TEST_CASE("a fault is reported with its stack named by the helper") {
     CHECK(crash_in_child(directory, {{"damaged", write_damaged}, {"after", write_after}},
                          fault_on_purpose) == SIGSEGV);
     const std::string report = read_text(only_report(directory) / "report.txt");
+    INFO(report);
     CHECK(report.find("fault: SIGSEGV (bad memory access)\naddress: 0x0\n") != std::string::npos);
     CHECK(report.find("thread: the game's\n") != std::string::npos);
     // The faulting function first: the handler's own frames are gone.
@@ -370,6 +380,7 @@ TEST_CASE("std::terminate is reported with what it was handed") {
     const fs::path directory = fresh_directory("terminate");
     CHECK(crash_in_child(directory, {}, terminate_while_handling) == SIGABRT);
     const std::string report = read_text(only_report(directory) / "report.txt");
+    INFO(report);
     CHECK(report.find("fault: SIGABRT (aborted)\n") != std::string::npos);
     CHECK(report.find("message: the chest table ran out\n") != std::string::npos);
     CHECK(report.find("terminate_while_handling()") != std::string::npos);
