@@ -300,6 +300,11 @@ OptionSection display_look() {
     }});
 }
 
+OptionRow hyllian_only(OptionRow made) {
+    return shown_if(std::move(made),
+                    [] { return settings().screen_shader == static_cast<int>(ScreenShader::CrtHyllian); });
+}
+
 // Not locked by Classic mode: the original game was played on a television.
 OptionSection display_screen() {
     Settings &s = settings();
@@ -310,9 +315,24 @@ OptionSection display_screen() {
                "look best large, in fullscreen. Sharp bilinear keeps pixels square when the window is not a whole "
                "multiple of the picture.",
                s.screen_shader,
-               {{0, "Off"}, {1, "Scanlines"}, {2, "CRT (Lottes)"}, {3, "CRT, curved"}, {4, "Sharp bilinear"},
-                {5, "LCD grid"}},
+               {{0, "Off"}, {1, "Scanlines"}, {2, "CRT (Lottes)"}, {3, "CRT, curved"}, {6, "CRT (Hyllian)"},
+                {4, "Sharp bilinear"}, {5, "LCD grid"}},
                apply_render_settings),
+        hyllian_only(choice("display.crt_mask", "CRT mask",
+                            "The phosphors between the beams, drawn in screen pixels. Pick the 4K ones on a 4K "
+                            "screen: the plain ones are too fine to show there.",
+                            s.crt_mask,
+                            {{0, "None"}, {1, "Aperture grille"}, {2, "Aperture grille (4K)"}, {3, "Slot mask"},
+                             {4, "Slot mask (4K)"}, {5, "Dot mask"}, {6, "Dot mask (4K)"}, {7, "TV shadow mask"}},
+                            apply_render_settings)),
+        hyllian_only(toggle("display.crt_curvature", "CRT curvature", "A curved tube with rounded corners.",
+                            s.crt_curvature, apply_render_settings)),
+        hyllian_only(number("display.crt_scanlines", "Scanline strength",
+                            "How dark the gaps between the game's lines are.", s.crt_scanlines,
+                            {0, 100, 1, "%.0f%%"}, apply_render_settings)),
+        hyllian_only(number("display.crt_brightness", "CRT brightness",
+                            "Light given back for what the mask and scanlines take away.", s.crt_brightness,
+                            {100, 200, 1, "%.0f%%"}, apply_render_settings)),
     }};
 }
 

@@ -4,6 +4,10 @@
 // in frontend.h): drawn into its letterbox rectangle of a swapchain image, the
 // rest cleared to black. ScreenShader::None does not come here; the backend
 // blits the picture instead.
+//
+// A shader is one pass, or two like Hyllian's: the first filters along each of
+// the game's lines into an image as wide as the letterbox, the second draws
+// the lines from it.
 #include "vulkan_device.h"
 #include "vulkan_render_pass.h"
 #include "vulkan_resources.h"
@@ -24,6 +28,7 @@ struct ScreenDraw {
     const Framebuffer *framebuffer;   // window_image as an attachment of window_format
     VkFormat window_format;
     PresentRect rect;                 // the letterbox, in window pixels
+    HyllianOptions hyllian;           // ScreenShader::CrtHyllian only
 };
 
 class ScreenPass {
@@ -50,8 +55,11 @@ public:
 
 private:
     bool fit_format(VkFormat window_format);
+    bool fit_lines(uint32_t width_px, uint32_t lines);
     VkPipeline pipeline(ScreenShader shader);
+    VkPipeline lines_pipeline(ScreenShader shader);
     void release_pipelines();
+    bool record_lines(VkCommandBuffer commands, uint32_t frame, const ScreenDraw &draw);
 
     const VulkanDevice &device_;
     VkSampler sampler_ = VK_NULL_HANDLE;
@@ -61,6 +69,12 @@ private:
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     RenderPass pass_;   // the window's format, cleared first
     std::array<VkPipeline, screen_shader_count> pipelines_{};
+    // A two-pass shader's first pass and the lines it filters.
+    RenderPass lines_pass_;
+    std::array<VkPipeline, screen_shader_count> lines_pipelines_{};
+    std::array<VkDescriptorSet, frames_in_flight> lines_sets_{};   // read lines_
+    GpuImage lines_;
+    Framebuffer lines_framebuffer_;
 };
 } // namespace kf
 

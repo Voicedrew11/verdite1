@@ -66,8 +66,23 @@ enum class FogMode : u8 { Corners, Depth, Distance };
 //   CrtCurved:     the same on a curved tube, through a shadow mask
 //   SharpBilinear: square pixels at any size, blended only where two meet
 //   Lcd:           a handheld's LCD, a faint grid between the game's pixels
-enum class ScreenShader : u8 { None, Scanlines, Crt, CrtCurved, SharpBilinear, Lcd };
-inline constexpr std::size_t screen_shader_count = 6;
+//   CrtHyllian:    Hyllian's CRT shader (MIT), set up by HyllianOptions
+enum class ScreenShader : u8 { None, Scanlines, Crt, CrtCurved, SharpBilinear, Lcd, CrtHyllian };
+inline constexpr std::size_t screen_shader_count = 7;
+
+// The phosphors Hyllian's CRT draws, in window pixels: the plain ones suit a
+// 1080p screen, the 4K ones are drawn larger so they still show at 2160p.
+//   Aperture: vertical stripes (Trinitron);  Slot: stripes in staggered slots;
+//   Dot: a delta of dots;  Shadow: a television's shadow mask, compressed
+enum class CrtMask : u8 { None, Aperture, Aperture4k, Slot, Slot4k, Dot, Dot4k, Shadow };
+inline constexpr std::size_t crt_mask_count = 8;
+
+struct HyllianOptions {
+    CrtMask mask = CrtMask::Aperture;
+    bool curvature = false;
+    float scanlines = 0.72f;    // how dark the gaps between lines are, 0..1 (Hyllian's default)
+    float brightness = 1.0f;    // light added back for what the mask takes, 1..2
+};
 
 // The Display settings, one field per row.
 struct PictureOptions {
@@ -97,6 +112,7 @@ struct PictureOptions {
     // Presentation
     bool vsync = true;            // off: frames are shown as soon as they are drawn
     ScreenShader screen_shader = ScreenShader::None;
+    HyllianOptions hyllian;
 };
 
 // Where a game update saw the world from.

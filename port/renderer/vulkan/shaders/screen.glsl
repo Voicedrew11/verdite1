@@ -2,8 +2,13 @@
 // letterbox is in the window, and the game's grid of columns by 240 lines.
 layout(set = 0, binding = 0) uniform sampler2D picture;
 layout(push_constant) uniform ScreenConstants {
-    vec4 rect;   // x, y, width, height in window pixels
+    vec4 rect;   // x, y, width, height in pixels of the pass's target
     vec2 grid;   // the game's columns and lines
+    // Hyllian's (HyllianOptions)
+    float mask_layout;   // PHOSPHOR_LAYOUT
+    float curvature;     // 1: on
+    float scanlines;     // SCANLINES_STRENGTH
+    float brightness;    // BRIGHTBOOST
 } screen;
 
 layout(location = 0) out vec4 out_color;

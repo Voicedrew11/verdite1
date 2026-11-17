@@ -157,6 +157,13 @@ void settings_load() {
     current.antialiasing = static_cast<int>(read_number(display, "antialiasing", current.antialiasing));
     current.screen_shader = std::clamp(static_cast<int>(read_number(display, "screen_shader", current.screen_shader)), 0,
                                        static_cast<int>(screen_shader_count) - 1);
+    current.crt_mask = std::clamp(static_cast<int>(read_number(display, "crt_mask", current.crt_mask)), 0,
+                                  static_cast<int>(crt_mask_count) - 1);
+    current.crt_curvature = read_bool(display, "crt_curvature", current.crt_curvature);
+    current.crt_scanlines =
+        std::clamp(static_cast<int>(read_number(display, "crt_scanlines", current.crt_scanlines)), 0, 100);
+    current.crt_brightness =
+        std::clamp(static_cast<int>(read_number(display, "crt_brightness", current.crt_brightness)), 100, 200);
     current.flame_glow = read_bool(display, "flame_glow", current.flame_glow);
     current.shadows = read_bool(display, "shadows", current.shadows);
     current.frame_rate = static_cast<int>(read_number(display, "frame_rate", current.frame_rate));
@@ -243,6 +250,10 @@ void settings_save() {
     write_value(display, "enhanced_distance", cJSON_CreateNumber(current.enhanced_distance));
     write_value(display, "antialiasing", cJSON_CreateNumber(current.antialiasing));
     write_value(display, "screen_shader", cJSON_CreateNumber(current.screen_shader));
+    write_value(display, "crt_mask", cJSON_CreateNumber(current.crt_mask));
+    write_value(display, "crt_curvature", cJSON_CreateBool(current.crt_curvature));
+    write_value(display, "crt_scanlines", cJSON_CreateNumber(current.crt_scanlines));
+    write_value(display, "crt_brightness", cJSON_CreateNumber(current.crt_brightness));
     write_value(display, "flame_glow", cJSON_CreateBool(current.flame_glow));
     write_value(display, "shadows", cJSON_CreateBool(current.shadows));
     write_value(display, "frame_rate", cJSON_CreateNumber(current.frame_rate));
@@ -373,6 +384,10 @@ PictureOptions picture_options(const Settings &e) {
     options.enhanced_depth = static_cast<float>(e.enhanced_distance * KF_MAP_TILE_SIZE);
     options.vsync = current.vsync && e.frame_rate != frame_rate_unlimited;
     options.screen_shader = static_cast<ScreenShader>(e.screen_shader);
+    options.hyllian.mask = static_cast<CrtMask>(e.crt_mask);
+    options.hyllian.curvature = e.crt_curvature;
+    options.hyllian.scanlines = static_cast<float>(e.crt_scanlines) / 100.0f;
+    options.hyllian.brightness = static_cast<float>(e.crt_brightness) / 100.0f;
     return options;
 }
 } // namespace

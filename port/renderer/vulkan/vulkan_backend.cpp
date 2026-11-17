@@ -774,6 +774,7 @@ void VulkanBackend::show_picture(VkCommandBuffer commands, const SwapchainImage 
             image.framebuffer,
             swapchain_->format(),
             letterbox(logical_width_, static_cast<int>(extent.width), static_cast<int>(extent.height)),
+            options_.hyllian,
         };
         if (screen_->record(commands, static_cast<uint32_t>(frame_number_ % frames_in_flight), draw))
             return;

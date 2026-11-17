@@ -471,13 +471,13 @@ set(KF_SHADER_OUT ${CMAKE_BINARY_DIR}/generated/shaders)
 set(KF_SHADER_HEADERS)
 foreach(shader world.vert world.frag surface.frag fullscreen.vert downsample.frag occlusion.frag
     occlusion_blur.frag screen_scanlines.frag screen_crt.frag screen_crt_curved.frag screen_sharp_bilinear.frag
-    screen_lcd.frag)
+    screen_lcd.frag screen_hyllian_lines.frag screen_hyllian.frag)
   string(REPLACE "." "_" symbol ${shader})
   add_custom_command(OUTPUT ${KF_SHADER_OUT}/${symbol}.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${KF_SHADER_OUT}
     COMMAND ${KF_GLSLANG} -V --target-env vulkan1.1 --vn ${symbol} -o ${KF_SHADER_OUT}/${symbol}.h ${KF_SHADER_DIR}/${shader}
     DEPENDS ${KF_SHADER_DIR}/${shader} ${KF_SHADER_DIR}/draw.glsl ${KF_SHADER_DIR}/screen.glsl
-      ${KF_SHADER_DIR}/crt_lottes.glsl VERBATIM)
+      ${KF_SHADER_DIR}/crt_lottes.glsl ${KF_SHADER_DIR}/hyllian.glsl VERBATIM)
   list(APPEND KF_SHADER_HEADERS ${KF_SHADER_OUT}/${symbol}.h)
 endforeach()
 # third-party code: built with its own warnings, not ours
