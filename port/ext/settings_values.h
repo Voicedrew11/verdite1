@@ -57,6 +57,7 @@ struct Settings {
     bool detailed_map = true;   // distant map cells keep their detailed meshes
     bool flame_glow = true;
     bool shadows = true;
+    bool head_bob = true;       // the camera rises and falls with each step (the original's)
     bool touch_haptics = true;  // the on-screen buttons click the phone's vibrator
     bool auto_keys = true;          // interacting with a lock uses a carried key
     bool reload_on_death = true;    // a death reloads the last save, not a New Game

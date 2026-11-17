@@ -164,6 +164,7 @@ const std::vector<Page> &pages() {
             {"controls.pad_layout", {"PAD BUTTONS", "ボタンはいち"},
              {{std::string("west"), {"WEST", "かいがい"}}, {std::string("jp"), {"JAPANESE", "にほん"}}}, {}},
             {"analog.invert_pitch", {"INVERT CAMERA", "カメラのはんてん"}, {}, {}},
+            {"controls.head_bob", {"HEAD BOB", "あたまのゆれ"}, {}, {}},
             {"analog.stick_sens", {"STICK SENS", "レバーのはやさ"}, stick_sens_values(), stick_sens_page_stops()},
             {"gameplay.enemy_turn_speed", {"ENEMY TURN", "てきのふりむき"}, enemy_turn_values(),
              {ext::enemy_turn_automatic, 1.0, 2.0, 3.0, 4.0}},

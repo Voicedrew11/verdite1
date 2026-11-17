@@ -163,6 +163,7 @@ void settings_load() {
     current.look_limit = static_cast<int>(read_number(controls, "look_limit", current.look_limit));
     current.pad_layout = read_string(controls, "pad_layout", current.pad_layout);
     current.touch_haptics = read_bool(controls, "touch_haptics", current.touch_haptics);
+    current.head_bob = read_bool(controls, "head_bob", current.head_bob);
     current.analog = read_analog(cJSON_GetObjectItemCaseSensitive(document, "analog"), current.analog);
     const cJSON *gameplay = cJSON_GetObjectItemCaseSensitive(document, "gameplay");
     current.language = read_string(gameplay, "language", current.language);
@@ -245,6 +246,7 @@ void settings_save() {
     write_value(controls, "look_limit", cJSON_CreateNumber(current.look_limit));
     write_value(controls, "pad_layout", cJSON_CreateString(current.pad_layout.c_str()));
     write_value(controls, "touch_haptics", cJSON_CreateBool(current.touch_haptics));
+    write_value(controls, "head_bob", cJSON_CreateBool(current.head_bob));
     write_analog(object_entry(document, "analog"), current.analog);
     cJSON *gameplay = object_entry(document, "gameplay");
     write_value(gameplay, "language", cJSON_CreateString(current.language.c_str()));
@@ -321,6 +323,7 @@ const Settings &effective_settings() {
     classic.frame_rate = 20;
     classic.tick_rate = 20;
     classic.look_limit = 17;
+    classic.head_bob = true;
     classic.auto_keys = false;
     classic.reload_on_death = false;
     classic.enemy_turn_auto = false;
@@ -424,6 +427,7 @@ void apply_control_settings() {
     // Degrees to 1/4096 turns; never tighter than the original limit, and short of straight up/down.
     const int degrees = std::clamp(e.look_limit, 17, 85);
     player_pitch_limit = std::max(191, degrees * 4096 / 360);
+    head_bob = e.head_bob;
     fix_actor_ceiling_fall = e.fix_ceiling_fall;
     auto_use_keys = e.auto_keys;
     host_set_enemy_turn({e.enemy_turn_auto ? EnemyTurnMode::Automatic : EnemyTurnMode::Fixed, e.enemy_turn,
@@ -453,6 +457,7 @@ void crash_write_settings(verdite::CrashWriter &out) {
     out.line("enemy turn percent", static_cast<std::int64_t>(s.enemy_turn * 100.0f));
     out.line("fix ceiling fall", s.fix_ceiling_fall);
     out.line("auto keys", s.auto_keys);
+    out.line("head bob", s.head_bob);
     out.line("reload on death", s.reload_on_death);
     out.line("aspect", s.aspect);
     out.line("resolution", s.resolution);

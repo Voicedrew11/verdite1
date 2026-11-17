@@ -530,7 +530,7 @@ apart, each label in a row box and its value centred in an option box at X 180, 
   |---|---|
   | DISPLAY | FULLSCREEN, RESOLUTION, ASPECT, HUD AT EDGES, FRAME RATE, ANTIALIASING, CLASSIC MODE, RUN SETUP |
   | GRAPHICS | WIGGLE, TRUE COLOUR, FILTER, ANISO, PER PIXEL LIGHT, AO, FOG, DETAILED MAP |
-  | CONTROLS | CONTROLS, PAD BUTTONS, INVERT CAMERA, STICK SENS, ENEMY TURN |
+  | CONTROLS | CONTROLS, PAD BUTTONS, INVERT CAMERA, HEAD BOB, STICK SENS, ENEMY TURN |
   | SOUND | VOLUME |
 
   Left off the page for now (2026-11-05), kept in the overlay: tick rate (15; a host still sets the

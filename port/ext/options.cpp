@@ -355,6 +355,9 @@ OptionSection controls_movement() {
         number("controls.look_limit", "Look up/down limit",
                "How far the camera can tilt up or down. The original game allows about 17 degrees.", s.look_limit,
                {17, 85, 1, "%.0f deg"}, apply_control_settings),
+        toggle("controls.head_bob", "Head bob",
+               "The camera rises and falls with each step, as in the original game. Off keeps it level.",
+               s.head_bob, apply_control_settings),
     }});
     movement.rows.insert(movement.rows.begin(), classic_note("controls"));
     movement.rows.push_back(needs(
