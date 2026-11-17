@@ -6,6 +6,7 @@
 #include <kf/platform/files.h>
 #include <kf/renderer/constants.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace kf::ext {
@@ -27,13 +29,48 @@ using Refusal = std::optional<std::string>;
 Refusal check_tim(Bytes bytes);
 Refusal check_seq(Bytes bytes);
 Refusal check_tmd(Bytes bytes);
+// The kinds' checks, given the disc path; only a picture inside a file needs it.
+Refusal tim_row(std::string_view, Bytes bytes) { return check_tim(bytes); }
+Refusal seq_row(std::string_view, Bytes bytes) { return check_seq(bytes); }
+Refusal tmd_row(std::string_view, Bytes bytes) { return check_tmd(bytes); }
+Refusal check_picture(std::string_view path, Bytes bytes);
+
+// Pictures a mod may replace inside a file of several TIMs one after another, named "<file>#<n>" with
+// n counted from 0: the pages of the opening and ending scrolls (B0/MIX3., B0/MIX9.) and the page of
+// notification banners in the common pictures (COM/MIX.TIM). Only these: the files' other pictures
+// are textures the scenes' models are mapped onto by position.
+struct PicturePlace {
+    std::string_view path, file;
+    std::size_t index;
+};
+constexpr std::array<PicturePlace, 5> picture_places{{
+    {"KF/B0/MIX3.#6", "KF/B0/MIX3.", 6},
+    {"KF/B0/MIX3.#7", "KF/B0/MIX3.", 7},
+    {"KF/B0/MIX9.#7", "KF/B0/MIX9.", 7},
+    {"KF/B0/MIX9.#8", "KF/B0/MIX9.", 8},
+    {"KF/COM/MIX.TIM#5", "KF/COM/MIX.TIM", 5},
+}};
+
 
 // The kinds a mod may replace, by suffix: a file takes the first row its disc path ends with.
 // No MIM row: a MIM with fewer animation clips than the game asks for passes any byte check (docs/MODDING.md).
-const std::array<verdite::ModAssetKind, 3> asset_kinds{{
-    {".TIM", check_tim},
-    {".SEQ", check_seq},
-    {".TMD", check_tmd},
+const std::array<verdite::ModAssetKind, 37> asset_kinds{{
+    {".TIM", tim_row},
+    {".SEQ", seq_row},
+    {".TMD", tmd_row},
+    // Pictures the disc names without .TIM: the spells' pages, the memory card's and quit's
+    // messages (KF/TIM), and the boxed system screens at the root (disc errors, no card, pause).
+    {"KF/TIM/M001.", tim_row}, {"KF/TIM/M002.", tim_row}, {"KF/TIM/M003.", tim_row}, {"KF/TIM/M004.", tim_row},
+    {"KF/TIM/M005.", tim_row}, {"KF/TIM/M006.", tim_row}, {"KF/TIM/M007.", tim_row}, {"KF/TIM/M008.", tim_row},
+    {"KF/TIM/M009.", tim_row}, {"KF/TIM/M101.", tim_row}, {"KF/TIM/M102.", tim_row}, {"KF/TIM/M103.", tim_row},
+    {"KF/TIM/M104.", tim_row}, {"KF/TIM/M105.", tim_row}, {"KF/TIM/M106.", tim_row}, {"KF/TIM/M107.", tim_row},
+    {"KF/TIM/M108.", tim_row}, {"KF/TIM/M109.", tim_row}, {"KF/TIM/M110.", tim_row}, {"KF/TIM/M111.", tim_row},
+    {"KF/TIM/M112.", tim_row}, {"KF/TIM/M113.", tim_row}, {"KF/TIM/M114.", tim_row}, {"KF/TIM/M115.", tim_row},
+    {"KF/TIM/M999.", tim_row}, {"E0.", tim_row}, {"E1.", tim_row}, {"E2.", tim_row},
+    {"E3.", tim_row},
+    {picture_places[0].path, check_picture}, {picture_places[1].path, check_picture},
+    {picture_places[2].path, check_picture}, {picture_places[3].path, check_picture},
+    {picture_places[4].path, check_picture},
 }};
 
 // Nothing if decode accepts the bytes, else why the game would not load them. The decoders throw.
@@ -209,6 +246,179 @@ Refusal check_tmd(Bytes bytes) {
     return std::nullopt;
 }
 
+// ---- pictures inside a file of several ----
+
+constexpr std::uint32_t tim_magic = 0x10;
+constexpr std::uint32_t tim_depth_mask = 7;
+constexpr std::uint32_t tim_has_palette = 8;
+constexpr std::size_t tim_header_bytes = 8;
+constexpr std::size_t tim_block_header_bytes = 12;
+
+// Where a block's rectangle sits: x, y, width, height, after its length word.
+struct TimBlock {
+    std::size_t at = 0;   // its length word, from the start of the file
+    u16 x = 0, y = 0, width = 0, height = 0;
+};
+
+// One TIM of a file: its bytes and its two blocks.
+struct TimPicture {
+    std::size_t at = 0, size = 0;
+    std::uint32_t depth = 0;
+    std::optional<TimBlock> palette;
+    TimBlock image;
+};
+
+u16 u16_at(Bytes bytes, std::size_t at) {
+    return static_cast<u16>(bytes[at] | (bytes[at + 1] << 8));
+}
+
+std::uint32_t u32_at(Bytes bytes, std::size_t at) {
+    return static_cast<std::uint32_t>(bytes[at]) | (static_cast<std::uint32_t>(bytes[at + 1]) << 8) |
+           (static_cast<std::uint32_t>(bytes[at + 2]) << 16) | (static_cast<std::uint32_t>(bytes[at + 3]) << 24);
+}
+
+// A block's rectangle, and the end of the block; nothing if it runs past the bytes.
+std::optional<std::pair<TimBlock, std::size_t>> tim_block(Bytes bytes, std::size_t at) {
+    if (bytes.size() - at < tim_block_header_bytes)
+        return std::nullopt;
+    const std::uint32_t length = u32_at(bytes, at);
+    if (length < tim_block_header_bytes || length > bytes.size() - at)
+        return std::nullopt;
+    const TimBlock block{at, u16_at(bytes, at + 4), u16_at(bytes, at + 6), u16_at(bytes, at + 8),
+                         u16_at(bytes, at + 10)};
+    return std::pair{block, at + length};
+}
+
+// The TIM starting at `at`; nothing if its headers do not hold together.
+std::optional<TimPicture> tim_picture(Bytes bytes, std::size_t at) {
+    if (at > bytes.size() || bytes.size() - at < tim_header_bytes || u32_at(bytes, at) != tim_magic)
+        return std::nullopt;
+    TimPicture picture;
+    picture.at = at;
+    const std::uint32_t flags = u32_at(bytes, at + 4);
+    picture.depth = flags & tim_depth_mask;
+    std::size_t next = at + tim_header_bytes;
+    if (flags & tim_has_palette) {
+        const auto palette = tim_block(bytes, next);
+        if (!palette)
+            return std::nullopt;
+        picture.palette = palette->first;
+        next = palette->second;
+    }
+    const auto image = tim_block(bytes, next);
+    if (!image)
+        return std::nullopt;
+    picture.image = image->first;
+    picture.size = image->second - at;
+    return picture;
+}
+
+// Every TIM of a file of TIMs one after another; nothing unless they fill it exactly.
+std::optional<std::vector<TimPicture>> tim_pictures(Bytes bytes) {
+    std::vector<TimPicture> pictures;
+    std::size_t at = 0;
+    while (at < bytes.size()) {
+        const auto picture = tim_picture(bytes, at);
+        if (!picture)
+            return std::nullopt;
+        pictures.push_back(*picture);
+        at += picture->size;
+    }
+    return pictures;
+}
+
+const PicturePlace *picture_place(std::string_view path) {
+    const auto found = std::find_if(picture_places.begin(), picture_places.end(),
+                                    [&](const PicturePlace &place) { return place.path == path; });
+    return found == picture_places.end() ? nullptr : &*found;
+}
+
+std::optional<std::vector<std::uint8_t>> disc_file_bytes(std::string_view path) {
+    const std::string disc_path(path);
+    DataFile file{};
+    if (data_file_open_disc(&file, disc_path.c_str()) != FileResult::Ok)
+        return std::nullopt;
+    std::vector<std::uint8_t> bytes;
+    const FileResult read = data_file_read(&file, bytes, file.size);
+    data_file_close(&file);
+    if (read != FileResult::Ok)
+        return std::nullopt;
+    return bytes;
+}
+
+// The disc's picture at a place, in the disc's file.
+std::optional<TimPicture> disc_picture(Bytes disc, const PicturePlace &place) {
+    auto pictures = tim_pictures(disc);
+    if (!pictures || place.index >= pictures->size())
+        return std::nullopt;
+    return (*pictures)[place.index];
+}
+
+// The replacement as one TIM that can take the disc picture's place, or why not: it is moved to the
+// disc's positions, so it needs the same depth and picture size, and a palette no wider and no
+// taller exactly when the disc's has one, and it may be no larger than the disc's picture.
+std::variant<TimPicture, std::string> fitted_picture(Bytes replacement, const TimPicture &disc) {
+    const auto parsed = tim_picture(replacement, 0);
+    if (!parsed || parsed->size != replacement.size())
+        return std::string("is not one TIM");
+    const TimPicture &picture = *parsed;
+    if (picture.size > disc.size)
+        return "is larger than the disc's picture (" + std::to_string(picture.size) + " > " +
+               std::to_string(disc.size) + " bytes)";
+    if (picture.depth != disc.depth)
+        return std::string("has another colour depth than the disc's picture");
+    if (picture.image.width != disc.image.width || picture.image.height != disc.image.height)
+        return "is not the disc's picture's size (" + std::to_string(disc.image.width) + "x" +
+               std::to_string(disc.image.height) + " words)";
+    if (picture.palette.has_value() != disc.palette.has_value())
+        return std::string(disc.palette ? "has no palette; the disc's picture has one"
+                                        : "has a palette; the disc's picture has none");
+    // Each side: a wider or taller palette would write into another picture's colours.
+    if (picture.palette && disc.palette &&
+        (picture.palette->width > disc.palette->width || picture.palette->height > disc.palette->height))
+        return "has a larger palette than the disc's picture (" + std::to_string(disc.palette->width) + "x" +
+               std::to_string(disc.palette->height) + " at most)";
+    return picture;
+}
+
+// The replacement with its blocks at the disc picture's places in the picture store.
+std::vector<std::uint8_t> picture_moved(Bytes replacement, const TimPicture &picture, const TimPicture &disc) {
+    std::vector<std::uint8_t> moved(replacement.begin(), replacement.end());
+    const auto place = [&](const TimBlock &to, const TimBlock &from) {
+        moved[to.at + 4] = static_cast<std::uint8_t>(from.x & 0xff);
+        moved[to.at + 5] = static_cast<std::uint8_t>(from.x >> 8);
+        moved[to.at + 6] = static_cast<std::uint8_t>(from.y & 0xff);
+        moved[to.at + 7] = static_cast<std::uint8_t>(from.y >> 8);
+    };
+    if (picture.palette && disc.palette)
+        place(*picture.palette, *disc.palette);
+    place(picture.image, disc.image);
+    return moved;
+}
+
+// The replacement moved into the disc picture's place; nothing if it does not fit there.
+std::optional<std::vector<std::uint8_t>> moved_if_fits(Bytes replacement, const TimPicture &disc) {
+    const auto fitted = fitted_picture(replacement, disc);
+    const auto *picture = std::get_if<TimPicture>(&fitted);
+    if (!picture)
+        return std::nullopt;
+    return picture_moved(replacement, *picture, disc);
+}
+
+Refusal check_picture(std::string_view path, Bytes bytes) {
+    if (auto reason = check_tim(bytes))
+        return reason;
+    const PicturePlace *place = picture_place(path);
+    const auto disc = place ? disc_file_bytes(place->file) : std::nullopt;
+    const auto picture = disc ? disc_picture(*disc, *place) : std::nullopt;
+    if (!picture)
+        return std::string("is not a picture on the disc");
+    const auto fitted = fitted_picture(bytes, *picture);
+    if (const auto *reason = std::get_if<std::string>(&fitted))
+        return *reason;
+    return std::nullopt;
+}
+
 } // namespace
 
 std::optional<std::string> mod_tim_refusal(std::span<const std::uint8_t> bytes) {
@@ -230,6 +440,10 @@ std::vector<verdite::ModAssetKind> mod_asset_kinds() {
 std::optional<std::size_t> mod_disc_file_size(std::string_view path) {
     if (path.find('\0') != std::string_view::npos)
         return std::nullopt;
+    // A picture inside a file: its file's size. Its check measures it against the disc's picture,
+    // reading the file once.
+    if (const PicturePlace *place = picture_place(path))
+        return mod_disc_file_size(place->file);
     const std::string disc_path(path);
     DataFile file{};
     if (data_file_open_disc(&file, disc_path.c_str()) != FileResult::Ok)
@@ -237,6 +451,75 @@ std::optional<std::size_t> mod_disc_file_size(std::string_view path) {
     const std::size_t size = file.size;
     data_file_close(&file);
     return size;
+}
+
+std::optional<std::vector<std::uint8_t>> mod_disc_file_at(const char *directory, std::string_view path) {
+    if (!directory || path.find('\0') != std::string_view::npos)
+        return std::nullopt;
+    const std::string disc_path(path);
+    DataFile file{};
+    if (data_file_open_at(&file, directory, disc_path.c_str()) != FileResult::Ok)
+        return std::nullopt;
+    std::vector<std::uint8_t> bytes;
+    const FileResult read = data_file_read(&file, bytes, file.size);
+    data_file_close(&file);
+    if (read != FileResult::Ok)
+        return std::nullopt;
+    return bytes;
+}
+
+std::vector<std::string_view> mod_pictures_in(std::string_view file) {
+    std::vector<std::string_view> paths;
+    for (const PicturePlace &place : picture_places)
+        if (place.file == file)
+            paths.push_back(place.path);
+    return paths;
+}
+
+std::optional<std::vector<std::uint8_t>> mod_pictures_put_in(std::string_view file, std::span<const std::uint8_t> disc,
+                                                             const PictureLookup &replacement_of) {
+    const auto pictures = tim_pictures(disc);
+    if (!pictures)
+        return std::nullopt;
+    // Each picture's bytes in the file to give the game: the disc's, or a replacement moved into place.
+    std::vector<std::optional<std::vector<std::uint8_t>>> moved(pictures->size());
+    bool any = false;
+    for (const PicturePlace &place : picture_places) {
+        if (place.file != file || place.index >= pictures->size())
+            continue;
+        const auto replacement = replacement_of(place.path);
+        // Checked when the mod set it; checked again, against the disc's file the game is loading.
+        if (replacement)
+            moved[place.index] = moved_if_fits(*replacement, (*pictures)[place.index]);
+        any = any || moved[place.index].has_value();
+    }
+    if (!any)
+        return std::nullopt;
+    std::vector<std::uint8_t> out;
+    out.reserve(disc.size());
+    for (std::size_t i = 0; i < pictures->size(); ++i) {
+        if (const auto &bytes = moved[i]) {
+            out.insert(out.end(), bytes->begin(), bytes->end());
+        } else {
+            const TimPicture &picture = (*pictures)[i];
+            const auto from = disc.begin() + static_cast<std::ptrdiff_t>(picture.at);
+            out.insert(out.end(), from, from + static_cast<std::ptrdiff_t>(picture.size));
+        }
+    }
+    return out;
+}
+
+std::optional<std::vector<std::uint8_t>> mod_picture_for_upload(std::string_view path, std::span<const std::uint8_t> disc,
+                                                                 const std::vector<std::uint8_t> *replacement) {
+    const PicturePlace *place = picture_place(path);
+    const auto picture = place ? disc_picture(disc, *place) : std::nullopt;
+    if (!picture)
+        return std::nullopt;
+    if (replacement)
+        if (auto moved = moved_if_fits(*replacement, *picture))
+            return moved;
+    const auto from = disc.begin() + static_cast<std::ptrdiff_t>(picture->at);
+    return std::vector<std::uint8_t>(from, from + static_cast<std::ptrdiff_t>(picture->size));
 }
 
 } // namespace kf::ext

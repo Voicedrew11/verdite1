@@ -45,6 +45,10 @@
 #include <kf/platform/mod_events.h>
 #include <kf/platform/play_overrides.h>
 #include <kf/platform/saves.h>
+#include <kf/platform/assets.h>
+#include <kf/platform/language_runtime.h>
+#include <kf/renderer/textures.h>
+#include <kf/game/resources.h>
 #include "coop_party.h"
 #include "call_checks.h"
 #include "raw_layer.h"
@@ -68,7 +72,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "1.1";
+constexpr const char *api_version = "1.2";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -1094,6 +1098,10 @@ int kf_context(lua_State *L) {
     lua_pushstring(L, context_names[static_cast<std::size_t>(std::clamp(input_context, 0, 3))]);
     return 1;
 }
+int kf_language(lua_State *L) {
+    lua_pushstring(L, language_code(game_text_language()));
+    return 1;
+}
 SDL_Scancode check_key(lua_State *L) {
     const char *name = luaL_checkstring(L, 1);
     const SDL_Scancode code = SDL_GetScancodeFromName(name);
@@ -1407,6 +1415,9 @@ std::vector<verdite::ModTable> api_tables() {
              {ModFunction{"log", "fun(...: any)", "Prints [id] and the values to the console and kf.log.", kf_log},
               {"context", "fun(): \"opening\"|\"gameplay\"|\"menu\"|\"scripted\"", "What the game is showing.",
                kf_context},
+              {"language", "fun(): \"ja\"|\"en\"",
+               "The language the game's text is in now: Configuration's Language row or the launch option.",
+               kf_language},
               {"frame", "fun(): integer", "Presented frames so far.", kf_frame},
               {"time", "fun(): number", "Seconds since start.", kf_time},
               {"key_down", "fun(name: string): boolean", "An SDL key name held; false while the overlay is open.",
@@ -1825,13 +1836,114 @@ void mods_shutdown() {
     refresh_mod_play();
 }
 
-std::shared_ptr<const std::vector<std::uint8_t>> mod_asset_for_path(const char *path) {
+namespace {
+constexpr std::string_view common_pictures_file = "KF/COM/MIX.TIM";
+constexpr Uint64 common_pictures_retry_ms = 1000;
+using SharedBytes = std::shared_ptr<const std::vector<std::uint8_t>>;
+
+// COM/MIX.TIM goes up once a game (with any pictures mods put in it), so the banners' page is
+// uploaded again during play when it changes: a mod sets or clears it, mods pause for coop, or a
+// language switch writes the other language's texels over it. Not while a cutscene's pictures are
+// in its place, until the game uploads the file again.
+struct CommonPictures {
+    bool uploaded = false;
+    // Each picture's replacement when last uploaded, null the disc's; held, so a new one is never at
+    // its address.
+    std::vector<SharedBytes> shown;
+    Language language = Language::Japanese;
+    std::array<std::optional<std::vector<std::uint8_t>>, 2> disc;   // each language's file, read once
+    Uint64 failed_at = 0;
+};
+CommonPictures common_pictures;
+
+SharedBytes picture_replacement(std::string_view path) {
+    return mods_active() ? host->asset_override(path) : nullptr;
+}
+
+std::vector<SharedBytes> common_pictures_now() {
+    std::vector<SharedBytes> now;
+    for (const std::string_view path : mod_pictures_in(common_pictures_file))
+        now.push_back(picture_replacement(path));
+    return now;
+}
+
+void common_pictures_uploaded() {
+    common_pictures.uploaded = true;
+    common_pictures.shown = common_pictures_now();
+    common_pictures.language = game_text_language();
+}
+
+void cutscene_pictures_uploaded() {
+    common_pictures.uploaded = false;
+}
+
+const std::vector<std::uint8_t> *common_pictures_disc(Language language) {
+    auto &disc = common_pictures.disc[static_cast<std::size_t>(language)];
+    if (!disc) {
+        const std::string folder = language_folder(language);
+        disc = mod_disc_file_at(folder.empty() ? nullptr : folder.c_str(), common_pictures_file);
+    }
+    return disc ? &*disc : nullptr;
+}
+
+// Uploads each picture: false if any could not be.
+bool upload_common_pictures(const std::vector<SharedBytes> &now, Language language) {
+    const auto *disc = common_pictures_disc(language);
+    if (!disc)
+        return false;
+    const auto paths = mod_pictures_in(common_pictures_file);
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        const auto picture = mod_picture_for_upload(paths[i], *disc, now[i].get());
+        if (!picture || !texture_store_upload_tim(&host_textures(), picture->data(), picture->size()))
+            return false;
+    }
+    return true;
+}
+
+void refresh_common_pictures() {
+    const bool in_play = input_context == static_cast<int>(InputContext::Gameplay) ||
+                         input_context == static_cast<int>(InputContext::Menu);
+    if (!host || !common_pictures.uploaded || !in_play)
+        return;
+    auto now = common_pictures_now();
+    const Language language = game_text_language();
+    if (now == common_pictures.shown && language == common_pictures.language)
+        return;
+    // A failed upload is tried again, but not every frame.
+    const Uint64 time = SDL_GetTicks();
+    if (common_pictures.failed_at != 0 && time - common_pictures.failed_at < common_pictures_retry_ms)
+        return;
+    if (!upload_common_pictures(now, language)) {
+        common_pictures.failed_at = time == 0 ? 1 : time;
+        return;
+    }
+    common_pictures.failed_at = 0;
+    common_pictures.shown = std::move(now);
+    common_pictures.language = language;
+}
+} // namespace
+
+std::shared_ptr<const std::vector<std::uint8_t>> mod_asset_for_path(const char *path, const char *directory) {
     // A floor a mod added is the game's to load for as long as a save or the player is on it.
     if (auto floor_file = mod_content_floor_file(path))
         return floor_file;
     if (!mods_active())
         return nullptr;
-    return host->asset_override(path);
+    if (auto whole = host->asset_override(path))
+        return whole;
+    // A file of pictures with some of them replaced (the opening's and ending's scrolls, the banners),
+    // built on the disc's file in the folder being read: never through the replacer again.
+    const auto pictures = mod_pictures_in(path);
+    if (std::none_of(pictures.begin(), pictures.end(),
+                     [](std::string_view picture) { return host->asset_override(picture) != nullptr; }))
+        return nullptr;
+    const auto disc = mod_disc_file_at(directory, path);
+    if (!disc)
+        return nullptr;
+    auto put_in = mod_pictures_put_in(path, *disc, picture_replacement);
+    if (!put_in)
+        return nullptr;
+    return std::make_shared<const std::vector<std::uint8_t>>(std::move(*put_in));
 }
 
 void mods_between_updates() {
@@ -1916,6 +2028,7 @@ void mods_frame(int context) {
     stop_shapes_of_inactive_mods();   // a mod that failed in its update leaves no shapes behind
     // Also while paused, so the game sees the defaults from the first frame of coop.
     refresh_mod_play();
+    refresh_common_pictures();
 }
 
 void mods_draw_hud() {
@@ -2120,6 +2233,14 @@ void mods_floor_loaded(u8 floor, u8 map_variant) {
         return;
     std::array<verdite::ModEventValue, 2> changed{std::int64_t{from}, std::int64_t{floor}};
     raise_event("on_floor_change", changed);
+}
+
+void mods_common_pictures_uploaded() {
+    ext::common_pictures_uploaded();
+}
+
+void mods_cutscene_pictures_uploaded() {
+    ext::cutscene_pictures_uploaded();
 }
 
 void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page) {

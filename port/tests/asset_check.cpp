@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
             continue;
         }
         const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        const auto reason = kind->check(bytes);
+        const auto reason = kind->check(argv[1], bytes);
         std::printf("%s\n", reason ? ("refused: " + *reason).c_str() : "ok");
     }
     return 0;
