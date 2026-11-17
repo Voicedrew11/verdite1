@@ -156,6 +156,17 @@ const std::vector<Page> &pages() {
              {{0.0, {"CORNERS", "かど"}}, {1.0, {"DEPTH", "ふかさ"}}, {2.0, {"DISTANCE", "とおさ"}}}, {}},
             {"display.detailed_map", {"DETAILED MAP", "とおくのかべ"}, {}, {}},
         }});
+        made.push_back({"screen", {"SCREEN", "えいぞう"}, {
+            {"display.screen_shader", {"SHADER", "えいぞう"},
+             {{0.0, off_text}, {1.0, {"SCANLINES", "よこせん"}}, {2.0, {"CRT", "てれび"}},
+              {3.0, {"CURVED CRT", "まるいてれび"}}, {6.0, {"HYLLIAN CRT", "きれいなてれび"}},
+              {4.0, {"SHARP", "するどい"}}, {5.0, {"LCD", "えきしよう"}}}, {}},
+            {"display.crt_mask", {"CRT MASK", "てれびのめ"},
+             {{0.0, off_text}, {1.0, {"GRILLE", "たてじま"}}, {2.0, {"GRILLE 4K", "ふとじま"}},
+              {3.0, {"SLOT", "みぞ"}}, {4.0, {"SLOT 4K", "おおきいみぞ"}}, {5.0, {"DOT", "てん"}},
+              {6.0, {"DOT 4K", "おおきいてん"}}, {7.0, {"TV", "てれび"}}}, {}},
+            {"display.crt_curvature", {"CURVATURE", "まるいがめん"}, {}, {}},
+        }});
         made.push_back({"controls", {"CONTROLS", "そうさ"}, {
             // D-pad only shows, for a file that chose it in the overlay.
             {"analog.style", {"CONTROLS", "そうさ"},

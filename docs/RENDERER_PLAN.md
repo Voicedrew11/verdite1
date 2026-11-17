@@ -334,6 +334,24 @@ What carries over is decisions and references, not code:
    Supersampling draws the target N times larger and averages each N x N block
    before the window (`vulkan_downsample.h`); captures keep the full target.
    Every pass is a Vulkan 1.0 render pass (2026-10-25).
+   Screen shaders (2026-11-17, issue #15): with Display > Screen shader set,
+   the picture reaches the window through a fragment shader into its letterbox
+   (`vulkan_screen_pass.h`) instead of the blit. Built in: Scanlines, CRT and
+   CRT curved (Timothy Lottes' public-domain shader), CRT (Hyllian), Sharp
+   bilinear (public domain) and an LCD grid. The libretro CRT shaders most
+   people know (crt-guest-advanced, crt-royale, Mega Bezel, crt-geom) are GPL
+   and stay out of this MIT repo; Sony Megatron carries no licence at all.
+   crt-hyllian is MIT: its two passes (pass0, pass1) are ported with their
+   notice, the mask, curvature, scanline strength and brightness in settings;
+   its colour LUTs, glow and NTSC passes are not (no licence in those files).
+   A two-pass shader filters along the lines into an image the letterbox's
+   width first (`ScreenPass`'s lines). The
+   CRT and LCD shaders work on the game's own grid (columns x 240), whatever
+   the resolution. Not locked by Classic mode. Not yet: loading a player's own
+   shaders (would need glslang at run time) and a row on the in-game settings
+   pages at first; they now have a SCREEN page (shader, mask, curvature). A new shader is a new
+   `shaders/screen_*.frag`, an entry in `ScreenShader` and in the pass's table,
+   and a choice in `display_screen` (`options.cpp`).
 3. A second backend early, before the frontend sets in Vulkan-shaped habits.
    deko3d is the more useful second one; the 3DS is so limited it would bend
    the frontend.

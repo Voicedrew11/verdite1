@@ -14,6 +14,7 @@
 #include <kf/renderer/renderer.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -56,6 +57,33 @@ enum class OcclusionQuality : u8 { Low, Medium, High };
 // Per pixel, each face keeps the strength the game cued it with.
 enum class FogMode : u8 { Corners, Depth, Distance };
 
+// What the picture is drawn through on its way to the window. The CRT and LCD
+// shaders work on the game's own grid (its columns by 240 lines), whatever the
+// resolution it was drawn at.
+//   None:          scaled as it is: nearest at whole multiples, smoothed otherwise
+//   Scanlines:     dark gaps between the game's lines
+//   Crt:           Timothy Lottes' CRT shader: soft scanlines and an aperture grille
+//   CrtCurved:     the same on a curved tube, through a shadow mask
+//   SharpBilinear: square pixels at any size, blended only where two meet
+//   Lcd:           a handheld's LCD, a faint grid between the game's pixels
+//   CrtHyllian:    Hyllian's CRT shader (MIT), set up by HyllianOptions
+enum class ScreenShader : u8 { None, Scanlines, Crt, CrtCurved, SharpBilinear, Lcd, CrtHyllian };
+inline constexpr std::size_t screen_shader_count = 7;
+
+// The phosphors Hyllian's CRT draws, in window pixels: the plain ones suit a
+// 1080p screen, the 4K ones are drawn larger so they still show at 2160p.
+//   Aperture: vertical stripes (Trinitron);  Slot: stripes in staggered slots;
+//   Dot: a delta of dots;  Shadow: a television's shadow mask, compressed
+enum class CrtMask : u8 { None, Aperture, Aperture4k, Slot, Slot4k, Dot, Dot4k, Shadow };
+inline constexpr std::size_t crt_mask_count = 8;
+
+struct HyllianOptions {
+    CrtMask mask = CrtMask::Aperture;
+    bool curvature = false;
+    float scanlines = 0.72f;    // how dark the gaps between lines are, 0..1 (Hyllian's default)
+    float brightness = 1.0f;    // light added back for what the mask takes, 1..2
+};
+
 // The Display settings, one field per row.
 struct PictureOptions {
     // Balanced
@@ -83,6 +111,8 @@ struct PictureOptions {
     float enhanced_depth = 0;
     // Presentation
     bool vsync = true;            // off: frames are shown as soon as they are drawn
+    ScreenShader screen_shader = ScreenShader::None;
+    HyllianOptions hyllian;
 };
 
 // Where a game update saw the world from.
