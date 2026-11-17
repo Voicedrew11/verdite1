@@ -74,6 +74,8 @@ inline bool fix_spatial_panning = true;
 // Classic mode (F1 > Settings): as originally shipped, so also no automap,
 // equipment stats or quick save/load.
 inline bool classic_mode = false;
+// The camera rises and falls with each step, as the original does.
+inline bool head_bob = true;
 // Interacting with a lock uses the matching key if the player carries it.
 inline bool auto_use_keys = true;
 // An enemy turning toward the player (pursuing, retreating) turns this many times its
