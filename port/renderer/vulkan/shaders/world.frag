@@ -27,6 +27,7 @@ layout(location = 5) in vec3 in_clear;         // the colour before the depth cu
 layout(location = 6) flat in float in_cue_scale;   // 0: not cued
 layout(location = 7) in vec4 in_normal;            // model space, and its length
 layout(location = 8) flat in uvec4 in_light;       // light set (0: none), tint
+layout(location = 9) flat in uint in_keep;         // its share over what is behind it, 255: all
 
 layout(location = 0) out vec4 out_color;
 
@@ -302,5 +303,11 @@ void main() {
                                                       : classic_color(game_shade, texel_color, texturing, light);
     // A textured face blends only its STP texels; an untextured one blends whole.
     bool stp = texturing == texturing_solid || texel_color.a < stp_alpha_threshold;
+    // A face drawn in part (a slain monster's body fading) is in an average run
+    // (frame_batch.cpp): its share is the alpha, whatever its texels' STP bits.
+    if (in_keep < 255u) {
+        out_color = vec4(color, float(in_keep) / 255.0);
+        return;
+    }
     out_color = blend_output(color, stp);
 }

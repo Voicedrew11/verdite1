@@ -63,6 +63,8 @@ struct Settings {
     bool reload_on_death = true;    // a death reloads the last save, not a New Game
     bool enemy_turn_auto = true;    // the enemy turn follows how fast the last input to turn can turn
     bool fix_ceiling_fall = true;   // bug fix: enemies fall after hitting a ceiling mid-jump
+    bool enemy_hit_flash = true;    // a struck enemy flushes red (King's Field III)
+    bool enemy_death_fade = true;   // a slain enemy's body fades away (King's Field II and III)
     bool fix_spatial_panning = true; // bug fix: flagged sounds get their panning adjustment
     bool item_descriptions = true;  // what an item does, in the game's item menus
     bool update_check = true;   // asks GitHub for a new release at launch, at most once a day

@@ -534,7 +534,8 @@ apart, each label in a row box and its value centred in an option box at X 180, 
   | SOUND | VOLUME |
 
   Left off the page for now (2026-11-05), kept in the overlay: tick rate (15; a host still sets the
-  room's), auto keys, item text, dynamic light (with its shadows) and flame glow. With them gone the
+  room's), auto keys, item text, dynamic light (with its shadows) and flame glow; and (2026-11-16) the
+  enemies' hit flash and death fade, as GRAPHICS is full. With them gone the
   WORLD and GAMEPLAY pages had too little to stand alone: FOG and DETAILED MAP joined GRAPHICS,
   CLASSIC MODE joined DISPLAY. ENEMY TURN is on CONTROLS, as its Auto follows the turn speed.
   CONTROLS steps 2D, 2D ACCEL and 3D, Verdite2's; D-pad is the overlay's alone.
@@ -679,6 +680,34 @@ game alone would start over); with the fountain flowing (set from a test mod's `
 revived at (64000, 20000) with MP full, the fruit gone from the pack and nothing reloaded, and the
 next death without a fruit reloaded. Not run: a death after a quick save (F2 has no agent command).
 The fade is not judged by eye.
+
+## Enemy hit flash and death fade
+
+Gameplay > Enemies > *Hit flash* and *Death fade* (`gameplay.enemy_hit_flash`, `gameplay.enemy_death_fade`, on;
+off in Classic mode; overlay only, as the game menu's GRAPHICS page is full). From the later games, at the
+user's word (2026-11-16): in King's Field III a struck monster turns red; in II and III a slain one's body
+fades out instead of vanishing. Verdite2 and Verdite3 keep those games' own effects and record nothing of how
+they are drawn, and neither game's decomp has the code yet, so the timings here are ours, not measured from
+them.
+
+- **Watched, not told.** `render_entities` hands `kf::creature_look` (`port/ext/creature_feedback.cpp`)
+  each actor slot every drawn update: occupant, health, awake, and whether its death has played out. A
+  fall in health for the same occupant is a blow, wherever it came from (the player, a spell, a coop
+  puppet's health, a mod's `set_hp`). The game's state is never written; floor loads forget everything.
+- **The flash** lights the monster toward the game's own damage red (`KF_GAME_COLOR_DAMAGE`, the matrix the
+  game tints the world with when the player is hurt) through its colour matrix, so the corner lighting and
+  per-pixel lighting both show it: all of it at the blow, gone over 18 vblanks (0.3 s).
+- **The body** is held 18 vblanks after the death animation ends (post-death), then faded over 54 (0.9 s).
+  The game lets the slot go after 7 updates of post-death; the body is drawn on from the slot as left,
+  until the fade ends or the slot is woken again. Floor 4's creature that rises as another is left whole.
+- **The fade** is `DrawFace::keep`: a face below 255 is drawn through the average pipeline with its share
+  as alpha (`frame_batch.cpp`, `world.frag`), its own STP translucency set aside while it fades, and without
+  writing depth, so the model's far side shows through as it goes, in the game's back-to-front order. The
+  surface pass (ambient occlusion) drops it once under half.
+
+The rule is `port/ext/creature_feedback_rule.cpp`, tested in `port/tests/creature_feedback.cpp`. Not judged
+in play: the red's strength and length, the hold and fade times, and how the see-through body looks in
+motion. The share changes once per game update, not per displayed frame.
 
 ## Open questions
 

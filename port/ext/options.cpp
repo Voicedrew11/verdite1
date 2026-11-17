@@ -518,6 +518,7 @@ OptionSection gameplay_world() {
 }
 
 OptionSection gameplay_enemies() {
+    Settings &s = settings();
     std::vector<std::pair<double, std::string>> turns;
     turns.emplace_back(enemy_turn_automatic, "Automatic");
     turns.emplace_back(1.0, "x1 (original)");
@@ -535,6 +536,13 @@ OptionSection gameplay_enemies() {
                          "by its turn speed and acceleration, the mouse or a touch drag at x3. Above x1 a chasing enemy "
                          "also aims at where you are every update; the original re-aimed on about one update in eight.",
                          std::move(turns), enemy_turn_choice, set_enemy_turn_choice, apply_control_settings),
+        toggle("gameplay.enemy_hit_flash", "Hit flash",
+               "A struck enemy flushes red and eases back, as in King's Field III. The original shows nothing.",
+               s.enemy_hit_flash, apply_control_settings),
+        toggle("gameplay.enemy_death_fade", "Death fade",
+               "A slain enemy's body stays a moment where it fell, then fades away, as in King's Field II and III. "
+               "In the original it vanishes once it has fallen.",
+               s.enemy_death_fade, apply_control_settings),
     }});
 }
 
