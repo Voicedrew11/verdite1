@@ -531,11 +531,12 @@ apart, each label in a row box and its value centred in an option box at X 180, 
   | DISPLAY | FULLSCREEN, RESOLUTION, ASPECT, HUD AT EDGES, FRAME RATE, ANTIALIASING, CLASSIC MODE, RUN SETUP |
   | GRAPHICS | WIGGLE, TRUE COLOUR, FILTER, ANISO, PER PIXEL LIGHT, AO, FOG, DETAILED MAP |
   | CONTROLS | CONTROLS, PAD BUTTONS, INVERT CAMERA, HEAD BOB, STICK SENS, ENEMY TURN |
+  | GAMEPLAY | ON DEATH, HIT FLASH, DEATH FADE |
   | SOUND | VOLUME |
 
   Left off the page for now (2026-11-05), kept in the overlay: tick rate (15; a host still sets the
-  room's), auto keys, item text, dynamic light (with its shadows) and flame glow; and (2026-11-16) the
-  enemies' hit flash and death fade, as GRAPHICS is full. With them gone the
+  room's), auto keys, item text, dynamic light (with its shadows) and flame glow. GAMEPLAY came back
+  (2026-11-16) with HIT FLASH and DEATH FADE, and ON DEATH moved there from CONTROLS. With them gone the
   WORLD and GAMEPLAY pages had too little to stand alone: FOG and DETAILED MAP joined GRAPHICS,
   CLASSIC MODE joined DISPLAY. ENEMY TURN is on CONTROLS, as its Auto follows the turn speed.
   CONTROLS steps 2D, 2D ACCEL and 3D, Verdite2's; D-pad is the overlay's alone.
@@ -651,7 +652,7 @@ and the two at once switch once. The x3 is not judged in play.
 ## Reload on death
 
 Gameplay > *Reload the last save on death* (`gameplay.reload_on_death`, on; off in Classic mode),
-ON DEATH (RELOAD / RESTART) on the game menu's CONTROLS page. At the end of the death fade the game's
+ON DEATH (RELOAD / RESTART) on the game menu's GAMEPLAY page. At the end of the death fade the game's
 `player_death_restart` does one of two things: with the Dragon Fountain flowing
 (`world_state.floor1.revival_enabled`) and a Dragon Tree Fruit carried, it uses one and revives the
 player at the fountain with everything else kept; otherwise it starts a New Game. The patch leaves
@@ -684,7 +685,8 @@ The fade is not judged by eye.
 ## Enemy hit flash and death fade
 
 Gameplay > Enemies > *Hit flash* and *Death fade* (`gameplay.enemy_hit_flash`, `gameplay.enemy_death_fade`, on;
-off in Classic mode; overlay only, as the game menu's GRAPHICS page is full). From the later games, at the
+off in Classic mode; HIT FLASH and DEATH FADE on the game menu's GAMEPLAY page; setup's Presentation page,
+*Enemies*, turns both on for Modern and off for Original and Balanced). From the later games, at the
 user's word (2026-11-16): in King's Field III a struck monster turns red; in II and III a slain one's body
 fades out instead of vanishing. Verdite2 and Verdite3 keep those games' own effects and record nothing of how
 they are drawn, and neither game's decomp has the code yet, so the timings here are ours, not measured from
