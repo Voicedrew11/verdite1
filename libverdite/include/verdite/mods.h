@@ -169,8 +169,8 @@ struct ModStored {
 // suffix its disc path ends with.
 struct ModAssetKind {
     std::string_view suffix;   // ".TIM"
-    // Nothing if the game can load these bytes, else why not.
-    std::optional<std::string> (*check)(std::span<const std::uint8_t> bytes);
+    // Nothing if the game can load these bytes as the file at disc_path, else why not.
+    std::optional<std::string> (*check)(std::string_view disc_path, std::span<const std::uint8_t> bytes);
 };
 
 struct ModHostConfig {

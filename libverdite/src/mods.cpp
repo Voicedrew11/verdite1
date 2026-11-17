@@ -470,9 +470,17 @@ AssetLoad load_asset(const ModHostConfig &host, const fs::path &file, std::strin
     std::vector<std::uint8_t> bytes(text->begin(), text->end());
     if (!kind->check)
         return refused("has no check in the game for " + std::string(kind->suffix) + " files");
-    if (auto reason = kind->check(bytes))
+    if (auto reason = kind->check(disc_path, bytes))
         return refused(std::move(*reason));
     return {std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes)), {}};
+}
+
+// The disc path a file below assets/ stands for. Windows keeps no trailing dot on a file's name,
+// so assets/E0 is the disc's E0. when only the dotted path is a kind a mod may replace.
+std::string asset_disc_path(const ModHostConfig &host, std::string path) {
+    if (!kind_of(host, path) && kind_of(host, path + "."))
+        path += '.';
+    return path;
 }
 
 // Loads every file under dir/assets/ as the replacement for its path below assets/, into assets.
@@ -493,7 +501,7 @@ std::optional<std::string> load_asset_folder(const ModHostConfig &host, const fs
     for (fs::recursive_directory_iterator it(folder, error), end; !error && it != end; it.increment(error)) {
         if (fs::is_directory(it->symlink_status(error)))
             continue;
-        const std::string disc_path = it->path().lexically_relative(folder).generic_string();
+        const std::string disc_path = asset_disc_path(host, it->path().lexically_relative(folder).generic_string());
         AssetLoad load = load_asset(host, it->path(), disc_path);
         if (!load.refusal.empty())
             return "assets/" + disc_path + " " + load.refusal;
