@@ -90,7 +90,8 @@ bool Downsample::fit(const GpuImage &target, uint32_t factor) {
     const uint32_t width = source.width / factor, height = source.height / factor;
     if (!picture_ || picture_.shape().width != width || picture_.shape().height != height) {
         const ImageShape shape{width, height, 1, picture_format,
-                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                   VK_IMAGE_USAGE_SAMPLED_BIT,
                                VK_IMAGE_ASPECT_COLOR_BIT};
         GpuImage picture = GpuImage::create(device_, allocator_, shape);
         if (!picture)

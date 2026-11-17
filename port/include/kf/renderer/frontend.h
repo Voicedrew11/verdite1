@@ -14,6 +14,7 @@
 #include <kf/renderer/renderer.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -56,6 +57,18 @@ enum class OcclusionQuality : u8 { Low, Medium, High };
 // Per pixel, each face keeps the strength the game cued it with.
 enum class FogMode : u8 { Corners, Depth, Distance };
 
+// What the picture is drawn through on its way to the window. The CRT and LCD
+// shaders work on the game's own grid (its columns by 240 lines), whatever the
+// resolution it was drawn at.
+//   None:          scaled as it is: nearest at whole multiples, smoothed otherwise
+//   Scanlines:     dark gaps between the game's lines
+//   Crt:           Timothy Lottes' CRT shader: soft scanlines and an aperture grille
+//   CrtCurved:     the same on a curved tube, through a shadow mask
+//   SharpBilinear: square pixels at any size, blended only where two meet
+//   Lcd:           a handheld's LCD, a faint grid between the game's pixels
+enum class ScreenShader : u8 { None, Scanlines, Crt, CrtCurved, SharpBilinear, Lcd };
+inline constexpr std::size_t screen_shader_count = 6;
+
 // The Display settings, one field per row.
 struct PictureOptions {
     // Balanced
@@ -83,6 +96,7 @@ struct PictureOptions {
     float enhanced_depth = 0;
     // Presentation
     bool vsync = true;            // off: frames are shown as soon as they are drawn
+    ScreenShader screen_shader = ScreenShader::None;
 };
 
 // Where a game update saw the world from.

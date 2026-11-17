@@ -9,6 +9,7 @@
 #include "vulkan_pipelines.h"
 #include "vulkan_render_pass.h"
 #include "vulkan_resources.h"
+#include "vulkan_screen_pass.h"
 #include "vulkan_surfaces.h"
 #include "vulkan_swapchain.h"
 #include "../texture_mips.h"
@@ -28,6 +29,7 @@
 namespace kf {
 namespace {
 constexpr int frames_in_flight = 2;
+static_assert(ScreenPass::frames_in_flight == frames_in_flight);
 // 256 x 256 down to 1 x 1.
 constexpr uint32_t page_mip_levels = 9;
 constexpr VkDeviceSize motion_bytes = sizeof(Motion);
@@ -144,7 +146,8 @@ private:
     void measure_occlusion(VkCommandBuffer commands, const DrawConstants &constants, const FrameSlot &slot);
     void draw_world(VkCommandBuffer commands, const FrameView &view, const FrameSlot &slot);
     void draw_runs(VkCommandBuffer commands, DrawConstants constants, const FrameSlot &slot);
-    const GpuImage &shown_picture(VkCommandBuffer commands);
+    const GpuImage &shown_picture(VkCommandBuffer commands, VkImageLayout layout);
+    void show_picture(VkCommandBuffer commands, const SwapchainImage &image);
     void blit_to(VkCommandBuffer commands, const GpuImage &source, VkImage image, VkExtent2D extent);
     void draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, ImDrawData *overlay);
 
@@ -157,6 +160,7 @@ private:
     std::unique_ptr<WorldPipelines> pipelines_;
     std::unique_ptr<Downsample> downsample_;   // window only
     bool downsampled_ = false;                 // the window shows downsample_'s picture
+    std::unique_ptr<ScreenPass> screen_;       // window only
     std::unique_ptr<SurfaceBuffer> surfaces_;
     std::unique_ptr<AmbientOcclusion> occlusion_;
     bool occlusion_ready_ = false;             // surfaces_ and occlusion_ fit the target
@@ -227,6 +231,7 @@ VulkanBackend::~VulkanBackend() {
     pipelines_.reset();
     occlusion_.reset();
     surfaces_.reset();
+    screen_.reset();
     if (descriptor_pool_)
         vkDestroyDescriptorPool(device, descriptor_pool_, nullptr);
     if (set_layout_)
@@ -250,6 +255,11 @@ bool VulkanBackend::start(std::string &error) {
         downsample_ = Downsample::create(*device_);
         if (!downsample_) {
             error = "supersampling pipeline";
+            return false;
+        }
+        screen_ = ScreenPass::create(*device_);
+        if (!screen_) {
+            error = "screen shader pipeline";
             return false;
         }
     }
@@ -732,20 +742,43 @@ void VulkanBackend::draw_runs(VkCommandBuffer commands, DrawConstants constants,
     }
 }
 
-// What the window shows, in TRANSFER_SRC_OPTIMAL: the target, or its average
+// What the window shows, in layout (TRANSFER_SRC_OPTIMAL for a blit,
+// SHADER_READ_ONLY_OPTIMAL for a screen shader): the target, or its average
 // when supersampling.
-const GpuImage &VulkanBackend::shown_picture(VkCommandBuffer commands) {
+const GpuImage &VulkanBackend::shown_picture(VkCommandBuffer commands, VkImageLayout layout) {
     if (!downsampled_) {
-        transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, target_layout_,
-                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, target_layout_, layout);
+        target_layout_ = layout;
         return target_;
     }
     transition(commands, target_.image(), VK_IMAGE_ASPECT_COLOR_BIT, target_layout_,
                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     target_layout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     downsample_->record(commands);
+    if (layout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+        transition(commands, downsample_->picture().image(), VK_IMAGE_ASPECT_COLOR_BIT,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layout);
     return downsample_->picture();
+}
+
+// The picture into the window image, left in TRANSFER_DST_OPTIMAL: through the
+// screen shader when one is chosen and can draw, blitted otherwise.
+void VulkanBackend::show_picture(VkCommandBuffer commands, const SwapchainImage &image) {
+    const VkExtent2D extent = swapchain_->extent();
+    if (options_.screen_shader != ScreenShader::None && screen_) {
+        const ScreenDraw draw{
+            options_.screen_shader,
+            &shown_picture(commands, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+            static_cast<uint32_t>(logical_width_),
+            image.image,
+            image.framebuffer,
+            swapchain_->format(),
+            letterbox(logical_width_, static_cast<int>(extent.width), static_cast<int>(extent.height)),
+        };
+        if (screen_->record(commands, static_cast<uint32_t>(frame_number_ % frames_in_flight), draw))
+            return;
+    }
+    blit_to(commands, shown_picture(commands, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL), image.image, extent);
 }
 
 // Letterboxes source (in TRANSFER_SRC_OPTIMAL) into a swapchain image: nearest
@@ -866,7 +899,7 @@ void VulkanBackend::present(const FrameView &view, std::span<const RenderLight>,
         draw_world(slot.commands, view, slot);
     frame_drawn_ = true;
     if (image) {
-        blit_to(slot.commands, shown_picture(slot.commands), image->image, swapchain_->extent());
+        show_picture(slot.commands, *image);
         draw_overlay(slot.commands, *image, overlay);
     }
     if (vkEndCommandBuffer(slot.commands) != VK_SUCCESS)

@@ -30,6 +30,7 @@ struct Settings {
     int enhanced_distance = 0;  // cells past which the picture is the game's own; 0: everywhere
     int fog = 2;                // 0 at the corners (original), 1 per pixel by depth, 2 by distance (FogMode)
     int antialiasing = 1;       // 0 off, 1 FXAA, 2 4x SSAA, 3 9x SSAA
+    int screen_shader = 0;      // ScreenShader: 0 off, 1 scanlines, 2 CRT, 3 curved CRT, 4 sharp bilinear, 5 LCD
     int frame_rate = 0;         // 20: original (no smoothing), 0: display refresh, -1: unlimited, else cap
     int tick_rate = 15;         // world updates a second: 12, 15, 20 (the gate's) or 30
     int look_limit = 70;        // degrees the camera may tilt up or down (original: 17)

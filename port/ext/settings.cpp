@@ -155,6 +155,8 @@ void settings_load() {
         std::clamp(static_cast<int>(read_number(display, "enhanced_distance", current.enhanced_distance)), 0, 16);
     current.fog = std::clamp(static_cast<int>(read_number(display, "fog", current.fog)), 0, 2);
     current.antialiasing = static_cast<int>(read_number(display, "antialiasing", current.antialiasing));
+    current.screen_shader = std::clamp(static_cast<int>(read_number(display, "screen_shader", current.screen_shader)), 0,
+                                       static_cast<int>(screen_shader_count) - 1);
     current.flame_glow = read_bool(display, "flame_glow", current.flame_glow);
     current.shadows = read_bool(display, "shadows", current.shadows);
     current.frame_rate = static_cast<int>(read_number(display, "frame_rate", current.frame_rate));
@@ -240,6 +242,7 @@ void settings_save() {
     write_value(display, "fog", cJSON_CreateNumber(current.fog));
     write_value(display, "enhanced_distance", cJSON_CreateNumber(current.enhanced_distance));
     write_value(display, "antialiasing", cJSON_CreateNumber(current.antialiasing));
+    write_value(display, "screen_shader", cJSON_CreateNumber(current.screen_shader));
     write_value(display, "flame_glow", cJSON_CreateBool(current.flame_glow));
     write_value(display, "shadows", cJSON_CreateBool(current.shadows));
     write_value(display, "frame_rate", cJSON_CreateNumber(current.frame_rate));
@@ -369,6 +372,7 @@ PictureOptions picture_options(const Settings &e) {
     options.fog = static_cast<FogMode>(std::clamp(e.fog, 0, 2));
     options.enhanced_depth = static_cast<float>(e.enhanced_distance * KF_MAP_TILE_SIZE);
     options.vsync = current.vsync && e.frame_rate != frame_rate_unlimited;
+    options.screen_shader = static_cast<ScreenShader>(e.screen_shader);
     return options;
 }
 } // namespace
@@ -473,6 +477,7 @@ void crash_write_settings(verdite::CrashWriter &out) {
     out.line("aspect", s.aspect);
     out.line("resolution", s.resolution);
     out.line("antialiasing", s.antialiasing);
+    out.line("screen shader", s.screen_shader);
     out.line("depth buffer", s.depth_buffer);
     out.line("pixel lighting", s.pixel_lighting);
     out.line("ambient occlusion", s.ambient_occlusion);

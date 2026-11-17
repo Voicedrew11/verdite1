@@ -300,6 +300,22 @@ OptionSection display_look() {
     }});
 }
 
+// Not locked by Classic mode: the original game was played on a television.
+OptionSection display_screen() {
+    Settings &s = settings();
+    return {"Screen", {
+        choice("display.screen_shader", "Screen shader",
+               "What the picture is drawn through on its way to the window. Scanlines and the CRTs imitate a "
+               "television, LCD a handheld's screen; they work on the game's own 240 lines at any resolution and "
+               "look best large, in fullscreen. Sharp bilinear keeps pixels square when the window is not a whole "
+               "multiple of the picture.",
+               s.screen_shader,
+               {{0, "Off"}, {1, "Scanlines"}, {2, "CRT (Lottes)"}, {3, "CRT, curved"}, {4, "Sharp bilinear"},
+                {5, "LCD grid"}},
+               apply_render_settings),
+    }};
+}
+
 OptionSection display_lighting() {
     Settings &s = settings();
     return classic_locked({"Lighting", {
@@ -337,7 +353,7 @@ OptionSection display_accuracy() {
 
 OptionPage display_page() {
     return {"Display", {OptionSection{"", {classic_note("display")}}, display_window(), display_picture(),
-                        display_look(), display_lighting(), display_accuracy()}};
+                        display_look(), display_lighting(), display_screen(), display_accuracy()}};
 }
 
 // ---- Audio ----
