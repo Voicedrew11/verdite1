@@ -59,11 +59,11 @@ static bool valid_relative_path(const char *path) {
     }
 }
 
-bool data_file_open_replaced(DataFile *file, const char *path) {
+bool data_file_open_replaced(DataFile *file, const char *path, const char *directory) {
     const DataReplacer replace = replacer.load();
     if (!replace || !valid_relative_path(path))
         return false;
-    auto bytes = replace(path);
+    auto bytes = replace(path, directory);
     if (!bytes)
         return false;
     *file = {};
@@ -75,7 +75,7 @@ bool data_file_open_replaced(DataFile *file, const char *path) {
 
 FileResult data_file_open(DataFile *file, const char *path) {
     *file = {};
-    if (data_file_open_replaced(file, path))
+    if (data_file_open_replaced(file, path, data_root.empty() ? nullptr : data_root.c_str()))
         return FileResult::Ok;
     return data_file_open_disc(file, path);
 }

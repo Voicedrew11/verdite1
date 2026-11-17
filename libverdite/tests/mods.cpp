@@ -69,16 +69,22 @@ int spend(lua_State *L) {
 }
 
 // The test game's replaceable files: a .TIM must begin with TIM, a .SEQ may hold anything.
-std::optional<std::string> check_tim(std::span<const std::uint8_t> bytes) {
+std::optional<std::string> check_tim(std::string_view, std::span<const std::uint8_t> bytes) {
     if (bytes.size() < 3 || bytes[0] != 'T' || bytes[1] != 'I' || bytes[2] != 'M')
         return "is not a TIM: it must begin with TIM";
     return std::nullopt;
 }
-std::optional<std::string> check_anything(std::span<const std::uint8_t>) { return std::nullopt; }
+std::optional<std::string> check_anything(std::string_view, std::span<const std::uint8_t>) { return std::nullopt; }
+// The disc path a check is given, as a reason, to see it arrive.
+std::optional<std::string> name_the_path(std::string_view disc_path, std::span<const std::uint8_t>) {
+    return "checked as " + std::string(disc_path);
+}
 
 const std::vector<ModAssetKind> &test_kinds() {
     static const std::vector<ModAssetKind> kinds = {{.suffix = ".TIM", .check = check_tim},
-                                                    {.suffix = ".SEQ", .check = check_anything}};
+                                                    {.suffix = ".SEQ", .check = check_anything},
+                                                    {.suffix = "E0.", .check = check_anything},
+                                                    {.suffix = "#2", .check = name_the_path}};
     return kinds;
 }
 
@@ -813,6 +819,26 @@ TEST_CASE("an assets/ file replaces the disc file of its path while its mod runs
     CHECK(text_of(mods.host->asset_override("KF/B0/SND0.SEQ")) == "SEQ bytes");
     CHECK_FALSE(mods.host->asset_override("KF/B0/OTHER.SEQ"));
     CHECK_FALSE(mods.host->asset_override("kf/b0/snd0.seq"));   // exact and case-sensitive
+}
+
+TEST_CASE("an assets/ file whose name lost its trailing dot replaces the dotted disc file") {
+    Mods mods;
+    mods.disc["E0."] = 16;
+    mods.write("a/assets/E0", "screen");    // as Windows stores E0.
+    mods.host->scan();
+    mods.host->enable("a");
+    REQUIRE(mods.info("a").state == ModState::Running);
+    CHECK(text_of(mods.host->asset_override("E0.")) == "screen");
+    CHECK_FALSE(mods.host->asset_override("E0"));
+}
+
+TEST_CASE("a kind's check is given the disc path it checks the file as") {
+    Mods mods;
+    mods.disc["KF/B0/MIX3.#2"] = 16;
+    mods.write("a/assets/KF/B0/MIX3.#2", "page");
+    mods.host->scan();
+    mods.host->enable("a");
+    CHECK(mods.info("a").error.find("checked as KF/B0/MIX3.#2") != std::string::npos);
 }
 
 TEST_CASE("the last running mod in the listed order replaces the disc file") {

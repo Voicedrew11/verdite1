@@ -104,6 +104,7 @@ kf.items.slot
 kf.items.take
 kf.key_down
 kf.key_pressed
+kf.language
 kf.log
 kf.magic
 kf.magic.learned

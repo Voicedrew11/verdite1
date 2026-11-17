@@ -46,6 +46,10 @@ bool mods_item_picked_up(u16 item);
 bool mods_item_used(u16 item);
 void mods_floor_loaded(u8 floor, u8 map_variant);
 void mods_dialogue(u8 floor, u8 character, u8 stage, u8 page);
+// The game uploaded COM/MIX.TIM (with any pictures mods put in it), or a cutscene's pictures over
+// part of its place: the mods keep the banners' page up to date in between.
+void mods_common_pictures_uploaded();
+void mods_cutscene_pictures_uploaded();
 // false: a mod cancelled the shop, which does not open.
 bool mods_shop_opened(u8 bank);
 // A revival keeps the game and its save data; a restart is a new game (mods_new_game).

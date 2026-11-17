@@ -350,3 +350,29 @@ index d4f416a15c3c24fd3a644ed9231d0926c8e8bf93..37085cf7420792ce419fb6a8b2a1f24a
      }
      render_face_uv_rectangle(&face, sprite->u, sprite->v,
          sprite->u + sprite->u_span, sprite->v + sprite->v_span);
+diff --git a/src/cutscene/resources.cpp b/src/cutscene/resources.cpp
+index 49eaf1971e37646d7a968a01df9811050075422e..ee06996d27401feb34b74e753118eb136edce0cc 100644
+--- a/src/cutscene/resources.cpp
++++ b/src/cutscene/resources.cpp
+@@ -1,4 +1,5 @@
+ #include <kf/platform/prelude.h>
++#include <kf/platform/mod_events.h>
+ #include <kf/cutscene/audio.h>
+ #include <kf/cutscene/render.h>
+ #include <kf/cutscene/resources.h>
+@@ -105,6 +106,7 @@ void opening_resources_load_scene3(void)
+     audio_play_sequence_file("B0/OPEN3.");
+     resource_file_load_allocated(cutscene_memory_arena, &tim_stream, "B0/MIX3.", &tim_size);
+     tim_upload_images(tim_stream, tim_size);
++    kf::mods_cutscene_pictures_uploaded();   // PC extension (mods): over the common pictures' place
+     memory_release_last(cutscene_memory_arena);
+     std::size_t resource_size;
+     resource_file_load_allocated(cutscene_memory_arena, &stream, "B0/MIXA3.", &resource_size);
+@@ -135,6 +137,7 @@ void opening_resources_load_ending(void)
+     memory_allocation_reset(cutscene_memory_arena);
+     resource_file_load_allocated(cutscene_memory_arena, &tim_stream, "B0/MIX9.", &tim_size);
+     tim_upload_images(tim_stream, tim_size);
++    kf::mods_cutscene_pictures_uploaded();   // PC extension (mods): over the common pictures' place
+     memory_release_last(cutscene_memory_arena);
+     std::size_t resource_size;
+     resource_file_load_allocated(cutscene_memory_arena, &stream, "B0/MIXAE.", &resource_size);

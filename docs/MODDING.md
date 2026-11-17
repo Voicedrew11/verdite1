@@ -209,8 +209,10 @@ A mod may be nothing else: a folder with `assets/` needs no `mod.json` or
 | kind | what it is |
 |---|---|
 | `.TIM` | textures and pictures |
+| `KF/TIM/M001.`–`M009.`, `M101.`–`M115.`, `M999.`, `E0.`–`E3.` | pictures the disc names without `.TIM`: the spells' pages, the memory card's and quit's messages, the boxed system screens. Windows drops a name's trailing dot, so in `assets/` these may be `KF/TIM/M001` or `E0` |
 | `.SEQ` | music, in the game's sequence format (it plays through the floor's sound bank) |
 | `.TMD` | item models (`KF/ITEM1/I001.TMD`) |
+| `KF/B0/MIX3.#6`, `#7`; `KF/B0/MIX9.#7`, `#8`; `KF/COM/MIX.TIM#5` | one picture inside a file of several: the opening's and ending's scroll pages, and the page of notification banners (below) |
 
 Each file is checked when the mod loads, with the game's own parse, and held in
 memory. A bad one fails the whole mod with a reason in the Mods panel, as a Lua
@@ -220,7 +222,8 @@ game reads these into buffers made for the disc's sizes), it fails the check, or
 is a link.
 
 - A replacement applies the next time the game loads that file: a texture loaded
-  already stays until then, and `KF/COM/MIX.TIM` is kept for the whole run.
+  already stays until then, and `KF/COM/MIX.TIM` is kept for the whole run (but see
+  its banners' page, below).
 - When two mods replace a file, the last in the listed order wins.
 - A replacement applies in both languages, and its size is checked against the
   language being played.
@@ -228,6 +231,18 @@ is a link.
 
 `mod.assets.set` and `mod.assets.clear` change this from Lua. `set` raises an error
 with the same reasons.
+
+**A picture inside a file.** Some files are several TIMs one after another, and a mod may
+replace a few of their pictures on their own, named by the file and the picture's number
+from 0: `KF/B0/MIX3.#6` and `#7` (the opening's scroll), `KF/B0/MIX9.#7` and `#8` (the
+ending's), and `KF/COM/MIX.TIM#5` (the notification banners: LEVEL UP, LOCKED, ...). The
+replacement is one TIM of the disc picture's colour depth and size in words, with a palette
+exactly when the disc's has one (no wider and no taller), and no more bytes than the disc's picture. It
+goes where the disc's picture goes, palette and all, whatever positions its own header
+says, so a mod need not know where the game keeps it. The files' other pictures are textures
+the scenes' models are mapped onto, and are not offered. The banners' page is uploaded again
+during play whenever it changes (a mod sets or clears it, a language switch, coop pausing
+the mods), since the game loads `KF/COM/MIX.TIM` only once.
 
 What cannot be replaced yet, and why:
 
@@ -342,6 +357,7 @@ end
 | `kf.log(...)` | prints `[id] ...` to the console and `kf.log` |
 | `kf.context()` | `"opening"`, `"gameplay"`, `"menu"` or `"scripted"` |
 | `kf.frame()` | presented-frame counter |
+| `kf.language()` | `"en"` or `"ja"`: the language the game's text is in now; it changes when the player switches in Configuration |
 | `kf.time()` | seconds since start |
 | `kf.key_down(name)` / `kf.key_pressed(name)` | SDL key names: `"F5"`, `"G"`, `"Left Shift"`; `pressed` is true on the first frame only. Both are false while the overlay is open or a mod's `ui.input_text` has the keyboard. |
 | `kf.action_down(name)` / `kf.action_pressed(name)` | an action held by any of its keys, pad buttons or touch controls (below); `pressed` is true on the first update in `on_update`, the first drawn frame in `on_draw`. Both are false while the overlay is open or a mod's `ui.input_text` has the keyboard. |
@@ -357,7 +373,7 @@ end
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.move_player(x, y, z)` | moves the player now, world units; `y` nil keeps the height. See Position below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | the API's version: `"1.1"` |
+| `kf.api_version` | the API's version: `"1.2"` |
 
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
@@ -1167,6 +1183,10 @@ mods are off in coop (decided 2026-10-31).
     `kf.move_player`, `kf.world.standing_y`, invincibility over falls and drops,
     `kf.play.no_look_lead`, `kf.items.slot`, `kf.magic.selected` and `select`, and the ui's tabs, collapsing
     headers, scroll areas, text boxes and int boxes. The new names raise the minor version.~~
+
+14. Declare 1.2: `kf.language()`; the pictures the disc names without `.TIM`, and the opening's,
+    ending's and banners' pictures inside their files, among the files a mod may replace. For mods
+    that letter the game's text (the Text and Retranslation mods).
 
 ### Open questions
 

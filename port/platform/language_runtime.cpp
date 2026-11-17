@@ -224,11 +224,14 @@ Language language_requested() {
 
 FileResult language_file_open(DataFile *file, Language language, const char *path) {
     *file = {};
-    if (data_file_open_replaced(file, path))
+    // The language's own folder is what a replacement built on the disc's file is built on.
+    const bool prepared = prepare_resources(language);
+    const std::string folder = prepared ? language_folder(language) : std::string();
+    if (data_file_open_replaced(file, path, prepared ? folder.c_str() : nullptr))
         return FileResult::Ok;
-    if (!prepare_resources(language))
+    if (!prepared)
         return FileResult::IoError;
-    return data_file_open_at(file, language_folder(language).c_str(), path);
+    return data_file_open_at(file, folder.c_str(), path);
 }
 
 bool language_apply_pending() {

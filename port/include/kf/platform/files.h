@@ -21,14 +21,17 @@ struct DataFile {
 };
 
 // A mod's replacement for a path as the game names it ("KF/B1/SND0.SEQ"), or null for the disc's.
-using DataReplacer = std::shared_ptr<const std::vector<u8>> (*)(const char *path);
+// directory is the folder the disc's file is opened from (a language's), for a replacement built on
+// the disc's own file; null when there is none to build on.
+using DataReplacer = std::shared_ptr<const std::vector<u8>> (*)(const char *path, const char *directory);
 // Set by the mods at start and cleared at shutdown; null: no replacements.
 void data_files_set_replacer(DataReplacer replacer);
 
 // Paths are ordinary, case-sensitive paths relative to the extracted disc root.
 bool data_files_set_root(const char *directory);
-// The replacement for path, if a mod gives one; false (file untouched) otherwise.
-bool data_file_open_replaced(DataFile *file, const char *path);
+// The replacement for path, if a mod gives one; false (file untouched) otherwise. directory: as for
+// DataReplacer.
+bool data_file_open_replaced(DataFile *file, const char *path, const char *directory);
 // The disc's file at path, or the replacement for it; the game's own opening.
 FileResult data_file_open(DataFile *file, const char *path);
 // The disc's file at path, never a replacement (the disc's size for mods, and the other folders).

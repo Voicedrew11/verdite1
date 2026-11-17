@@ -7474,7 +7474,7 @@ index a89ed01864d01ed77774c0159d4d4234cf179f4e..8d8e3c96ce3edee16b16d43a66b184ce
      return resource_file_try_load_allocated(memory_arena, destination, item_model_files[index].path.data(), loaded_size);
  }
 diff --git a/src/game/resources.cpp b/src/game/resources.cpp
-index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..7a4bfe8df90b27471a786cfd686c8958b8e18d87 100644
+index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..780a12f362d56b1f69a4b5e0a3635620b1a32954 100644
 --- a/src/game/resources.cpp
 +++ b/src/game/resources.cpp
 @@ -2,6 +2,8 @@
@@ -7599,7 +7599,15 @@ index 35eede9c8c9e6ed7f63ea9e13b7bb3e9b626cba6..7a4bfe8df90b27471a786cfd686c8958
  kf::Language game_text_language()
  {
      return displayed_language.value_or(kf::game_language());
-@@ -130,20 +210,21 @@ void common_resources_load(void)
+@@ -108,6 +188,7 @@ void common_resources_load(void)
+ 
+     resource_file_load_allocated(memory_arena, &images, "COM/MIX.TIM", &image_size);
+     tim_upload_images(images, image_size);
++    kf::mods_common_pictures_uploaded();   // PC extension (mods): a picture a mod puts in it is kept up
+     memory_release_last(memory_arena);
+     std::size_t resource_size;
+     resource_file_load_allocated(memory_arena, &stream, "COM/COM.DAT", &resource_size);
+@@ -130,20 +211,21 @@ void common_resources_load(void)
          resource_chunk_data<KfMagicTable>(resource_chunk_view(stream, resource_end)));
      stream = resource_stream_next(stream, resource_end);
      // The original copy includes the next chunk's header and 148 growth bytes.
