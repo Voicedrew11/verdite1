@@ -1036,6 +1036,7 @@ void host_enqueue_face(const DrawFace &face) {
     try {
         host.frame_faces.push_back(face);
         host.frame_faces.back().entity = render_entity_tag;
+        host.frame_faces.back().keep = render_model_keep;
     } catch (const std::bad_alloc &) {
         host_fail("Cannot allocate render commands.");
     }

@@ -174,7 +174,17 @@ SetupPage presentation_page() {
         choice("HUD at the edges", "In a wide picture, the gauges move out to the left edge and the compass to the right.",
                {"modern"}, {{"display.hud_at_edges", true}}),
     }};
-    return {"presentation", "Presentation", tiers_intro, {image, lighting, edges, view}, SetupPageTiers::Offered};
+    const SetupGroup enemies{"enemy_feedback", "Enemies", "", {
+        choice("As the original",
+               "A struck enemy shows nothing, and a slain one vanishes once it has fallen.",
+               {"original", "balanced"},
+               {{"gameplay.enemy_hit_flash", false}, {"gameplay.enemy_death_fade", false}}),
+        choice("Hit flash and death fade",
+               "A struck enemy flushes red, and a slain one's body fades away, as in King's Field II and III.",
+               {"modern"}, {{"gameplay.enemy_hit_flash", true}, {"gameplay.enemy_death_fade", true}}),
+    }};
+    return {"presentation", "Presentation", tiers_intro, {image, lighting, edges, view, enemies},
+            SetupPageTiers::Offered};
 }
 
 SetupPage turning_page() {

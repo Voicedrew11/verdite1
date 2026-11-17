@@ -38,6 +38,10 @@ inline constexpr float render_near_depth = 32.0f;
 // into the next (PartOwner).
 inline u16 render_entity_tag = 0;
 inline u32 render_entity_identity = 0;
+// PC extension (a slain monster's body fading, creature_feedback.h): the share
+// of the model being enqueued that is drawn over what is behind it, 255 = all
+// (DrawFace::keep).
+inline u8 render_model_keep = 255;
 inline bool render_subpixel = true;     // keep projected positions' fractions
 inline bool render_perspective = true;  // perspective-correct textures and shading
 inline bool render_detailed_map = true; // distant map cells drawn with their near (detailed) meshes
@@ -97,6 +101,10 @@ struct DrawFace {
     // packet's colour; 128 for a textured face).
     u16 light_set = 0;
     std::array<u8, 3> tint{};
+    // PC extension: how much of it is laid over what is behind it, 255 = all
+    // (drawn as the game drew it). Below 255 the face is drawn see-through by
+    // that share, its own translucency set aside.
+    u8 keep = 255;
 };
 struct FaceList {
     const DrawFace *faces;

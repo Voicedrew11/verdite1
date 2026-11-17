@@ -9,6 +9,7 @@ layout(set = 0, binding = 0) uniform sampler2DArray pages;
 layout(location = 0) in vec2 in_uv;
 layout(location = 3) flat in uvec4 in_flags;   // layer, texturing, dither, world
 layout(location = 4) in vec3 in_camera;        // z = 0: not world
+layout(location = 9) flat in uint in_keep;     // the share of the face drawn, 255: all
 
 layout(location = 0) out vec4 out_surface;     // normal xyz, camera depth
 
@@ -17,6 +18,9 @@ void main() {
     // of its camera position span its own plane.
     vec3 normal = cross(dFdx(in_camera), dFdy(in_camera));
     if (in_camera.z <= 0.0)
+        discard;
+    // A fading body stops shading what is behind it once it is half gone.
+    if (in_keep < 128u)
         discard;
     if (in_flags.y != texturing_solid && textureLod(pages, vec3(in_uv, float(in_flags.x)), 0.0).a == 0.0)
         discard;

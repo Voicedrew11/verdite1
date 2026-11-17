@@ -6,6 +6,7 @@
 #include <kf/lib/map_types.h>
 #include <kf/platform/host.h>
 #include <kf/platform/analog.h>
+#include <kf/platform/creature_feedback.h>
 #include <kf/platform/enemy_turn.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
@@ -173,6 +174,8 @@ void settings_load() {
     current.tick_rate = static_cast<int>(read_number(gameplay, "tick_rate", current.tick_rate));
     current.enemy_turn_auto = read_bool(gameplay, "enemy_turn_auto", current.enemy_turn_auto);
     current.enemy_turn = std::clamp(static_cast<float>(read_number(gameplay, "enemy_turn", current.enemy_turn)), 1.0f, 4.0f);
+    current.enemy_hit_flash = read_bool(gameplay, "enemy_hit_flash", current.enemy_hit_flash);
+    current.enemy_death_fade = read_bool(gameplay, "enemy_death_fade", current.enemy_death_fade);
     const cJSON *map = cJSON_GetObjectItemCaseSensitive(document, "map");
     const cJSON *overlay = cJSON_GetObjectItemCaseSensitive(document, "overlay");
     current.pause_when_open = read_bool(overlay, "pause_when_open", current.pause_when_open);
@@ -256,6 +259,8 @@ void settings_save() {
     write_value(gameplay, "tick_rate", cJSON_CreateNumber(current.tick_rate));
     write_value(gameplay, "enemy_turn_auto", cJSON_CreateBool(current.enemy_turn_auto));
     write_value(gameplay, "enemy_turn", cJSON_CreateNumber(current.enemy_turn));
+    write_value(gameplay, "enemy_hit_flash", cJSON_CreateBool(current.enemy_hit_flash));
+    write_value(gameplay, "enemy_death_fade", cJSON_CreateBool(current.enemy_death_fade));
     cJSON *map = object_entry(document, "map");
     cJSON *overlay = object_entry(document, "overlay");
     write_value(overlay, "pause_when_open", cJSON_CreateBool(current.pause_when_open));
@@ -330,6 +335,8 @@ const Settings &effective_settings() {
     classic.enemy_turn = 1.0f;
     classic.analog.enabled = false;   // the game came out before the DualShock
     classic.fix_ceiling_fall = false;
+    classic.enemy_hit_flash = false;
+    classic.enemy_death_fade = false;
     classic.fix_spatial_panning = false;
     classic.item_descriptions = false;
     return classic;
@@ -429,6 +436,8 @@ void apply_control_settings() {
     player_pitch_limit = std::max(191, degrees * 4096 / 360);
     head_bob = e.head_bob;
     fix_actor_ceiling_fall = e.fix_ceiling_fall;
+    creature_hit_flash = e.enemy_hit_flash;
+    creature_death_fade = e.enemy_death_fade;
     auto_use_keys = e.auto_keys;
     host_set_enemy_turn({e.enemy_turn_auto ? EnemyTurnMode::Automatic : EnemyTurnMode::Fixed, e.enemy_turn,
                          stick_turn_reach(e.analog)});
@@ -456,6 +465,8 @@ void crash_write_settings(verdite::CrashWriter &out) {
     out.line("enemy turn automatic", s.enemy_turn_auto);
     out.line("enemy turn percent", static_cast<std::int64_t>(s.enemy_turn * 100.0f));
     out.line("fix ceiling fall", s.fix_ceiling_fall);
+    out.line("enemy hit flash", s.enemy_hit_flash);
+    out.line("enemy death fade", s.enemy_death_fade);
     out.line("auto keys", s.auto_keys);
     out.line("head bob", s.head_bob);
     out.line("reload on death", s.reload_on_death);

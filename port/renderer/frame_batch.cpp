@@ -155,6 +155,7 @@ struct FaceAttributes {
     u8 cue_scale_quarters;
     u16 light_set;
     std::array<u8, 3> tint;
+    u8 keep;
 };
 
 FaceAttributes face_attributes(const DrawFace &face, u8 layer, const BatchRules &rules) {
@@ -179,6 +180,7 @@ FaceAttributes face_attributes(const DrawFace &face, u8 layer, const BatchRules 
     out.cue_scale_quarters = static_cast<u8>(std::clamp(std::lround(face.depth_cue_scale * 4), 0L, 255L));
     out.light_set = face.light_set <= rules.light_set_count ? face.light_set : 0;
     out.tint = face.tint;
+    out.keep = face.keep;
     return out;
 }
 
@@ -214,6 +216,7 @@ GpuVertex gpu_vertex(const Vertex &vertex, const FaceAttributes &face) {
     out.nz = vertex.nz;
     out.light_set = face.light_set;
     out.tint = face.tint;
+    out.keep = face.keep;
     return out;
 }
 
@@ -256,7 +259,11 @@ FrameBatch batch_faces(std::span<const DrawFace> faces, const BatchRules &rules,
             layer = layers.layer_for(face.material.source);
         if (!layer)
             continue;
-        const BlendMode blend = face.transparency == FaceTransparency::Blend ? preceding_blend : BlendMode::opaque;
+        // A face drawn in part (DrawFace::keep) is laid over what is behind it by
+        // its share, through the average pipeline (world.frag).
+        const BlendMode blend = face.keep < 255 ? BlendMode::average
+                                : face.transparency == FaceTransparency::Blend ? preceding_blend
+                                                                               : BlendMode::opaque;
         const FaceAttributes attributes = face_attributes(face, *layer, rules);
         triangles.clear();
         split_face(face, rules, triangles);

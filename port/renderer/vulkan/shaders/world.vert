@@ -31,6 +31,7 @@ layout(location = 5) out vec3 out_clear;         // the colour bytes before the 
 layout(location = 6) flat out float out_cue_scale;   // 0: not cued
 layout(location = 7) out vec4 out_normal;        // model space, and its length
 layout(location = 8) flat out uvec4 out_light;   // light set, tint
+layout(location = 9) flat out uint out_keep;     // DrawFace::keep, 255: all drawn
 
 // Reversed infinite depth: clip z is the constant near_w, so NDC depth is
 // near_w / w: 1 at the near plane, approaching 0 far away. Vulkan keeps 0 <= z <= w,
@@ -107,6 +108,7 @@ void main() {
     out_uv_bounds = in_uv_bounds;
     out_normal = vec4(in_normal, length(in_normal));
     out_light = uvec4(in_light_set.x, in_tint.rgb);
+    out_keep = in_tint.a;
     // Only world surfaces (perspective) are filtered.
     out_flags = uvec4(in_flags.xyz, in_screen.z > 0.0 && !fixed_to_camera ? 1u : 0u);
 }

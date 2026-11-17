@@ -54,7 +54,7 @@ struct GpuVertex {
     u16 light_set;                  // FrameView::light_sets index + 1, 0: drawn as color
     u16 light_padding = 0;
     std::array<u8, 3> tint;         // DrawFace::tint
-    u8 tint_padding = 0;
+    u8 keep = 255;                  // DrawFace::keep
 };
 
 // A light set as this displayed frame shows it, worked out by the frontend.

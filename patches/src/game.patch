@@ -1953,18 +1953,19 @@ index c71d1f33020a17fdc28c290f146f11c52383e1c3..f82b0051199a7f8d893a38625708ec22
 +    map_event_in_conversation = NULL;
  }
 diff --git a/src/game/map_load.cpp b/src/game/map_load.cpp
-index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..0cad75c0e8a8217d7592d6fa4853cb5dc0482e6d 100644
+index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..612cf98fc475683791890b81a487157111c1bb06 100644
 --- a/src/game/map_load.cpp
 +++ b/src/game/map_load.cpp
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,8 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/extra_items.h>
 +#include <kf/platform/coop.h>
++#include <kf/platform/creature_feedback.h>
 +#include <kf/platform/mod_events.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
  #include <kf/lib/map.h>
-@@ -16,6 +19,18 @@ enum {
+@@ -16,6 +20,18 @@ enum {
      MAP_RESTORE_POSITION_RANDOM_BITS = 15
  };
  
@@ -1983,7 +1984,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..0cad75c0e8a8217d7592d6fa4853cb5d
  bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink &link)
  {
      switch (operation) {
-@@ -23,7 +38,7 @@ bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink
+@@ -23,7 +39,7 @@ bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink
      case KF_MAP_OBJECT_OP_ITEM_CONTAINER:
          for (unsigned slot = 0; slot < KF_MAP_CONTAINER_ITEM_COUNT; ++slot) {
              const auto item = map_container_item(link, operation, slot);
@@ -1992,7 +1993,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..0cad75c0e8a8217d7592d6fa4853cb5d
                  return false;
          }
          return true;
-@@ -52,9 +67,7 @@ void map_restore_floor_state(void)
+@@ -52,9 +68,7 @@ void map_restore_floor_state(void)
      s32 index;
  
      const auto floor = kf_enum_encode<u8>(player_state.progress_state.current_floor);
@@ -2003,7 +2004,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..0cad75c0e8a8217d7592d6fa4853cb5d
      if (*in++ == 1) {
          event = map_runtime_state.events.data();
          for (i = 0; i < KF_MAP_EVENT_CAPACITY; i++, event++) {
-@@ -147,9 +160,10 @@ void map_restore_floor_state(void)
+@@ -147,9 +161,10 @@ void map_restore_floor_state(void)
                  object->cell_z * KF_MAP_TILE_SIZE + ((kf::random_next() * KF_MAP_TILE_SIZE) >> MAP_RESTORE_POSITION_RANDOM_BITS);
              object->position.vy =
                  -(map_floor_height_grid.cells[object->cell_z][object->cell_x] * KF_MAP_HEIGHT_STEP);
@@ -2016,7 +2017,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..0cad75c0e8a8217d7592d6fa4853cb5d
                  object->rotation.vx = 0;
              }
              object->rotation.vz = 0;
-@@ -190,7 +204,8 @@ void map_restore_floor_state(void)
+@@ -190,7 +205,8 @@ void map_restore_floor_state(void)
          if (map_runtime_state.world_state.floor5.weapon_transformed == KF_MAP_SCRIPT_SET) {
              map_object_pool_clear_link(KF_MAP_LINK_WEAPON_TRANSFORM_DOORS);
          }
@@ -2026,10 +2027,11 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..0cad75c0e8a8217d7592d6fa4853cb5d
              map_runtime_state.events[KF_FLOOR2_DEPARTING_EVENT].state = KF_MAP_EVENT_DISABLED;
          }
          break;
-@@ -256,6 +271,8 @@ void map_load_floor(void)
+@@ -256,6 +272,9 @@ void map_load_floor(void)
      map_refresh_dialogue_stages();
      render_prepare_actor_textures(player_state.progress_state.current_floor);
      game_graphics_runtime.hud_model_color_matrix = color_matrix_table[kf_enum_encode<s32>(KF_GAME_COLOR_WHITE)];
++    kf::creature_feedback_forget();   // PC extension (creature_feedback.h): nothing carries over
 +    kf::mods_floor_loaded(kf_enum_encode<u8>(player_state.progress_state.current_floor),   // PC extension (mods)
 +        kf_enum_encode<u8>(player_state.map_variant));
  }
@@ -7224,20 +7226,21 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62
  
      rows = game_graphics_runtime.active_cell_window->height;
 diff --git a/src/game/render_scene.cpp b/src/game/render_scene.cpp
-index e8bb3a2e7549ef01c7bf034245989edd7c823b01..e225ee52e9513ff5fa49f5e1ad7d82bce96c0dfe 100644
+index e8bb3a2e7549ef01c7bf034245989edd7c823b01..c669cf94b0ac635c51d7cd9d5153980c843c511a 100644
 --- a/src/game/render_scene.cpp
 +++ b/src/game/render_scene.cpp
-@@ -3,6 +3,9 @@
+@@ -3,6 +3,10 @@
  #include <kf/game/render.h>
  #include <kf/game/state.h>
  #include <kf/lib/map_data.h>
 +#include <kf/game/player.h>
++#include <kf/platform/creature_feedback.h>
 +#include <kf/platform/messages.h>
 +#include <kf/platform/online_name_bar.h>
  
  enum {
      ACTOR_CULL_SQUARE_HALF_WIDTH = 12,
-@@ -14,6 +17,22 @@ struct RenderCellOrigin {
+@@ -14,6 +18,22 @@ struct RenderCellOrigin {
      u16 z;
  };
  
@@ -7260,7 +7263,7 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..e225ee52e9513ff5fa49f5e1ad7d82bc
  static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin origin)
  {
      // Narrow before checking bounds, including cells before the window origin.
-@@ -23,7 +42,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
+@@ -23,7 +43,7 @@ static bool render_cell_is_visible(s32 cell_x, s32 cell_z, RenderCellOrigin orig
          return false;
      }
      const u16 col = cell_x - origin.x;
@@ -7269,7 +7272,42 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..e225ee52e9513ff5fa49f5e1ad7d82bc
  }
  
  static bool render_actor_is_visible(const KfActor &actor, RenderCellOrigin origin)
-@@ -51,19 +70,30 @@ void render_entities(void)
+@@ -42,6 +62,34 @@ static bool render_actor_is_visible(const KfActor &actor, RenderCellOrigin origi
+     return col < ACTOR_CULL_SQUARE_WIDTH;
+ }
+ 
++// PC extension (creature_feedback.h): its death has played out and its body is
++// left, except floor 4's creature that rises again as another, drawn whole while
++// it turns.
++static bool render_actor_leaves_body(const KfActor &actor)
++{
++    if (actor.action != KF_ACTOR_ACTION_POST_DEATH) {
++        return false;
++    }
++    return player_state.progress_state.current_floor != KF_FLOOR_4
++        || actor.definition_id != KF_FLOOR4_TRANSFORM_SOURCE_DEFINITION;
++}
++
++// PC extension (creature_feedback.h): the actor lit toward the game's damage red
++// and drawn see-through as the look says, the lighting and share put back after.
++static void render_draw_actor_as(KfActor *actor, const kf::CreatureLook &look)
++{
++    const MATRIX color = game_graphics_runtime.render_state.lighting.color_matrix;
++
++    if (look.red_q12 > 0) {
++        lighting_set_color_matrix(game_graphics_runtime.render_state, &color,
++            &color_matrix_table[kf_enum_encode<s32>(KF_GAME_COLOR_DAMAGE)], look.red_q12);
++    }
++    kf::render_model_keep = look.keep;
++    render_actor(actor);
++    kf::render_model_keep = 255;
++    game_graphics_runtime.render_state.lighting.color_matrix = color;
++}
++
+ void render_entities(void)
+ {
+     const auto *grid = game_graphics_runtime.active_cell_window;
+@@ -51,19 +99,34 @@ void render_entities(void)
  
      tmd_select(tmd_context(), KF_TMD_SLOT_ENTITIES);
  
@@ -7291,19 +7329,25 @@ index e8bb3a2e7549ef01c7bf034245989edd7c823b01..e225ee52e9513ff5fa49f5e1ad7d82bc
      }
  
 -    for (auto &actor : actor_state.actors) {
+-        if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
 +    for (std::size_t i = 0; i < std::size(actor_state.actors); ++i) {
 +        auto &actor = actor_state.actors[i];
-         if (actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE
++        // PC extension (creature_feedback.h): a struck monster flushes red, and a
++        // slain one's body stays drawn, fading, after the game lets its slot go.
++        const kf::CreatureLook look = kf::creature_look(i, {actor.definition_id, actor.health,
++            actor.lifecycle == KF_ACTOR_LIFECYCLE_ACTIVE, render_actor_leaves_body(actor)});
++        if (look.drawn
              && render_actor_is_visible(actor, origin)) {
+-            render_actor(&actor);
 +            tag(KF_RENDER_TAG_ACTORS, i, actor.definition_id);
-             render_actor(&actor);
++            render_draw_actor_as(&actor, look);
          }
      }
 +    kf::render_entity_tag = 0;
  
      game_graphics_runtime.active_render_color.b = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
      game_graphics_runtime.active_render_color.g = KF_FLOOR_ITEM_RENDER_BRIGHTNESS;
-@@ -77,23 +107,83 @@ void render_entities(void)
+@@ -77,23 +140,83 @@ void render_entities(void)
                  item.position_x / KF_MAP_TILE_SIZE, item.position_z / KF_MAP_TILE_SIZE, origin)) {
              render_floor_item(game_graphics_runtime.render_state, floor_item_sprites,
                  render_enqueue_sprite, &item, &render_light_matrices[KF_RENDER_LIGHT_FLOOR_ITEM]);
