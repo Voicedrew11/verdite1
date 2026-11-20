@@ -240,6 +240,11 @@ std::optional<ServiceFrame> parse_frame(const cJSON *json) {
         return std::nullopt;
     if (*type == "welcome")
         return parse_welcome(json);
+    if (*type == "pong") {
+        ServiceFrame frame;
+        frame.kind = ServiceFrame::Kind::Pong;
+        return frame;
+    }
     if (*type == "turn")
         return parse_turn(json);
     if (*type == "rooms")
@@ -413,6 +418,10 @@ std::string signal_frame(PeerId to, const Signal &signal) {
 
 std::string turn_frame() {
     return R"({"type":"turn"})";
+}
+
+std::string ping_frame() {
+    return R"({"type":"ping"})";
 }
 
 std::string describe_frame(std::uint32_t floor) {

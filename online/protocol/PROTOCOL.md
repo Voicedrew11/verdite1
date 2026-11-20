@@ -54,6 +54,7 @@ frames over 64 KiB are an error. The first frame from the service is `welcome` o
 | `join` | `peer` | a peer joined after you |
 | `leave` | `peer` | a peer left |
 | `signal` | `from`, `data` | a peer sent you `data` |
+| `pong` | | the answer to your `ping` |
 | `turn` | `iceServers`, `seconds` | the answer to your `turn`: the RTCIceServer list to connect with, good for `seconds` (1800). Empty when the service has no TURN key (local testing) |
 | `error` | `code`, `message` | see below; `full`, `build_mismatch` and `unavailable` close the socket after it |
 
@@ -76,6 +77,7 @@ Error codes after the upgrade:
 | `signal` | `to`, `data` | send `data` to peer `to`; it arrives as `signal` with your id as `from` |
 | `turn` | | ask for a TURN credential, answered by `turn` or an error. Only with another peer in the room. A peer keeps its last two: a new one revokes the one before the last |
 | `describe` | `floor` | a listed room's host: the floor its list row shows, a whole number 0 to 99. Ignored from anyone else; at most one a second counts |
+| `ping` | | I am still here: sent as exactly `{"type":"ping"}` (see "Staying in a room"), answered with exactly `{"type":"pong"}` |
 
 `data` is opaque to the service, a JSON object the clients agree on. Every one names `gen`, the
 generation of the pair's connection it belongs to (a whole number, 0 for the first; see "Moving to
@@ -96,6 +98,20 @@ A generation is never reused between a pair, and signals for one that is gone ar
 
 Leaving is closing the socket. The service sends `leave` to the others and revokes the leaver's
 TURN credential.
+
+### Staying in a room
+
+A game that crashes into an error dialog, freezes, or loses its network can leave its socket open,
+and its peer would hold the room: a host could not host the same code again. So a client sends
+`ping` when its socket opens and every 10 seconds after, from the thread that runs the game, so a
+frozen game stops. The service answers at Cloudflare's edge, without waking the room. A peer that
+has pinged and then goes 45 seconds without one leaves as if it had closed its socket (the others
+get `leave`), and its socket is closed with code 4000. The service looks whenever someone joins, and
+every 15 seconds while a peer of the room pings. A peer that never pinged (an older client) is
+never dropped. A floor mesh (below) does the same.
+
+A client also gives up on a service it stops hearing: WebSocket pings, three unanswered, end the
+session as `disconnected`.
 
 ## The list of public rooms
 

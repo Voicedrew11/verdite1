@@ -29,8 +29,11 @@ import {
   verifyRecord,
 } from "./record";
 import {
+  anyPinging,
+  answerPings,
   attachment,
   clientAddress,
+  closeSilent,
   fail,
   freshPeerId,
   grantTurn,
@@ -38,7 +41,9 @@ import {
   readFrame,
   revokeTurn,
   send,
+  silentMembers,
   store,
+  watchLiveness,
   FrameRate,
   type Client,
   type Member,
@@ -84,6 +89,7 @@ export class Floor extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    answerPings(ctx);
     // The name ("game/area") comes with a request by name; kept in storage too, so an object woken by a
     // hibernated socket's message, which may not carry it, still knows its floor.
     void ctx.blockConcurrencyWhile(async () => {
@@ -100,7 +106,9 @@ export class Floor extends DurableObject<Env> {
     const ip = clientAddress(request);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     if (url.pathname.endsWith("/mesh")) {
+      await this.dropSilent();
       this.joinMesh(server, ip);
+      await watchLiveness(this.ctx, this.env);
     } else {
       const records = await this.sampleFor(Number(url.searchParams.get("seed")));
       this.ctx.acceptWebSocket(server, ["records"]);
@@ -108,6 +116,19 @@ export class Floor extends DurableObject<Env> {
       send(server, { type: "records", records });
     }
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async alarm(): Promise<void> {
+    await this.dropSilent();
+    if (anyPinging(this.ctx, "mesh")) await watchLiveness(this.ctx, this.env);
+  }
+
+  // Mesh members whose game stopped pinging leave, so newcomers are not linked to them.
+  private async dropSilent(): Promise<void> {
+    for (const { ws } of silentMembers<MeshMember>(this.ctx, this.env, "mesh")) {
+      await this.leave(ws);
+      closeSilent(ws);
+    }
   }
 
   // Drops records retired in this floor's cache: an author's posts in another floor retire these.

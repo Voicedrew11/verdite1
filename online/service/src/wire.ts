@@ -14,6 +14,9 @@ export const RECORD_POSTS_PER_MINUTE = 10;
 export const MESH_WELCOME = 3; // most links a newcomer is given
 export const MESH_LINKS = 4; // a member accepts links until it has this many
 export const MESH_MIN_LINKS = 2; // a member left with fewer is given new links
+export const PING_FRAME = '{"type":"ping"}'; // answered at the edge, so a room never wakes for it
+export const PONG_FRAME = '{"type":"pong"}';
+export const SILENT_SECONDS = 45; // a peer that pinged and then went this long without one is dropped
 
 export interface ListedRoom {
   room: string;

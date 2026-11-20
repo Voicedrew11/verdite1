@@ -47,6 +47,11 @@ test their renewal; it is never set on the live service except for such a test. 
 `npx wrangler dev --ip 127.0.0.1 --port 8787 --var TURN_CREDENTIAL_SECONDS:60`, then
 `TURN_CREDENTIAL_SECONDS=60 npm test` and `vo_pair --seconds 120` (a move every 30 seconds).
 
+`SILENT_SECONDS` (3 to 45, default 45) shortens how long a peer that stopped pinging stays in its
+room (PROTOCOL.md, "Staying in a room"), for its test only, since the client pings every 10
+seconds: `npx wrangler dev --ip 127.0.0.1 --port 8787 --var SILENT_SECONDS:3`, then
+`SILENT_SECONDS=3 npm test`.
+
 ## The client
 
 C++20 behind the C interface in `client/include/verdite_online.h`, on libdatachannel 0.24.1

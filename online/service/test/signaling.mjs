@@ -245,6 +245,43 @@ const cases = {
     assert.deepEqual(await refused("/v1/lobby/test?protocol=2&build=b"), { status: 400, error: "protocol" });
     assert.deepEqual(await refused("/v1/lobby/test?protocol=1"), { status: 400, error: "bad_request" });
   },
+
+  async "a peer that pinged and went silent leaves, and an older client that never pinged stays"() {
+    const silent = Number(process.env.SILENT_SECONDS ?? 0); // the Worker's, set to a few seconds
+    if (!silent) {
+      console.log("     (not run: start the Worker with --var SILENT_SECONDS:3 and set SILENT_SECONDS=3)");
+      return;
+    }
+    const host = connect(roomUrl("silent"));
+    const wh = await host.next();
+    host.send({ type: "ping" });
+    assert.deepEqual(await host.next(), { type: "pong" });
+    const older = connect(roomUrl("silent")); // never pings
+    const wo = await older.next();
+    assert.deepEqual(wo.peers, [wh.peer]);
+    const guest = connect(roomUrl("silent"));
+    const wg = await guest.next();
+    assert.deepEqual(wg.peers, [wh.peer, wo.peer]);
+    const pinging = setInterval(() => guest.send({ type: "ping" }), 1000);
+    try {
+      // the host froze: its socket stays open, but it pings no more
+      for (;;) {
+        const frame = await guest.next((silent * 2 + 5) * 1000);
+        if (frame.type === "pong") continue;
+        assert.deepEqual(frame, { type: "leave", peer: wh.peer });
+        break;
+      }
+      assert.equal((await host.closed).code, 4000);
+      const later = connect(roomUrl("silent"));
+      const wl = await later.next();
+      assert.deepEqual(wl.peers, [wo.peer, wg.peer]);
+      later.close();
+    } finally {
+      clearInterval(pinging);
+      older.close();
+      guest.close();
+    }
+  },
 };
 
 let failed = 0;

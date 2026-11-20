@@ -48,6 +48,10 @@ constexpr std::string_view moved_marker = "moved";
 constexpr std::string_view seen_marker = "seen";
 constexpr auto describe_every = std::chrono::seconds(1);    // the service counts no more
 constexpr auto describe_refresh = std::chrono::seconds(60); // keeps the row, which goes stale in 5 minutes
+// PROTOCOL.md, "Staying in a room": the service drops a peer silent for 45 s, so a crashed game's
+// peer cannot hold the room; sent from vo_poll, so a frozen game stops too.
+constexpr auto ping_every = std::chrono::seconds(10);
+constexpr auto service_silent_most = std::chrono::seconds(45); // a ping unanswered this long ends the session
 
 // What a libdatachannel thread saw.
 struct Happening {
@@ -255,6 +259,9 @@ struct vo_session {
     std::optional<std::uint32_t> floor;
     std::optional<std::uint32_t> floor_sent;
     Clock::time_point floor_sent_at{};
+
+    std::optional<Clock::time_point> ping_sent_at;
+    std::optional<Clock::time_point> unanswered_since; // the oldest ping the service has not answered
 
     std::vector<Retired> retired;
     bool fatal = false;
@@ -657,6 +664,7 @@ struct vo_session {
             on_error(*frame);
             break;
         case vo::ServiceFrame::Kind::Rooms: // the list's, not a room's
+        case vo::ServiceFrame::Kind::Pong:   // heard_service has taken it
             break;
         }
     }
@@ -800,6 +808,7 @@ struct vo_session {
         using Kind = Happening::Kind;
         switch (happening.kind) {
         case Kind::SocketText:
+            heard_service();
             on_frame(happening.text);
             break;
         case Kind::SocketClosed:
@@ -859,8 +868,29 @@ struct vo_session {
         floor_sent_at = now;
     }
 
+    // Anything from the service answers a ping: an older service answers one with an error.
+    void heard_service() {
+        unanswered_since.reset();
+    }
+
+    void ping_if_due(Clock::time_point now) {
+        if (unanswered_since && now - *unanswered_since > service_silent_most) {
+            fail(VO_ERROR_DISCONNECTED, "the service stopped answering");
+            return;
+        }
+        if (!socket || !socket->isOpen() || (ping_sent_at && now - *ping_sent_at < ping_every))
+            return;
+        send_frame(vo::ping_frame());
+        ping_sent_at = now;
+        if (!unanswered_since)
+            unanswered_since = now;
+    }
+
     void run_timers() {
         const auto now = Clock::now();
+        ping_if_due(now);
+        if (fatal)
+            return;
         renew_if_due(now);
         describe_if_due(now);
         std::vector<std::pair<PeerId, std::string>> failed;

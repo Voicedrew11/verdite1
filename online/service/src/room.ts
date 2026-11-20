@@ -4,8 +4,11 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 import {
+  anyPinging,
+  answerPings,
   attachment,
   clientAddress,
+  closeSilent,
   fail,
   freshPeerId,
   grantTurn,
@@ -16,7 +19,9 @@ import {
   refuse,
   revokeTurn,
   send,
+  silentMembers,
   store,
+  watchLiveness,
 } from "./session";
 import {
   DESCRIBE_EVERY_MS,
@@ -46,6 +51,11 @@ export class Room extends DurableObject<Env> {
   // Lost when the object hibernates, which only forgives a burst.
   private frames = new FrameRate();
 
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    answerPings(ctx);
+  }
+
   private peers(): { ws: WebSocket; peer: Peer }[] {
     return members<Peer>(this.ctx).map(({ ws, member }) => ({ ws, peer: member }));
   }
@@ -53,6 +63,7 @@ export class Room extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const build = new URL(request.url).searchParams.get("build") ?? "";
     const ip = clientAddress(request);
+    await this.dropSilent(); // a crashed game's peer must not hold the room against its rehost
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     const present = this.peers();
 
@@ -78,7 +89,20 @@ export class Room extends DurableObject<Env> {
     send(server, { type: "welcome", protocol: PROTOCOL, peer: id, peers: oldest });
     for (const { ws: other } of present) send(other, { type: "join", peer: id });
     await this.listOnJoin(new URL(request.url), id, build, present.length === 0);
+    await watchLiveness(this.ctx, this.env);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async alarm(): Promise<void> {
+    await this.dropSilent();
+    if (anyPinging(this.ctx)) await watchLiveness(this.ctx, this.env);
+  }
+
+  private async dropSilent(): Promise<void> {
+    for (const { ws } of silentMembers<Peer>(this.ctx, this.env)) {
+      await this.leave(ws);
+      closeSilent(ws);
+    }
   }
 
   private lobby(listing: Listing) {

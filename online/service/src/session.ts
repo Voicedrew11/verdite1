@@ -3,7 +3,15 @@
 import type { Env } from "./index";
 import { addressKey } from "./quota";
 import { credentialSeconds, issue, revoke } from "./turn";
-import { FRAME_BYTES, FRAMES_PER_SECOND, type ErrorCode, type ServerFrame } from "./wire";
+import {
+  FRAME_BYTES,
+  FRAMES_PER_SECOND,
+  PING_FRAME,
+  PONG_FRAME,
+  SILENT_SECONDS,
+  type ErrorCode,
+  type ServerFrame,
+} from "./wire";
 
 const TURN_CREDENTIALS_KEPT = 2;
 
@@ -78,6 +86,57 @@ export function members<T>(ctx: DurableObjectState, tag?: string): { ws: WebSock
     .filter((ws) => ws.readyState === WebSocket.OPEN)
     .map((ws) => ({ ws, member: attachment<T>(ws) }))
     .filter((entry): entry is { ws: WebSocket; member: T } => entry.member !== null);
+}
+
+// Liveness (PROTOCOL.md, "Staying in a room"): a client pings every 10 seconds, answered at the
+// edge without waking the object, so a crashed or frozen game, or one whose network went, still has
+// an open socket but stops pinging. A socket that never pinged is an older client's and is kept.
+
+export function answerPings(ctx: DurableObjectState): void {
+  ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME));
+}
+
+// SILENT_SECONDS, or the env's (3 to 45) to test dropping.
+export function silentSeconds(env: Env): number {
+  const seconds = Number(env.SILENT_SECONDS);
+  return Number.isInteger(seconds) && seconds >= 3 && seconds <= SILENT_SECONDS ? seconds : SILENT_SECONDS;
+}
+
+// How often an object with members looks for silent ones.
+export function livenessEveryMs(env: Env): number {
+  return (silentSeconds(env) * 1000) / 3;
+}
+
+// Whether a member of a tag (all when none) pings, so the object has someone to watch.
+export function anyPinging(ctx: DurableObjectState, tag?: string): boolean {
+  return members(ctx, tag).some(({ ws }) => ctx.getWebSocketAutoResponseTimestamp(ws) !== null);
+}
+
+// The members of a tag (all when none) that pinged once and then went silent.
+export function silentMembers<T>(ctx: DurableObjectState, env: Env, tag?: string): { ws: WebSocket; member: T }[] {
+  const now_ms = Date.now();
+  const silent_ms = silentSeconds(env) * 1000;
+  return members<T>(ctx, tag).filter(({ ws }) => {
+    const pinged = ctx.getWebSocketAutoResponseTimestamp(ws);
+    return pinged !== null && now_ms - pinged.getTime() > silent_ms;
+  });
+}
+
+// Closes a silent member's socket, after the caller has made it leave as its close would have.
+export function closeSilent(ws: WebSocket): void {
+  try {
+    ws.close(4000, "silent");
+  } catch {
+    // already closed
+  }
+}
+
+// Sets the object's next liveness alarm unless one is due sooner. Set on a join, since the
+// joiner's first ping comes after its welcome; the alarm sets the next only while anyPinging.
+export async function watchLiveness(ctx: DurableObjectState, env: Env): Promise<void> {
+  const due_ms = Date.now() + livenessEveryMs(env);
+  const alarm_ms = await ctx.storage.getAlarm();
+  if (alarm_ms === null || alarm_ms > due_ms) await ctx.storage.setAlarm(due_ms);
 }
 
 // The frames a socket sent in its current second, at most FRAMES_PER_SECOND. Lost when the object

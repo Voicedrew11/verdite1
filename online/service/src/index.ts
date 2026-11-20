@@ -23,6 +23,7 @@ export interface Env {
   TURN_BUDGET_GB?: string; // past this month's, no new connections
   TURN_HARD_GB?: string; // past this month's, every credential ends
   TURN_CREDENTIAL_SECONDS?: string; // 1800 when unset; shorter only to test renewal
+  SILENT_SECONDS?: string; // 45 when unset; shorter only to test dropping a silent peer
   // secrets (online/README.md, "Secrets")
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;

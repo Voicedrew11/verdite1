@@ -43,6 +43,11 @@ TEST_CASE("a candidate must give an address, never a name to look up") {
     CHECK_FALSE(signal_with(R"("kind":"offer","sdp":"v=0\r\na=candidate:1 1 UDP 1 a.example 9 typ relay\r\n")"));
 }
 
+TEST_CASE("a ping is the exact text the service answers at its edge, and its pong parses") {
+    CHECK(ping_frame() == R"({"type":"ping"})");
+    CHECK(parsed(R"({"type":"pong"})").kind == ServiceFrame::Kind::Pong);
+}
+
 TEST_CASE("a room's address follows the service's scheme and checks the names") {
     CHECK(room_url("https://online.example.net/", "kf1", "sign-1", "kf1-0.1.0+ab") ==
           "wss://online.example.net/v1/rooms/kf1/sign-1?protocol=1&build=kf1-0.1.0%2Bab");

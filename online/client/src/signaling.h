@@ -70,7 +70,8 @@ struct Signal {
 
 struct ServiceFrame {
     // Link: a floor mesh's newer peer is told to offer to peer, as to one named in welcome.
-    enum class Kind { Welcome, Join, Leave, Signal, Turn, Rooms, Error, Link };
+    // Pong: the answer to a ping.
+    enum class Kind { Welcome, Join, Leave, Signal, Turn, Rooms, Error, Link, Pong };
     Kind kind = Kind::Error;
     int protocol = 0;                   // Welcome
     PeerId peer = 0;                    // Welcome: you; Join, Leave, Link: them; Signal: the sender
@@ -89,6 +90,8 @@ std::optional<ServiceFrame> parse_service_frame(std::string_view text);
 
 std::string signal_frame(PeerId to, const Signal &signal);
 std::string turn_frame();
+// Exactly the text the service answers at its edge (PROTOCOL.md, "Staying in a room").
+std::string ping_frame();
 std::string describe_frame(std::uint32_t floor);
 
 } // namespace vo
