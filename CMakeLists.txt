@@ -184,7 +184,8 @@ set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES GENERATED TRUE
 add_library(kf_support STATIC port/platform/files.cpp port/platform/disc.cpp port/platform/assets.cpp
   port/platform/user_folder.cpp port/platform/desktop_entry.cpp port/platform/picked_file.cpp
   port/platform/language.cpp port/platform/translation.cpp port/platform/translation_ppf.cpp
-  port/platform/controls.cpp port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
+  port/platform/controls.cpp port/platform/bindings.cpp port/platform/binding_names.cpp
+  port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
   ${KF_SRC}/src/lib/random.cpp ${KF_SRC}/src/lib/resource_decode.cpp)
 target_sources(kf_support PRIVATE "${CMAKE_BINARY_DIR}/generated/english_patch.inc")
 target_include_directories(kf_support PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
@@ -606,7 +607,7 @@ endif()
 
 # port/'s tests: the parts that run without a window or GPU.
 if(doctest_FOUND)
-  add_executable(kf_port_tests port/tests/main.cpp port/tests/controls.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp port/tests/death_reload.cpp port/ext/death_reload_rule.cpp
+  add_executable(kf_port_tests port/tests/main.cpp port/tests/controls.cpp port/tests/bindings.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp port/tests/death_reload.cpp port/ext/death_reload_rule.cpp
     port/tests/creature_feedback.cpp port/ext/creature_feedback_rule.cpp
     port/tests/setting_rows.cpp port/ext/setting_rows.cpp
     port/tests/online_pose.cpp port/ext/online_pose.cpp port/tests/online_playback.cpp port/ext/online_playback.cpp
