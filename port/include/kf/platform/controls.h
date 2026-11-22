@@ -7,10 +7,11 @@
 #include <array>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string_view>
 
 namespace kf {
-inline constexpr unsigned input_binding_capacity = 96;
+inline constexpr unsigned input_binding_capacity = 192;
 enum class Action : u8 {
     forward,
     backward,
@@ -39,6 +40,7 @@ enum class InputDevice : u8 { keyboard, mouse, gamepad };
 struct Control {
     InputDevice device;
     u32 code;
+    friend bool operator==(const Control &, const Control &) = default;
 };
 struct InputFrame {
     u32 held, pressed, released;
@@ -62,6 +64,11 @@ std::string_view action_name(Action action);
 std::optional<Action> action_from_name(std::string_view name);
 bool input_pressed(const InputFrame *frame, Action action);
 bool input_bind(InputState *input, Control control, Action action);
+// Replaces every binding with these, in order. A control held now stays held only if it keeps
+// its action; any other starts released, so a key held through the change neither sticks nor
+// presses its new action. The same bindings again change nothing. False, with nothing changed,
+// for more than the capacity, an action past count or a control listed twice.
+[[nodiscard]] bool input_set_bindings(InputState *input, std::span<const InputBinding> bindings);
 void input_button(InputState *input, Control control, bool down);
 void input_motion(InputState *input, double x, double y);
 void input_disconnect(InputState *input, InputDevice device);

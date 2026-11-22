@@ -10,6 +10,28 @@ constexpr std::array<std::string_view, 21> action_names{
     "attack", "magic", "interact", "inventory", "pause", "pause_or_back", "confirm", "back", "run",
     "quick_save", "quick_load", "compare_language", "full_map"};
 static_assert(action_names.size() == static_cast<std::size_t>(Action::count));
+
+bool bindings_valid(std::span<const InputBinding> bindings) {
+    if (bindings.size() > input_binding_capacity)
+        return false;
+    for (std::size_t i = 0; i < bindings.size(); ++i) {
+        if (bindings[i].action >= Action::count)
+            return false;
+        for (std::size_t j = 0; j < i; ++j)
+            if (bindings[j].control == bindings[i].control)
+                return false;
+    }
+    return true;
+}
+// Whether this control is down now on this same action, which is all a replaced table keeps.
+bool held_on(const InputState *input, const InputBinding &binding) {
+    for (std::size_t i = 0; i < input->binding_count; ++i) {
+        const auto &old = input->bindings[i];
+        if (old.control == binding.control)
+            return old.action == binding.action && old.down;
+    }
+    return false;
+}
 } // namespace
 
 u32 action_bit(Action action) {
@@ -51,6 +73,17 @@ bool input_bind(InputState *input, Control control, Action action) {
     if (input->binding_count == input->bindings.size())
         return false;
     input->bindings[input->binding_count++] = {control, action, false};
+    return true;
+}
+bool input_set_bindings(InputState *input, std::span<const InputBinding> bindings) {
+    if (!bindings_valid(bindings))
+        return false;
+    std::array<InputBinding, input_binding_capacity> next{};
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+        next[i] = {bindings[i].control, bindings[i].action, held_on(input, bindings[i])};
+    input->bindings = next;
+    input->binding_count = bindings.size();
+    update_held(input);
     return true;
 }
 void input_button(InputState *input, Control control, bool down) {
