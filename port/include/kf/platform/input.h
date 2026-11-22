@@ -52,7 +52,10 @@ InputContext host_input_context();
 LookDelta host_take_look();
 // Which gamepad face button does what. West, the US King's Field's, is the default.
 enum class PadLayout : u8 { West, Japanese };
-void host_set_pad_layout(PadLayout layout);
+struct Bindings;
+// The player's bindings, after the fixed ones (kf/platform/bindings.h). Nothing happens when they
+// are the ones in use; see input_set_bindings for what is held across a change.
+void host_set_bindings(const Bindings &bindings);
 // Quick save/load presses made during gameplay since the last call.
 enum class QuickRequest : u8 { None, Save, Load };
 QuickRequest host_take_quick_request();

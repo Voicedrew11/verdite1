@@ -6,6 +6,7 @@
 #include <kf/lib/map_types.h>
 #include <kf/platform/host.h>
 #include <kf/platform/analog.h>
+#include <kf/platform/bindings.h>
 #include <kf/platform/creature_feedback.h>
 #include <kf/platform/enemy_turn.h>
 #include <kf/platform/input.h>
@@ -460,7 +461,7 @@ void apply_control_settings() {
     auto_use_keys = e.auto_keys;
     host_set_enemy_turn({e.enemy_turn_auto ? EnemyTurnMode::Automatic : EnemyTurnMode::Fixed, e.enemy_turn,
                          stick_turn_reach(e.analog)});
-    host_set_pad_layout(e.pad_layout == "jp" ? PadLayout::Japanese : PadLayout::West);
+    host_set_bindings(bindings_resolve(BindingChanges{}, pad_layout_of(e.pad_layout)));
     touch_button_haptics = e.touch_haptics;
     host_set_analog_options(e.analog);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.

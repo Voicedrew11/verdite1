@@ -10,6 +10,7 @@
 #include <kf/platform/menu_pointer.h>
 #include <kf/platform/touch.h>
 #include <kf/platform/controls.h>
+#include <kf/platform/bindings.h>
 #include <kf/game/system.h>
 #include <kf/platform/agent.h>
 #include <kf/platform/fuzz.h>
@@ -73,7 +74,8 @@ struct HostState {
     u32 mod_held_read;           // the mods' holds at the last read, for their new holds
     bool opening_load_pressed;
     bool backing_out;   // a dead coop player's menu: Back pressed on every other read
-    PadLayout pad_layout;
+    Bindings bindings;         // the player's, as last applied
+    bool bindings_applied;
     struct FrameLight {
         float x, y, z, radius, r, g, b, flicker;
         u32 seed;
@@ -95,9 +97,6 @@ static constexpr Uint64 ns_per_millisecond = 1000000;
 static constexpr Uint64 clock_ticks_per_second = 60;
 static constexpr Uint64 unfocused_poll_interval_ns = 16 * ns_per_millisecond;
 static constexpr Uint64 maximum_wait_slice_ns = 8 * ns_per_millisecond;
-static constexpr u32 gamepad_axis_control_first = 100;
-static constexpr u32 gamepad_axis_positive_first = gamepad_axis_control_first + 1;
-static constexpr int gamepad_axis_deadzone = 16000;
 static constexpr double mouse_degrees_per_pixel = 0.12;
 // Each model and map cell drawn takes one; render distance 16 draws about 600.
 static constexpr std::size_t frame_light_set_capacity = 4096;
@@ -114,68 +113,30 @@ static void platform_yield(Uint64 nanoseconds) {
 #endif
 }
 
-struct GamepadBinding { SDL_GamepadButton code; Action action; };
-
-// The face buttons by position (SDL's south is Cross on a PlayStation pad).
-// Japanese is this disc's own; West is the US King's Field's: Square attacks,
-// Cross examines and confirms, Circle opens the menu and backs out, Triangle
-// uses the item or spell.
-constexpr std::array<GamepadBinding, 4> japanese_face_buttons = {
-    GamepadBinding{SDL_GAMEPAD_BUTTON_NORTH, Action::attack}, GamepadBinding{SDL_GAMEPAD_BUTTON_WEST, Action::magic},
-    GamepadBinding{SDL_GAMEPAD_BUTTON_EAST, Action::interact}, GamepadBinding{SDL_GAMEPAD_BUTTON_SOUTH, Action::back}};
-constexpr std::array<GamepadBinding, 4> west_face_buttons = {
-    GamepadBinding{SDL_GAMEPAD_BUTTON_WEST, Action::attack}, GamepadBinding{SDL_GAMEPAD_BUTTON_NORTH, Action::magic},
-    GamepadBinding{SDL_GAMEPAD_BUTTON_SOUTH, Action::interact}, GamepadBinding{SDL_GAMEPAD_BUTTON_EAST, Action::back}};
-
-static std::span<const GamepadBinding> face_buttons(PadLayout layout) {
-    return layout == PadLayout::Japanese ? std::span(japanese_face_buttons) : std::span(west_face_buttons);
-}
-
-static void bind_gamepad_buttons(std::span<const GamepadBinding> buttons) {
-    for (const auto &button : buttons)
-        input_bind(&host.input, {InputDevice::gamepad, static_cast<u32>(button.code)}, button.action);
+void host_set_bindings(const Bindings &bindings) {
+    if (host.bindings_applied && bindings == host.bindings)
+        return;
+    // bindings.cpp asserts that the fixed controls and both full groups fit.
+    std::array<InputBinding, input_binding_capacity> table{};
+    std::size_t count = 0;
+    for (const InputBinding &binding : fixed_bindings())
+        table[count++] = binding;
+    for (const GroupBindings *group : std::array{&bindings.keys, &bindings.pad}) {
+        for (std::size_t action = 0; action < action_count; ++action) {
+            for (const Control control : (*group)[action].controls())
+                table[count++] = {control, static_cast<Action>(action), false};
+        }
+    }
+    if (!input_set_bindings(&host.input, std::span(table.data(), count))) {
+        std::fprintf(stderr, "[controls] bindings refused; the last ones stay\n");
+        return;
+    }
+    host.bindings = bindings;
+    host.bindings_applied = true;
 }
 
 static void bind_inputs() {
-    auto *input = &host.input;
-    struct KeyBinding { SDL_Keycode code; Action action; };
-    constexpr std::array<KeyBinding, 25> keys = {
-        KeyBinding{SDLK_W, Action::forward}, KeyBinding{SDLK_UP, Action::forward},
-        KeyBinding{SDLK_S, Action::backward}, KeyBinding{SDLK_DOWN, Action::backward},
-        KeyBinding{SDLK_A, Action::strafe_left}, KeyBinding{SDLK_D, Action::strafe_right},
-        KeyBinding{SDLK_LEFT, Action::turn_left}, KeyBinding{SDLK_RIGHT, Action::turn_right},
-        KeyBinding{SDLK_PAGEUP, Action::look_up}, KeyBinding{SDLK_PAGEDOWN, Action::look_down},
-        KeyBinding{SDLK_F, Action::interact}, KeyBinding{SDLK_RETURN, Action::confirm},
-        KeyBinding{SDLK_SPACE, Action::attack}, KeyBinding{SDLK_Q, Action::magic},
-        KeyBinding{SDLK_TAB, Action::inventory}, KeyBinding{SDLK_BACKSPACE, Action::back},
-        KeyBinding{SDLK_ESCAPE, Action::pause_or_back}, KeyBinding{SDLK_P, Action::pause},
-        KeyBinding{SDLK_LSHIFT, Action::run}, KeyBinding{SDLK_RSHIFT, Action::run},
-        KeyBinding{SDLK_F2, Action::quick_save}, KeyBinding{SDLK_F4, Action::quick_load},
-        KeyBinding{SDLK_R, Action::compare_language}, KeyBinding{SDLK_AC_BACK, Action::pause_or_back},
-        KeyBinding{SDLK_M, Action::full_map}
-    };
-    for (const auto &key : keys)
-        input_bind(input, {InputDevice::keyboard, static_cast<u32>(key.code)}, key.action);
-    input_bind(input, {InputDevice::mouse, SDL_BUTTON_LEFT}, Action::attack);
-    input_bind(input, {InputDevice::mouse, SDL_BUTTON_RIGHT}, Action::magic);
-    constexpr std::array<GamepadBinding, 10> buttons = {
-        GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_UP, Action::forward}, GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_DOWN, Action::backward},
-        GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_LEFT, Action::turn_left}, GamepadBinding{SDL_GAMEPAD_BUTTON_DPAD_RIGHT, Action::turn_right},
-        GamepadBinding{SDL_GAMEPAD_BUTTON_START, Action::inventory}, GamepadBinding{SDL_GAMEPAD_BUTTON_BACK, Action::pause},
-        GamepadBinding{SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, Action::strafe_left},
-        GamepadBinding{SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, Action::strafe_right},
-        GamepadBinding{SDL_GAMEPAD_BUTTON_LEFT_STICK, Action::run},
-        GamepadBinding{SDL_GAMEPAD_BUTTON_RIGHT_STICK, Action::compare_language}
-    };
-    bind_gamepad_buttons(buttons);
-    bind_gamepad_buttons(face_buttons(host.pad_layout));
-    // Axis directions use distinct controls so releasing a stick cannot release a held D-pad.
-    input_bind(input, {InputDevice::gamepad, gamepad_axis_control_first + SDL_GAMEPAD_AXIS_LEFTX * 2}, Action::turn_left);
-    input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_LEFTX * 2}, Action::turn_right);
-    input_bind(input, {InputDevice::gamepad, gamepad_axis_control_first + SDL_GAMEPAD_AXIS_LEFTY * 2}, Action::forward);
-    input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_LEFTY * 2}, Action::backward);
-    input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_LEFT_TRIGGER * 2}, Action::look_up);
-    input_bind(input, {InputDevice::gamepad, gamepad_axis_positive_first + SDL_GAMEPAD_AXIS_RIGHT_TRIGGER * 2}, Action::look_down);
+    host_set_bindings(bindings_resolve(BindingChanges{}, PadLayout::West));
 }
 
 static bool left_stick_axis(SDL_GamepadAxis axis) {
@@ -187,10 +148,11 @@ static bool left_stick_axis(SDL_GamepadAxis axis) {
 static void push_axis_buttons(SDL_GamepadAxis axis, Sint16 value) {
     const bool analog = left_stick_axis(axis) && host.input_context == InputContext::Gameplay
         && host_analog_owns_left_stick();
-    input_button(&host.input, {InputDevice::gamepad, gamepad_axis_control_first + axis * 2u},
-                 !analog && value < -gamepad_axis_deadzone);
-    input_button(&host.input, {InputDevice::gamepad, gamepad_axis_positive_first + axis * 2u},
-                 !analog && value > gamepad_axis_deadzone);
+    const auto sdl_axis = static_cast<u32>(axis);
+    input_button(&host.input, {InputDevice::gamepad, pad_axis_negative(sdl_axis)},
+                 !analog && value < -pad_axis_deadzone);
+    input_button(&host.input, {InputDevice::gamepad, pad_axis_positive(sdl_axis)},
+                 !analog && value > pad_axis_deadzone);
 }
 
 // After the context or the analog options change, a held left stick moves to
@@ -374,10 +336,7 @@ static void process_keyboard_event(const SDL_KeyboardEvent &event) {
             return;
         // Letter shortcuts follow physical QWERTY positions in every layout.
         // Other keys retain logical remaps, including Caps Lock to Escape.
-        if (event.scancode >= SDL_SCANCODE_A && event.scancode <= SDL_SCANCODE_Z)
-            pressed_key = SDLK_A + static_cast<SDL_Keycode>(event.scancode - SDL_SCANCODE_A);
-        else
-            pressed_key = SDL_GetKeyFromScancode(event.scancode, SDL_KMOD_NONE, false);
+        pressed_key = bound_key(event.scancode, SDL_GetKeyFromScancode(event.scancode, SDL_KMOD_NONE, false));
         if (pressed_key != SDLK_UNKNOWN)
             input_button(&host.input, {InputDevice::keyboard, pressed_key}, true);
     } else {
@@ -948,11 +907,6 @@ RawSticks host_gamepad_sticks() {
     };
     return {axis(SDL_GAMEPAD_AXIS_LEFTX, touch.left_x), axis(SDL_GAMEPAD_AXIS_LEFTY, touch.left_y),
             axis(SDL_GAMEPAD_AXIS_RIGHTX, touch.right_x), axis(SDL_GAMEPAD_AXIS_RIGHTY, touch.right_y)};
-}
-
-void host_set_pad_layout(PadLayout layout) {
-    host.pad_layout = layout;
-    bind_gamepad_buttons(face_buttons(layout));
 }
 
 // The look not yet taken, in angle units. A direction a mod blocks is dropped here, before
