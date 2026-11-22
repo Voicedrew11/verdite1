@@ -378,11 +378,13 @@ end
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
 `interact`, `inventory`, `pause`, `pause_or_back`, `confirm`, `back`, `run`
-(Shift, the left stick's click, the touch Run button), `quick_save`,
-`quick_load`, `compare_language` and `full_map` (M, the touch Map button).
-`run` and `full_map` mean nothing to the game: they are there for mods. An
-action's press in `on_draw` is seen while the game is paused, so a mod that
-pauses can unpause on one.
+(by default Shift, the left stick's click, the touch Run button), `quick_save`,
+`quick_load`, `compare_language` and `full_map` (by default M, the touch Map
+button). `run` and `full_map` mean nothing to the game: they are there for mods.
+An action's press in `on_draw` is seen while the game is paused, so a mod that
+pauses can unpause on one. The player can rebind the actions in F1 > Settings >
+Controls, so read an action rather than its default key; `kf.key_*` hotkeys are
+not checked against the bindings, and a mod's hotkey can share a key with one.
 
 `kf.action_down` and `kf.action_pressed` read the player's own controls,
 without any mod's holds or blocks, so a mod can block `attack` and still read

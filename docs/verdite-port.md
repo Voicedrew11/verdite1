@@ -434,7 +434,7 @@ branch point.
 | AO, per-pixel lighting | dynamic lights, AO, shadows, flame glow | different designs: judge, do not merge blindly. AO and the game's lighting per pixel are done on Vulkan (`RENDERER_PLAN.md`); dynamic lights, shadows and glow were drawn only by GL and are not drawn yet |
 | mouse look, free look | mouse look, `look_limit` | |
 | English translation | language switch, ppf/rar import | fetched at start from the Japanese files (2026-10-27, "Build and run (Linux)"). Coop needs it, for the players' names ("Language handling"). Not yet: a LANGUAGE row in the game's menu; 3DS and the web have no curl or bsdtar, so they cannot download or open the `.rar` |
-| keyboard layout | controls | |
+| keyboard layout | controls | done (2026-11-21): rebinding in F1 > Settings > Controls; see "Control bindings" below |
 | settings UI (Verdite Core) | F1 overlay | the settings in the game's own menu done (2026-10-26), as Verdite2's and Verdite3's PORT SETTINGS: see "The settings page in the game's menu" below |
 
 ### Missing: port
@@ -445,7 +445,7 @@ branch point.
 | render distance + fade, models past the game's reach | `RenderDistance.cs`, `CullCone.cs` | the decomp's stencil/cell loop can be widened directly |
 | distance fog, anisotropic, mipmaps, enhance distance | `KF1_FOG`, `KF1_ANISO`, `KF1_MIPMAPS`, `KF1_ENHANCEDIST` | done on Vulkan (2026-10-23, `RENDERER_PLAN.md`); enhanced distance leaves dynamic lights alone |
 | analog tuning: curves, deadzones, ease, accel, tank, inverts | `Analog.cs` | done (2026-10-23): the shaping in libverdite (`verdite/stick.h`), the options and per-axis state in `port/platform/analog.cpp`, and a line in each of the player update's four velocity branches asking it for the velocity (`host_analog_velocity`), so nothing is pre-loaded to steer the game's own branch; centred, the D-pad's branches run. Twin stick by default; off in Classic mode. Not carried: `AnalogProbe` |
-| pad layout `jp`/`west` | `PadLayout.cs` | done (2026-10-23): two face-button tables in `port/platform/host.cpp`, chosen by `controls.pad_layout` (West by default); only the gamepad's bindings change, so the keyboard, mouse and agent need no subtraction |
+| pad layout `jp`/`west` | `PadLayout.cs` | done (2026-10-23): two face-button tables, chosen by `controls.pad_layout` (West by default); only the gamepad's bindings change, so the keyboard, mouse and agent need no subtraction. Since 2026-11-21 the tables are in `port/platform/bindings.cpp` and set only the face buttons' defaults: pad actions the player changed keep their lists, and the unchanged ones follow the layout ("Control bindings" below) |
 | mouse on the menus | Verdite2's `patches/MenuMouse.cs` (KF2; KF1's main had none) | done (2026-10-25): `verdite/menu_pointer.h` in libverdite (game-agnostic, unit-tested), `port/platform/menu_pointer.cpp` (SDL to game pixels, the presses into `host_read_buttons`), Controls > *Mouse in menus* (`controls.menu_pointer`, on, kept in Classic mode as mouse look is). See "The mouse on the menus" below |
 | reload on death | Verdite2's `AutoReload.cs`, Verdite3's `patches/AutoReload.cs` | done (2026-11-06): see "Reload on death" below |
 | enemy turn speed | Verdite2's `EnemyTurn.cs` (KF2, `81c02db` there) | done (2026-10-23), reworked for KF1: its enemies already turn 60-80 a tick (32, 48 and 10 for a few) against the D-pad's 28, so the turn rate alone was not what let a player circle them; the pursuit re-aims at the player on only one update in eight, and a retreat only as it starts. Gameplay > *Enemy turn speed* (x1-x4, x1.5 by default, x1 in Classic mode, `gameplay.enemy_turn`; since 2026-10-26 the Fixed mode beside the default Automatic, "Automatic enemy turn" below) multiplies the turn of a pursuit or a retreat, not a wander or the way home; above x1 the enemy keeps the player in sight (no setting since 2026-11-03), re-aiming both every update, the random draw kept so the sequence is the game's. Staged on floor 1 (an enemy of turn 80 put 2,500 ahead, the player strafing round it at 180 a tick, three runs each): at x1 it lost the player in every run and wandered off, with 4-5 melee attacks; at x1.5 with tracking it stayed at about 2,550 and started 8-10, at x2 7-15; x1.5 without tracking lost the player too. Not carried: V2's tracking while standing, since a KF1 enemy near the player is pursuing, not standing |
@@ -508,6 +508,60 @@ Status and out, Use Item and its Use/Cancel prompt, Equipment and the weapon
 list, a click clear of the list, one within the margin, right clicks out to play.
 The window-to-game conversion (the letterbox, the widescreen columns, the pixel
 density) is not exercised by that and is the user's to judge in play.
+
+## Control bindings
+
+Done 2026-11-21. F1 > Settings > Controls ends with two sections, *Keyboard and mouse* and
+*Gamepad buttons*, each listing the 21 actions with their controls, up to four a group, and a
+row that resets the group. A control is added by [+] and pressing it, and removed from its
+chip's popup.
+
+- **Changes over defaults.** `controls.bindings` in `settings.json` holds only the actions the
+  player changed, `keys` and `pad` each mapping an action's name (the mods' names) to its
+  controls; `[]` is a deliberate none, and an absent action has its default. A changed list takes
+  its controls from the unchanged actions' defaults, so the taking leaves no trace in the file
+  and undoes itself when the taker is reset. The pad's defaults follow `controls.pad_layout`, so
+  switching PAD BUTTONS moves the unchanged face buttons and keeps every changed list. The data,
+  the resolve and the names are `kf/platform/bindings.h` (kf_support, no SDL in the header,
+  unit-tested); the rows are `port/ext/binding_rows.cpp`, the capture
+  `port/ext/binding_overlay.cpp`. Loading bounds-checks every entry once and logs what it leaves
+  out; a list with entries but none usable keeps its default, so a typo does not unbind, and so
+  does one whose every control an earlier action's list also has.
+- **One-word names**, readable as one agent argument and joinable with ",": letters by their US
+  place ("Q" is the key there on any layout, as the game binds letters by scancode), other keys
+  from SDL's static scancode names with spaces dropped ("LeftShift", "KeypadComma"), "MouseLeft"
+  to "MouseX2", and PlayStation names for the pad ("Square", "R2", "DpadUp"). Reading ignores
+  case and spaces. `SDL_GetKeyFromName` and `SDL_GetKeyName` are never used for names, since they
+  go through the current keymap; only the chips' labels use the keymap, so a stored "Q" shows as A
+  on AZERTY.
+- **Fixed and reserved.** Escape and Android's Back stay on Pause / back, and the left stick's
+  four directions on walking and turning; they are bound first and have no bindable name. Escape
+  is the capture's cancel and the overlay's close, so it could never be captured back, and keeps a
+  way out on the keyboard. F1, F11 and Alt+Enter stay the overlay's and fullscreen's; Guide is not
+  bindable. A note row on the page names the reserved keys.
+- **Room proved at build time.** Six fixed bindings plus 2 groups × 21 actions × 4 controls is
+  174, within the input table's 192 (a `static_assert` in `bindings.cpp`). A new table replaces
+  the old in one step (`input_set_bindings`): a control held through the change stays held only
+  if it keeps its action, so a key held while rebinding neither sticks nor presses its new action.
+- **Capture.** Keys rows take a key down (not a repeat), normalised as the game matches it, or a
+  mouse button 1-5; a lone modifier binds on its release, so Alt+Enter still toggles fullscreen
+  and binds nothing. Pad rows take a button other than Guide, or L2 or R2 crossing 16000. Escape,
+  F1, closing the overlay, focus loss, a row no longer drawn, and 5 s with nothing pressed all
+  cancel. Pad navigation is off while a capture waits and until the captured button is released
+  (2 s at most), so the press that binds does not also activate a widget.
+- **Warnings, not refusals.** Nothing a player sets is refused for leaving no way round the menus;
+  instead the row shows a warning while it applies (nothing on the keyboard that confirms on the
+  title's name pages, no key for the menu, no pad button to confirm, back out or open the menu).
+  Reset and Escape are always there.
+- **No new option kind in libverdite.** Each binding row is a Status row whose value is its text
+  ("Space,MouseLeft" or "none"), and the port's `option_change` sets binding ids from that text
+  before anything else. So Android shows the pad rows read-only and truthfully (its Reset works),
+  the agent and `scripts/smoke.py` can read and set every row
+  (`option controls.bindings.pad.attack Square,R2`), and no frontend's switch over the kinds
+  changes.
+
+Mods' `kf.key_*` hotkeys are by scancode and are not checked against the bindings
+([MODDING.md](MODDING.md)).
 
 ## The settings page in the game's menu
 
