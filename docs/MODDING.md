@@ -15,6 +15,16 @@ sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `%APPDATA%\Verdite\Verdite1` on Windows,
 `~/.local/share/Verdite/Verdite1` on Linux.
 
+On Android the user folder is the app's private storage, which no file manager reaches, so a mod
+comes in as a `.zip`: Settings → Mods → **Install mod...** (any platform with a file dialog). The
+archive holds one mod, `mod.json` or `main.lua` at its top or in a single folder there; it is
+installed as `mods/<id>`, or the folder's or the archive's name without an `id`, and starts off.
+An earlier copy of that folder moves to `mods_removed`. Every path is checked before anything is
+written (`verdite/mod_archive.h`): none may leave the folder or be a name Windows refuses.
+Android and Windows unzip with libarchive, Linux and the Mac with `bsdtar`, and iOS, whose
+folder Files reaches, not at all. `KF_TEST_INSTALL_MOD=<archive>` installs one at start, as if
+picked, for a test with no dialog.
+
 ```
 mods/mymod/mod.json
 mods/mymod/main.lua
@@ -1013,7 +1023,7 @@ your own disc by `tools/mod_floor_from_disc.py`, and without it the sigil rouses
 this repository. `scripts/example_mod_crypt.py` plays the crypt through. Only `mods/` ships: the crypt
 is an example to read and copy into a mods folder by hand, and since 2026-11-05 a copy the game gave
 a player moves to `mods_removed`, as the other retired examples do. The
-build puts `mods/` beside the executable, and the game copies each one into the
+build puts `mods/` beside the executable (in an APK, `assets/bundled_mods`, read through SDL), and the game copies each one into the
 mods folder the first time it sees it, disabled unless it says
 `default_enabled`; `mods/.examples` lists those
 already offered, so an example you delete stays deleted.

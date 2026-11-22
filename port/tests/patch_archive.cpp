@@ -1,3 +1,4 @@
+#include <kf/platform/archive_entries.h>
 #include <kf/platform/patch_archive.h>
 
 #include <doctest/doctest.h>
@@ -166,4 +167,25 @@ TEST_CASE("an archive cut short anywhere is refused or gives the whole patch, ne
         else
             CHECK_FALSE(error.empty());
     }
+}
+
+TEST_CASE("a mod's .zip gives each file, by the path the archive spells") {
+    const auto read = kf::archive_entries(zip_of({{"hello/mod.json", "{}"}, {"hello/main.lua", "mod.log(1)"}}));
+    REQUIRE(read.error.empty());
+    REQUIRE(read.entries.size() == 2);
+    CHECK(read.entries[0].path == "hello/mod.json");
+    CHECK(std::string(read.entries[1].bytes.begin(), read.entries[1].bytes.end()) == "mod.log(1)");
+}
+
+TEST_CASE("a mod's .zip cut short anywhere is refused or read whole, never a file cut short") {
+    const Bytes whole = zip_of({{"m/mod.json", "{}"}, {"m/main.lua", "mod.log(1)"}});
+    for (std::size_t size = 0; size < whole.size(); ++size) {
+        const auto read = kf::archive_entries(std::span(whole).first(size));
+        for (const auto &entry : read.entries)
+            CHECK((entry.bytes.size() == 2 || entry.bytes.size() == 10));
+        if (read.error.empty())
+            continue;
+        CHECK(read.entries.empty());
+    }
+    CHECK_FALSE(kf::archive_entries(Bytes(4096, 0x5A)).error.empty());
 }

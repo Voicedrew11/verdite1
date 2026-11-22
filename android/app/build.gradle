@@ -35,7 +35,10 @@ android {
         // The release takes only its own (KF_ANDROID_JNI_DIR, scripts/package-android.sh).
         def jniDir = System.getenv('KF_ANDROID_JNI_DIR')
         jniLibs.srcDirs = jniDir ? [jniDir] : ['../../build/android-arm64/jni', '../../build/android-x86_64/jni']
-        def assetsDir = System.getenv('KF_ANDROID_ASSETS_DIR')
+        // Each preset's build also leaves assets/: the example mods. A development APK takes the
+        // first preset built, as two would carry the same files.
+        def assetsDir = System.getenv('KF_ANDROID_ASSETS_DIR') ?:
+            ['../../build/android-arm64/assets', '../../build/android-x86_64/assets'].find { file(it).isDirectory() }
         if (assetsDir)
             assets.srcDirs += assetsDir
     }

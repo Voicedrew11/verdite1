@@ -194,7 +194,7 @@ target_link_libraries(kf_support PRIVATE verdite SDL3::SDL3)
 # Getting the English patch: a phone has no curl or bsdtar, and Windows' tar cannot be relied on
 # (patch_archive.h).
 if(KF_IOS)
-  target_sources(kf_support PRIVATE port/platform/ios.mm port/platform/patch_archive_ios.cpp)
+  target_sources(kf_support PRIVATE port/platform/ios.mm port/platform/patch_archive_ios.cpp port/platform/archive_entries_ios.cpp)
   set_source_files_properties(port/platform/ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(kf_support PRIVATE "-framework UniformTypeIdentifiers")
 elseif(NOT ANDROID)
@@ -329,7 +329,7 @@ add_custom_target(kf_raw_layer DEPENDS ${KF_RAW_OUT}/raw_layer.stamp)
 
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/setting_rows.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/setup_overlay.cpp port/ext/setup_panel.cpp port/ext/update_notice.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/death_reload.cpp port/ext/death_reload_rule.cpp port/ext/creature_feedback.cpp port/ext/creature_feedback_rule.cpp port/ext/coop_profile.cpp port/ext/coop_refusals.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_menu.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/setting_rows.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/setup_overlay.cpp port/ext/setup_panel.cpp port/ext/update_notice.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/death_reload.cpp port/ext/death_reload_rule.cpp port/ext/creature_feedback.cpp port/ext/creature_feedback_rule.cpp port/ext/coop_profile.cpp port/ext/coop_refusals.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_menu.cpp port/ext/mod_install.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
   ${KF_RAW_OUT}/raw_layer.cpp)
 add_dependencies(kf_ext kf_raw_layer)
 set_source_files_properties(${KF_RAW_OUT}/raw_layer.cpp PROPERTIES GENERATED TRUE)
@@ -559,6 +559,12 @@ if(ANDROID)
     COMMAND ${CMAKE_COMMAND} -E make_directory ${KF_JNI_DIR}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:verdite1> $<TARGET_FILE:SDL3::SDL3-shared>
       ${KF_CXX_RUNTIME} ${KF_JNI_DIR}
+    VERBATIM)
+  # The example mods, as the APK's assets/bundled_mods: a phone's mods folder is out of a file
+  # manager's reach, so the game copies them in from there (port/ext/mods.cpp).
+  add_custom_command(TARGET verdite1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/assets/bundled_mods
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/mods ${CMAKE_BINARY_DIR}/assets/bundled_mods
     VERBATIM)
 endif()
 if(WIN32)

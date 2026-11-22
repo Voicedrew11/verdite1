@@ -2,6 +2,7 @@
 // and Android's settings panel draw. A row's id is its settings.json path where
 // it has one. Each set stores, applies and marks the settings for saving.
 #include "internal.hpp"
+#include "mod_install.h"
 #include "mod_menu.h"
 #include <kf/platform/coop.h>
 #include <kf/platform/language.h>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <utility>
 
@@ -590,14 +592,21 @@ OptionPage gameplay_page() {
 
 // A file chosen in a dialog. The dialog answers later, possibly on another
 // thread, so options_poll picks the result up on the game thread.
-enum class Pick : std::uint8_t { None, Patch, Disc };
+enum class Pick : std::uint8_t { None, Patch, Disc, Mod };
 std::mutex pick_lock;
 Pick pick_pending = Pick::None, pick_done = Pick::None;
 std::string pick_path;
 
-void pick_file(Pick purpose) {
+const SDL_DialogFileFilter *pick_filter(Pick purpose) {
     static const SDL_DialogFileFilter patch_filter[] = {{"English patch (.rar or .ppf)", "rar;ppf;zip;7z"}};
     static const SDL_DialogFileFilter disc_filter[] = {{"Disc images", "cue;bin;iso;chd"}};
+    static const SDL_DialogFileFilter mod_filter[] = {{"Mods (.zip)", "zip"}};
+    if (purpose == Pick::Patch)
+        return patch_filter;
+    return purpose == Pick::Mod ? mod_filter : disc_filter;
+}
+
+void pick_file(Pick purpose) {
     {
         std::lock_guard guard(pick_lock);
         pick_pending = purpose;
@@ -607,7 +616,7 @@ void pick_file(Pick purpose) {
         pick_done = files && files[0] ? pick_pending : Pick::None;
         pick_path = files && files[0] ? files[0] : "";
         pick_pending = Pick::None;
-    }, nullptr, window(), purpose == Pick::Patch ? patch_filter : disc_filter, 1, nullptr, false);
+    }, nullptr, window(), pick_filter(purpose), 1, nullptr, false);
 }
 
 void choose_language(Language language) {
@@ -812,6 +821,26 @@ OptionSection multiplayer_host() {
 OptionPage multiplayer_page() { return {"Multiplayer", {multiplayer_own(), multiplayer_host()}}; }
 #endif
 
+// ---- Mods ----
+
+std::string mod_install_note;   // what the last install did
+
+// The Mods page: installing from a .zip, then each mod's own menu.
+OptionPage mods_page() {
+    OptionPage page = mod_menu_options_page();
+    OptionSection install{"", {
+        needs(action("mods.install", "Install mod...",
+                     "Choose a mod's .zip. It is copied into the mods folder and starts off: turn it on under MODS "
+                     "on the title screen.",
+                     [] { pick_file(Pick::Mod); }),
+              PlatformFeature::FileDialog),
+        shown_if(status("mods.install_note", "", [] { return mod_install_note; }),
+                 [] { return !mod_install_note.empty(); }),
+    }};
+    page.sections.insert(page.sections.begin(), std::move(install));
+    return page;
+}
+
 } // namespace
 
 static std::vector<verdite::OptionPage> all_pages() {
@@ -819,7 +848,7 @@ static std::vector<verdite::OptionPage> all_pages() {
 #if KF_ONLINE
             multiplayer_page(),
 #endif
-            mod_menu_options_page()};
+            mods_page()};
 }
 
 verdite::OptionTable &options() {
@@ -843,11 +872,20 @@ verdite::PlatformFeatures platform_features() {
 }
 
 void options_poll() {
+    // KF_TEST_INSTALL_MOD=<archive>: installed once at start as if picked, for a test with no dialog.
+    static const char *test_install = std::getenv("KF_TEST_INSTALL_MOD");
+    if (test_install) {
+        mod_install_note = mod_install_from_archive(test_install);
+        std::printf("[mods] %s\n", mod_install_note.c_str());
+        test_install = nullptr;
+    }
     std::lock_guard guard(pick_lock);
     if (pick_done == Pick::Patch)
         language_task_patch_file(pick_path);
     else if (pick_done == Pick::Disc)
         language_task_add_disc(pick_path);
+    else if (pick_done == Pick::Mod)
+        mod_install_note = mod_install_from_archive(pick_path);
     pick_done = Pick::None;
 }
 

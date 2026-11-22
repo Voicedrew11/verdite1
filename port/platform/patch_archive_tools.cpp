@@ -1,3 +1,4 @@
+#include <kf/platform/archive_entries.h>
 #include <kf/platform/patch_archive.h>
 #include <algorithm>
 #include <atomic>
@@ -142,6 +143,49 @@ std::optional<std::vector<u8>> patch_from_archive(std::span<const u8> archive_by
     if (!ppf)
         *error = "Cannot read the patch in that archive.";
     return ppf;
+}
+
+namespace {
+// The archive's regular files, by their paths below `folder`. Links are neither followed nor read.
+ArchiveRead read_extracted(const std::filesystem::path &folder) {
+    ArchiveRead read;
+    std::size_t room_bytes = verdite::mod_archive_bytes_most;
+    std::error_code error;
+    for (std::filesystem::recursive_directory_iterator it(folder, error), end; !error && it != end; it.increment(error)) {
+        if (it->is_symlink(error) || !it->is_regular_file(error))
+            continue;
+        if (read.entries.size() >= verdite::mod_archive_files_most)
+            return {{}, "That archive holds too many files to be a mod."};
+        const auto size = it->file_size(error);
+        auto bytes = error || size > room_bytes ? std::nullopt : read_file(it->path());
+        if (!bytes)
+            return {{}, "That archive is damaged, or too large to be a mod."};
+        room_bytes -= bytes->size();
+        read.entries.push_back({std::filesystem::relative(it->path(), folder, error).generic_string(), std::move(*bytes)});
+    }
+    if (error)
+        return {{}, "Cannot read the files in that archive."};
+    return read;
+}
+} // namespace
+
+ArchiveRead archive_entries(std::span<const u8> archive_bytes) {
+    ScratchDirectory scratch;
+    const auto archive = scratch.path / "mod-archive";
+    const auto extracted = scratch.path / "extracted";
+    std::error_code failure;
+    std::filesystem::create_directories(extracted, failure);
+    {
+        std::ofstream out(archive, std::ios::binary);
+        out.write(reinterpret_cast<const char *>(archive_bytes.data()),
+                  static_cast<std::streamsize>(archive_bytes.size()));
+        if (!out.flush())
+            return {{}, "Cannot read that archive."};
+    }
+    // bsdtar refuses absolute paths and .. unless told otherwise (-P).
+    if (!run_tool("bsdtar", {"-xf", archive, "-C", extracted}))
+        return {{}, "Cannot open that file as a .zip archive, or it names a file outside its folder."};
+    return read_extracted(extracted);
 }
 #endif
 } // namespace kf

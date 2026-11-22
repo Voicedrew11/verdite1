@@ -1716,32 +1716,97 @@ void move_retired_examples() {
     }
 }
 
+// The folder the example mods ship in: beside the executable, or inside an APK, which SDL reads as
+// a relative path once the user folder (its first guess) has no such name.
+std::string bundled_mods_folder() {
+#ifdef __ANDROID__
+    return "bundled_mods";
+#else
+    const char *base = SDL_GetBasePath();
+    return base ? std::string(base) + "mods" : std::string();
+#endif
+}
+
+std::string bundled_child(const std::string &folder, const std::string &name) {
+    std::string path = folder;
+    path += '/';
+    path += name;
+    return path;
+}
+
+std::filesystem::path utf8_path(const std::string &text) {
+    return {std::u8string(text.begin(), text.end())};
+}
+
+std::vector<std::string> bundled_names(const std::string &folder) {
+    std::vector<std::string> names;
+    const auto add = [](void *found, const char *, const char *name) {
+        static_cast<std::vector<std::string> *>(found)->emplace_back(name);
+        return SDL_ENUM_CONTINUE;
+    };
+    if (!SDL_EnumerateDirectory(folder.c_str(), add, &names))
+        names.clear();
+    std::ranges::sort(names);
+    return names;
+}
+
+bool bundled_folder(const std::string &path) {
+    SDL_PathInfo info{};
+    return SDL_GetPathInfo(path.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
+}
+
+bool copy_bundled_file(const std::string &from, const std::filesystem::path &to) {
+    std::size_t size = 0;
+    const std::unique_ptr<void, void (*)(void *)> bytes(SDL_LoadFile(from.c_str(), &size), SDL_free);
+    if (!bytes)
+        return false;
+    std::ofstream out(to, std::ios::binary | std::ios::trunc);
+    out.write(static_cast<const char *>(bytes.get()), static_cast<std::streamsize>(size));
+    return static_cast<bool>(out.flush());
+}
+
+// Through SDL, so an APK's assets copy as a folder does.
+bool copy_bundled(const std::string &from, const std::filesystem::path &to) {
+    std::error_code error;
+    std::filesystem::create_directories(to, error);
+    if (error)
+        return false;
+    for (const std::string &name : bundled_names(from)) {
+        const std::string source = bundled_child(from, name);
+        const bool copied = bundled_folder(source) ? copy_bundled(source, to / utf8_path(name))
+                                                   : copy_bundled_file(source, to / utf8_path(name));
+        if (!copied)
+            return false;
+    }
+    return true;
+}
+
 void copy_example_mods() {
     move_retired_examples();
-    const char *base = SDL_GetBasePath();
-    if (!base)
+    const std::string bundled = bundled_mods_folder();
+    if (bundled.empty() || !bundled_folder(bundled))
         return;
-    const auto bundled = std::filesystem::path(reinterpret_cast<const char8_t *>(base)) / "mods";
     std::error_code error;
-    if (!std::filesystem::is_directory(bundled, error))
-        return;
     std::filesystem::create_directories(mods_dir(), error);
     const auto list = mods_dir() / ".examples";
     auto offered = offered_examples(list);
     const auto before = offered.size();
-    for (const auto &entry : std::filesystem::directory_iterator(bundled, error)) {
-        const std::string name = entry.path().filename().string();
-        if (!entry.is_directory(error) || offered.contains(name))
+    for (const std::string &name : bundled_names(bundled)) {
+        const std::string source = bundled_child(bundled, name);
+        if (offered.contains(name) || !bundled_folder(source))
             continue;
+        const auto target = mods_dir() / utf8_path(name);
+        if (std::filesystem::exists(target, error)) {
+            offered.insert(name);
+            continue;
+        }
+        if (!copy_bundled(source, target)) {
+            std::filesystem::remove_all(target, error);   // tried again at the next start
+            std::printf("[mods] cannot copy the example mod %s: %s\n", name.c_str(), SDL_GetError());
+            continue;
+        }
         offered.insert(name);
-        const auto target = mods_dir() / name;
-        if (std::filesystem::exists(target, error))
-            continue;
-        std::filesystem::copy(entry.path(), target, std::filesystem::copy_options::recursive, error);
-        if (error)
-            std::printf("[mods] cannot copy the example mod %s: %s\n", name.c_str(), error.message().c_str());
-        else
-            std::printf("[mods] copied the example mod %s to %s\n", name.c_str(), target.string().c_str());
+        std::printf("[mods] copied the example mod %s to %s\n", name.c_str(), target.string().c_str());
     }
     if (offered.size() != before)
         write_offered_examples(list, offered);

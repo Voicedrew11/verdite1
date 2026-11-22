@@ -370,6 +370,12 @@ touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has un
 - A signed release APK built by CI (the key in the repository's secrets), on the
   GitHub release beside the AppImage and the Windows build: done, [PACKAGING.md](PACKAGING.md),
   which also has the update dialog. It carries libarchive's licence in `assets/licenses`.
+- Mods on a phone (2026-11-22): the user folder is the app's private storage, out of any file
+  manager's reach (`Android/data` is another folder, which the game never read), so release players
+  had no way to add a mod, the debug mod included. The APK now carries `mods/` as
+  `assets/bundled_mods`, copied in at first launch as on the desktop, and Settings → Mods →
+  "Install mod..." takes a `.zip` from the picker ([MODDING.md](MODDING.md)). Mods switch on under
+  MODS on the title screen, by touch.
 - `scripts/check.sh` builds the `android-arm64` preset when the Android shell
   is present. The sanitizer runs stay on the desktop, where the same game and
   port code is covered. HWASan on a device is later, if a bug calls for it.
