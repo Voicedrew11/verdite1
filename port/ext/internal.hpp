@@ -1,6 +1,7 @@
 #pragma once
 #include <kf/ext/ext.h>
 #include <kf/platform/analog.h>
+#include <kf/platform/bindings.h>
 #include <kf/platform/language.h>
 #include <verdite/setup.h>
 #include "coop_profile.h"
@@ -60,6 +61,31 @@ void apply_render_settings();   // also on window resize
 verdite::OptionTable &options();
 void options_rebuild();   // the table again, for rows that changed: invalidates every view of it
 verdite::PlatformFeatures platform_features();   // what this build's platform has
+
+// ---- the Controls page's binding rows (binding_rows.cpp) ----
+// A binding row's id is controls.bindings.<keys|pad>.<action>.
+struct BindingRow {
+    BindingGroup group;
+    Action action;
+};
+// The row an id names; nothing for any other id (the group's note and reset rows among them).
+std::optional<BindingRow> binding_row(std::string_view id);
+std::string binding_row_id(BindingRow row);   // the id binding_row reads back
+const char *action_label(Action action);   // "Attack", "Magic / item"...
+// The row's help line for its group (the pad's walk and turn rows name the left stick); often "".
+const char *action_help(BindingRow row);
+GroupBindings bindings_in_play(BindingGroup group);   // the settings' changes over the defaults now
+// Edits: each stores, applies (apply_control_settings), marks the settings dirty and leaves a 4 s note.
+void binding_add(BindingRow row, Control control);
+void binding_remove(BindingRow row, Control control);
+// Puts the group back to its defaults: stores, applies and marks the settings dirty; no note.
+void bindings_reset(BindingGroup group);
+bool bindings_changed(BindingGroup group);   // the group has an action the player changed
+void binding_note(BindingRow row, std::string text);   // the capture's own messages
+std::string binding_row_note(BindingRow row);   // the 4 s note, else a missing-way warning, else empty
+// The text path (agent, Android): nothing for an id that is no binding row; else "" when set,
+// or why not ("not a value it takes").
+std::optional<std::string> binding_text_change(std::string_view id, std::string_view text);
 
 // ---- the SETTINGS page in the game's menu (kf/platform/settings_page.h) ----
 bool settings_page_holding();   // it has changes not yet saved: the settings file waits

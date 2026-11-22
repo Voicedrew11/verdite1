@@ -400,7 +400,8 @@ OptionSection controls_movement() {
         choice<std::string>("controls.pad_layout", "Gamepad buttons",
                             "West: Square attacks, Cross examines and confirms, Circle opens the menu and backs out, "
                             "Triangle uses the item or spell. Japanese: Triangle attacks, Circle examines and confirms, "
-                            "Cross opens the menu and backs out, Square uses the item or spell.",
+                            "Cross opens the menu and backs out, Square uses the item or spell. Pad buttons you set "
+                            "yourself under Gamepad buttons stay as you set them.",
                             s.pad_layout, {{"west", "West (US King's Field)"}, {"jp", "Japanese (this disc's)"}},
                             apply_control_settings),
         PlatformFeature::Gamepad));
@@ -482,17 +483,35 @@ OptionSection controls_fine_tuning() {
     }});
 }
 
-OptionSection controls_bindings() {
-    static constexpr std::pair<const char *, const char *> bindings[] = {
-        {"Move / strafe", "W A S D"}, {"Turn", "Left / Right arrows"},
-        {"Look", "Mouse, Page Up / Page Down"}, {"Attack", "Space, left mouse"}, {"Magic", "Q, right mouse"},
-        {"Interact", "F, Enter"}, {"Menu", "Tab (opens and backs out)"}, {"Back", "Backspace, Tab, right mouse in menus"},
-        {"Quick save", "F2"}, {"Quick load", "F4 (also on the title screen)"},
-        {"Pause", "P, Escape"}, {"Overlay", "F1"}, {"Fullscreen", "F11, Alt+Enter"}};
-    OptionSection section{"Keyboard (rebinding is planned)", {}};
-    for (const auto &[what, keys] : bindings)
-        section.rows.push_back(needs(status(std::string("controls.keys.") + what, what, [keys] { return std::string(keys); }),
-                                     PlatformFeature::Keyboard));
+// One row per action, its value the controls in force as text ("Space,MouseLeft"): a Status row, so
+// Android shows it as it is, while option_change sets it from text (binding_text_change).
+OptionRow binding_status(BindingRow r) {
+    OptionRow made = status(binding_row_id(r), action_label(r.action), [r] {
+        return controls_text(bindings_in_play(r.group)[static_cast<std::size_t>(r.action)].controls());
+    });
+    made.help = action_help(r);
+    made.state = [r] { return OptionState{true, true, binding_row_note(r)}; };
+    return made;
+}
+
+OptionSection controls_bindings(BindingGroup group) {
+    const bool keys = group == BindingGroup::keys;
+    OptionSection section{keys ? "Keyboard and mouse" : "Gamepad buttons", {}};
+    if (keys)
+        section.rows.push_back(note("controls.bindings.keys.note",
+                                    "F1 opens this window. F11 and Alt+Enter switch fullscreen. Escape always pauses "
+                                    "and backs out, and cancels a key being set. These cannot be changed."));
+    for (std::size_t a = 0; a < action_count; ++a)
+        section.rows.push_back(binding_status({group, static_cast<Action>(a)}));
+    section.rows.push_back(enabled_if(
+        action(keys ? "controls.bindings.keys.reset" : "controls.bindings.pad.reset",
+               keys ? "Reset keyboard and mouse" : "Reset gamepad buttons",
+               keys ? "Every key and mouse button back to its default."
+                    : "Every gamepad button back to its default, for the Gamepad buttons layout above.",
+               [group] { bindings_reset(group); }),
+        [group] { return bindings_changed(group); }));
+    for (OptionRow &each : section.rows)
+        each = needs(std::move(each), keys ? PlatformFeature::Keyboard : PlatformFeature::Gamepad);
     return section;
 }
 
@@ -507,7 +526,8 @@ OptionSection controls_touch() {
 }
 
 OptionPage controls_page() {
-    return {"Controls", {controls_movement(), controls_touch(), controls_analog(), controls_fine_tuning(), controls_bindings()}};
+    return {"Controls", {controls_movement(), controls_touch(), controls_analog(), controls_fine_tuning(),
+                         controls_bindings(BindingGroup::keys), controls_bindings(BindingGroup::pad)}};
 }
 
 // ---- Gameplay ----
@@ -854,6 +874,8 @@ void options_poll() {
 std::string options_json() { return verdite::options_json(options().view(platform_features())); }
 
 std::string option_change(std::string_view id, std::string_view text) {
+    if (const auto why = binding_text_change(id, text))
+        return *why;
     const OptionRow *found = options().find(id);
     if (!found)
         return "no such option";
