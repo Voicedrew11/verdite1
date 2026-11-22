@@ -606,7 +606,7 @@ endif()
 
 # port/'s tests: the parts that run without a window or GPU.
 if(doctest_FOUND)
-  add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp port/tests/death_reload.cpp port/ext/death_reload_rule.cpp
+  add_executable(kf_port_tests port/tests/main.cpp port/tests/controls.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp port/tests/death_reload.cpp port/ext/death_reload_rule.cpp
     port/tests/creature_feedback.cpp port/ext/creature_feedback_rule.cpp
     port/tests/setting_rows.cpp port/ext/setting_rows.cpp
     port/tests/online_pose.cpp port/ext/online_pose.cpp port/tests/online_playback.cpp port/ext/online_playback.cpp

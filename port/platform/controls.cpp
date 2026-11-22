@@ -3,8 +3,27 @@
 #include <cmath>
 
 namespace kf {
+namespace {
+// In Action's order.
+constexpr std::array<std::string_view, 21> action_names{
+    "forward", "backward", "strafe_left", "strafe_right", "turn_left", "turn_right", "look_up", "look_down",
+    "attack", "magic", "interact", "inventory", "pause", "pause_or_back", "confirm", "back", "run",
+    "quick_save", "quick_load", "compare_language", "full_map"};
+static_assert(action_names.size() == static_cast<std::size_t>(Action::count));
+} // namespace
+
 u32 action_bit(Action action) {
     return 1u << static_cast<unsigned>(action);
+}
+std::string_view action_name(Action action) {
+    const auto index = static_cast<std::size_t>(action);
+    return index < action_names.size() ? action_names[index] : std::string_view{};
+}
+std::optional<Action> action_from_name(std::string_view name) {
+    for (std::size_t i = 0; i < action_names.size(); ++i)
+        if (action_names[i] == name)
+            return static_cast<Action>(i);
+    return std::nullopt;
 }
 bool input_pressed(const InputFrame *frame, Action action) {
     return (frame->pressed & action_bit(action)) != 0;

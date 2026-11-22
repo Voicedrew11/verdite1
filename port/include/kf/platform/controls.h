@@ -6,6 +6,8 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
+#include <string_view>
 
 namespace kf {
 inline constexpr unsigned input_binding_capacity = 96;
@@ -54,6 +56,10 @@ struct InputState {
 };
 
 u32 action_bit(Action action);
+// An action as mods and settings.json name it ("attack", "pause_or_back"); empty past the last.
+std::string_view action_name(Action action);
+// The action with this name, matched exactly; nothing for an unknown name.
+std::optional<Action> action_from_name(std::string_view name);
 bool input_pressed(const InputFrame *frame, Action action);
 bool input_bind(InputState *input, Control control, Action action);
 void input_button(InputState *input, Control control, bool down);

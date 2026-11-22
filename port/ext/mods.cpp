@@ -1119,19 +1119,14 @@ int kf_key_pressed(lua_State *L) {
     lua_pushboolean(L, !overlay_captures_keys() && keys_now[code] && !keys_before[code]);
     return 1;
 }
-// Action as the mods name it, in its order.
-constexpr std::array<const char *, 21> input_action_names{
-    "forward", "backward", "strafe_left", "strafe_right", "turn_left", "turn_right", "look_up", "look_down",
-    "attack", "magic", "interact", "inventory", "pause", "pause_or_back", "confirm", "back", "run",
-    "quick_save", "quick_load", "compare_language", "full_map"};
-static_assert(input_action_names.size() == static_cast<std::size_t>(Action::count));
-
 u32 check_action(lua_State *L) {
     const char *name = luaL_checkstring(L, 1);
-    const auto found = std::ranges::find_if(input_action_names, [name](const char *each) { return std::strcmp(each, name) == 0; });
-    if (found == input_action_names.end())
+    const auto found = action_from_name(name);
+    if (!found) {
         luaL_error(L, "unknown action '%s' (\"run\", \"full_map\", \"attack\", ...)", name);
-    return action_bit(static_cast<Action>(found - input_action_names.begin()));
+        return 0;   // not reached: luaL_error does not return
+    }
+    return action_bit(*found);
 }
 int kf_action_down(lua_State *L) {
     const u32 bit = check_action(L);
