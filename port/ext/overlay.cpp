@@ -104,6 +104,8 @@ void set_open(bool value) {
     open = value;
     if (open)
         SDL_SetWindowRelativeMouseMode(main_window, false);
+    else
+        binding_capture_cancel();
 }
 
 // ---- Settings: the option table, drawn as it comes ----
@@ -166,6 +168,8 @@ void draw_status(const verdite::OptionRowView &view) {
 }
 
 void draw_option(const verdite::OptionRowView &view) {
+    if (draw_binding_row(view, 180.0f * applied_scale))
+        return;
     const verdite::OptionRow &row = *view.row;
     ImGui::PushID(row.id.c_str());
     ImGui::BeginDisabled(!view.state.enabled);
@@ -478,6 +482,8 @@ bool process_event(const SDL_Event &event) {
         online_went_to_background();
     if (!running || !imgui)
         return false;
+    if (binding_capture_event(event))
+        return true;
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
         const bool alt_enter = event.key.key == SDLK_RETURN && (event.key.mod & SDL_KMOD_ALT);
         if (event.key.key == SDLK_F11 || alt_enter) {
@@ -605,6 +611,7 @@ ImDrawData *build_overlay(int width, int height) {
         if (show_about)
             draw_about_window();
     }
+    binding_capture_frame();
     setup_draw();
     update_notice_draw();
     ImGui::Render();
