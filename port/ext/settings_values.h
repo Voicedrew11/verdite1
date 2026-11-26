@@ -35,6 +35,7 @@ struct Settings {
     int texture_filter = 3;     // 0 nearest (original), 1 bilinear, 2 three-point, 3 sharp
     int anisotropy = 16;        // 1 (off), 2, 4, 8 or 16 samples along slanted textures
     int enhanced_distance = 0;  // cells past which the picture is the game's own; 0: everywhere
+    int vertex_occlusion = 0;   // percent a fully occluded map corner is darkened; 0: off (map_occlusion.h)
     int fog = 2;                // 0 at the corners (original), 1 per pixel by depth, 2 by distance (FogMode)
     int antialiasing = 1;       // 0 off, 1 FXAA, 2 4x SSAA, 3 9x SSAA
     int screen_shader = 0;      // ScreenShader: 0 off, 1 scanlines, 2 CRT, 3 curved CRT, 4 sharp bilinear, 5 LCD,

@@ -14,7 +14,7 @@ Verdite1 is a port of King's Field (JP) to Windows, Linux and Android, built as 
 - Widescreen support (16:9, 16:10, 21:9)
 - Perspective-correct textures and corrected vertex wobbling
 - Anisotropic filtering
-- Ambient occlusion
+- Ambient occlusion (screen-space, and baked into the map's corners)
 - Z-buffer
 - 24-bit colour
 - 60+ fps

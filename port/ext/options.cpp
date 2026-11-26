@@ -361,6 +361,12 @@ OptionSection display_lighting() {
                            "game's own pixels, Medium at twice that, High at the full resolution.",
                            {{AoChoice::Off, "Off"}, {AoChoice::Low, "Low"}, {AoChoice::Medium, "Medium"}, {AoChoice::High, "High"}},
                            ao_choice, set_ao_choice, apply_render_settings),
+        number("display.vertex_occlusion", "Vertex ambient occlusion",
+               "Shading baked into the corners of walls, floors and ceilings from the map's own shape, where they "
+               "meet and under ledges. Worked out once per floor, so it costs nothing while playing, and reaches "
+               "the creases screen-space occlusion cannot see. The strength is how dark a fully enclosed corner "
+               "is drawn; 0 turns it off.",
+               s.vertex_occlusion, {0, 100, 1, "%.0f%%"}, apply_render_settings),
     }});
 }
 

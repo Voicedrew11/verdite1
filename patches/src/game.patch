@@ -1953,19 +1953,20 @@ index c71d1f33020a17fdc28c290f146f11c52383e1c3..f82b0051199a7f8d893a38625708ec22
 +    map_event_in_conversation = NULL;
  }
 diff --git a/src/game/map_load.cpp b/src/game/map_load.cpp
-index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..612cf98fc475683791890b81a487157111c1bb06 100644
+index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..b7e7603343fad714a6227a45351e63b05b61dbb0 100644
 --- a/src/game/map_load.cpp
 +++ b/src/game/map_load.cpp
-@@ -1,4 +1,8 @@
+@@ -1,4 +1,9 @@
  #include <kf/platform/prelude.h>
 +#include <kf/platform/extra_items.h>
 +#include <kf/platform/coop.h>
 +#include <kf/platform/creature_feedback.h>
++#include <kf/platform/map_occlusion.h>
 +#include <kf/platform/mod_events.h>
  #include <kf/game/game.h>
  #include <kf/game/graphics.h>
  #include <kf/lib/map.h>
-@@ -16,6 +20,18 @@ enum {
+@@ -16,6 +21,18 @@ enum {
      MAP_RESTORE_POSITION_RANDOM_BITS = 15
  };
  
@@ -1984,7 +1985,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..612cf98fc475683791890b81a4871571
  bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink &link)
  {
      switch (operation) {
-@@ -23,7 +39,7 @@ bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink
+@@ -23,7 +40,7 @@ bool map_saved_link_valid(KfMapObjectOperation operation, const KfMapObjectLink
      case KF_MAP_OBJECT_OP_ITEM_CONTAINER:
          for (unsigned slot = 0; slot < KF_MAP_CONTAINER_ITEM_COUNT; ++slot) {
              const auto item = map_container_item(link, operation, slot);
@@ -1993,7 +1994,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..612cf98fc475683791890b81a4871571
                  return false;
          }
          return true;
-@@ -52,9 +68,7 @@ void map_restore_floor_state(void)
+@@ -52,9 +69,7 @@ void map_restore_floor_state(void)
      s32 index;
  
      const auto floor = kf_enum_encode<u8>(player_state.progress_state.current_floor);
@@ -2004,7 +2005,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..612cf98fc475683791890b81a4871571
      if (*in++ == 1) {
          event = map_runtime_state.events.data();
          for (i = 0; i < KF_MAP_EVENT_CAPACITY; i++, event++) {
-@@ -147,9 +161,10 @@ void map_restore_floor_state(void)
+@@ -147,9 +162,10 @@ void map_restore_floor_state(void)
                  object->cell_z * KF_MAP_TILE_SIZE + ((kf::random_next() * KF_MAP_TILE_SIZE) >> MAP_RESTORE_POSITION_RANDOM_BITS);
              object->position.vy =
                  -(map_floor_height_grid.cells[object->cell_z][object->cell_x] * KF_MAP_HEIGHT_STEP);
@@ -2017,7 +2018,7 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..612cf98fc475683791890b81a4871571
                  object->rotation.vx = 0;
              }
              object->rotation.vz = 0;
-@@ -190,7 +205,8 @@ void map_restore_floor_state(void)
+@@ -190,7 +206,8 @@ void map_restore_floor_state(void)
          if (map_runtime_state.world_state.floor5.weapon_transformed == KF_MAP_SCRIPT_SET) {
              map_object_pool_clear_link(KF_MAP_LINK_WEAPON_TRANSFORM_DOORS);
          }
@@ -2027,11 +2028,12 @@ index fa2a9b84a51e7eb0e8405a0fb35ac9159bcfa4be..612cf98fc475683791890b81a4871571
              map_runtime_state.events[KF_FLOOR2_DEPARTING_EVENT].state = KF_MAP_EVENT_DISABLED;
          }
          break;
-@@ -256,6 +272,9 @@ void map_load_floor(void)
+@@ -256,6 +273,10 @@ void map_load_floor(void)
      map_refresh_dialogue_stages();
      render_prepare_actor_textures(player_state.progress_state.current_floor);
      game_graphics_runtime.hud_model_color_matrix = color_matrix_table[kf_enum_encode<s32>(KF_GAME_COLOR_WHITE)];
 +    kf::creature_feedback_forget();   // PC extension (creature_feedback.h): nothing carries over
++    kf::map_occlusion_floor_loaded(); // PC extension (map_occlusion.h): this floor's corner occlusion
 +    kf::mods_floor_loaded(kf_enum_encode<u8>(player_state.progress_state.current_floor),   // PC extension (mods)
 +        kf_enum_encode<u8>(player_state.map_variant));
  }
@@ -6444,14 +6446,15 @@ index 41c80ebec46a78661150cba8971617f367a64dd6..76811ae6f128bc8dacae2f73c1e77332
      }
      map_load_floor();
 diff --git a/src/game/render.cpp b/src/game/render.cpp
-index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..98e50014ee530711f8e858d4fcd163dffbacabfc 100644
+index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..053047c08d4306f29d0197e1561612df20fed939 100644
 --- a/src/game/render.cpp
 +++ b/src/game/render.cpp
-@@ -201,10 +201,43 @@ void render_initialize(void)
+@@ -201,10 +201,44 @@ void render_initialize(void)
      animation_cache_reset();
  }
  
 +const KfPreciseMapTransform *render_precise_map;
++std::span<const u8> render_map_occlusion;
 +
 +// Exact map cell transform (see KfPreciseMapTransform); integer results are
 +// unchanged, only the drawn sub-pixel position and camera coordinates.
@@ -6491,7 +6494,7 @@ index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..98e50014ee530711f8e858d4fcd163df
  
      projected = game_graphics_runtime.tmd_projected_vertices.data();
      vertex = tmd_vertices(tmd_context(), count).data();
-@@ -213,9 +246,20 @@ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &
+@@ -213,9 +247,20 @@ void tmd_project_vertices(s32 count, const MATRIX *model, const kf::Projection &
          projected->position = {point.x, point.y};
          projected->p2 = point.fog << KF_TMD_DEFAULT_PERSPECTIVE_SHIFT;
          projected->sz = point.depth;
@@ -6513,10 +6516,18 @@ index 4ea5f7f9dd40776b28cc2dd395c346ea78ae3f72..98e50014ee530711f8e858d4fcd163df
  
  void render_reset_module_state(void)
 diff --git a/src/game/render_enqueuers.cpp b/src/game/render_enqueuers.cpp
-index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84f359f7d3 100644
+index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..c86cc7239a47eb9822c2e36b34d76d3c42566716 100644
 --- a/src/game/render_enqueuers.cpp
 +++ b/src/game/render_enqueuers.cpp
-@@ -22,6 +22,8 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -5,6 +5,7 @@
+ #include <kf/lib/null.h>
+ #include <kf/lib/render_face.h>
+ #include <kf/lib/tmd.h>
++#include <kf/platform/map_occlusion.h>
+ 
+ #include <array>
+ #include <cstdio>
+@@ -22,6 +23,8 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
      auto stream = tmd_primitive_stream(tmd_context(), object);
      const auto normals = tmd_normal_bytes(tmd_context(), object);
      const auto &vertices = game_graphics_runtime.tmd_projected_vertices;
@@ -6525,7 +6536,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
      s32 otz;
  
      while (stream.remaining != 0) {
-@@ -36,13 +38,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -36,13 +39,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6542,7 +6553,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -55,11 +58,12 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -55,11 +59,12 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6557,7 +6568,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -71,15 +75,16 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -71,15 +76,16 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6578,7 +6589,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -92,17 +97,18 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -92,17 +98,18 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6602,7 +6613,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -114,17 +120,18 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -114,17 +121,18 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6625,7 +6636,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -137,19 +144,20 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -137,19 +145,20 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6651,7 +6662,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -161,16 +169,17 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -161,16 +170,17 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6673,7 +6684,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -183,13 +192,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -183,13 +193,14 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6690,7 +6701,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -201,11 +211,12 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -201,11 +212,12 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6705,7 +6716,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -218,18 +229,19 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -218,18 +230,19 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6730,7 +6741,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -241,12 +253,13 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -241,12 +254,13 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6746,7 +6757,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -259,12 +272,13 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
+@@ -259,12 +273,13 @@ void render_enqueue_tmd(u16 object_index, s16 depth_bias, const MATRIX *lights)
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6762,7 +6773,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -285,6 +299,8 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
+@@ -285,6 +300,8 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
      auto stream = tmd_primitive_stream(tmd_context(), object);
      const auto normals = tmd_normal_bytes(tmd_context(), object);
      const auto &vertices = game_graphics_runtime.tmd_projected_vertices;
@@ -6771,7 +6782,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
      s32 otz;
  
      while (stream.remaining != 0) {
-@@ -299,17 +315,18 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
+@@ -299,17 +316,18 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6794,7 +6805,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -322,19 +339,20 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
+@@ -322,19 +340,20 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6820,7 +6831,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -346,13 +364,14 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
+@@ -346,13 +365,14 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6837,7 +6848,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -365,13 +384,14 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
+@@ -365,13 +385,14 @@ void render_enqueue_tmd_retextured(u16 object_index, s16 depth_bias, const MATRI
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6854,8 +6865,28 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                      render_face_submit(&face, colors, kf::FaceShading::Flat, (otz + depth_bias) & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -397,6 +417,8 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
+@@ -388,6 +409,16 @@ CVECTOR map_textured_primitive_color = {
+ 
+ SVECTOR render_sprite_light_normal = {0, 0, KF_FIXED12_ONE, 0};
+ 
++// PC extension (vertex ambient occlusion): the corners of the cell's nth FT3 or
++// FT4 face, as baked (render_map_occlusion), at the strength set.
++static void render_face_occlusion(kf::DrawFace &face, std::size_t face_index)
++{
++    if (render_map_occlusion.size() < (face_index + 1) * 4)
++        return;
++    for (std::size_t i = 0; i < 4; ++i)
++        face.vertices[i].occlusion = render_map_occlusion[face_index * 4 + i] * kf::map_occlusion_strength / 255.0f;
++}
++
+ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *model, const kf::Projection &projection)
+ {
+     const auto object = tmd_read_object(tmd_context(), object_index);
+@@ -395,8 +426,11 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
+     const auto normals = tmd_normal_bytes(tmd_context(), object);
+     const auto &vertices = game_graphics_runtime.tmd_projected_vertices;
      CVECTOR shade;
++    std::size_t face_index = 0; // PC extension (vertex ambient occlusion): FT3 and FT4 faces met so far
  
      tmd_project_vertices(object.vertex_count, model, projection);
 +    // PC extension (lighting per pixel): how these faces are lit.
@@ -6863,7 +6894,7 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
      while (stream.remaining != 0) {
          const auto packet = tmd_next_packet(stream);
          switch (packet.mode) {
-@@ -412,17 +434,18 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
+@@ -412,20 +446,23 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
              if (projected) {
                  projected->complete_quad(vertices[p.vertices[3]]);
                  auto face = projected->draw_face();
@@ -6884,10 +6915,15 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                  otz = projected->ordering_depth() + KF_MAP_OT_DEPTH_BIAS;
                  if (otz < KF_ORDERING_TABLE_LENGTH) {
 +                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, map_textured_primitive_color);
++                    render_face_occlusion(face, face_index); // PC extension (vertex ambient occlusion)
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, otz & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -436,16 +459,17 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
++            face_index++; // PC extension (vertex ambient occlusion)
+             break;
+         }
+         case KF_TMD_MODE_FT3: {
+@@ -436,19 +473,22 @@ void render_enqueue_map(u16 object_index, const MATRIX *lights, const MATRIX *mo
                  vertices, p.vertices[0], p.vertices[1], p.vertices[2]);
              if (projected) {
                  auto face = projected->draw_face();
@@ -6906,10 +6942,15 @@ index b8ac6f7c1ac84d98b3f4eefc6597e1660bc296cd..d00ca6f7965e485fd5cfd2183b19bf84
                  otz = projected->ordering_depth() + KF_MAP_OT_DEPTH_BIAS;
                  if (otz < KF_ORDERING_TABLE_LENGTH) {
 +                    render_face_light(face, light_set, normals, p, kf::FaceShading::Flat, map_textured_primitive_color);
++                    render_face_occlusion(face, face_index); // PC extension (vertex ambient occlusion)
                      render_face_submit(&face, colors, kf::FaceShading::Gouraud, otz & KF_ORDERING_TABLE_INDEX_MASK);
                  }
              }
-@@ -475,23 +499,34 @@ void render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpriteDepthCu
++            face_index++; // PC extension (vertex ambient occlusion)
+             break;
+         }
+         }
+@@ -475,23 +515,34 @@ void render_enqueue_sprite(KfSpriteQuad *sprite, s16 depth_bias, KfSpriteDepthCu
      depth_cue = positions[3].fog;
  
      kf::DrawFace face {};
@@ -7079,22 +7120,23 @@ index 73c6900e478aa3769791136fbf65a88230b2c272..a7e2d843f37791807ef0f6f1d480d0f1
      animation_cache_release_stale();
      // World rendering also advances floor sprites and notifications. Pace every
 diff --git a/src/game/render_map_cells.cpp b/src/game/render_map_cells.cpp
-index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62e3ef6964 100644
+index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c5e02ab27f3e28a992f0bd2080b74c7397156a9 100644
 --- a/src/game/render_map_cells.cpp
 +++ b/src/game/render_map_cells.cpp
-@@ -3,6 +3,11 @@
+@@ -3,6 +3,12 @@
  #include <kf/game/graphics.h>
  #include <kf/game/render.h>
  #include <kf/lib/map_data.h>
 +#include <kf/game/player_motion.h>
 +#include <kf/platform/input.h>
++#include <kf/platform/map_occlusion.h>
 +#include <array>
 +#include <cstdlib>
 +#include <span>
  
  enum {
      ILLUSION_STAFF_REMAP_PHASE_MASK = 3,
-@@ -68,7 +73,9 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+@@ -68,7 +74,9 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
          return;
      }
      orientation = kf_enum_encode<u8>(map_cell_orientation_grid.cells[row][col]) - 1;
@@ -7105,14 +7147,16 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62
          object_index += KF_MAP_MESHES_PER_BANK;
      }
      position = VECTOR{
-@@ -88,7 +95,93 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
+@@ -88,7 +96,95 @@ void render_map_cell(s32 col, s32 row, KfCellVisibility visibility)
      kf::render_place_model(cell_matrix, game_graphics_runtime.render_state.view_matrix, position);
      kf::matrix_multiply_rotation(game_graphics_runtime.render_state.view_matrix, game_graphics_runtime.render_state.quadrant_matrices[orientation], cell_matrix);
      tmd_select_object_vertices(tmd_context(), object_index);
 +    const KfPreciseMapTransform precise{&game_graphics_runtime.render_state.view_matrix,
 +        &game_graphics_runtime.render_state.quadrant_matrices[orientation], position};
 +    render_precise_map = &precise;
++    render_map_occlusion = kf::map_occlusion_cell(col, row, object_index, orientation); // PC extension (vertex ambient occlusion)
      render_enqueue_map(object_index, &game_graphics_runtime.light_quadrant_matrices[orientation], &cell_matrix, game_graphics_runtime.render_state.projection);
++    render_map_occlusion = {};
 +    render_precise_map = nullptr;
 +}
 +
@@ -7199,7 +7243,7 @@ index 593214a7ac4add44a720ecb8a2b5dc6b038659c0..5c4bc5ef699b46379af3537000a22e62
  }
  
  void render_map_cells(void)
-@@ -103,15 +196,21 @@ void render_map_cells(void)
+@@ -103,15 +199,21 @@ void render_map_cells(void)
      if ((u16)(game_graphics_runtime.render_state.view_rotation.vx + (KF_ANGLE_EIGHTH_TURN - 1))
          >= 2 * KF_ANGLE_EIGHTH_TURN - 1) {
          game_graphics_runtime.active_cell_window = &render_fixed_cell_window;
