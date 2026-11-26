@@ -59,6 +59,7 @@ English and Japanese can be switched at any time: in the game's Options menu
 
 CONTROLS
 --------
+The defaults:
   Move / strafe ........ W A S D
   Look ................. Mouse (click the window first), Page Up / Page Down
   Turn ................. Left / Right arrows
@@ -72,6 +73,9 @@ CONTROLS
   Quick save / load .... F2 / F4 (F4 also works on the title screen)
   Settings overlay ..... F1
   Fullscreen ........... F11, Alt+Enter
+
+Change any of these in F1 > Settings > Controls. Letters go by their place on
+a US keyboard. F1, F11, Alt+Enter, Escape and looking with the mouse stay.
 
 Every enhancement can be switched off in the F1 settings, or all at once with
 Classic mode at the top of F1 > Settings (your own settings come back when you

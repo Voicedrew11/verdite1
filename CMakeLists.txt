@@ -184,7 +184,8 @@ set_source_files_properties(${KF_GAME_SOURCES} PROPERTIES GENERATED TRUE
 add_library(kf_support STATIC port/platform/files.cpp port/platform/disc.cpp port/platform/assets.cpp
   port/platform/user_folder.cpp port/platform/desktop_entry.cpp port/platform/picked_file.cpp
   port/platform/language.cpp port/platform/translation.cpp port/platform/translation_ppf.cpp
-  port/platform/controls.cpp port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
+  port/platform/controls.cpp port/platform/bindings.cpp port/platform/binding_names.cpp
+  port/renderer/tim.cpp ${KF_SRC}/src/audio/codec.cpp ${KF_SRC}/src/lib/fixed_math.cpp
   ${KF_SRC}/src/lib/random.cpp ${KF_SRC}/src/lib/resource_decode.cpp)
 target_sources(kf_support PRIVATE "${CMAKE_BINARY_DIR}/generated/english_patch.inc")
 target_include_directories(kf_support PUBLIC ${KF_INCLUDES} PRIVATE "${CMAKE_BINARY_DIR}/generated")
@@ -329,13 +330,15 @@ add_custom_target(kf_raw_layer DEPENDS ${KF_RAW_OUT}/raw_layer.stamp)
 
 add_library(kf_ext STATIC
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp
-  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/setting_rows.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/setup_overlay.cpp port/ext/setup_panel.cpp port/ext/update_notice.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/death_reload.cpp port/ext/death_reload_rule.cpp port/ext/creature_feedback.cpp port/ext/creature_feedback_rule.cpp port/ext/coop_profile.cpp port/ext/coop_refusals.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_menu.cpp port/ext/mod_install.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
+  port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/binding_rows.cpp port/ext/binding_overlay.cpp port/ext/setting_rows.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/setup_overlay.cpp port/ext/setup_panel.cpp port/ext/update_notice.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/death_reload.cpp port/ext/death_reload_rule.cpp port/ext/creature_feedback.cpp port/ext/creature_feedback_rule.cpp port/ext/coop_profile.cpp port/ext/coop_refusals.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_menu.cpp port/ext/mod_install.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
   ${KF_RAW_OUT}/raw_layer.cpp)
 add_dependencies(kf_ext kf_raw_layer)
 set_source_files_properties(${KF_RAW_OUT}/raw_layer.cpp PROPERTIES GENERATED TRUE)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI})
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
 target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite lua54 cjson)
+# settings.json names controls through kf_support's binding_names.cpp, which nothing else links.
+target_link_libraries(kf_ext PRIVATE kf_support)
 target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}"
   KF_RELEASE=$<BOOL:${KF_RELEASE}>)
 target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CMAKE_SOURCE_DIR}/port/ext)
@@ -612,7 +615,7 @@ endif()
 
 # port/'s tests: the parts that run without a window or GPU.
 if(doctest_FOUND)
-  add_executable(kf_port_tests port/tests/main.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp port/tests/death_reload.cpp port/ext/death_reload_rule.cpp
+  add_executable(kf_port_tests port/tests/main.cpp port/tests/controls.cpp port/tests/bindings.cpp port/tests/renderer.cpp port/tests/enemy_turn.cpp port/platform/enemy_turn.cpp port/tests/death_reload.cpp port/ext/death_reload_rule.cpp
     port/tests/creature_feedback.cpp port/ext/creature_feedback_rule.cpp
     port/tests/setting_rows.cpp port/ext/setting_rows.cpp
     port/tests/online_pose.cpp port/ext/online_pose.cpp port/tests/online_playback.cpp port/ext/online_playback.cpp

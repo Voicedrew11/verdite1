@@ -1,9 +1,14 @@
 #pragma once
 // What settings.json holds, as plain data. No SDL and no game, so its logic can be tested alone.
 #include <kf/platform/analog.h>
+#include <kf/platform/bindings.h>
 #include <string>
 
 namespace kf::ext {
+// The face-button layout settings.json names: "jp", or the West's for anything else.
+inline PadLayout pad_layout_of(const std::string &name) {
+    return name == "jp" ? PadLayout::Japanese : PadLayout::West;
+}
 #if defined(__ANDROID__) || defined(KF_IOS)
 // A phone: the whole screen, with no status or navigation bar over the picture.
 inline constexpr bool default_fullscreen = true;
@@ -22,6 +27,8 @@ struct Settings {
     std::string language = "en";   // game language when both are set up: "en" or "ja"
     std::string ui_font;        // empty: first available system font
     AnalogOptions analog;       // the sticks, saved as "analog"
+    BindingChanges bindings;    // controls.bindings: the player's lists over the defaults;
+                                // Classic mode leaves them
     int volume = 100;           // percent
     int resolution = 0;         // 0: native (match the window), else whole multiple of 320x240
     int ao_quality = 1;         // 0 low, 1 medium, 2 high (OcclusionQuality)

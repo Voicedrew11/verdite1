@@ -61,7 +61,17 @@ def values_to_try(row):
         return [choice["value"] for choice in row["choices"]] + [row["value"]]
     if row["kind"] == "number":
         return [row["min"], row["max"], row["value"]]
+    if is_binding_row(row):
+        return [row["value"]]
     return []
+
+
+def is_binding_row(row):
+    """A controls.bindings.<keys|pad>.<action> row, which takes its controls as text. The note
+    among them (controls.bindings.keys.note) has no label and takes no value."""
+    parts = row["id"].split(".")
+    return (row["kind"] == "status" and len(parts) == 4 and parts[:2] == ["controls", "bindings"]
+            and parts[2] in ("keys", "pad") and row["label"] != "")
 
 
 def try_options(channel, reader):

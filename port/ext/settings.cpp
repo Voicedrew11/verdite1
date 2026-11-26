@@ -6,6 +6,7 @@
 #include <kf/lib/map_types.h>
 #include <kf/platform/host.h>
 #include <kf/platform/analog.h>
+#include <kf/platform/bindings.h>
 #include <kf/platform/creature_feedback.h>
 #include <kf/platform/enemy_turn.h>
 #include <kf/platform/input.h>
@@ -17,10 +18,16 @@
 #include <kf/renderer/renderer.h>
 #include <verdite/crash.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <optional>
 #include <sstream>
+#include <string>
+#include <string_view>
 
 namespace kf::ext {
 namespace {
@@ -105,6 +112,161 @@ void write_analog(cJSON *analog, const AnalogOptions &o) {
     write_value(analog, "acceleration_max", cJSON_CreateNumber(o.acceleration_max));
     write_value(analog, "acceleration_time_s", cJSON_CreateNumber(o.acceleration_time_s));
 }
+
+// controls.bindings: one object per group, each mapping an action's name to its control names.
+struct BindingGroupKey {
+    BindingGroup group;
+    const char *key;
+    GroupChanges BindingChanges::*changes;
+};
+constexpr std::array<BindingGroupKey, 2> binding_groups{{
+    {BindingGroup::keys, "keys", &BindingChanges::keys},
+    {BindingGroup::pad, "pad", &BindingChanges::pad},
+}};
+// What is read of a list from the file, so a bad one cannot cost much.
+constexpr int binding_entries_read = 16;
+constexpr std::size_t binding_name_bytes = 32;
+
+// One entry of a list as a control the group may bind; nothing, logged, for anything else.
+std::optional<Control> read_control(const cJSON *item, BindingGroup group, const std::string &where) {
+    if (!cJSON_IsString(item)) {
+        std::printf("[settings] %s: an entry that is not a name; left out\n", where.c_str());
+        return std::nullopt;
+    }
+    const std::string_view name = item->valuestring;
+    if (name.size() > binding_name_bytes) {
+        std::printf("[settings] %s: a name over %zu bytes; left out\n", where.c_str(), binding_name_bytes);
+        return std::nullopt;
+    }
+    const auto control = control_from_name(group, name);
+    if (!control) {
+        std::printf("[settings] %s: \"%s\" is not a control; left out\n", where.c_str(), item->valuestring);
+        return std::nullopt;
+    }
+    if (!control_bindable(group, *control)) {
+        std::printf("[settings] %s: \"%s\" cannot be bound; left out\n", where.c_str(), item->valuestring);
+        return std::nullopt;
+    }
+    return control;
+}
+
+// An action's list from the file: nothing (its default stands) unless it is an array that is
+// empty, a deliberate none, or holds a usable control. Repeats and a fifth control are left out.
+std::optional<ActionControls> read_action_list(const cJSON *list, BindingGroup group, const std::string &where) {
+    if (!cJSON_IsArray(list)) {
+        std::printf("[settings] %s: not a list; the default stands\n", where.c_str());
+        return std::nullopt;
+    }
+    ActionControls controls;
+    int entries = 0;
+    const cJSON *item = nullptr;
+    cJSON_ArrayForEach(item, list) {
+        if (++entries > binding_entries_read) {
+            std::printf("[settings] %s: only the first %d entries are read\n", where.c_str(), binding_entries_read);
+            break;
+        }
+        const auto control = read_control(item, group, where);
+        if (!control)
+            continue;
+        if (controls.has(*control)) {
+            std::printf("[settings] %s: \"%s\" is listed twice; left out\n", where.c_str(), item->valuestring);
+            continue;
+        }
+        if (controls.count == controls_per_action) {
+            std::printf("[settings] %s: more than %zu controls; the rest are left out\n", where.c_str(),
+                        controls_per_action);
+            break;
+        }
+        controls.list[controls.count++] = *control;
+    }
+    if (entries > 0 && controls.count == 0) {
+        std::printf("[settings] %s: no control to use; the default stands\n", where.c_str());
+        return std::nullopt;
+    }
+    return controls;
+}
+
+// Logs each control tidying took from a list because an earlier action's list has it. A list
+// tidying emptied is no change again, so a control written on two actions does not leave the
+// later one deliberately none: its default stands, less what the earlier lists have.
+void settle_tidied(const GroupChanges &read, GroupChanges &tidied, const std::string &where) {
+    for (std::size_t a = 0; a < action_count; ++a) {
+        const std::optional<ActionControls> &before = read[a];
+        std::optional<ActionControls> &after = tidied[a];
+        if (!before || !after)
+            continue;
+        const std::string name(action_name(static_cast<Action>(a)));
+        for (const Control control : before->controls()) {
+            if (!after->has(control))
+                std::printf("[settings] %s.%s: \"%s\" is on an earlier action; left out\n", where.c_str(),
+                            name.c_str(), control_name(control).c_str());
+        }
+        if (before->count > 0 && after->count == 0) {
+            std::printf("[settings] %s.%s: every control is on an earlier action; the default stands\n",
+                        where.c_str(), name.c_str());
+            after.reset();
+        }
+    }
+}
+
+// A group's changes from controls.bindings, tidied over the layout's defaults; none when the
+// group is not an object. Only the actions' own names are looked up.
+GroupChanges read_group(const cJSON *object, BindingGroup group, const char *key, PadLayout layout) {
+    const std::string where = std::string("controls.bindings.") + key;
+    if (!cJSON_IsObject(object)) {
+        if (object)
+            std::printf("[settings] %s: not an object; the defaults stand\n", where.c_str());
+        return {};
+    }
+    GroupChanges changes{};
+    for (std::size_t a = 0; a < action_count; ++a) {
+        const std::string name(action_name(static_cast<Action>(a)));
+        const cJSON *list = cJSON_GetObjectItemCaseSensitive(object, name.c_str());
+        if (!list)
+            continue;
+        std::string path = where + '.';
+        path += name;
+        changes[a] = read_action_list(list, group, path);
+    }
+    GroupChanges tidied = bindings_tidy(default_bindings(group, layout), changes);
+    settle_tidied(changes, tidied, where);
+    return tidied;
+}
+
+// A group's changed lists as an object of name arrays, in action order; null when it has none.
+cJSON *write_group(const GroupChanges &changes) {
+    cJSON *object = nullptr;
+    for (std::size_t a = 0; a < action_count; ++a) {
+        const std::optional<ActionControls> &changed = changes[a];
+        if (!changed)
+            continue;
+        cJSON *list = cJSON_CreateArray();
+        for (const Control control : changed->controls())
+            cJSON_AddItemToArray(list, cJSON_CreateString(control_name(control).c_str()));
+        if (!object)
+            object = cJSON_CreateObject();
+        cJSON_AddItemToObject(object, std::string(action_name(static_cast<Action>(a))).c_str(), list);
+    }
+    return object;
+}
+
+// controls.bindings rewritten from the changes, or removed when there are none, so a file that
+// never had it stays as it was.
+void write_bindings(cJSON *controls, const BindingChanges &changes) {
+    cJSON *bindings = nullptr;
+    for (const auto &entry : binding_groups) {
+        cJSON *group = write_group(changes.*entry.changes);
+        if (!group)
+            continue;
+        if (!bindings)
+            bindings = cJSON_CreateObject();
+        cJSON_AddItemToObject(bindings, entry.key, group);
+    }
+    if (bindings)
+        write_value(controls, "bindings", bindings);
+    else
+        cJSON_DeleteItemFromObjectCaseSensitive(controls, "bindings");
+}
 }
 
 std::filesystem::path user_dir() {
@@ -174,6 +336,15 @@ void settings_load() {
     current.pad_layout = read_string(controls, "pad_layout", current.pad_layout);
     current.touch_haptics = read_bool(controls, "touch_haptics", current.touch_haptics);
     current.head_bob = read_bool(controls, "head_bob", current.head_bob);
+    const cJSON *bindings = cJSON_GetObjectItemCaseSensitive(controls, "bindings");
+    if (bindings && !cJSON_IsObject(bindings))
+        std::printf("[settings] controls.bindings: not an object; the defaults stand\n");
+    const PadLayout layout = pad_layout_of(current.pad_layout);
+    for (const auto &entry : binding_groups) {
+        const cJSON *group =
+            cJSON_IsObject(bindings) ? cJSON_GetObjectItemCaseSensitive(bindings, entry.key) : nullptr;
+        current.bindings.*entry.changes = read_group(group, entry.group, entry.key, layout);
+    }
     current.analog = read_analog(cJSON_GetObjectItemCaseSensitive(document, "analog"), current.analog);
     const cJSON *gameplay = cJSON_GetObjectItemCaseSensitive(document, "gameplay");
     current.language = read_string(gameplay, "language", current.language);
@@ -264,6 +435,7 @@ void settings_save() {
     write_value(controls, "pad_layout", cJSON_CreateString(current.pad_layout.c_str()));
     write_value(controls, "touch_haptics", cJSON_CreateBool(current.touch_haptics));
     write_value(controls, "head_bob", cJSON_CreateBool(current.head_bob));
+    write_bindings(controls, current.bindings);
     write_analog(object_entry(document, "analog"), current.analog);
     cJSON *gameplay = object_entry(document, "gameplay");
     write_value(gameplay, "language", cJSON_CreateString(current.language.c_str()));
@@ -460,7 +632,7 @@ void apply_control_settings() {
     auto_use_keys = e.auto_keys;
     host_set_enemy_turn({e.enemy_turn_auto ? EnemyTurnMode::Automatic : EnemyTurnMode::Fixed, e.enemy_turn,
                          stick_turn_reach(e.analog)});
-    host_set_pad_layout(e.pad_layout == "jp" ? PadLayout::Japanese : PadLayout::West);
+    host_set_bindings(bindings_resolve(e.bindings, pad_layout_of(e.pad_layout)));
     touch_button_haptics = e.touch_haptics;
     host_set_analog_options(e.analog);
     // Whole vblanks of the 60 Hz clock, as the console's gate counts.
@@ -488,6 +660,11 @@ void crash_write_settings(verdite::CrashWriter &out) {
     out.line("enemy death fade", s.enemy_death_fade);
     out.line("auto keys", s.auto_keys);
     out.line("head bob", s.head_bob);
+    std::int64_t changed_bindings = 0;
+    for (const auto &entry : binding_groups)
+        changed_bindings += std::ranges::count_if(s.bindings.*entry.changes,
+                                                  [](const auto &list) { return list.has_value(); });
+    out.line("changed bindings", changed_bindings);
     out.line("reload on death", s.reload_on_death);
     out.line("aspect", s.aspect);
     out.line("resolution", s.resolution);
