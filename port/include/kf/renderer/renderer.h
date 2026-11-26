@@ -29,6 +29,9 @@ struct Vertex {
     // PC extension (lighting per pixel): the corner's normal in model space, as
     // the model holds it (4096 = unit). Read only when the face has a light set.
     float nx = 0, ny = 0, nz = 0;
+    // PC extension (vertex ambient occlusion): how much darker the corner is
+    // drawn, 0 (as the game lit it) to 1 (black); kf/platform/map_occlusion.h.
+    float occlusion = 0;
 };
 // PC extensions, set from the Display settings.
 // Camera-space depth where faces reaching behind the camera are clipped (PC extension).

@@ -15,7 +15,7 @@ layout(location = 7) in vec3 in_local;      // a model part's vertex, model spac
 layout(location = 8) in vec3 in_back;       // way back: model space, or screen x, y when camera-fixed
 layout(location = 9) in uvec4 in_clear;     // colour before the depth cue, cue scale in quarters
 layout(location = 10) in vec3 in_normal;    // model space, 4096 = unit
-layout(location = 11) in uvec2 in_light_set;   // FrameView::light_sets index + 1, 0: none
+layout(location = 11) in uvec2 in_light_set;   // FrameView::light_sets index + 1, 0: none; vertex occlusion
 layout(location = 12) in uvec4 in_tint;     // the colour the game lit
 
 layout(set = 0, binding = 1) readonly buffer Motions {
@@ -32,6 +32,7 @@ layout(location = 6) flat out float out_cue_scale;   // 0: not cued
 layout(location = 7) out vec4 out_normal;        // model space, and its length
 layout(location = 8) flat out uvec4 out_light;   // light set, tint
 layout(location = 9) flat out uint out_keep;     // DrawFace::keep, 255: all drawn
+layout(location = 10) out float out_vertex_light;   // what vertex ambient occlusion leaves, 0..1
 
 // Reversed infinite depth: clip z is the constant near_w, so NDC depth is
 // near_w / w: 1 at the near plane, approaching 0 far away. Vulkan keeps 0 <= z <= w,
@@ -109,6 +110,7 @@ void main() {
     out_normal = vec4(in_normal, length(in_normal));
     out_light = uvec4(in_light_set.x, in_tint.rgb);
     out_keep = in_tint.a;
+    out_vertex_light = 1.0 - float(in_light_set.y) / 65535.0;
     // Only world surfaces (perspective) are filtered.
     out_flags = uvec4(in_flags.xyz, in_screen.z > 0.0 && !fixed_to_camera ? 1u : 0u);
 }

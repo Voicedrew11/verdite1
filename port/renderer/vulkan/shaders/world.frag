@@ -28,6 +28,7 @@ layout(location = 6) flat in float in_cue_scale;   // 0: not cued
 layout(location = 7) in vec4 in_normal;            // model space, and its length
 layout(location = 8) flat in uvec4 in_light;       // light set (0: none), tint
 layout(location = 9) flat in uint in_keep;         // its share over what is behind it, 255: all
+layout(location = 10) in float in_vertex_light;    // what vertex ambient occlusion leaves, 0..1
 
 layout(location = 0) out vec4 out_color;
 
@@ -297,7 +298,8 @@ void main() {
         if (in_flags.w != 0u && !plain())
             texel_color = world_texel(texel_color, uv_dx, uv_dy);
     }
-    float light = occlusion_light();
+    // Both occlusions darken the same light: the baked corners' for the broad creases, the screen's for detail.
+    float light = occlusion_light() * (plain() ? 1.0 : in_vertex_light);
     vec3 game_shade = shade();
     vec3 color = (draw.flags & draw_true_color) != 0u ? true_color(game_shade, texel_color, texturing, light)
                                                       : classic_color(game_shade, texel_color, texturing, light);

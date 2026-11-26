@@ -52,7 +52,7 @@ struct GpuVertex {
     u8 cue_scale_quarters;          // DrawFace::depth_cue_scale x 4; 0: colour is drawn as given
     float nx, ny, nz;               // the corner's model-space normal, 4096 = unit
     u16 light_set;                  // FrameView::light_sets index + 1, 0: drawn as color
-    u16 light_padding = 0;
+    u16 occlusion = 0;              // Vertex::occlusion, 65535 = black
     std::array<u8, 3> tint;         // DrawFace::tint
     u8 keep = 255;                  // DrawFace::keep
 };
