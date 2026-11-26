@@ -151,15 +151,19 @@ SetupPage presentation_page() {
         choice("Corner lighting",
                "Light and fog worked out at each polygon's corners, as the console did. No ambient occlusion.",
                {"original"},
-               {{"display.pixel_lighting", false}, {"display.ao", 0.0}, {"display.fog", 0.0}}),
+               {{"display.pixel_lighting", false}, {"display.ao", 0.0}, {"display.vertex_occlusion", 0.0},
+                {"display.fog", 0.0}}),
         choice("Smooth lighting and fog",
-               "Per-pixel lighting, and fog by distance from the eye. No ambient occlusion.",
+               "Per-pixel lighting, fog by distance from the eye, and shading worked out once per floor where walls "
+               "meet floors. No screen-space ambient occlusion.",
                {"balanced"},
-               {{"display.pixel_lighting", true}, {"display.ao", 0.0}, {"display.fog", 2.0}}),
+               {{"display.pixel_lighting", true}, {"display.ao", 0.0}, {"display.vertex_occlusion", 60.0},
+                {"display.fog", 2.0}}),
         costly(choice("Smooth, with soft shadows",
                       "Per-pixel lighting and fog, plus ambient occlusion: soft shadowing in corners, where walls meet "
                       "floors and under ledges.",
-                      {"modern"}, {{"display.pixel_lighting", true}, {"display.ao", 2.0}, {"display.fog", 2.0}})),
+                      {"modern"}, {{"display.pixel_lighting", true}, {"display.ao", 2.0}, {"display.vertex_occlusion", 60.0},
+                                  {"display.fog", 2.0}})),
     }};
     const SetupGroup edges{"edges", "Edges", "", {
         choice("Jagged", "No anti-aliasing.", {"original", "balanced"}, {{"display.antialiasing", 0.0}}),

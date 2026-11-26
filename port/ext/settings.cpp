@@ -11,6 +11,7 @@
 #include <kf/platform/enemy_turn.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
+#include <kf/platform/map_occlusion.h>
 #include <kf/platform/menu_pointer.h>
 #include <kf/platform/touch.h>
 #include <kf/platform/user_folder.h>
@@ -309,6 +310,8 @@ void settings_load() {
     current.dynamic_lights = read_bool(display, "dynamic_lights", current.dynamic_lights);
     current.ambient_occlusion = read_bool(display, "ambient_occlusion", current.ambient_occlusion);
     current.ao_quality = std::clamp(static_cast<int>(read_number(display, "ao_quality", current.ao_quality)), 0, 2);
+    current.vertex_occlusion =
+        std::clamp(static_cast<int>(read_number(display, "vertex_occlusion", current.vertex_occlusion)), 0, 100);
     current.texture_filter = static_cast<int>(read_number(display, "texture_filter", current.texture_filter));
     current.mipmaps = read_bool(display, "mipmaps", current.mipmaps);
     current.detailed_map = read_bool(display, "detailed_map", current.detailed_map);
@@ -413,6 +416,7 @@ void settings_save() {
     write_value(display, "dynamic_lights", cJSON_CreateBool(current.dynamic_lights));
     write_value(display, "ambient_occlusion", cJSON_CreateBool(current.ambient_occlusion));
     write_value(display, "ao_quality", cJSON_CreateNumber(current.ao_quality));
+    write_value(display, "vertex_occlusion", cJSON_CreateNumber(current.vertex_occlusion));
     write_value(display, "texture_filter", cJSON_CreateNumber(current.texture_filter));
     write_value(display, "mipmaps", cJSON_CreateBool(current.mipmaps));
     write_value(display, "detailed_map", cJSON_CreateBool(current.detailed_map));
@@ -503,6 +507,7 @@ const Settings &effective_settings() {
     classic.pixel_lighting = false;
     classic.dynamic_lights = false;
     classic.ambient_occlusion = false;
+    classic.vertex_occlusion = 0;
     classic.texture_filter = 0;
     classic.mipmaps = false;
     classic.detailed_map = false;
@@ -577,6 +582,7 @@ void apply_render_settings() {
     render_subpixel = e.subpixel;
     render_perspective = e.perspective;
     render_detailed_map = e.detailed_map;
+    map_occlusion_strength = static_cast<float>(e.vertex_occlusion) / 100.0f;
     render_hud_at_edges = e.hud_at_edges;
     render_dynamic_lights = e.dynamic_lights;
     render_light_occlusion = true;
@@ -673,6 +679,7 @@ void crash_write_settings(verdite::CrashWriter &out) {
     out.line("depth buffer", s.depth_buffer);
     out.line("pixel lighting", s.pixel_lighting);
     out.line("ambient occlusion", s.ambient_occlusion);
+    out.line("vertex occlusion", s.vertex_occlusion);
     out.line("fog", s.fog);
     out.line("enhanced distance", s.enhanced_distance);
     out.line("language", s.language);

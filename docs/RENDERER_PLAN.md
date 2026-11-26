@@ -202,6 +202,55 @@ where the fragment's depth matches the measured surface, so the HUD, the held
 weapon and translucent faces are left alone without a mask. Verdite's
 floor-plan term (`AoWorld`) is not carried over: judged not worth having.
 
+### Vertex ambient occlusion
+
+Display > Lighting > Vertex ambient occlusion (off by default and in Classic,
+60% in the Balanced and Modern setups; added 2026-11-25) bakes occlusion into the map cells' corners
+(`kf/platform/map_occlusion.h`). It is measured from the meshes, not the grid:
+the grids hold floor heights, attributes and turns, and the walls are in the
+meshes, so a grid term has to guess what is solid, which is where `AoWorld`
+went wrong. For each FT3 and FT4 face corner of a drawn cell, 32
+cosine-weighted rays (`corner_occlusion.h`) go out over the face's own normal
+against every FT3 and FT4 face of the 3x3 near meshes around it, each hit
+counting by how near it is, 1 at the corner and 0 at 1000 units (half a cell).
+The falloff keeps a small room from going dark all over, `AoWorld`'s other
+fault. Rays start 8 units off the face, more than the 4 by which neighbouring
+cells' faces overlap (B1-B3 meshes span -4..2004), and 16 in from the corner.
+
+Every cell is baked when a floor loads (`map_load_floor`, after
+`map_restore_floor_state` has put back the region copies a save holds), in the
+cell's own frame and keyed on its layout: its mesh and turn, and the 3x3 cells'
+attributes, turns and floor heights relative to its own. A cell the game
+changes later (`map_object_pool.cpp`'s region copies), a mod's change or the
+Illusion Staff's swapped mesh is a new layout, baked when it is first drawn.
+Turned on during a floor, the whole floor is baked at the next drawn cell.
+Distant meshes (Detailed map off) are drawn without it: they are a separate
+mesh per cell, far off and fogged, and baking them would double the load's
+work or bake as the player walks. The floor's meshes are decoded once on the game thread; the
+bake then reads only those, the grids and the quarter-turn matrices, so it runs
+on every hardware thread while the game thread waits. The near
+meshes have 7 rows of vertices up a 3000-unit wall and split floors at half a
+cell, so a crease fades over the face rather than darkening it whole.
+`render_enqueue_map` puts each corner's value on `Vertex::occlusion`, carried
+in `GpuVertex`'s spare half of the light-set attribute, and `world.frag`
+multiplies it into the same light the screen-space term darkens, so it holds
+under per-pixel lighting and fog, and stops at the enhanced distance.
+
+Measured 2026-11-25 on B1 (i5-11400, 12 threads): 6034 cells but 3887
+layouts, since the floor heights around a cell vary too much for many to
+repeat; 1361 ms on one thread, 180-190 ms on twelve, the results bit for bit
+the same (a checksum over every layout). Baking a corner shared by faces once
+saves about 2%; it is kept so a cell's shared corners agree. A windowed run
+with smoothing on baked nothing after the floor's load. Baked as cells were
+drawn instead (the first version), the floor's first frame took about 32 ms
+for its 150 cells. About 290 occluder triangles a cell; half the corners fully
+open and none above 90%, so no mesh's normals face into the rock. Bakes at
+import, cached on disk, were considered and not taken: the load-time bake is
+under a fifth of a second, and a cache would need a format, a version and
+invalidation by the floor's files. `kf_port_tests` checks an open floor, a
+crease against a wall fading with distance, and a neighbour's face 4 units
+proud.
+
 ### Fog per pixel
 
 The game fogs on the CPU: each corner's depth cue (`render_project_point`,

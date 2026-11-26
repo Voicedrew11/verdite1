@@ -73,6 +73,7 @@ Vertex mix(const Vertex &a, const Vertex &b, float t) {
     out.nx = lerp(a.nx, b.nx);
     out.ny = lerp(a.ny, b.ny);
     out.nz = lerp(a.nz, b.nz);
+    out.occlusion = lerp(a.occlusion, b.occlusion);
     return out;
 }
 
@@ -215,6 +216,7 @@ GpuVertex gpu_vertex(const Vertex &vertex, const FaceAttributes &face) {
     out.ny = vertex.ny;
     out.nz = vertex.nz;
     out.light_set = face.light_set;
+    out.occlusion = static_cast<u16>(std::clamp(std::lround(vertex.occlusion * 65535.0f), 0L, 65535L));
     out.tint = face.tint;
     out.keep = face.keep;
     return out;
