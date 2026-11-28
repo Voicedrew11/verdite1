@@ -2,6 +2,8 @@
 // ImGui over the game's frame. The game pauses while it is open (configurable).
 #include "build_info.h"
 #include "internal.hpp"
+#include "shell.h"
+#include <verdite/ui.h>
 #include <backends/imgui_impl_sdl3.h>
 #include <imgui.h>
 #include <imgui_internal.h>   // FindRenderedTextEnd
@@ -406,13 +408,25 @@ ViewRect game_view() {
             static_cast<float>(rect.width) / scale.x, static_cast<float>(rect.height) / scale.y};
 }
 
-ViewRect original_view() {
-    const auto whole = game_view();
+ViewRect game_view_px() {
+    int width = 0, height = 0;
+    if (main_window)
+        SDL_GetWindowSizeInPixels(main_window, &width, &height);
+    const auto rect = renderer_present_rect(width, height);
+    return {static_cast<float>(rect.x), static_cast<float>(rect.y), static_cast<float>(rect.width),
+            static_cast<float>(rect.height)};
+}
+
+// The original 320 columns within a whole picture.
+static ViewRect original_within(const ViewRect &whole) {
     const int extra = renderer_extra_columns();
     const float column = whole.w / static_cast<float>(render_width + 2 * extra);
     return {whole.x + column * static_cast<float>(extra), whole.y,
             column * static_cast<float>(render_width), whole.h};
 }
+
+ViewRect original_view() { return original_within(game_view()); }
+ViewRect original_view_px() { return original_within(game_view_px()); }
 
 bool start(SDL_Window *handle, Overlay overlay) {
     main_window = handle;
@@ -441,6 +455,7 @@ bool start(SDL_Window *handle, Overlay overlay) {
         std::printf("[overlay] cannot initialize Dear ImGui\n");
         return false;
     }
+    interface_start(handle);
     running = true;
     apply_display_settings();
     apply_audio_settings();
@@ -469,6 +484,7 @@ void shutdown() {
     running = false;
     if (!imgui)
         return;
+    interface_stop();
     renderer_overlay_stop();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
@@ -501,6 +517,9 @@ bool process_event(const SDL_Event &event) {
         return true;
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
         apply_render_settings();
+    // The interface is drawn over Dear ImGui, so it is asked first.
+    if (interface_event(event))
+        return true;
     ImGui_ImplSDL3_ProcessEvent(&event);
     // A mod that takes the mouse (the full map: zoom, drag, hover) gets it; the keyboard still reaches the game.
     const bool mouse_event = event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
@@ -548,25 +567,22 @@ void show_message(const std::string &text) {
     message_started = SDL_GetTicks();
 }
 
-static void draw_message(int width, int height) {
+// The message over the game: centred, fading out at the end.
+static void draw_message(verdite::ui::Canvas &canvas, int width_px, int height_px) {
     constexpr Uint64 shown_ms = 1800, fade_ms = 400;
     const Uint64 age = SDL_GetTicks() - message_started;
     if (message_text.empty() || age >= shown_ms)
         return;
     const float alpha = age + fade_ms > shown_ms ? static_cast<float>(shown_ms - age) / fade_ms : 1.0f;
-    ImFont *font = ImGui::GetFont();
-    const float size = std::max(18.0f, height / 30.0f);
-    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, message_text.c_str());
-    const ImVec2 at((width - extent.x) * 0.5f, height * 0.2f);
-    ImDrawList *draw = ImGui::GetForegroundDrawList();
-    draw->AddRectFilled(ImVec2(at.x - size * 0.6f, at.y - size * 0.3f), ImVec2(at.x + extent.x + size * 0.6f, at.y + extent.y + size * 0.3f),
-                        IM_COL32(0, 0, 0, static_cast<int>(150 * alpha)), size * 0.3f);
-    draw->AddText(font, size, at, IM_COL32(255, 235, 170, static_cast<int>(255 * alpha)), message_text.c_str());
+    const float size = std::max(18.0f, static_cast<float>(height_px) / 30.0f);
+    const verdite::ui::Point extent = canvas.text_size(message_text, size);
+    const verdite::ui::Point at{(static_cast<float>(width_px) - extent.x) * 0.5f, static_cast<float>(height_px) * 0.2f};
+    canvas.rounded_rect({at.x - size * 0.6f, at.y - size * 0.3f, extent.x + size * 1.2f, extent.y + size * 0.6f},
+                        size * 0.3f, {0, 0, 0, 150 / 255.0f * alpha});
+    canvas.text(at, message_text, {1, 235 / 255.0f, 170 / 255.0f, alpha}, size);
 }
 
-ImDrawData *build_overlay(int width, int height) {
-    if (!running || !imgui || width <= 0 || height <= 0)
-        return nullptr;
+static void count_frame() {
     ++fps_frames;
     const Uint64 now = SDL_GetTicks();
     if (now - fps_started >= 1000) {
@@ -574,6 +590,33 @@ ImDrawData *build_overlay(int width, int height) {
         fps_frames = 0;
         fps_started = now;
     }
+}
+
+// The frame counter in the top left, below the menu bar while it shows.
+static void draw_fps(verdite::ui::Canvas &canvas, float px_per_dp) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.0f fps", fps_value);
+    canvas.text({8 * px_per_dp, (open ? 30.0f : 6.0f) * px_per_dp}, text, {1, 1, 120 / 255.0f, 1},
+                hud_font_size * px_per_dp, verdite::ui::Shadow::Drop);
+}
+
+const verdite::ui::Frame *build_interface(int width_px, int height_px) {
+    verdite::ui::Screen *screen = running ? interface_screen() : nullptr;
+    if (!screen || width_px <= 0 || height_px <= 0)
+        return nullptr;
+    count_frame();
+    verdite::ui::Canvas &front = screen->canvas(verdite::ui::Layer::Front);
+    item_description_draw(screen->canvas(verdite::ui::Layer::Back));
+    touch_controls_draw(front);
+    draw_message(front, width_px, height_px);
+    if (settings().show_fps)
+        draw_fps(front, screen->px_per_dp());
+    return interface_frame(width_px, height_px);
+}
+
+ImDrawData *build_overlay(int width, int height) {
+    if (!running || !imgui || width <= 0 || height <= 0)
+        return nullptr;
     // The Vulkan renderer's NewFrame only checks that it was started, so it is not called.
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
@@ -590,14 +633,6 @@ ImDrawData *build_overlay(int width, int height) {
             language_task_download_english();
     }
     mods_draw_hud();
-    item_description_draw();
-    touch_controls_draw();
-    draw_message(width, height);
-    if (settings().show_fps) {
-        char text[32];
-        std::snprintf(text, sizeof text, "%.0f fps", fps_value);
-        ImGui::GetForegroundDrawList()->AddText(ImVec2(8, open ? 30.0f : 6.0f), IM_COL32(255, 255, 120, 255), text);
-    }
     if (open) {
         draw_menu_bar();
         if (show_settings)

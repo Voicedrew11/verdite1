@@ -12,6 +12,7 @@
 #include "vulkan_screen_pass.h"
 #include "vulkan_surfaces.h"
 #include "vulkan_swapchain.h"
+#include "vulkan_ui.h"
 #include "../texture_mips.h"
 
 #include <SDL3/SDL_video.h>
@@ -113,7 +114,7 @@ public:
     void upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs, const FrameStyle &style,
                       const DepthCue &cue) override;
     void present(const FrameView &view, std::span<const RenderLight> lights, int window_width, int window_height,
-                 ImDrawData *overlay) override;
+                 const OverlayLayers &overlay) override;
     std::optional<Image> capture() override;
     bool restore(const Image &picture) override;
     bool start_overlay() override;
@@ -149,7 +150,8 @@ private:
     const GpuImage &shown_picture(VkCommandBuffer commands, VkImageLayout layout);
     void show_picture(VkCommandBuffer commands, const SwapchainImage &image);
     void blit_to(VkCommandBuffer commands, const GpuImage &source, VkImage image, VkExtent2D extent);
-    void draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, ImDrawData *overlay);
+    void prepare_ui(VkCommandBuffer commands, const verdite::ui::Frame *ui);
+    void draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, const OverlayLayers &overlay);
 
     std::unique_ptr<VulkanDevice> device_;
     SDL_Window *window_;
@@ -185,6 +187,8 @@ private:
     DepthCue cue_;
     bool frame_drawn_ = false;
     bool overlay_started_ = false;
+    std::unique_ptr<UiPass> ui_;   // made with the first frame of the interface to a window
+    bool ui_failed_ = false;
 };
 
 bool format_supports(VkPhysicalDevice physical, VkFormat format, VkFormatFeatureFlags features) {
@@ -812,9 +816,25 @@ void VulkanBackend::blit_to(VkCommandBuffer commands, const GpuImage &source_ima
     }
 }
 
-// Dear ImGui over the picture, then the image goes to the window.
-void VulkanBackend::draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, ImDrawData *overlay) {
-    if (!overlay_started_ || !overlay || overlay->CmdListsCount == 0) {
+// The interface's textures and triangles for this slot, outside any pass: its
+// pass is made with its first frame, once there is a window to draw it to.
+void VulkanBackend::prepare_ui(VkCommandBuffer commands, const verdite::ui::Frame *ui) {
+    if (!ui || !swapchain_ || ui_failed_)
+        return;
+    if (!ui_) {
+        ui_ = UiPass::create(*device_, swapchain_->render_pass(), frames_in_flight);
+        ui_failed_ = !ui_;
+        if (!ui_)
+            return;
+    }
+    ui_->prepare(commands, static_cast<int>(frame_number_ % frames_in_flight), *ui);
+}
+
+// Dear ImGui, then the interface, over the picture; then the image goes to the window.
+void VulkanBackend::draw_overlay(VkCommandBuffer commands, const SwapchainImage &image, const OverlayLayers &overlay) {
+    const bool imgui = overlay_started_ && overlay.imgui && overlay.imgui->CmdListsCount > 0;
+    const bool ui = ui_ && overlay.ui && !overlay.ui->draws.empty();
+    if (!imgui && !ui) {
         transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         return;
@@ -822,7 +842,11 @@ void VulkanBackend::draw_overlay(VkCommandBuffer commands, const SwapchainImage 
     transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     begin_pass(commands, swapchain_->render_pass(), *image.framebuffer);
-    ImGui_ImplVulkan_RenderDrawData(overlay, commands);
+    if (imgui)
+        ImGui_ImplVulkan_RenderDrawData(overlay.imgui, commands);
+    if (ui)
+        ui_->draw(commands, static_cast<int>(frame_number_ % frames_in_flight), *overlay.ui,
+                  image.framebuffer->extent());
     vkCmdEndRenderPass(commands);
     transition(commands, image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -868,7 +892,7 @@ void VulkanBackend::stop_overlay() {
 }
 
 void VulkanBackend::present(const FrameView &view, std::span<const RenderLight>, int window_width, int window_height,
-                            ImDrawData *overlay) {
+                            const OverlayLayers &overlay) {
     const bool to_window = swapchain_ != nullptr;
     if (to_window && (window_width <= 0 || window_height <= 0))
         return;
@@ -895,6 +919,8 @@ void VulkanBackend::present(const FrameView &view, std::span<const RenderLight>,
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (vkBeginCommandBuffer(slot.commands, &begin) != VK_SUCCESS)
         return;
+    if (image)
+        prepare_ui(slot.commands, overlay.ui);
     // A kept picture (FrameClear::Retain) is drawn over once, never again.
     if (!frame_drawn_ || (view.reproject && style_.clear == FrameClear::Clear))
         draw_world(slot.commands, view, slot);

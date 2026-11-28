@@ -328,7 +328,29 @@ add_custom_command(OUTPUT ${KF_RAW_OUT}/raw_layer.stamp
   COMMENT "Generating the raw layer" VERBATIM)
 add_custom_target(kf_raw_layer DEPENDS ${KF_RAW_OUT}/raw_layer.stamp)
 
+# The interface's carried files (cmake/ui_assets.cmake): libverdite's fonts and KF1's documents.
+file(GLOB_RECURSE KF_UI_SHARED_FILES CONFIGURE_DEPENDS RELATIVE ${CMAKE_SOURCE_DIR}/libverdite/res
+  ${CMAKE_SOURCE_DIR}/libverdite/res/*.ttf)
+file(GLOB_RECURSE KF_UI_GAME_FILES CONFIGURE_DEPENDS RELATIVE ${CMAKE_SOURCE_DIR}/port/ui/res
+  ${CMAKE_SOURCE_DIR}/port/ui/res/*.rml ${CMAKE_SOURCE_DIR}/port/ui/res/*.rcss)
+set(KF_UI_ASSET_ENTRIES)
+set(KF_UI_ASSET_DEPENDS)
+foreach(name ${KF_UI_SHARED_FILES})
+  list(APPEND KF_UI_ASSET_ENTRIES "${CMAKE_SOURCE_DIR}/libverdite/res|${name}")
+  list(APPEND KF_UI_ASSET_DEPENDS ${CMAKE_SOURCE_DIR}/libverdite/res/${name})
+endforeach()
+foreach(name ${KF_UI_GAME_FILES})
+  list(APPEND KF_UI_ASSET_ENTRIES "${CMAKE_SOURCE_DIR}/port/ui/res|${name}")
+  list(APPEND KF_UI_ASSET_DEPENDS ${CMAKE_SOURCE_DIR}/port/ui/res/${name})
+endforeach()
+string(REPLACE ";" "^" KF_UI_ASSET_LIST "${KF_UI_ASSET_ENTRIES}")   # (one argument: ui_assets.cmake splits at ^)
+add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/generated/ui_assets.cpp
+  COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_BINARY_DIR}/generated/ui_assets.cpp -DNAME=kf1_ui_assets
+    "-DENTRIES=${KF_UI_ASSET_LIST}" -P ${CMAKE_SOURCE_DIR}/cmake/ui_assets.cmake
+  DEPENDS ${CMAKE_SOURCE_DIR}/cmake/ui_assets.cmake ${KF_UI_ASSET_DEPENDS} VERBATIM)
+
 add_library(kf_ext STATIC
+  port/ui/shell.cpp ${CMAKE_BINARY_DIR}/generated/ui_assets.cpp
   port/ext/console.cpp port/ext/settings.cpp port/ext/mods.cpp port/ext/overlay.cpp
   port/ext/item_text.cpp port/ext/discord.cpp port/ext/options.cpp port/ext/binding_rows.cpp port/ext/binding_overlay.cpp port/ext/setting_rows.cpp port/ext/settings_page.cpp port/ext/settings_panel.cpp port/ext/setup.cpp port/ext/setup_overlay.cpp port/ext/setup_panel.cpp port/ext/update_notice.cpp port/ext/touch_overlay.cpp port/ext/online.cpp port/ext/online_pose.cpp port/ext/online_playback.cpp port/ext/online_stride.cpp port/ext/online_weapon_hold.cpp port/ext/online_player_model.cpp port/ext/online_sounds.cpp port/ext/coop.cpp port/ext/coop_party.cpp port/ext/coop_message.cpp port/ext/coop_floor_owners.cpp port/ext/coop_floor.cpp port/ext/coop_floor_frames.cpp port/ext/coop_floor_play.cpp port/ext/coop_hits.cpp port/ext/coop_death.cpp port/ext/coop_death_play.cpp port/ext/death_reload.cpp port/ext/death_reload_rule.cpp port/ext/creature_feedback.cpp port/ext/creature_feedback_rule.cpp port/ext/coop_profile.cpp port/ext/coop_refusals.cpp port/ext/online_player_colours.cpp port/ext/title.cpp port/ext/message_reading.cpp port/ext/messages.cpp port/ext/messages_board.cpp port/ext/message_writer.cpp port/ext/mod_play.cpp port/ext/mod_draw.cpp port/ext/mod_menu.cpp port/ext/mod_install.cpp port/ext/mod_automap.cpp port/ext/mod_assets.cpp port/ext/mod_audio.cpp port/ext/mod_audio_mix.cpp port/ext/mod_scene.cpp port/ext/mod_scene_shapes.cpp port/ext/mod_rules.cpp port/ext/mod_rule_values.cpp port/ext/call_checks.cpp port/ext/extra_items.cpp port/ext/mod_content.cpp port/ext/mod_content_save.cpp port/ext/mod_floor_check.cpp
   ${KF_RAW_OUT}/raw_layer.cpp)
@@ -336,12 +358,13 @@ add_dependencies(kf_ext kf_raw_layer)
 set_source_files_properties(${KF_RAW_OUT}/raw_layer.cpp PROPERTIES GENERATED TRUE)
 target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI})
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
-target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite lua54 cjson)
+target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite verdite_ui lua54 cjson)
 # settings.json names controls through kf_support's binding_names.cpp, which nothing else links.
 target_link_libraries(kf_ext PRIVATE kf_support)
 target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}"
   KF_RELEASE=$<BOOL:${KF_RELEASE}>)
-target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CMAKE_SOURCE_DIR}/port/ext)
+target_include_directories(kf_ext PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CMAKE_SOURCE_DIR}/port/ext
+  ${CMAKE_SOURCE_DIR}/port/ui)
 if(KF_ONLINE)
   target_link_libraries(kf_ext PRIVATE verdite_online)
   if(ANDROID)
@@ -484,7 +507,7 @@ find_program(KF_GLSLANG glslangValidator REQUIRED)
 set(KF_SHADER_DIR ${CMAKE_SOURCE_DIR}/port/renderer/vulkan/shaders)
 set(KF_SHADER_OUT ${CMAKE_BINARY_DIR}/generated/shaders)
 set(KF_SHADER_HEADERS)
-foreach(shader world.vert world.frag surface.frag fullscreen.vert downsample.frag occlusion.frag
+foreach(shader world.vert world.frag surface.frag fullscreen.vert downsample.frag occlusion.frag ui.vert ui.frag
     occlusion_blur.frag screen_scanlines.frag screen_crt.frag screen_crt_curved.frag screen_sharp_bilinear.frag
     screen_lcd.frag screen_hyllian_lines.frag screen_hyllian.frag)
   string(REPLACE "." "_" symbol ${shader})
@@ -506,9 +529,9 @@ add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/render
   port/renderer/vulkan/vulkan_ambient_occlusion.cpp port/renderer/vulkan/vulkan_downsample.cpp
   port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_render_pass.cpp port/renderer/vulkan/vulkan_surfaces.cpp
   port/renderer/vulkan/vulkan_resources.cpp port/renderer/vulkan/vulkan_screen_pass.cpp
-  port/renderer/vulkan/vulkan_swapchain.cpp ${KF_SHADER_HEADERS})
+  port/renderer/vulkan/vulkan_swapchain.cpp port/renderer/vulkan/vulkan_ui.cpp ${KF_SHADER_HEADERS})
 target_include_directories(kf_vulkan PUBLIC ${KF_INCLUDES} PRIVATE ${KF_SHADER_OUT})
-target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL3)
+target_link_libraries(kf_vulkan PUBLIC kf_vulkan_libraries kf_frontend SDL3::SDL3 verdite)
 target_compile_options(kf_vulkan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(kf_host STATIC port/platform/host.cpp port/platform/agent.cpp port/platform/fuzz.cpp port/platform/saves.cpp port/platform/language_runtime.cpp

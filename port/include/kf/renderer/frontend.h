@@ -22,8 +22,17 @@
 #include <variant>
 
 struct ImDrawData;
+namespace verdite::ui { struct Frame; }
 
 namespace kf {
+// What is drawn over the picture, in order; either may be null. Dear ImGui's
+// draw lists go once the interface has left it (docs/verdite-port.md, "The
+// interface"); the interface's frame is RmlUi's (verdite/ui_frame.h).
+struct OverlayLayers {
+    ImDrawData *imgui = nullptr;
+    const verdite::ui::Frame *ui = nullptr;
+};
+
 class RenderBackend;
 
 // Feature levels. A backend draws up to one of them, and an option above the
@@ -204,13 +213,13 @@ void renderer_set_occluders(std::span<const u8> solid, int columns, int rows, fl
 // A finished game update, received at at_ns (host_clock_ns). Replaces the
 // frame every present draws. Faces that are not a triangle or quad are dropped.
 void renderer_submit(const GameFrame &frame, std::uint64_t at_ns);
-// Draws the last submitted frame as seen at now_ns, then the overlay (may be
-// null), and presents it to a window of the given size. When smoothing,
+// Draws the last submitted frame as seen at now_ns, then the overlay layers,
+// and presents it to a window of the given size. When smoothing,
 // positions blend between the last two updates while the view turns by
 // pending_look (angle units), the look input the game has not consumed yet,
 // so looking has no update of lag.
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look,
-                      int window_width, int window_height, ImDrawData *overlay);
+                      int window_width, int window_height, const OverlayLayers &overlay);
 // The camera the frame about to be presented shows (as renderer_present would show it at now_ns),
 // for renderer_world_to_picture: call it before the overlay is built, which reads the picture.
 void renderer_begin_picture(std::uint64_t now_ns, const SVECTOR &pending_look);

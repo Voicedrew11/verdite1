@@ -4,10 +4,11 @@
 // records, which tick at 20 per second) and the Sword of Moonlight wiki.
 #include "internal.hpp"
 #include "item_menu.h"
-#include <imgui.h>
+#include <verdite/ui_canvas.h>
 #include <kf/platform/host.h>
 #include <algorithm>
 #include <cfloat>
+#include <vector>
 
 namespace kf::ext {
 
@@ -138,7 +139,7 @@ std::string item_description(std::uint8_t id) {
     return {};
 }
 
-void item_description_draw() {
+void item_description_draw(verdite::ui::Canvas &canvas) {
     // The preview panel's inside in the original 320x240 menu layout, and the
     // text size in those units.
     constexpr float panel_left = 174, panel_right = 300, panel_bottom = 216;
@@ -149,20 +150,21 @@ void item_description_draw() {
     const std::string text = item_description(static_cast<std::uint8_t>(preview.item));
     if (text.empty())
         return;
-    const ViewRect view = original_view();
+    const ViewRect view = original_view_px();
     const float sx = view.w / 320.0f, sy = view.h / 240.0f;
-    ImFont *font = ImGui::GetFont();
     const float size = text_units * sy, pad = pad_units * sy;
     const float wrap = (panel_right - panel_left) * sx - 2 * pad;
-    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, wrap, text.c_str());
+    const std::vector<std::string> lines = canvas.wrap(text, wrap, size);
+    const float line_height = canvas.text_size("Ag", size).y;
+    const float height = line_height * static_cast<float>(lines.size());
     // Bottom of the panel, growing upwards over the model but never over the stats.
     const float top = std::max(view.y + (static_cast<float>(preview.top) + 3) * sy,
-                               view.y + panel_bottom * sy - extent.y - 2 * pad);
-    const ImVec2 from(view.x + panel_left * sx, top);
-    ImDrawList *draw = ImGui::GetBackgroundDrawList();
-    draw->AddRectFilled(from, ImVec2(view.x + panel_right * sx, top + extent.y + 2 * pad), IM_COL32(24, 26, 52, 185),
-                        pad);
-    draw->AddText(font, size, ImVec2(from.x + pad, from.y + pad), IM_COL32(232, 226, 204, 255), text.c_str(), nullptr,
-                  wrap);
+                               view.y + panel_bottom * sy - height - 2 * pad);
+    const float left = view.x + panel_left * sx;
+    canvas.rounded_rect({left, top, (panel_right - panel_left) * sx, height + 2 * pad}, pad,
+                        {24 / 255.0f, 26 / 255.0f, 52 / 255.0f, 185 / 255.0f});
+    for (std::size_t i = 0; i < lines.size(); ++i)
+        canvas.text({left + pad, top + pad + line_height * static_cast<float>(i)}, lines[i],
+                    {232 / 255.0f, 226 / 255.0f, 204 / 255.0f, 1}, size);
 }
 }

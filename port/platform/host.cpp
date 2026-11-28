@@ -1193,9 +1193,10 @@ static void frontend_present(Uint64 now) {
     SDL_GetWindowSizeInPixels(host.window, &width, &height);
     // The overlay's on_draw projects through the camera this frame shows (ui.world_to_screen).
     renderer_begin_picture(now, pending_look());
-    ImDrawData *overlay = nullptr;
+    OverlayLayers overlay;
 #if KF_EXT
-    overlay = ext::build_overlay(width, height);
+    overlay.imgui = ext::build_overlay(width, height);
+    overlay.ui = ext::build_interface(width, height);
 #endif
     renderer_present(now, pending_look(), width, height, overlay);
 #if KF_EXT

@@ -24,6 +24,7 @@
 #include <vector>
 
 struct cJSON;
+namespace verdite::ui { class Canvas; }
 
 namespace kf::ext {
 // ---- paths ----
@@ -106,8 +107,9 @@ RenderTarget applied_render_target();
 
 // What an item does (effects only; the menus show equipment stats), or empty.
 std::string item_description(std::uint8_t id);
-// Draws the description of the item in the game menu's preview panel, if any.
-void item_description_draw();
+// Draws the description of the item in the game menu's preview panel, if any,
+// on the interface's back canvas.
+void item_description_draw(verdite::ui::Canvas &canvas);
 
 // ---- the first-run setup (setup.cpp) ----
 void setup_begin(Overlay overlay); // at start: shown if due and drawn
@@ -265,7 +267,7 @@ void title_coop_setting_step(TitleCoopRows rows, std::size_t row, int delta);
 const char *item_english_name(std::uint8_t id);
 
 // ---- touch controls ----
-void touch_controls_draw();   // inside the ImGui frame
+void touch_controls_draw(verdite::ui::Canvas &canvas);   // the interface's front canvas
 void touch_commands_poll();   // the gear and the map button, on every host poll
 void overlay_set_open(bool open);
 void overlay_restyle();   // after the interface scale changes
@@ -318,6 +320,8 @@ inline constexpr float hud_font_size = 18.0f;   // mod drawing ignores the inter
 struct ViewRect { float x, y, w, h; };
 ViewRect game_view();             // the whole presented picture, in ImGui/window points
 ViewRect original_view();         // the original 320x240 area within it
+ViewRect game_view_px();          // the same in the window's pixels (the interface's canvases)
+ViewRect original_view_px();
 bool overlay_captures_input();
 // The keys belong to the overlay, or to a mod's text box that has the keyboard.
 bool overlay_captures_keys();

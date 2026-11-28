@@ -9,6 +9,7 @@
 
 struct ImDrawData;
 namespace verdite { class CrashWriter; }
+namespace verdite::ui { struct Frame; }
 
 namespace kf::ext {
 // Whether Dear ImGui is drawn: not headless, where nothing is.
@@ -42,6 +43,9 @@ void poll();
 void game_frame(int input_context);
 // The overlay and mod HUDs for this frame, for the frontend to draw; null if none.
 ImDrawData *build_overlay(int width, int height);
+// The interface (RmlUi, port/ui/) for this frame, at the window's pixel size,
+// drawn over the overlay; null when headless or nothing shows.
+const verdite::ui::Frame *build_interface(int width_px, int height_px);
 // A brief centred message, such as "Quick saved".
 void show_message(const std::string &text);
 // The settings as this platform shows them, as JSON (verdite::options_json), for the

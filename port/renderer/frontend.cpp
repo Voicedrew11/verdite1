@@ -163,7 +163,7 @@ std::optional<std::array<double, 2>> renderer_world_to_picture(const std::array<
 }
 
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look, int window_width, int window_height,
-                      ImDrawData *overlay) {
+                      const OverlayLayers &overlay) {
     if (!frontend.backend)
         return;
     const PictureOptions options = drawn_options();
