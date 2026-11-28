@@ -24,6 +24,7 @@
 #include <vector>
 
 struct cJSON;
+namespace verdite::ui { class Canvas; struct Action; }
 
 namespace kf::ext {
 // ---- paths ----
@@ -87,14 +88,18 @@ std::string binding_row_note(BindingRow row);   // the 4 s note, else a missing-
 // or why not ("not a value it takes").
 std::optional<std::string> binding_text_change(std::string_view id, std::string_view text);
 
-// ---- binding rows in the overlay (binding_overlay.cpp) ----
-// Draws a binding row (chips, add, the capture box); false for any other row.
-bool draw_binding_row(const verdite::OptionRowView &view, float label_column_px);
-// Every event, before the overlay's own keys: true when a capture took it, or a key or trigger a
+// ---- the capture behind the F1 menu's binding rows (port/ui/binding_capture.cpp) ----
+// Waits for a control for the row; one wait at a time.
+void binding_capture_start(BindingRow row);
+bool binding_capture_waiting(BindingRow row);
+// Waiting, or a pad control it took not yet let go: the menu takes no pad input.
+bool binding_capture_busy();
+int binding_capture_seconds_left();   // while waiting
+// Every event, before the menu's own keys: true when a capture took it, or a key or trigger a
 // capture took is still held.
 bool binding_capture_event(const SDL_Event &event);
-void binding_capture_frame();    // each drawn frame: timeouts, a row no longer drawn
-void binding_capture_cancel();   // the overlay closed
+void binding_capture_frame();    // each frame: timeouts
+void binding_capture_cancel();   // the menu closed
 
 // ---- the SETTINGS page in the game's menu (kf/platform/settings_page.h) ----
 bool settings_page_holding();   // it has changes not yet saved: the settings file waits
@@ -106,8 +111,9 @@ RenderTarget applied_render_target();
 
 // What an item does (effects only; the menus show equipment stats), or empty.
 std::string item_description(std::uint8_t id);
-// Draws the description of the item in the game menu's preview panel, if any.
-void item_description_draw();
+// Draws the description of the item in the game menu's preview panel, if any,
+// on the interface's back canvas.
+void item_description_draw(verdite::ui::Canvas &canvas);
 
 // ---- the first-run setup (setup.cpp) ----
 void setup_begin(Overlay overlay); // at start: shown if due and drawn
@@ -115,8 +121,11 @@ void settings_page_check();         // at start: the page's words against the me
 void setup_run();                  // from the start, again
 bool setup_open();
 bool setup_shows_game();           // open, and the game is seen behind it
-void setup_poll();                 // on every host poll: a native panel's controls in
-void setup_draw();                 // inside the ImGui frame (setup_json, setup_command: ext.h)
+// The RmlUi screen's keys and pad, its document's presses, and its frame before the interface is
+// drawn (setup_json, setup_command: ext.h).
+bool setup_event(const SDL_Event &event);
+void setup_action(const verdite::ui::Action &action);
+void setup_frame();
 
 // ---- Discord Rich Presence ----
 void discord_start();     // reads KF_DISCORD and KF_DISCORD_APP
@@ -129,9 +138,12 @@ bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
 void update_notice_start();   // asks GitHub on its own thread, in a build for players or by KF_UPDATE_CHECK=force
 void update_notice_poll();    // on every host poll: shows the notice once, at the title
 bool update_notice_open();    // its window covers the game
-void update_notice_draw();    // inside the ImGui frame
-void update_notice_draw_badge();           // inside the menu bar
-float update_notice_badge_width_px();      // 0 when there is no badge
+// The notice is an RmlUi document (port/ui/res/notice.rml): its keys and pad while open, a press on
+// it or on the F1 menu's badge, and its frame before the interface is drawn.
+bool update_notice_event(const SDL_Event &event);
+void update_notice_action(const verdite::ui::Action &action);
+void update_notice_frame();
+std::string update_notice_badge_rml();     // the F1 menu's badge; empty when there is no release
 std::string update_notice_setting_note();  // what the setting's row says; empty when there is no release
 
 // ---- messages on the ground (messages_board.cpp, docs/MESSAGES_PLAN.md) ----
@@ -150,7 +162,20 @@ std::string online_service_url();
 void online_start();   // joins the room given on the command line, if any
 void online_poll();    // on every host poll: the session's events (our pose goes out from online_update)
 void online_stop();    // leaves the room
-void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
+// What the F1 menu's Online page shows: the room, who is here, or how to join one.
+struct OnlinePanel {
+    bool built = true;            // false: this build has no online play
+    bool mods_stay_off = false;   // mods are loaded, and stop in a room
+    bool in_room = false;
+    std::string room, coop_line;
+    bool joining = false;
+    std::vector<std::string> players;   // a line each
+    bool at_title = false;              // rooms are joined from the title's CO-OP there
+    std::string status, service;
+};
+OnlinePanel online_panel();
+void online_panel_join(std::string_view code);   // not in a room, not at the title
+void online_panel_leave();
 #ifdef __linux__
 // Points OpenSSL at the system's root certificates, for the service's wss://: online_android_roots.cpp
 // on a phone, online_linux_roots.cpp on a desktop. Windows' OpenSSL reads the system's store itself.
@@ -265,31 +290,21 @@ void title_coop_setting_step(TitleCoopRows rows, std::size_t row, int delta);
 const char *item_english_name(std::uint8_t id);
 
 // ---- touch controls ----
-void touch_controls_draw();   // inside the ImGui frame
+void touch_controls_draw(verdite::ui::Canvas &canvas);   // the interface's front canvas
 void touch_commands_poll();   // the gear and the map button, on every host poll
-void overlay_set_open(bool open);
-void overlay_restyle();   // after the interface scale changes
-
-// ---- Android's settings panel (settings_panel.cpp): native views over the game ----
-// Shows the panel in place of the overlay's windows; false where there is none.
-bool settings_panel_show();
-bool settings_panel_open();
-void settings_panel_poll();   // on every host poll: the panel's changes in, the new view out
-#ifdef __ANDROID__
-void android_call_activity(const char *method);   // a no-argument method of VerditeActivity
-#endif
-
-// ---- Android's setup panel (setup_panel.cpp; null elsewhere) ----
-verdite::SetupScreen *setup_panel_screen();
-std::vector<std::string> setup_panel_take_controls();   // the panel's taps, as Setup::command lines
 
 // ---- mods ----
 void mods_start();
 void mods_shutdown();
 void mods_poll();                 // hot reload
 void mods_frame(int input_context);
-void mods_draw_hud();             // each enabled mod's on_draw, inside the ImGui frame
-void mods_draw_panel();           // the Mods window contents
+void mods_draw_hud();             // each running mod's on_draw, on the interface's canvases
+void mods_reload_all();           // not while mods are off in a room
+void mods_open_folder();
+bool mods_off_in_room();          // mods stop in a coop room
+// A press on a mod's own page: its on_ui_action. The wheel's steps for ui.mouse_wheel.
+void mods_ui_action(const verdite::ui::Action &action);
+void mods_ui_wheel(float steps);
 int mods_loaded_count();
 bool mods_pause_requested();      // kf.game.paused, combined over the running mods
 bool mods_pause_keeps_music();    // ...and every pausing mod keeps the music (kf.game.music_while_paused)
@@ -308,16 +323,10 @@ std::optional<verdite::ModConfigValue> mods_config_value(std::string_view id, st
 void mods_set_config_value(std::string_view id, std::string_view key, const verdite::ModConfigValue &value);
 
 // ---- overlay helpers shared with the mod API ----
-// Slider with a typed-value box beside it. `committed` (optional) is set when an
-// edit finishes: slider released, or Enter / focus change in the box.
-bool slider_input(const char *label, float *value, float min, float max, const char *format,
-                  float snap = 0.0f, bool *committed = nullptr);
-bool slider_input(const char *label, int *value, int min, int max, const char *format = "%d",
-                  bool *committed = nullptr);
 inline constexpr float hud_font_size = 18.0f;   // mod drawing ignores the interface scale
 struct ViewRect { float x, y, w, h; };
-ViewRect game_view();             // the whole presented picture, in ImGui/window points
-ViewRect original_view();         // the original 320x240 area within it
+ViewRect game_view_px();          // the whole presented picture, in the window's pixels
+ViewRect original_view_px();      // the original 320x240 area within it
 bool overlay_captures_input();
 // The keys belong to the overlay, or to a mod's text box that has the keyboard.
 bool overlay_captures_keys();

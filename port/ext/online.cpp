@@ -12,7 +12,6 @@
 #include "online_sounds.h"
 #include "online_stride.h"
 
-#include <imgui.h>
 #include <kf/platform/automap.h>
 #include <kf/platform/input.h>
 #include <kf/platform/language_runtime.h>
@@ -81,7 +80,6 @@ struct Online {
     std::unique_ptr<vo_lobby, LobbyClose> lobby;
     std::map<vo_peer, Peer> players; // open peers
     std::string status;   // what the overlay says when not in a room, or why we left
-    std::array<char, room_most + 1> room_field{};
     std::optional<std::string> leave_after_poll;   // why, once the session's events are handled
 };
 Online online;
@@ -413,40 +411,38 @@ bool online_rooms(std::vector<verdite::TitleRoom> &rooms, verdite::RoomListState
     return changed != 0 || state != was;
 }
 
-void online_draw_panel() {
-    if (mods_loaded_count() > 0)
-        ImGui::TextWrapped("Your mods stay off while you are in a room.");
-    if (online.session) {
-        ImGui::Text("Room: %s", online.room.c_str());
-        if (const std::string coop_line = coop_panel_line(); !coop_line.empty())
-            ImGui::TextUnformatted(coop_line.c_str());
-        if (online.self == 0)
-            ImGui::TextDisabled("Joining...");
-        else if (online.players.empty())
-            ImGui::TextDisabled("Waiting for someone to join the same room.");
-        for (const auto &[peer, known] : online.players) {
-            if (const auto &pose = known.shown)
-                ImGui::BulletText("%s  floor %d  (%.1f, %.1f)", hex(peer).c_str(), pose->floor, pose->x, pose->z);
-            else
-                ImGui::BulletText("%s  connected", hex(peer).c_str());
-        }
-        if (ImGui::Button("Leave"))
-            leave("");
-        return;
+OnlinePanel online_panel() {
+    OnlinePanel panel;
+    panel.mods_stay_off = mods_loaded_count() > 0;
+    panel.in_room = static_cast<bool>(online.session);
+    panel.at_title = title_is_open();
+    panel.status = online.status;
+    panel.service = service_url();
+    if (!panel.in_room)
+        return panel;
+    panel.room = online.room;
+    panel.coop_line = coop_panel_line();
+    panel.joining = online.self == 0;
+    char line[96];
+    for (const auto &[peer, known] : online.players) {
+        if (const auto &pose = known.shown)
+            std::snprintf(line, sizeof line, "%s  floor %d  (%.1f, %.1f)", hex(peer).c_str(), pose->floor, pose->x,
+                          pose->z);
+        else
+            std::snprintf(line, sizeof line, "%s  connected", hex(peer).c_str());
+        panel.players.emplace_back(line);
     }
-    ImGui::TextWrapped("Play together: everyone who joins the same room code, with the same build of "
-                       "the game, plays one coop world, kept by whoever is in the room first. Joining sets "
-                       "this game aside; leaving puts it back.");
-    if (title_is_open()) {
-        ImGui::TextDisabled("On the title screen, choose CO-OP to host or join a room.");
-        return;
-    }
-    ImGui::InputText("Room code", online.room_field.data(), online.room_field.size());
-    if (ImGui::Button("Join") && online.room_field[0] != '\0')
-        join(online.room_field.data());
-    if (!online.status.empty())
-        ImGui::TextWrapped("%s", online.status.c_str());
-    ImGui::TextDisabled("Service: %s", service_url().c_str());
+    return panel;
+}
+
+void online_panel_join(std::string_view code) {
+    if (!code.empty() && !online.session && !title_is_open())
+        join(std::string(code));
+}
+
+void online_panel_leave() {
+    if (online.session)
+        leave("");
 }
 
 std::vector<OnlinePose> online_players() {
@@ -512,9 +508,15 @@ bool online_rooms(std::vector<verdite::TitleRoom> &, verdite::RoomListState &sta
     return changed;
 }
 
-void online_draw_panel() {
-    ImGui::TextWrapped("This build has no online play: it was built without libdatachannel.");
+OnlinePanel online_panel() {
+    OnlinePanel panel;
+    panel.built = false;
+    return panel;
 }
+
+void online_panel_join(std::string_view) {}
+
+void online_panel_leave() {}
 
 std::vector<OnlinePose> online_players() {
     return {};

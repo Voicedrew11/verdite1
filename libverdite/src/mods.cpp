@@ -149,7 +149,6 @@ struct Mod {
     fs::file_time_type stamp = fs::file_time_type::min();
     std::size_t file_count = 0;
     bool config_dirty = false;
-    bool has_settings = false;
     const ModHostConfig *host = nullptr;
     SaveTables *saves = nullptr;
     RaisedEvent raised;
@@ -1329,11 +1328,10 @@ struct CallbackName {
     ModCallback callback;
     std::string_view global, old_global, doc;
 };
-constexpr std::array<CallbackName, 6> callback_names{{
+constexpr std::array<CallbackName, 5> callback_names{{
     {ModCallback::Load, "on_load", "", "After the script runs, on every (re)load."},
     {ModCallback::Update, "on_update", "on_frame", "Once per game update: read and change game state here."},
     {ModCallback::Draw, "on_draw", "", "Once per displayed frame: draw, do not change game state."},
-    {ModCallback::Settings, "on_settings", "", "While the mod's settings are shown in the Mods panel."},
     {ModCallback::Unload, "on_unload", "", "Before a reload, or when the mod is disabled."},
     {ModCallback::BetweenUpdates, "on_between_updates", "",
      "Between two world updates, where no menu or script holds the game: the place for calls that change state."},
@@ -1363,10 +1361,6 @@ int run_callback(lua_State *L) {
     const CallbackName &name = name_of(callback);
     if (push_global_function(L, name.global) || push_global_function(L, name.old_global))
         lua_call(L, 0, 0);
-    if (callback == ModCallback::Load) {
-        mod_of_state(L).has_settings = push_global_function(L, "on_settings");
-        lua_settop(L, 1);
-    }
     return 0;
 }
 
@@ -2003,7 +1997,6 @@ struct ModHost::State final : ModPeers {
         mod.instructions_left = static_cast<std::int64_t>(config.instructions_per_call);
         lua_sethook(mod.lua.get(), count_instructions, LUA_MASKCOUNT, hook_every_instructions);
         mod.lua.reset();
-        mod.has_settings = false;
         if (config.unloaded)
             config.unloaded(mod.id);
     }
@@ -2606,6 +2599,26 @@ void ModHost::raise(std::string_view event_name, std::span<ModEventValue> values
     std::ranges::copy(current, values.begin());
 }
 
+void ModHost::raise_for(std::string_view id, std::string_view event_name, std::span<ModEventValue> values) {
+    State &state = *state_;
+    if (state.raising)
+        return;
+    const ModEvent *event = find_event(state.config.events, event_name);
+    Mod *mod = state.running_peer(id);
+    if (!event || !mod)
+        return;
+    if (!values_fit(*event, values)) {
+        assert(false && "raise_for: values do not match the event's fields");
+        return;
+    }
+    std::vector<ModEventValue> current(values.begin(), values.end());
+    {
+        const RaiseScope scope(state.raising);
+        state.raise_in(*mod, *event, current);
+    }
+    std::ranges::copy(current, values.begin());
+}
+
 std::string ModHost::save_tables() const {
     for (auto &mod : state_->mods)
         state_->keep_save(*mod);
@@ -2646,7 +2659,7 @@ std::vector<ModInfo> ModHost::mods() const {
                                : mod->lua          ? ModState::Running
                                                    : ModState::Disabled;
         list.push_back({mod->id, mod->name, mod->version, mod->author, mod->description, mod->enabled, shown,
-                        mod->error, mod->has_settings, mod->enhancement,
+                        mod->error, mod->enhancement,
                         shown == ModState::Running && state_->held(*mod), mod->menu});
     }
     return list;

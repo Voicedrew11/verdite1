@@ -163,7 +163,7 @@ std::optional<std::array<double, 2>> renderer_world_to_picture(const std::array<
 }
 
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look, int window_width, int window_height,
-                      ImDrawData *overlay) {
+                      const verdite::ui::Frame *ui) {
     if (!frontend.backend)
         return;
     const PictureOptions options = drawn_options();
@@ -175,7 +175,7 @@ void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look, int win
     const std::vector<ShownLightSet> light_sets = shown_light_sets(frontend.light_sets, parts, shown.motions);
     const FrameView view{shown.motions,  shown.carry,    shown.reproject,       !render_subpixel, shown.projection_distance,
                          shown.center_x, shown.center_y, shown.camera_to_world, shown.camera_world, light_sets};
-    frontend.backend->present(view, lights, window_width, window_height, overlay);
+    frontend.backend->present(view, lights, window_width, window_height, ui);
 }
 
 std::optional<Image> renderer_capture() {
@@ -185,13 +185,6 @@ std::optional<Image> renderer_capture() {
 }
 
 bool renderer_restore(const Image &picture) { return frontend.backend && frontend.backend->restore(picture); }
-
-bool renderer_overlay_start() { return frontend.backend && frontend.backend->start_overlay(); }
-
-void renderer_overlay_stop() {
-    if (frontend.backend)
-        frontend.backend->stop_overlay();
-}
 
 void renderer_release_window() {
     if (frontend.backend)

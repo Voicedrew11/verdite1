@@ -1,5 +1,5 @@
 #pragma once
-// Messages on the ground, the parts with no ImGui and no network (docs/MESSAGES_PLAN.md): which
+// Messages on the ground, the parts with no interface and no network (docs/MESSAGES_PLAN.md): which
 // shown message the action button is for, the box of the message open for reading, and a message's
 // place in a record. A cell is AutomapSnapshot's: cell (x, z) spans [x, x + 1). Yaw is in radians, 0 facing
 // +z (north) and increasing turns towards -x, so the way the player looks is (-sin yaw, cos yaw)

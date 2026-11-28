@@ -485,7 +485,6 @@ TEST_CASE("a call that changes the game runs only directly in on_between_updates
     };
     refused("function on_update() g.call.add_hp(1) end", ModCallback::Update);
     refused("function on_draw() g.call.add_hp(1) end", ModCallback::Draw);
-    refused("function on_settings() g.call.add_hp(1) end", ModCallback::Settings);
     refused("function on_between_updates() coroutine.wrap(function() g.call.add_hp(1) end)() end",
             ModCallback::BetweenUpdates);
 

@@ -3,12 +3,14 @@
 // api_tables; the host writes the editors' definitions file (mods/kf.d.lua) from the same rows.
 #include "internal.hpp"
 #include <cJSON.h>
-#include <imgui.h>
+#include "mod_ui.h"
+#include <verdite/ui.h>
 #include <verdite/mod_saved.h>
 #include <verdite/mods.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -56,7 +58,6 @@
 #include "mod_audio.h"
 #include "mod_automap.h"
 #include "mod_content.h"
-#include "mod_draw.h"
 #include "mod_menu.h"
 #include "mod_play.h"
 #include "mod_rules.h"
@@ -72,7 +73,7 @@
 
 namespace kf::ext {
 namespace {
-constexpr const char *api_version = "1.2";
+constexpr const char *api_version = "2.0";
 
 std::unique_ptr<verdite::ModHost> host;
 // Each running mod's kf.play and kf.game values, by id, and what they combine to.
@@ -465,6 +466,7 @@ void forget_mod(std::string_view id) {
     mod_audio_forget(id);
     mod_scene_clear_mod(id);
     mod_content_forget(id);
+    ui_mod_forget(id);
 }
 
 // Mods' sounds stop while mods are off (coop), and while a mod is held or not running.
@@ -1171,225 +1173,17 @@ int push_view(lua_State *L, const ViewRect &view) {
     lua_pushnumber(L, view.w); lua_pushnumber(L, view.h);
     return 4;
 }
-int kf_view(lua_State *L) { return push_view(L, game_view()); }
-int kf_view_original(lua_State *L) { return push_view(L, original_view()); }
+int kf_view(lua_State *L) { return push_view(L, game_view_px()); }
+int kf_view_original(lua_State *L) { return push_view(L, original_view_px()); }
 int kf_save_config(lua_State *L) {
     verdite::mod_config_changed(L);
     return 0;
 }
 void push_api_version(lua_State *L) { lua_pushstring(L, api_version); }
 
-// ---------- ui.* (ImGui) ----------
 void mark_changed(lua_State *L, bool changed) {
     if (changed)
         verdite::mod_config_changed(L);
-}
-int ui_text(lua_State *L) { ui_require_frame(L); ImGui::TextUnformatted(luaL_checkstring(L, 1)); return 0; }
-int ui_text_colored(lua_State *L) {
-    ui_require_frame(L);
-    const ImVec4 color(static_cast<float>(luaL_checknumber(L, 1)), static_cast<float>(luaL_checknumber(L, 2)),
-                       static_cast<float>(luaL_checknumber(L, 3)), 1.0f);
-    ImGui::TextColored(color, "%s", luaL_checkstring(L, 4));
-    return 0;
-}
-int ui_button(lua_State *L) { ui_require_frame(L); lua_pushboolean(L, ImGui::Button(luaL_checkstring(L, 1))); return 1; }
-int ui_checkbox(lua_State *L) {
-    ui_require_frame(L);
-    bool value = lua_toboolean(L, 2);
-    mark_changed(L, ImGui::Checkbox(luaL_checkstring(L, 1), &value));
-    lua_pushboolean(L, value);
-    return 1;
-}
-int ui_slider_int(lua_State *L) {
-    ui_require_frame(L);
-    int value = static_cast<int>(luaL_checkinteger(L, 2));
-    mark_changed(L, slider_input(luaL_checkstring(L, 1), &value, static_cast<int>(luaL_checkinteger(L, 3)),
-                                 static_cast<int>(luaL_checkinteger(L, 4))));
-    lua_pushinteger(L, value);
-    return 1;
-}
-int ui_slider_float(lua_State *L) {
-    ui_require_frame(L);
-    float value = static_cast<float>(luaL_checknumber(L, 2));
-    mark_changed(L, slider_input(luaL_checkstring(L, 1), &value, static_cast<float>(luaL_checknumber(L, 3)),
-                                 static_cast<float>(luaL_checknumber(L, 4)), luaL_optstring(L, 5, "%.2f")));
-    lua_pushnumber(L, value);
-    return 1;
-}
-int ui_combo(lua_State *L) {
-    ui_require_frame(L);
-    const char *label = luaL_checkstring(L, 1);
-    int index = static_cast<int>(luaL_checkinteger(L, 2)) - 1;
-    luaL_checktype(L, 3, LUA_TTABLE);
-    std::vector<std::string> items;
-    for (lua_Integer i = 1; lua_rawgeti(L, 3, i) == LUA_TSTRING; ++i) {
-        items.emplace_back(lua_tostring(L, -1));
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    const char *preview = index >= 0 && index < static_cast<int>(items.size()) ? items[index].c_str() : "";
-    if (ImGui::BeginCombo(label, preview)) {
-        for (int i = 0; i < static_cast<int>(items.size()); ++i)
-            if (ImGui::Selectable(items[i].c_str(), i == index)) {
-                index = i;
-                mark_changed(L, true);
-            }
-        ImGui::EndCombo();
-    }
-    lua_pushinteger(L, index + 1);
-    return 1;
-}
-int ui_separator(lua_State *L) { ui_require_frame(L); ImGui::Separator(); return 0; }
-int ui_same_line(lua_State *L) { ui_require_frame(L); ImGui::SameLine(); return 0; }
-int ui_spacing(lua_State *L) { ui_require_frame(L); ImGui::Spacing(); return 0; }
-int ui_tooltip(lua_State *L) { ui_require_frame(L); ImGui::SetItemTooltip("%s", luaL_checkstring(L, 1)); return 0; }
-int ui_begin_window(lua_State *L) {
-    ui_require_frame(L);
-    const bool no_input = lua_toboolean(L, 2);
-    ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing;
-    if (no_input && !overlay_open())
-        flags |= ImGuiWindowFlags_NoInputs;
-    const bool shown = ImGui::Begin(luaL_checkstring(L, 1), nullptr, flags);
-    ui_scope_begin(UiScope::Window);
-    lua_pushboolean(L, shown);
-    return 1;
-}
-int ui_end_window(lua_State *L) {
-    ui_require_frame(L);
-    ui_scope_end(L, UiScope::Window);
-    return 0;
-}
-int ui_begin_tab_bar(lua_State *L) {
-    ui_require_frame(L);
-    const bool shown = ImGui::BeginTabBar(luaL_checkstring(L, 1));
-    if (shown)
-        ui_scope_begin(UiScope::TabBar);
-    lua_pushboolean(L, shown);
-    return 1;
-}
-int ui_end_tab_bar(lua_State *L) {
-    ui_require_frame(L);
-    ui_scope_end(L, UiScope::TabBar);
-    return 0;
-}
-int ui_begin_tab(lua_State *L) {
-    ui_require_frame(L);
-    const bool shown = ImGui::BeginTabItem(luaL_checkstring(L, 1));
-    if (shown)
-        ui_scope_begin(UiScope::Tab);
-    lua_pushboolean(L, shown);
-    return 1;
-}
-int ui_end_tab(lua_State *L) {
-    ui_require_frame(L);
-    ui_scope_end(L, UiScope::Tab);
-    return 0;
-}
-int ui_collapsing_header(lua_State *L) {
-    ui_require_frame(L);
-    const ImGuiTreeNodeFlags flags =
-        lua_toboolean(L, 2) ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None;
-    lua_pushboolean(L, ImGui::CollapsingHeader(luaL_checkstring(L, 1), flags));
-    return 1;
-}
-// A text box's longest text, in bytes: 64 by default, held to 1 to 1024.
-constexpr lua_Integer default_text_bytes = 64;
-constexpr lua_Integer min_text_bytes = 1;
-constexpr lua_Integer max_text_bytes = 1024;
-int ui_input_text(lua_State *L) {
-    ui_require_frame(L);
-    const char *label = luaL_checkstring(L, 1);
-    std::size_t length = 0;
-    const char *text = luaL_checklstring(L, 2, &length);
-    const lua_Integer bytes =
-        std::clamp(luaL_optinteger(L, 3, default_text_bytes), min_text_bytes, max_text_bytes);
-    // ImGui edits a buffer that ends in a NUL, so the text keeps one byte of it free.
-    std::string buffer(static_cast<std::size_t>(bytes), '\0');
-    std::memcpy(buffer.data(), text, std::min(length, buffer.size() - 1));
-    const bool changed = ImGui::InputText(label, buffer.data(), buffer.size());
-    mark_changed(L, changed);
-    lua_pushstring(L, buffer.c_str());
-    return 1;
-}
-int ui_input_int(lua_State *L) {
-    ui_require_frame(L);
-    const char *label = luaL_checkstring(L, 1);
-    const lua_Integer value = luaL_checkinteger(L, 2);
-    if (!std::in_range<int>(value))
-        luaL_error(L, "%I is out of range for ui.input_int", value);
-    int number = static_cast<int>(value);
-    mark_changed(L, ImGui::InputInt(label, &number));
-    lua_pushinteger(L, number);
-    return 1;
-}
-int ui_text_wrapped(lua_State *L) {
-    ui_require_frame(L);
-    ImGui::TextWrapped("%s", luaL_checkstring(L, 1));
-    return 0;
-}
-int ui_begin_scroll(lua_State *L) {
-    ui_require_frame(L);
-    const char *id = luaL_checkstring(L, 1);
-    const lua_Integer height = luaL_checkinteger(L, 2);
-    if (height <= 0)
-        luaL_error(L, "scroll height %I is not above 0", height);
-    // Full width of the window; the scroll area is always bordered.
-    const bool shown =
-        ImGui::BeginChild(id, ImVec2(0.0f, static_cast<float>(height)), ImGuiChildFlags_Borders);
-    ui_scope_begin(UiScope::Scroll);
-    lua_pushboolean(L, shown);
-    return 1;
-}
-int ui_end_scroll(lua_State *L) {
-    ui_require_frame(L);
-    ui_scope_end(L, UiScope::Scroll);
-    return 0;
-}
-// ui: the widgets here, the drawing from mod_draw.
-verdite::ModTable ui_table() {
-    using verdite::ModFunction;
-    std::vector<ModFunction> functions = {
-        ModFunction{"text", "fun(text: string)", "", ui_text},
-        {"text_colored", "fun(r: number, g: number, b: number, text: string)", "", ui_text_colored},
-        {"button", "fun(label: string): boolean", "True when clicked.", ui_button},
-        {"checkbox", "fun(label: string, value: boolean): boolean", "", ui_checkbox},
-        {"slider_int", "fun(label: string, value: integer, min: integer, max: integer): integer", "",
-         ui_slider_int},
-        {"slider_float", "fun(label: string, value: number, min: number, max: number, format?: string): number",
-         "", ui_slider_float},
-        {"combo", "fun(label: string, index: integer, items: string[]): integer", "1-based.", ui_combo},
-        {"separator", "fun()", "", ui_separator},
-        {"same_line", "fun()", "", ui_same_line},
-        {"spacing", "fun()", "", ui_spacing},
-        {"tooltip", "fun(text: string)", "For the item before it.", ui_tooltip},
-        {"begin_window", "fun(title: string, click_through?: boolean): boolean",
-         "Always call end_window after it.", ui_begin_window},
-        {"end_window", "fun()", "", ui_end_window},
-        {"begin_tab_bar", "fun(id: string): boolean", "Call end_tab_bar only when this is true.",
-         ui_begin_tab_bar},
-        {"end_tab_bar", "fun()", "Ends the tab bar; no tab may be open.", ui_end_tab_bar},
-        {"begin_tab", "fun(label: string): boolean",
-         "In a tab bar. Call end_tab only when this is true.", ui_begin_tab},
-        {"end_tab", "fun()", "", ui_end_tab},
-        {"collapsing_header", "fun(label: string, default_open?: boolean): boolean",
-         "True while open. default_open opens it the first time it is drawn; after that the "
-         "player's choice holds.",
-         ui_collapsing_header},
-        {"begin_scroll", "fun(id: string, height_px: integer): boolean",
-         "A bordered area of this height, scrolled. Always call end_scroll after it.",
-         ui_begin_scroll},
-        {"end_scroll", "fun()", "", ui_end_scroll},
-        {"input_text", "fun(label: string, text: string, max_bytes?: integer): string",
-         "A text box; the text it holds. Text past max_bytes (64 by default, 1 to 1024) is cut.",
-         ui_input_text},
-        {"input_int", "fun(label: string, value: integer): integer", "", ui_input_int},
-        {"text_wrapped", "fun(text: string)", "", ui_text_wrapped},
-    };
-    std::ranges::move(ui_draw_functions(), std::back_inserter(functions));
-    return {.path = "ui",
-            .doc = "Dear ImGui, inside on_draw and on_settings only. Colours are 0-1.",
-            .functions = std::move(functions),
-            .fields = {}};
 }
 
 std::vector<verdite::ModFunction> content_functions() {
@@ -1572,7 +1366,7 @@ verdite::ModEventField string_field(std::string_view name, std::string_view doc)
 }
 
 std::vector<verdite::ModEvent> event_table() {
-    return {
+    std::vector<verdite::ModEvent> events = {
         {.name = "on_damage",
          .doc = "The player or an actor loses HP: a blow, or the player's poison or equipment drain.",
          .fields = {string_field("target", "\"player\" or \"actor\"."),
@@ -1633,6 +1427,8 @@ std::vector<verdite::ModEvent> event_table() {
          .doc = "A save is loaded, after its save data is read.",
          .fields = {integer_field("slot", "1 to 3 the game's slots, 4 the quick save, 5 the game set aside in coop.")}},
     };
+    events.push_back(ui_action_event());
+    return events;
 }
 
 // ---------- the mods' settings, in settings.json ----------
@@ -1776,6 +1572,36 @@ bool copy_bundled(const std::string &from, const std::filesystem::path &to) {
     return true;
 }
 
+// The major of the API a mod's mod.json says it was written for; 0 when it does not say.
+int api_major_of(const std::filesystem::path &folder) {
+    std::ifstream file(folder / "mod.json", std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::unique_ptr<cJSON, decltype(&cJSON_Delete)> json(cJSON_ParseWithLength(text.data(), text.size()),
+                                                                cJSON_Delete);
+    const cJSON *version = cJSON_GetObjectItemCaseSensitive(json.get(), "api_version");
+    return cJSON_IsString(version) ? std::atoi(version->valuestring) : 0;
+}
+
+// A copy of an example written for an older API major cannot run (API 2.0 replaced the ui widgets),
+// so it is set aside in mods_removed/ and the example copied again. False when it stays.
+bool set_aside_outdated_example(const std::string &name) {
+    const auto copy = mods_dir() / utf8_path(name);
+    const auto kept = mods_dir().parent_path() / "mods_removed" / (name + "-api" + std::to_string(api_major_of(copy)));
+    std::error_code error;
+    if (!std::filesystem::is_directory(copy, error) || api_major_of(copy) >= std::atoi(api_version) ||
+        std::filesystem::exists(kept, error))
+        return false;
+    std::filesystem::create_directories(kept.parent_path(), error);
+    std::filesystem::rename(copy, kept, error);
+    if (error) {
+        std::printf("[mods] cannot set aside the old example %s: %s\n", name.c_str(), error.message().c_str());
+        return false;
+    }
+    std::printf("[mods] the example %s was written for an older API; moved it to %s\n", name.c_str(),
+                kept.string().c_str());
+    return true;
+}
+
 void copy_example_mods() {
     move_retired_examples();
     const std::string bundled = bundled_mods_folder();
@@ -1788,6 +1614,8 @@ void copy_example_mods() {
     const auto before = offered.size();
     for (const std::string &name : bundled_names(bundled)) {
         const std::string source = bundled_child(bundled, name);
+        if (offered.contains(name) && set_aside_outdated_example(name))
+            offered.erase(name);
         if (offered.contains(name) || !bundled_folder(source))
             continue;
         const auto target = mods_dir() / utf8_path(name);
@@ -1807,59 +1635,6 @@ void copy_example_mods() {
         write_offered_examples(list, offered);
 }
 
-void draw_mod_row(const verdite::ModInfo &mod) {
-    ImGui::PushID(mod.id.c_str());
-    const bool paused = mods_paused();
-    bool enabled = mod.enabled;
-    ImGui::BeginDisabled(paused);
-    if (ImGui::Checkbox("##enabled", &enabled)) {
-        if (enabled)
-            host->enable(mod.id);
-        else
-            host->disable(mod.id);
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::Text("%s", mod.name.c_str());
-    if (!mod.version.empty()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("v%s", mod.version.c_str());
-    }
-    if (!mod.author.empty()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("by %s", mod.author.c_str());
-    }
-    // A disabled mod has no state label; a SameLine with nothing after it would put the
-    // description on the name's line.
-    if (mod.state == verdite::ModState::Failed) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "error");
-    } else if (mod.held) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("off in Classic mode");
-    } else if (mod.state == verdite::ModState::Running) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "running");
-    }
-    ImGui::Indent();
-    if (!mod.description.empty())
-        ImGui::TextWrapped("%s", mod.description.c_str());
-    if (!mod.error.empty())
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.45f, 1.0f), "%s", mod.error.c_str());
-    ImGui::BeginDisabled(paused);
-    if (mod.state == verdite::ModState::Running && !mod.held && mod.has_settings && ImGui::TreeNode("Settings")) {
-        if (!paused) {
-            ui_frame_open();
-            host->call(mod.id, verdite::ModCallback::Settings);
-            ui_frame_close();
-        }
-        ImGui::TreePop();
-    }
-    ImGui::EndDisabled();
-    ImGui::Unindent();
-    ImGui::Separator();
-    ImGui::PopID();
-}
 }
 
 void mods_start() {
@@ -2092,23 +1867,22 @@ void mods_frame(int context) {
 }
 
 void mods_draw_hud() {
-    if (!mods_active())
+    ui_mod_pages_shown(mods_active());
+    if (!mods_active()) {
+        ui_frames_done();
         return;
-    // Mod windows use the base font size whatever the interface scale is.
-    ImGui::PushFont(nullptr, hud_font_size / ImGui::GetStyle().FontScaleMain);
+    }
     draw_actions.advance(host_actions_held());
     callback_actions = &draw_actions;
     for (const verdite::ModInfo &mod : host->mods()) {
         if (mod.state != verdite::ModState::Running)
             continue;
-        ImGui::PushID(mod.id.c_str());
         ui_frame_open();
         host->call(mod.id, verdite::ModCallback::Draw);
         ui_frame_close();
-        ImGui::PopID();
     }
     callback_actions = &update_actions;
-    ImGui::PopFont();
+    ui_frames_done();
     refresh_mod_play();
 }
 
@@ -2141,29 +1915,32 @@ SaveModInfo mods_save_info(SaveSlot slot) {
     return {saved->size(), verdite::saved_mods_compare(*saved, mods_running_list())};
 }
 
-void mods_draw_panel() {
-    if (!host)
-        return;
-    if (mods_paused())
-        ImGui::TextWrapped("Mods are off in coop. They come back when you leave the room.");
-    const auto folder = mods_dir().string();
-    ImGui::TextDisabled("Folder: %s", folder.c_str());
-    if (ImGui::Button("Open mods folder"))
-        SDL_OpenURL(("file:///" + mods_dir().generic_string()).c_str());
-    ImGui::SameLine();
-    ImGui::BeginDisabled(mods_paused());
-    if (ImGui::Button("Reload all"))
+void mods_reload_all() {
+    if (host && !mods_paused())
         host->reload_all();
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled("(saving a mod's files reloads it automatically)");
-    ImGui::Separator();
-    const auto list = host->mods();
-    if (list.empty())
-        ImGui::TextWrapped("No mods yet. Create a folder in the mods folder with a mod.json and main.lua.");
-    for (const verdite::ModInfo &mod : list)
-        draw_mod_row(mod);
+}
+
+void mods_open_folder() {
+    if (!SDL_OpenURL(("file:///" + mods_dir().generic_string()).c_str()))
+        std::printf("[mods] cannot open the mods folder: %s\n", SDL_GetError());
+}
+
+bool mods_off_in_room() {
+    return mods_paused();
+}
+
+void mods_ui_action(const verdite::ui::Action &action) {
+    const std::optional<ModUiPress> press = ui_mod_press(action);
+    if (!host || !press || !mods_active())
+        return;
+    std::array<verdite::ModEventValue, 4> values{std::string_view(press->document), std::string_view(press->name),
+                                                 std::string_view(press->value), std::string_view(press->kind)};
+    host->raise_for(press->mod, "on_ui_action", values);
     refresh_mod_play();
+}
+
+void mods_ui_wheel(float steps) {
+    ui_wheel(steps);
 }
 }
 

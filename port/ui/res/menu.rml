@@ -1,0 +1,48 @@
+<rml>
+<head>
+	<title>Verdite1</title>
+	<link type="text/rcss" href="kf1.rcss"/>
+</head>
+<!-- The F1 menu (port/ui/menu.cpp fills #tabs, #update, #version, #heading, #part, #rows, #help and #prompts) -->
+<body>
+	<div id="shade"></div>
+	<div id="window">
+		<div id="rule-outer">
+			<div id="rule-inner">
+				<div id="main">
+					<div id="sidebar">
+						<div id="crest">
+							<div id="wordmark"><img id="logo" src="logo.alpha"/><img id="logo-one" src="logo_one.alpha"/></div>
+							<div id="subtitle">King's Field</div>
+						</div>
+						<div id="tabs"></div>
+						<div id="update"></div>
+						<div id="version"></div>
+					</div>
+					<div id="content">
+						<div id="heading"></div>
+						<div id="page">
+							<div id="part"></div>
+							<div id="rows"></div>
+						</div>
+					</div>
+					<div id="help"></div>
+				</div>
+				<div id="prompts"></div>
+			</div>
+		</div>
+		<!-- KF1's own gold window frame, from the disc (body.game-art; port/ui/game_window_art.h) -->
+		<div id="game-frame">
+			<div id="frame-top-l"></div><div id="frame-top-r"></div>
+			<div id="frame-bottom-l"></div><div id="frame-bottom-r"></div>
+			<div id="frame-left-t"></div><div id="frame-left-b"></div>
+			<div id="frame-right-t"></div><div id="frame-right-b"></div>
+			<div id="frame-tl"></div><div id="frame-tr"></div><div id="frame-bl"></div><div id="frame-br"></div>
+		</div>
+		<img class="corner" id="corner-tl" src="corner_tl.alpha"/>
+		<img class="corner" id="corner-tr" src="corner_tr.alpha"/>
+		<img class="corner" id="corner-bl" src="corner_bl.alpha"/>
+		<img class="corner" id="corner-br" src="corner_br.alpha"/>
+	</div>
+</body>
+</rml>

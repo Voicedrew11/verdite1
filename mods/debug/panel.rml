@@ -1,0 +1,14 @@
+<rml>
+<head>
+	<title>Debug</title>
+	<link type="text/rcss" href="panel.rcss"/>
+</head>
+<!-- The debug panel (main.lua fills #tabs and #body) -->
+<body>
+	<div id="window">
+		<div id="title">Debug</div>
+		<div id="tabs"></div>
+		<div id="body"></div>
+	</div>
+</body>
+</rml>

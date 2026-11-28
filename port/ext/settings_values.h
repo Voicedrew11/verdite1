@@ -25,7 +25,6 @@ struct Settings {
     std::string aspect = default_aspect; // "4:3", "16:9", "16:10", "21:9" or "window"
     std::string pad_layout = "west";   // gamepad face buttons: "west" (the US game's) or "jp"
     std::string language = "en";   // game language when both are set up: "en" or "ja"
-    std::string ui_font;        // empty: first available system font
     AnalogOptions analog;       // the sticks, saved as "analog"
     BindingChanges bindings;    // controls.bindings: the player's lists over the defaults;
                                 // Classic mode leaves them

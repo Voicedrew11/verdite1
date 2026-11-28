@@ -20,15 +20,13 @@ public:
     void upload_layer(u8, const Image &) override {}
     void set_occluders(std::span<const u8>, int, int, float) override {}
     void upload_frame(std::span<const GpuVertex>, std::span<const DrawRun>, const FrameStyle &, const DepthCue &) override {}
-    void present(const FrameView &, std::span<const RenderLight>, int, int, ImDrawData *) override {}
+    void present(const FrameView &, std::span<const RenderLight>, int, int, const verdite::ui::Frame *) override {}
     std::optional<Image> capture() override {
         Image picture{width_, height_, {}};
         picture.rgba.resize(static_cast<std::size_t>(width_) * height_ * 4);
         return picture;
     }
     bool restore(const Image &picture) override { return picture.width == width_ && picture.height == height_; }
-    bool start_overlay() override { return true; }
-    void stop_overlay() override {}
     void release_window() override {}
 
 private:

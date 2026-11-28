@@ -107,7 +107,7 @@ Starting from acranon's King's Field Enhanced:
   https://github.com/acranon/kf1-enhanced
 English translation by John Osborne (weissvulf / HwitVlf); it is applied to
 your own disc, not included.
-Uses Dear ImGui, Lua, cJSON, SDL3, libchdr and zstd; their licenses are in
+Uses RmlUi, FreeType, Lua, cJSON, SDL3, libchdr and zstd; their licenses are in
 the "licenses" folder.
 
 King's Field is by FromSoftware. This is an unofficial fan project, not

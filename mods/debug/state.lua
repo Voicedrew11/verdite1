@@ -84,24 +84,25 @@ local RAW = {
 }
 
 -- A row whose getter raises shows "unavailable" rather than stopping the mod.
-local function show_rows(rows)
+local function show_rows(w, title, rows)
+  w:heading(title)
   for _, row in ipairs(rows) do
     local ok, value = pcall(row[2])
     if not ok then value = "unavailable" end
-    ui.text(row[1] .. ": " .. tostring(value))
+    w:text(row[1] .. ": " .. tostring(value))
   end
 end
 
-function M.draw()
+function M.draw(w)
   if kf.context() == "opening" then
-    ui.text("Load a save or start a game.")
+    w:text("Load a save or start a game.")
     return
   end
-  if ui.collapsing_header("World", true) then show_rows(WORLD) end
-  if ui.collapsing_header("Position", true) then show_rows(POSITION) end
-  if ui.collapsing_header("Player", true) then show_rows(PLAYER) end
-  if ui.collapsing_header("Equipment") then show_rows(WORN) end
-  if ui.collapsing_header("Raw layer") then show_rows(RAW) end
+  show_rows(w, "World", WORLD)
+  show_rows(w, "Position", POSITION)
+  show_rows(w, "Player", PLAYER)
+  show_rows(w, "Equipment", WORN)
+  show_rows(w, "Raw layer", RAW)
 end
 
 return M

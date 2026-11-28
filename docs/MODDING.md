@@ -4,7 +4,7 @@ Mods are Lua 5.4 scripts that the game loads, and reloads, while it runs. The
 workflow follows [Verdite2](https://github.com/Voicedrew11/verdite2): edit a
 file, save it, and the running game picks it up.
 
-This page documents API 1.0. What it promises is under [Stability](#stability), and how it was
+This page documents API 2.0. What it promises is under [Stability](#stability), and how it was
 reached under [API 1.0](#api-10). The host (discovery, reload, the
 sandbox, budgets, `config`, `save`, `mod.*`, events) is libverdite's
 `verdite/mods.h`; KF1's tables are rows in `port/ext/mods.cpp`.
@@ -38,8 +38,8 @@ mods/mymod/main.lua
   "name": "My Mod",
   "version": "1.0",
   "author": "you",
-  "api_version": "1.0",
-  "description": "Shown in the Mods panel.",
+  "api_version": "2.0",
+  "description": "Shown on the Mods page.",
   "entry": "main.lua"
 }
 ```
@@ -51,7 +51,7 @@ or a newer minor one, fails when it loads and says why; one that does not say al
 game sees it; after that its switch is
 stored like any other. `"enhancement": true` marks a mod that changes the game
 from the original: Classic mode holds it, loaded but with no callback or event
-until Classic mode is off, and the Mods panel says "off in Classic mode". A held
+until Classic mode is off, and the Mods page (F1 → Mods) says "Off in Classic mode.". A held
 mod's `kf.play` and `kf.game` values do not apply. `require("other")` loads `other.lua` from the same folder
 (`require("lib.util")` loads `lib/util.lua` or `lib/util/init.lua`). Two
 folders with the same `id`: the second is listed with an error and never runs.
@@ -67,11 +67,11 @@ extension, Neovim and others then complete names and flag mistakes.
 ## Live reload
 
 * The game scans the mods folder twice a second. A new folder appears in the
-  Mods panel immediately; mods start **disabled**, like Verdite2.
+  Mods page (F1 → Mods) immediately; mods start **disabled**, like Verdite2.
 * Saving any `.lua` file or `mod.json`, or changing a file under `assets/`, in an enabled mod reloads it: `on_unload`
   runs, the Lua state is discarded, and the mod starts fresh.
 * An error stops only that mod, as does going over its budget (below). The message and stack trace go to the Console
-  (F1 → Console) and appear under the mod in the Mods panel. Fix the file and
+  (F1 → Console) and appear under the mod on the Mods page. Fix the file and
   save; it reloads on its own.
 * The enabled flag and `config` are stored in `settings.json` next to the mods folder;
   `save` is stored with each save slot (below).
@@ -102,7 +102,8 @@ discards is set back the same way.
 `default` may be left out: off, `min`, or the first choice. A label is capitals and digits, as the menu font spells them
 (lower case is raised), at most 16 bytes, which reach the value's box; `japanese` is optional, at most 16 kana, and the Japanese menus use it. A menu has at most 32
 rows, a number at most 256 steps, a choice 2 to 16 values of one type. A mod.json breaking any of this fails the mod when it
-loads, and the error names the row. `on_settings` is still there for what a menu cannot do: buttons, readouts, ImGui.
+loads, and the error names the row. What a menu cannot do (buttons, readouts, editors) goes on a page of the mod's
+own ([`ui`](#ui)).
 
 ## Saves and the mods they were made with
 
@@ -120,10 +121,10 @@ back into a set-aside game after coop is not asked about: it is the player's own
 
 ## Coop
 
-Mods do not run in coop. With a mod on, the title's COOP asks first, saying so (ENTER or BACK), and F1's Online window says it too. While the coop world is in play every mod is paused:
+Mods do not run in coop. With a mod on, the title's COOP asks first, saying so (ENTER or BACK), and F1's Online page says it too. While the coop world is in play every mod is paused:
 no callbacks, no events, and `kf.play`, `kf.game` and `kf.rules` values are not
-applied, so the game plays as if no mod were set. The Mods panel says so and disables its
-switches and Reload all. The count in the overlay's status line reads 0. Leaving
+applied, so the game plays as if no mod were set. The Mods page says so and disables its
+switches and Reload all. Leaving
 the room resumes the mods where they were; their enabled flags are untouched. A
 mod's `save` table belongs to the single-player game and comes back with it.
 
@@ -135,12 +136,11 @@ Define any of these as globals:
 |---|---|
 | `on_load()` | after the script runs, on every (re)load |
 | `on_update()` | once per game update, when the game hands over its picture (gameplay, menus, cutscenes); not per displayed frame, which smoothing makes more frequent. Read and change game state here. `on_frame()`, its 0.1 name, still works |
-| `on_draw()` | every presented frame, for drawing over the game with `ui.draw_*` or a `ui.begin_window` |
+| `on_draw()` | every presented frame, for drawing over the game with `ui.draw_*`, or writing a page's parts |
 | `on_between_updates()` | between two world updates, where no menu or script holds the game; the only place a [`kf.call`](#kfcall) that changes state may run. It does not run in menus, cutscenes, at the title or while the game is paused |
-| `on_settings()` | while the mod's **Settings** node is open in the Mods panel |
 | `on_unload()` | before a reload or when the mod is disabled |
 
-The game is paused while the F1 overlay is open (Settings → Interface), so
+The game is paused while the F1 menu is open (Settings → Interface), so
 `on_update` does not run then; `on_draw` still does.
 
 ### Events
@@ -169,6 +169,7 @@ The events are listed in `kf.d.lua` too.
 | `on_death` | none | the player dies, before the revival or restart |
 | `on_save` | `slot` integer: 1 to 3 the game's slots, 4 the quick save, 5 the game set aside in coop | the game is saved, after its save data is written: a change to `save` in this handler goes into the next save |
 | `on_load_game` | `slot` integer, as `on_save` | a save is loaded, after its save data is read |
+| `on_ui_action` | `document`, `name`, `value`, `kind` strings | a press on one of this mod's own pages, or Enter in its text field; only that mod hears it ([`ui`](#ui)) |
 
 ## The sandbox and the budget
 
@@ -225,7 +226,7 @@ A mod may be nothing else: a folder with `assets/` needs no `mod.json` or
 | `KF/B0/MIX3.#6`, `#7`; `KF/B0/MIX9.#7`, `#8`; `KF/COM/MIX.TIM#5` | one picture inside a file of several: the opening's and ending's scroll pages, and the page of notification banners (below) |
 
 Each file is checked when the mod loads, with the game's own parse, and held in
-memory. A bad one fails the whole mod with a reason in the Mods panel, as a Lua
+memory. A bad one fails the whole mod with a reason on the Mods page, as a Lua
 error does; the game goes on. It is refused if it is not one of the kinds above,
 the disc has no file at its path, it is empty or larger than the disc's file (the
 game reads these into buffers made for the disc's sizes), it fails the check, or it
@@ -326,13 +327,16 @@ changes the game, as the caller could.
 ## `config`
 
 A table that persists per mod. Values may be numbers, booleans, strings or
-nested tables with string keys. It is saved when a `ui.*` widget changes, when the mod unloads, or when a
-callback that called `mod.save_config()` (or `kf.save_config()`) returns.
+nested tables with string keys. It is saved when the game's menu changes one of the mod's menu rows, when the mod
+unloads, or when a callback that called `mod.save_config()` (or `kf.save_config()`) returns.
 
 ```lua
 config.speed = config.speed or 1.5          -- default on first run
-function on_settings()
-  config.speed = ui.slider_float("Speed", config.speed, 0.5, 3)
+function on_ui_action(e)
+  if e.name == "faster" then
+    config.speed = math.min(config.speed + 0.5, 3)
+    mod.save_config()
+  end
 end
 ```
 
@@ -369,8 +373,8 @@ end
 | `kf.frame()` | presented-frame counter |
 | `kf.language()` | `"en"` or `"ja"`: the language the game's text is in now; it changes when the player switches in Configuration |
 | `kf.time()` | seconds since start |
-| `kf.key_down(name)` / `kf.key_pressed(name)` | SDL key names: `"F5"`, `"G"`, `"Left Shift"`; `pressed` is true on the first frame only. Both are false while the overlay is open or a mod's `ui.input_text` has the keyboard. |
-| `kf.action_down(name)` / `kf.action_pressed(name)` | an action held by any of its keys, pad buttons or touch controls (below); `pressed` is true on the first update in `on_update`, the first drawn frame in `on_draw`. Both are false while the overlay is open or a mod's `ui.input_text` has the keyboard. |
+| `kf.key_down(name)` / `kf.key_pressed(name)` | SDL key names: `"F5"`, `"G"`, `"Left Shift"`; `pressed` is true on the first frame only. Both are false while a menu is open or a text field on a mod's page has the keyboard. |
+| `kf.action_down(name)` / `kf.action_pressed(name)` | an action held by any of its keys, pad buttons or touch controls (below); `pressed` is true on the first update in `on_update`, the first drawn frame in `on_draw`. Both are false while a menu is open or a text field on a mod's page has the keyboard. |
 | `kf.action_hold(name, on)` | while `on` is true, the game sees the action held, as if its key were down |
 | `kf.action_press(name)` | the game's next button read sees the action held, and the one after released: one press |
 | `kf.action_block(name, on)` | while `on` is true, the game does not see the action from the player's keys, pad or touch; a blocked movement or look direction also stops that direction of the stick and the mouse |
@@ -383,7 +387,7 @@ end
 | `kf.equip(slot [, item])` | queued, see below |
 | `kf.move_player(x, y, z)` | moves the player now, world units; `y` nil keeps the height. See Position below |
 | `kf.save_config()` | as `mod.save_config()` |
-| `kf.api_version` | the API's version: `"1.2"` |
+| `kf.api_version` | the API's version: `"2.0"` |
 
 The actions are `forward`, `backward`, `strafe_left`, `strafe_right`,
 `turn_left`, `turn_right`, `look_up`, `look_down`, `attack`, `magic`,
@@ -576,7 +580,7 @@ KF1 keeps its rules as tables: each floor's monster definitions, the level
 growth table, the shops' prices, and the weapon and armour records (the only
 regeneration there is). So a rule is a value a mod sets, not a function the game
 calls. The game keeps its own numbers and lays each running mod's values over
-them; per field, the mod later in load order (the Mods panel's order, by name)
+them; per field, the mod later in load order (the Mods page's order, by name)
 wins. A mod's values are laid when the callback that set them returns, and again
 each time the game reloads a table (a floor's definitions at every map load, the
 prices when the language changes). They come off, and the game's numbers come
@@ -755,7 +759,7 @@ Functions the definitions file marks "Runs frames" (a shop, a dialogue page, a w
 fading the music) return when they are done, which may be when the player presses
 something. Every mod's `on_update` and `on_draw` go on running in those frames, the
 caller's own included, and none of them can make a call that changes state. While
-one runs, editing a mod's files or using the Mods panel takes effect only after it
+one runs, editing a mod's files or using the Mods page takes effect only after it
 returns. If a mod errs in those frames it stops: another mod at once, the caller as
 soon as the call returns.
 
@@ -950,7 +954,7 @@ function on_level_up() kf.audio.play(bell, {volume = 0.8}) end
 
 Lines and markers in the world, as real faces of the game's picture: walls hide
 them and smoothing moves them with the camera. For text at a point, use
-`ui.world_to_screen` with `ui.draw_text`; the overlay is over everything, so walls do
+`ui.world_to_screen` with `ui.draw_text`; the drawing is over everything, so walls do
 not hide that.
 
 | call | notes |
@@ -958,7 +962,7 @@ not hide that.
 | `kf.scene.line(x1, y1, z1, x2, y2, z2 [, r, g, b, a [, width]])` | world units, y down; `width` above 0, at most 1024 (default 1) |
 | `kf.scene.marker(x, y, z [, size [, r, g, b, a]])` | a square facing the camera; `size` above 0, at most 4096 (default 16) |
 
-- Call them in `on_update` or an event; in `on_draw` or `on_settings` they are an
+- Call them in `on_update` or an event; in `on_draw` they are an
   error. All shapes are cleared before each `on_update`, so draw them every update.
 - The game builds a picture before `on_update` runs, so a shape shows in the next
   update's picture. Menus and transitions draw no world, so none shows there.
@@ -975,46 +979,67 @@ function on_update()
 end
 ```
 
-## `ui` (Dear ImGui)
+## `ui`
 
-Only inside `on_draw` and `on_settings`. Colours are 0–1 floats. Sliders show a
-number box for typing a value. Mod drawing is not affected by the overlay's
-interface scale.
+Two halves: drawing over the game in `on_draw`, and the mod's own pages, RmlUi documents from its folder, at any
+time. Colours are 0–1 floats. Positions and sizes are the window's pixels, as `kf.view` gives them; mod drawing is not
+affected by the interface scale.
+
+### Drawing
+
+Only inside `on_draw`. The shapes go on one of two canvases the interface draws each frame.
 
 | call | notes |
 |---|---|
-| `ui.text(s)`, `ui.text_colored(r, g, b, s)` | |
-| `ui.button(label)` → bool | true when clicked |
-| `ui.checkbox(label, value)` → value | |
-| `ui.slider_int(label, v, min, max)` → v | |
-| `ui.slider_float(label, v, min, max [, fmt])` → v | |
-| `ui.combo(label, index, {items})` → index | 1-based |
-| `ui.input_text(label, text [, max_bytes])` → text | a text box; `max_bytes` 64 by default, held to 1–1024, and longer text is cut to fit. While it has the keyboard, the keys do not reach the game or `kf.key_*` and `kf.action_*` |
-| `ui.input_int(label, v)` → v | |
-| `ui.collapsing_header(label [, default_open])` → open | `default_open` opens it the first time it is drawn; after that the player's choice holds |
-| `ui.text_wrapped(s)` | wraps to the window's width |
-| `ui.begin_scroll(id, height_px)` → visible; `ui.end_scroll()` | a bordered area of that height (above 0), full width, scrolled; always call `end_scroll` |
-| `ui.begin_tab_bar(id)` → visible; `ui.end_tab_bar()` | call `end_tab_bar` only when `begin_tab_bar` was true; no tab may be open then |
-| `ui.begin_tab(label)` → visible; `ui.end_tab()` | in a tab bar; call `end_tab` only when `begin_tab` was true |
-| `ui.separator()`, `ui.same_line()`, `ui.spacing()`, `ui.tooltip(s)` | |
-| `ui.begin_window(title [, click_through])` → visible; `ui.end_window()` | always call `end_window` |
-| `ui.draw_text(x, y, s [, r, g, b, a [, size]])` | window points, with a shadow; `size` in points (default 18) |
-| `ui.draw_rect(x, y, w, h [, r, g, b, a [, filled]])` | |
-| `ui.draw_line(x1, y1, x2, y2 [, r, g, b, a [, thickness]])` | thickness in points (default 1) |
+| `ui.draw_text(x, y, s [, r, g, b, a [, size]])` | with a shadow; `size` in pixels (default 18) |
+| `ui.draw_rect(x, y, w, h [, r, g, b, a [, filled]])` | filled unless `filled` is false (then a 1-pixel outline) |
+| `ui.draw_line(x1, y1, x2, y2 [, r, g, b, a [, thickness]])` | thickness in pixels (default 1) |
 | `ui.draw_circle(x, y, radius [, r, g, b, a [, filled [, thickness]]])` | filled unless `filled` is false |
 | `ui.draw_polygon({x1, y1, x2, y2, ...} [, r, g, b, a [, filled [, thickness]]])` | 3 to 64 points; filled (the default) must be convex |
 | `ui.push_clip(x, y, w, h)`, `ui.pop_clip()` | clips the layer's drawing; the end of `on_draw` pops any left |
-| `ui.layer(name)` | `"foreground"` (the default each `on_draw`): over everything; `"background"`: over the picture, under the windows |
-| `ui.text_size(s [, size])` → w, h | points |
-| `ui.mouse()` → x, y | window points; far off screen when there is no mouse |
-| `ui.mouse_down(button)` → bool | 1 left, 2 right, 3 middle; false while the overlay is open |
-| `ui.mouse_wheel()` → steps | this frame, up positive; 0 while the overlay is open |
+| `ui.layer(name)` | `"foreground"` (the default each `on_draw`): over everything; `"background"`: over the picture, under the pages and menus |
+| `ui.text_size(s [, size])` → w, h | pixels |
+| `ui.mouse()` → x, y | window pixels |
+| `ui.mouse_down(button)` → bool | 1 left, 2 right, 3 middle; false while a menu is open |
+| `ui.mouse_wheel()` → steps | since the last drawn frame, up positive; 0 while a menu is open |
 | `ui.game_to_screen(x, y)` → x, y | converts PS1 320×240 coordinates (the original area, where the game's HUD and menus are) |
 | `ui.world_to_screen(x, y, z)` → x, y or nil, nil | a world point through the camera this frame shows; nil behind the camera or with no world drawn (menus) |
 
-The `begin_` calls that open a window or a scroll area always need their `end_`; the tab
-ones need theirs only when the begin returned true. A Lua error between a begin and its end
-does not break the game's interface: the frame ends the open ones, innermost first.
+### A mod's pages
+
+A page is an `.rml` file in the mod's folder, with its `.rcss` styles and images beside it, in
+[RmlUi](https://mikke89.github.io/RmlUiDoc/)'s HTML and CSS. The menu font is named `Cabin` (regular and bold); `Mincho` is still loaded. A page is drawn over the
+game and under the game's own menus; it takes the mouse where it covers the picture, so a full-screen page that
+should let the game have the mouse gives its body `pointer-events: none` and its panels `pointer-events: auto`.
+RmlUi has no default style sheet: every element is inline until a style says otherwise, and a scroll area's bar
+needs a size (`scrollbarvertical { width: 6dp; }`) or it covers the area. `mods/debug/panel.rml` is a whole example.
+
+| call | notes |
+|---|---|
+| `ui.load(path)` → page or nil | the page at `path` in the mod's folder (`"panel.rml"`, `"pages/map.rml"`), loaded hidden; nil when it does not load, and the Console says why. The handle is the path. Call it in `on_load`: a reload drops the mod's pages |
+| `ui.show(page)`, `ui.hide(page)`, `ui.shown(page)` → bool | mods' pages hide while mods are off (coop) and come back after |
+| `ui.set_text(page, id, s)` | the element's content as plain text |
+| `ui.set_rml(page, id, rml)` | the element's content as RML; nothing is rebuilt when it is the same as before, so a page can be written every frame and a text field in it keeps its typing |
+| `ui.set_classes(page, id, classes)` | the element's `class`, space-separated |
+| `ui.field(page, id)` → s, `ui.set_field(page, id, s)` | a text field's (`<input type="text">`) text. While a field has the keyboard, the keys do not reach the game or `kf.key_*` and `kf.action_*` |
+
+A press on an element with `data-action="name"` (or inside one), and Enter in a field with `data-enter="name"`,
+raise `on_ui_action` in that mod alone (its fields: `document`, the page as `ui.load` named it; `name`; `value`,
+the element's `data-value` or `""`; `kind`, `"press"` or `"enter"`):
+
+```lua
+local page
+function on_load()
+  page = ui.load("panel.rml")   -- <div id="count"></div><button data-action="add" data-value="5">+5</button>
+  ui.show(page)
+end
+function on_ui_action(e)
+  if e.name == "add" then
+    config.count = (config.count or 0) + tonumber(e.value)
+    ui.set_text(page, "count", tostring(config.count))
+  end
+end
+```
 
 ## Examples
 
@@ -1141,7 +1166,7 @@ mods are off in coop (decided 2026-10-31).
 
 1. ~~Move the host into libverdite. Add the sandbox, budgets, `on_update`, and
    generation of the definitions file.~~ Done in 0.2 (2026-10-31). `ui` stays
-   in `port/`, bound as a table like the rest, since ImGui is the platform's.
+   in `port/` (`port/ui/mod_ui.cpp`), bound as a table like the rest, since the interface is the platform's.
 2. ~~Player position, world and game flow, then a debug mod (noclip, god mode,
    infinite MP, peaceful, speed, warp) in place of Verdite's debug menu.~~
    Done in 0.3 (2026-10-31): position, `kf.warp`, `kf.world`'s story flags,
@@ -1196,9 +1221,17 @@ mods are off in coop (decided 2026-10-31).
     `kf.play.no_look_lead`, `kf.items.slot`, `kf.magic.selected` and `select`, and the ui's tabs, collapsing
     headers, scroll areas, text boxes and int boxes. The new names raise the minor version.~~
 
-14. Declare 1.2: `kf.language()`; the pictures the disc names without `.TIM`, and the opening's,
+14. ~~Declare 1.2: `kf.language()`; the pictures the disc names without `.TIM`, and the opening's,
     ending's and banners' pictures inside their files, among the files a mod may replace. For mods
-    that letter the game's text (the Text and Retranslation mods).
+    that letter the game's text (the Text and Retranslation mods).~~
+
+15. ~~Declare 2.0 (2026-11-28): the interface moved from Dear ImGui to RmlUi, so the `ui` widgets
+    (`text`, `button`, `checkbox`, the sliders, `combo`, the text and int boxes, the headers, tabs,
+    windows and scroll areas, `same_line`, `separator`, `spacing`, `tooltip`) and `on_settings` go.
+    In their place a mod loads pages of its own (`ui.load`, `show`, `set_rml`...) and hears their
+    presses as `on_ui_action`. The drawing calls stay, in the window's pixels. No mod for Verdite1
+    used the widgets but the shipped debug mod, which was rewritten; a copy the game gave a player
+    of an example written for 1.x is moved to `mods_removed/<name>-api1` and the new one copied.~~
 
 ### Open questions
 

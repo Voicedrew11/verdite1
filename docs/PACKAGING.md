@@ -223,9 +223,11 @@ Notify only, as the C# ports: nothing is downloaded. `verdite/update_check.h` ha
   Verdite3: at once a day, a release went unannounced for up to a day. Offline or rate-limited, the
   kept answer stands.
 - **Shown** once a launch, when the title menu is up and nothing else covers the game, never in play.
-  A desktop draws a window (Download page, Skip this version, Later) that holds the game while it is
-  open, and a gold "Update available!" badge in the F1 menu bar. Android shows a dialog with the same
-  three buttons; a phone has no menu bar, so the setting's row in Interface says so too.
+  Every platform draws the same RmlUi plate (Download page, Skip this version, Later;
+  `port/ui/res/notice.rml`) that holds the game while it is open, and a gold "Update available" badge
+  under the version in the F1 menu, which shows the plate again; the setting's row in Interface says
+  so too. The interface's documents and fonts are carried in the binary (`cmake/ui_assets.cmake`),
+  and RmlUi's and FreeType's licences ship with the others.
 - **Skip** stops announcing that one tag; a later one is announced.
 - **Off:** Interface > "Check for updates at launch". `KF_UPDATE_CHECK=0` turns it off for a run and
   `force` asks now, in any build. `KF_TEST_UPDATE_URL` asks another URL (a `file://` works on the

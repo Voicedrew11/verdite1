@@ -731,7 +731,7 @@ OptionSection interface_overlay() {
     Settings &s = settings();
     OptionRow scale = number("overlay.ui_scale", "Interface scale",
                              "The overlay's size. Applies when you release the slider. Mods are not scaled.", s.ui_scale,
-                             {0.75, 2.5, 0.05, "%.2f"}, overlay_restyle);
+                             {0.75, 2.5, 0.05, "%.2f"}, store_only);
     scale.settle = true;
     return {"", {
         action("overlay.run_setup", "Run setup again",
@@ -845,9 +845,65 @@ OptionPage multiplayer_page() { return {"Multiplayer", {multiplayer_own(), multi
 
 std::string mod_install_note;   // what the last install did
 
-// The Mods page: installing from a .zip, then each mod's own menu.
+std::optional<verdite::ModInfo> mod_named(const std::string &id) {
+    for (verdite::ModInfo &mod : mods_list())
+        if (mod.id == id)
+            return std::move(mod);
+    return std::nullopt;
+}
+
+// A mod switched on or off, with why it is not running under it.
+OptionRow mod_row(const verdite::ModInfo &mod) {
+    std::string help = mod.description;
+    if (!mod.author.empty())
+        help += (help.empty() ? "By " : " By ") + mod.author + ".";
+    OptionRow made = row("mods.enabled." + mod.id, OptionKind::Toggle,
+                         mod.version.empty() ? mod.name : mod.name + "  v" + mod.version, std::move(help));
+    made.get = [id = mod.id] {
+        const std::optional<verdite::ModInfo> now = mod_named(id);
+        return OptionValue(now && now->enabled);
+    };
+    made.set = [id = mod.id](const OptionValue &v) { mods_set_enabled(id, std::get<bool>(v)); };
+    made.state = [id = mod.id] {
+        OptionState state;
+        state.enabled = !mods_off_in_room();
+        const std::optional<verdite::ModInfo> now = mod_named(id);
+        if (!now)
+            return state;
+        if (now->state == verdite::ModState::Failed)
+            state.note = "Error: " + now->error;
+        else if (now->held)
+            state.note = "Off in Classic mode.";
+        else if (now->state == verdite::ModState::Running)
+            state.note = "Running.";
+        return state;
+    };
+    return made;
+}
+
+// Every installed mod, and the folder they live in.
+OptionSection installed_mods() {
+    OptionSection section{"Installed", {}};
+    section.rows.push_back(shown_if(note("mods.off_in_room", "Mods are off in coop. They come back when you leave the room."),
+                                    mods_off_in_room));
+    const std::vector<verdite::ModInfo> list = mods_list();
+    if (list.empty())
+        section.rows.push_back(note("mods.none", "No mods yet. Create a folder in the mods folder with a mod.json and main.lua."));
+    for (const verdite::ModInfo &mod : list)
+        section.rows.push_back(mod_row(mod));
+    section.rows.push_back(enabled_if(action("mods.reload", "Reload all",
+                                             "Every mod on, as if its files changed. Saving a mod's files reloads it by itself.",
+                                             mods_reload_all),
+                                      [] { return !mods_off_in_room(); }));
+    section.rows.push_back(needs(action("mods.folder", "Open mods folder", "", mods_open_folder), PlatformFeature::Window));
+    section.rows.push_back(status("mods.folder_path", "Folder", [] { return mods_dir().string(); }));
+    return section;
+}
+
+// The Mods page: installing from a .zip, every mod, then each mod's own menu.
 OptionPage mods_page() {
     OptionPage page = mod_menu_options_page();
+    page.sections.insert(page.sections.begin(), installed_mods());
     OptionSection install{"", {
         needs(action("mods.install", "Install mod...",
                      "Choose a mod's .zip. It is copied into the mods folder and starts off: turn it on under MODS "

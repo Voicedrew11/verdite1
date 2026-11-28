@@ -91,7 +91,6 @@ enum class ModCallback : std::uint8_t {
     Load,       // on_load: after the script runs, on every (re)load
     Update,     // on_update (or on_frame, its old name): once per game update
     Draw,       // on_draw: once per displayed frame
-    Settings,   // on_settings: while the mod's settings are shown
     Unload,     // on_unload: before a reload, or when disabled
     // on_between_updates: between two world updates, where no menu or script holds the game. Calls
     // into the game that change state run here (verdite/raw_call.h).
@@ -205,7 +204,6 @@ struct ModInfo {
     bool enabled = false;         // switched on: a Failed mod stays on, and reloads when fixed
     ModState state = ModState::Disabled;
     std::string error;            // set when Failed: the message and stack
-    bool has_settings = false;    // defines on_settings
     bool enhancement = false;     // mod.json "enhancement"
     bool held = false;            // Running, but held: an enhancement while hold_enhancements lasts
     std::vector<ModMenuRow> menu; // mod.json "menu"; empty when it has none or it was refused
@@ -226,7 +224,7 @@ public:
     // Calls the callback in every running mod, in the listed order. A mod that errs, goes over its
     // budget or its memory cap is stopped and Failed; the others go on.
     void call_each(ModCallback callback);
-    // The same for one mod (Settings, from the panel).
+    // The same for one mod.
     void call(std::string_view id, ModCallback callback);
     // The game presented a frame. A mod inside a call that runs frames (verdite/raw_call.h) gets a
     // whole budget for its next ones, and each mod's hook handlers (verdite/raw_hook.h), which share
@@ -254,6 +252,9 @@ public:
     // a callback's budget. values follow the event's fields; each mod sees what the one before it
     // left, and the final values are written back. A raise during another raise is ignored.
     void raise(std::string_view event, std::span<ModEventValue> values);
+    // The same in one running mod only (a press on that mod's own page). Nothing for a mod not
+    // running or held, or an unknown event.
+    void raise_for(std::string_view id, std::string_view event, std::span<ModEventValue> values);
 
     // The current game's save tables (each mod's `save` global, stored with a save slot), as a
     // JSON object keyed by mod id. A mod not running keeps the entry it had, so disabling a mod

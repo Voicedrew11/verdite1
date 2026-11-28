@@ -1,5 +1,5 @@
 -- Debug: cheats, flight, editors and warps for testing. Switches are off until turned
--- on here, in the menu, or with their hotkey (keys.lua). The panel opens with F3.
+-- on here, in the menu, or with their hotkey (keys.lua). The panel (panel.rml) opens with F3.
 
 local keys = require("keys")
 local flight = require("flight")
@@ -23,10 +23,14 @@ default("fly_fast", 4.0)
 default("move_smoothing", 0.4)
 default("look_smoothing", 0.4)
 
--- Each editor is a tab, with .title, .draw(), and optional .update() and .between_updates().
+-- Each editor is a tab, with .title, .draw(w) (w: panel.lua), and optional .update() and
+-- .between_updates().
 local editors = {character, items, magic, warp, state}
 
+local panel = require("panel")
+
 local panel_open = false   -- not saved: closed at start
+local page = nil           -- the panel's page (panel.rml), once loaded
 
 local function apply()
   kf.play.noclip = config.noclip or flight.holds_height()
@@ -54,6 +58,8 @@ end
 local function toggle_panel()
   panel_open = not panel_open
   kf.game.mouse = panel_open
+  if not page then return end
+  if panel_open then ui.show(page) else ui.hide(page) end
 end
 
 local function in_play()
@@ -88,43 +94,51 @@ local function read_hotkeys()
   end
 end
 
-local function draw_cheats()
-  set("noclip", ui.checkbox("Noclip", config.noclip))
-  ui.tooltip("Walk through walls. Your height still follows the floor.")
-  set("fly", ui.checkbox("Fly", config.fly))
-  ui.tooltip("Float through the world with your walk keys. E and C go up and down. "
+local function draw_cheats(w)
+  w:toggle("Noclip", config.noclip, function(on) set("noclip", on) end)
+  w:help("Walk through walls. Your height still follows the floor.")
+  w:toggle("Fly", config.fly, function(on) set("fly", on) end)
+  w:help("Float through the world with your walk keys. E and C go up and down. "
     .. "Walls do not stop you, and falls cannot kill you. F6 toggles it.")
-  set("invincible", ui.checkbox("God mode", config.invincible))
-  ui.tooltip("Blocks HP loss and fatal falls. Poison or curse from a blow still land.")
-  set("infinite_mp", ui.checkbox("Infinite MP", config.infinite_mp))
-  ui.tooltip("Refills MP every update, in the game world only.")
-  set("peaceful", ui.checkbox("Peaceful", config.peaceful))
-  ui.tooltip("Enemies never attack you.")
-  ui.separator()
-  set("move_speed", ui.slider_float("Move speed", config.move_speed, 0.25, 8))
-  ui.tooltip("How fast you walk, from a quarter to eight times normal.")
-  set("turn_speed", ui.slider_float("Turn speed", config.turn_speed, 0.25, 8))
-  ui.tooltip("How fast the stick turns you, from a quarter to eight times normal.")
-  set("game_speed", ui.slider_float("Game speed", config.game_speed, 0.25, 8))
-  ui.tooltip("How fast the whole game runs: 0.25 is slow motion, 8 is fast forward.")
-  flight.draw()
+  w:toggle("God mode", config.invincible, function(on) set("invincible", on) end)
+  w:help("Blocks HP loss and fatal falls. Poison or curse from a blow still land.")
+  w:toggle("Infinite MP", config.infinite_mp, function(on) set("infinite_mp", on) end)
+  w:help("Refills MP every update, in the game world only.")
+  w:toggle("Peaceful", config.peaceful, function(on) set("peaceful", on) end)
+  w:help("Enemies never attack you.")
+  w:heading("Speeds")
+  w:stepper("Move speed", config.move_speed, {0.25, 1}, function(v) set("move_speed", v) end, 0.25, 8)
+  w:stepper("Turn speed", config.turn_speed, {0.25, 1}, function(v) set("turn_speed", v) end, 0.25, 8)
+  w:stepper("Game speed", config.game_speed, {0.25, 1}, function(v) set("game_speed", v) end, 0.25, 8)
+  w:help("How fast the whole game runs: 0.25 is slow motion, 8 is fast forward.")
+  flight.draw(w)
 end
 
 local cheats_tab = {title = "Cheats", draw = draw_cheats}
 local tabs = {cheats_tab, character, items, magic, warp, state, keys}
+local shown_tab = 1
+local drawn = nil   -- the open tab as last written, whose controls a press runs
 
-local function draw_tabs()
-  if not ui.begin_tab_bar("debug") then return end
-  for _, tab in ipairs(tabs) do
-    if ui.begin_tab(tab.title) then
-      tab.draw()
-      ui.end_tab()
-    end
+local function tabs_rml()
+  local out = {}
+  for i, tab in ipairs(tabs) do
+    out[#out + 1] = string.format('<tab data-action="tab" data-value="%d"%s>%s</tab>', i,
+      i == shown_tab and ' class="chosen"' or "", panel.escaped(tab.title))
   end
-  ui.end_tab_bar()
+  return table.concat(out)
+end
+
+local function draw_panel()
+  if not page then return end
+  local w = panel.new()
+  tabs[shown_tab].draw(w)
+  drawn = w
+  ui.set_rml(page, "tabs", tabs_rml())
+  ui.set_rml(page, "body", w:rml())
 end
 
 function on_load()
+  page = ui.load("panel.rml")
   apply()
 end
 
@@ -147,13 +161,16 @@ function on_between_updates()
 end
 
 function on_draw()
-  if not panel_open then return end
-  if ui.begin_window("Debug") then draw_tabs() end
-  ui.end_window()
+  if panel_open then draw_panel() end
 end
 
-function on_settings()
-  draw_tabs()
+function on_ui_action(e)
+  if e.name == "tab" then
+    shown_tab = tonumber(e.value) or shown_tab
+  elseif drawn then
+    drawn:press(e, page)
+  end
+  apply()
 end
 
 function on_unload()

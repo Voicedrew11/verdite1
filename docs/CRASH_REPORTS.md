@@ -30,7 +30,7 @@ report is, with **Open the report's folder** and **Quit**.
 turn that patch off and carry on. Here a fault in a patch is a crash, with the window: a game running
 without a patch it was meant to have is worse than one that says it stopped. `host_fail` (an error the
 game cannot go on from) writes a report too, and its box says what went wrong. A Lua mod is another
-matter: it is someone else's code, so one that errs is stopped, with its error in the Mods window, the
+matter: it is someone else's code, so one that errs is stopped, with its error on the Mods page, the
 console and the report's events, and the game goes on (`docs/MODDING.md`).
 
 ## Hangs

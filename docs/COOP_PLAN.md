@@ -310,7 +310,7 @@ What the table changed:
 - **The side of the screen says who found what:** "PLAYER1234 PICKED UP KNIGHT SWORD", for
   pickups, purchases, sales, items used up and keys spent, out of the way of play. The game's own
   pickup message still shows to the player who picked it up.
-- **The feed is drawn by the game, on every platform alike.** Not by the Dear ImGui overlay,
+- **The feed is drawn by the game, on every platform alike.** Not by the interface over it,
   which is a desktop tool (Android puts its own panel in its place, and not every platform will
   have it): the feed is drawn into the game's own picture with the game's own fonts, as the PORT
   SETTINGS page is (`menu_spell` and `menu_draw_text`, `verdite-port.md`), so it shows wherever
@@ -528,8 +528,8 @@ Right (2026-11-02); the pages under it use the menu's boxes, cursor and font as 
   with their floor and experience; the chosen one goes in at the game's first update. A save made with other mods asks first.
 - **NEW GAME**: the story scroll, then a new game, as a button at the logo was.
 - **MODS**: every installed mod with its switch (ON, OFF, ERROR or HELD), Confirm flipping it, or opening its
-  page when it has a menu of its own (docs/MODDING.md, "A mod's menu"); `on_settings` and a mod's error text
-  stay in the F1 Mods window.
+  page when it has a menu of its own (docs/MODDING.md, "A mod's menu"); a mod's error text is on the F1
+  menu's Mods page.
 - **COOP**, after a page saying mods stay off in there when one is on: HOST (a world this machine already keeps, the last played first and under the cursor; NEW WORLD, either private, whose 8-digit code is shown to read out before START, or
   public; and OPTIONS, with ROOM SETTINGS and DELETE, which asks first with the cursor on BACK), JOIN BY CODE (a grid of digits, or the
   keyboard's), PUBLIC ROOMS (the service's list, kept up to date while shown: the host's name,
@@ -1119,7 +1119,7 @@ walls are fixed (Death, Multiplayer settings). So are the host's crown, the comp
   pack and goes back when its wearer leaves. A feed on the side of the screen says who picked up
   what. Healing for two is an open question.
 - 2026-10-26: the pickup feed is drawn by the game with its own fonts, from a libverdite model,
-  not by the Dear ImGui overlay, so it is the same on every platform. The Grass Fruit is taken
+  not by the interface over it, so it is the same on every platform. The Grass Fruit is taken
   out of coop's death rules: it should do something in coop, not yet decided.
 - 2026-10-26: any number of players, not two: no rule counts the players and the room's size is
   measured on the weakest platform (four is the first to test). A shared floor is run by its most

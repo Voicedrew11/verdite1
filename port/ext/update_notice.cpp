@@ -9,8 +9,13 @@
 
 #include <verdite/update_check.h>
 
-#include <imgui.h>
+#include "menu_input.h"
+#include "shell.h"
 
+#include <verdite/ui.h>
+
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -21,11 +26,6 @@
 #include <string>
 #include <thread>
 #include <utility>
-
-#ifdef __ANDROID__
-#include <SDL3/SDL_system.h>
-#include <jni.h>
-#endif
 
 namespace kf::ext {
 namespace {
@@ -43,7 +43,9 @@ std::optional<verdite::UpdateRelease> release;   // what the player is told abou
 bool badge_hidden = false;                       // until the next launch
 bool notice_shown = false;                       // once a launch
 bool notice_open = false;
-bool notice_focus = false;
+int notice_button = 0;   // the button with the focus
+MenuInputs notice_inputs;
+constexpr const char *notice_path = "notice.rml";
 
 std::filesystem::path state_file() { return user_folder() / state_file_name; }
 
@@ -92,57 +94,54 @@ std::string shown_version() {
 
 std::string available_line() { return std::string(product_name) + " " + shown_version() + " is available."; }
 
-#ifdef __ANDROID__
-std::mutex skip_lock;
-bool skip_asked = false;   // from Android's UI thread
+// The notice's buttons, in order, and what each does.
+constexpr std::array<const char *, 3> button_names = {"download", "skip", "later"};
 
-// Hands the release to the activity, whose dialog runs on the UI thread.
+verdite::ui::Document *notice_document() {
+    verdite::ui::Screen *screen = interface_screen();
+    return screen ? screen->load(notice_path) : nullptr;
+}
+
 void show_notice() {
-    auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
-    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
-    if (!env || !activity)
+    verdite::ui::Document *page = notice_document();
+    if (!page)
         return;
-    jclass type = env->GetObjectClass(activity);
-    const jmethodID method = env->GetMethodID(type, "showUpdateNotice",
-                                              "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
-    jstring line = env->NewStringUTF(available_line().c_str());
-    jstring running = env->NewStringUTF((std::string("You have ") + KF_VERSION + ".").c_str());
-    jstring page = env->NewStringUTF(release->page_url.c_str());
-    if (method && line && running && page)
-        env->CallVoidMethod(activity, method, line, running, page);
-    if (env->ExceptionCheck())
-        env->ExceptionClear();
-    env->DeleteLocalRef(page);
-    env->DeleteLocalRef(running);
-    env->DeleteLocalRef(line);
-    env->DeleteLocalRef(type);
-    env->DeleteLocalRef(activity);
-}
-
-void take_skip() {
-    std::lock_guard guard(skip_lock);
-    if (std::exchange(skip_asked, false))
-        skip_release();
-}
-#else
-void show_notice() {
     notice_open = true;
-    notice_focus = true;
+    notice_button = 0;
+    notice_inputs.reset();
+    page->set_text("available", available_line());
+    page->set_text("running", std::string("You have ") + KF_VERSION + ".");
+    page->show();
+    page->raise();
 }
 
-void take_skip() {}
-#endif
-
-// The gold of the update notice's main button and the badge, as Verdite2's and Verdite3's.
-void push_gold() {
-    const ImVec4 gold(0.83f, 0.69f, 0.22f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, gold);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.86f, 0.75f, 0.38f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.89f, 0.80f, 0.49f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.07f, 0.02f, 1.0f));
+void close_notice() {
+    notice_open = false;
+    if (verdite::ui::Document *page = notice_document())
+        page->hide();
 }
 
-void pop_gold() { ImGui::PopStyleColor(4); }
+void press_button(std::string_view name) {
+    if (name == "download")
+        open_page();
+    else if (name == "skip")
+        skip_release();
+    else if (name != "later")
+        return;
+    close_notice();
+}
+
+void notice_input(verdite::MenuInput input) {
+    using verdite::MenuInput;
+    const int last = static_cast<int>(button_names.size()) - 1;
+    switch (input) {
+    case MenuInput::Left: case MenuInput::Up: notice_button = std::max(notice_button - 1, 0); break;
+    case MenuInput::Right: case MenuInput::Down: notice_button = std::min(notice_button + 1, last); break;
+    case MenuInput::Confirm: press_button(button_names[static_cast<std::size_t>(notice_button)]); break;
+    case MenuInput::Back: press_button("later"); break;
+    default: break;
+    }
+}
 } // namespace
 
 void update_notice_start() {
@@ -162,7 +161,6 @@ void update_notice_start() {
 }
 
 void update_notice_poll() {
-    take_skip();
     if (found && !release) {
         std::lock_guard guard(found->lock);
         release = std::move(found->release);
@@ -176,80 +174,47 @@ void update_notice_poll() {
 
 bool update_notice_open() { return notice_open; }
 
-void update_notice_draw() {
-    if (!notice_open || !release)
+bool update_notice_event(const SDL_Event &event) {
+    if (!notice_open)
+        return false;
+    const bool pad = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || event.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
+                     event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION;
+    if (!pad && event.type != SDL_EVENT_KEY_DOWN && event.type != SDL_EVENT_KEY_UP)
+        return false;
+    if (const std::optional<verdite::MenuInput> input = notice_inputs.take(event))
+        notice_input(*input);
+    return true;
+}
+
+void update_notice_action(const verdite::ui::Action &action) {
+    if (action.kind != verdite::ui::ActionKind::Press)
         return;
-    const ImGuiViewport *screen = ImGui::GetMainViewport();
-    const float width_px = ImGui::GetFontSize() * 26.0f;
-    ImGui::SetNextWindowPos(screen->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(width_px, 0.0f));
-    if (std::exchange(notice_focus, false))
-        ImGui::SetNextWindowFocus();
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoSavedSettings;
-    if (ImGui::Begin("Update available", nullptr, flags)) {
-        ImGui::TextWrapped("%s", available_line().c_str());
-        ImGui::TextDisabled("You have %s.", KF_VERSION);
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        const float gap_px = ImGui::GetStyle().ItemSpacing.x;
-        const ImVec2 button((ImGui::GetContentRegionAvail().x - gap_px * 2.0f) / 3.0f, 0.0f);
-        push_gold();
-        if (ImGui::IsWindowAppearing())
-            ImGui::SetKeyboardFocusHere();
-        const bool download = ImGui::Button("Download page", button);
-        pop_gold();
-        ImGui::SetItemTooltip("%s", release->page_url.c_str());
-        ImGui::SameLine();
-        const bool skip = ImGui::Button("Skip this version", button);
-        ImGui::SameLine();
-        const bool later = ImGui::Button("Later", button) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                           ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight);
-        if (download)
-            open_page();
-        if (skip)
-            skip_release();
-        if (download || skip || later)
-            notice_open = false;
+    if (action.document == notice_path && notice_open) {
+        press_button(action.value);
+        return;
     }
-    ImGui::End();
+    if (action.name == "update" && release)   // the F1 menu's badge
+        show_notice();
 }
 
-float update_notice_badge_width_px() {
-    if (!release || badge_hidden)
-        return 0.0f;
-    return ImGui::CalcTextSize("Update available!").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+void update_notice_frame() {
+    if (!notice_open)
+        return;
+    if (const std::optional<verdite::MenuInput> input = notice_inputs.repeat())
+        notice_input(*input);
+    verdite::ui::Document *page = notice_document();
+    if (!page || !notice_open)
+        return;
+    for (std::size_t i = 0; i < button_names.size(); ++i)
+        page->set_classes(button_names[i], static_cast<int>(i) == notice_button ? "focused" : "");
 }
 
-void update_notice_draw_badge() {
+std::string update_notice_badge_rml() {
     if (!release || badge_hidden)
-        return;
-    constexpr const char *menu_id = "##update_badge";
-    push_gold();
-    if (ImGui::SmallButton("Update available!"))
-        ImGui::OpenPopup(menu_id);
-    pop_gold();
-    if (!ImGui::BeginPopup(menu_id))
-        return;
-    ImGui::TextDisabled("%s %s (you have %s)", product_name, shown_version().c_str(), KF_VERSION);
-    ImGui::Separator();
-    if (ImGui::MenuItem("Open download page"))
-        open_page();
-    if (ImGui::MenuItem("Skip this version"))
-        skip_release();
-    if (ImGui::MenuItem("Hide until next launch"))
-        badge_hidden = true;
-    ImGui::EndPopup();
+        return {};
+    return "<badge data-action=\"update\">Update available</badge>";
 }
 
 std::string update_notice_setting_note() { return release && !badge_hidden ? available_line() : std::string(); }
 } // namespace kf::ext
 
-#ifdef __ANDROID__
-// On Android's UI thread, from the dialog in VerditeActivity.java.
-extern "C" JNIEXPORT void JNICALL Java_io_github_voicedrew11_verdite1_VerditeActivity_nativeUpdateSkip(JNIEnv *, jclass) {
-    std::lock_guard guard(kf::ext::skip_lock);
-    kf::ext::skip_asked = true;
-}
-#endif

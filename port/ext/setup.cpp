@@ -1,7 +1,8 @@
 // KF1's first-run setup (verdite/setup.h): its pages and tiers over the option table, and which
-// screen shows them: setup_overlay.cpp's window on a desktop, setup_panel.cpp's views on Android.
+// screen shows them: setup_screen.cpp's RmlUi page.
 #include "internal.hpp"
-#include "setup_overlay.h"
+#include "setup_screen.h"
+#include "shell.h"
 #include <verdite/setup.h>
 #include <algorithm>
 #include <array>
@@ -257,10 +258,9 @@ public:
 struct SetupState {
     SetupSpec spec;
     std::optional<verdite::Setup> setup;
-    SetupOverlayScreen overlay_screen;
+    SetupMenuScreen menu_screen;
     UndrawnScreen undrawn_screen;
     bool drawn = false;   // this run has a screen
-    std::vector<SetupControl> controls;
 };
 SetupState state;
 
@@ -295,15 +295,14 @@ void check_spec(const SetupSpec &spec) {
 verdite::SetupScreen &screen() {
     if (!state.drawn)
         return state.undrawn_screen;
-    if (verdite::SetupScreen *panel = setup_panel_screen())
-        return *panel;
-    return state.overlay_screen;
+    return state.menu_screen;
 }
 
 } // namespace
 
 void setup_begin(Overlay overlay) {
-    state.drawn = overlay == Overlay::Drawn;
+    // Without the interface nothing could answer it, and it would hold the game paused.
+    state.drawn = overlay == Overlay::Drawn && interface_screen();
     check_spec(kf1_spec());
     settings_page_check();
     if (state.drawn && verdite::setup_due(kf1_spec(), settings().setup_seen))
@@ -312,30 +311,29 @@ void setup_begin(Overlay overlay) {
 
 void setup_run() {
     // Rebuilt each time, for the monitor the window is on now.
+    state.menu_screen.attach(nullptr);
     state.setup.reset();
     state.spec = kf1_spec();
     state.setup.emplace(state.spec, options(), platform_features(), mark_seen);
+    state.menu_screen.attach(&*state.setup);
     state.setup->start(screen());
 }
 
 bool setup_open() { return state.setup && state.setup->running(); }
 
-bool setup_shows_game() { return setup_open() && !setup_panel_screen(); }
+bool setup_shows_game() { return setup_open(); }
 
-void setup_poll() {
-    for (const std::string &line : setup_panel_take_controls())
-        if (state.setup && state.setup->running() && !state.setup->command(line))
-            std::printf("[setup] not a control that fits: %s\n", line.c_str());
+
+bool setup_event(const SDL_Event &event) {
+    return setup_open() && state.menu_screen.event(event);
 }
 
-void setup_draw() {
-    if (!state.drawn || setup_panel_screen() || !setup_open())
-        return;
-    state.overlay_screen.draw(state.controls);
-    std::vector<SetupControl> controls = std::exchange(state.controls, {});
-    for (const SetupControl &control : controls)
-        if (state.setup && state.setup->running())
-            control(*state.setup);
+void setup_action(const verdite::ui::Action &action) {
+    state.menu_screen.action(action);
+}
+
+void setup_frame() {
+    state.menu_screen.frame();
 }
 
 std::string setup_command(std::string_view line) {

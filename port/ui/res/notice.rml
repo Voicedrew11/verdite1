@@ -1,0 +1,23 @@
+<rml>
+<head>
+	<title>Update available</title>
+	<link type="text/rcss" href="kf1.rcss"/>
+</head>
+<!-- A new release, told once at the title (port/ext/update_notice.cpp fills #available and #running) -->
+<body class="notice">
+	<div id="shade"></div>
+	<div id="plate">
+		<div id="plate-inner">
+			<div id="wordmark"><img id="logo" src="logo.alpha"/><img id="logo-one" src="logo_one.alpha"/></div>
+			<h1>Update available</h1>
+			<p id="available"></p>
+			<p id="running" class="dim"></p>
+			<div id="buttons">
+				<button id="download" data-action="press" data-value="download">Download page</button>
+				<button id="skip" data-action="press" data-value="skip">Skip this version</button>
+				<button id="later" data-action="press" data-value="later">Later</button>
+			</div>
+		</div>
+	</div>
+</body>
+</rml>

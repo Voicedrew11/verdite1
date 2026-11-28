@@ -52,38 +52,24 @@ function keys.down(action)
   return name ~= nil and kf.key_down(name)
 end
 
-local function draw_enabled()
-  local on = ui.checkbox("Hotkeys on", config.keys_enabled)
-  if on ~= config.keys_enabled then
+local function save_key(action, name)
+  config.keys[action] = name
+  mod.save_config()
+end
+
+function keys.draw(w)
+  w:toggle("Hotkeys on", config.keys_enabled, function(on)
     config.keys_enabled = on
     mod.save_config()
-  end
-end
-
-local function draw_row(row)
-  local text = config.keys[row.action]
-  local new = ui.input_text(row.label, text)
-  if new ~= text then
-    config.keys[row.action] = new
-    mod.save_config()
-  end
-  if new ~= "" and not is_valid(new) then
-    ui.text_colored(1, 0.35, 0.35, "Not a key name: " .. new)
-  end
-end
-
-local function draw_held()
-  ui.separator()
-  ui.text_wrapped("In flight the walk keys (forward, back, strafe) fly you, "
-    .. "and the run key makes it fast. Fly up and fly down are held.")
-end
-
-function keys.draw()
-  draw_enabled()
+  end)
+  w:help("Type a key's name and press Enter: an SDL key name, as F3, V or Left Shift.")
   for _, row in ipairs(ROWS) do
-    draw_row(row)
+    local text = config.keys[row.action]
+    w:field(row.action, row.label, text, function(name) save_key(row.action, name) end)
+    if text ~= "" and not is_valid(text) then w:text("Not a key name: " .. text, "warning") end
   end
-  draw_held()
+  w:help("In flight the walk keys (forward, back, strafe) fly you, "
+    .. "and the run key makes it fast. Fly up and fly down are held.")
 end
 
 return keys
