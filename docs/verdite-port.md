@@ -661,7 +661,9 @@ and `kf1.rcss` in `res/`, carried in the binary (`cmake/ui_assets.cmake`). The w
 as holyland's player menu: a framed window with iron corners, the Verdite¹ logo over the pages in the
 sidebar, the page's title over its rows, the help column; the logo and corners are alpha masks
 (`port/ui/art/*.png` to `res/*.alpha` by `tools/ui_masks.py`; `verdite/ui.h`: `alpha_mask`), coloured
-by the style sheet. Vulkan draws the frame
+by the style sheet. With the player's disc, the F1 menu and the setup wear KF1's own gold window
+frame instead of the rules and corners (`port/ui/game_window_art.cpp`: the status window's tile from
+`COM/STAT.DAT` and `COM/MIX.TIM`, served as images and never carried). Vulkan draws the frame
 last, in the swapchain's pass (`vulkan_ui.cpp`); a deko3d or citro3d backend draws the same frame.
 
 - **A new page of the F1 menu** is an option table page (rows in `port/ext/options.cpp`, which

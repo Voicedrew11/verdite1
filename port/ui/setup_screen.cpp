@@ -1,6 +1,7 @@
 // The first-run setup in RmlUi (setup_screen.h)
 #include "setup_screen.h"
 
+#include "game_window_art.h"
 #include "menu_input.h"
 #include "shell.h"
 
@@ -454,6 +455,7 @@ std::string SetupMenuScreen::State::help_rml() const {
 }
 
 void SetupMenuScreen::State::write(verdite::ui::Document &page) {
+    page.set_body_classes(game_window_art().available() ? "setup game-art" : "setup");
     page.set_rml("steps", steps_rml());
     page.set_rml("heading", heading_rml());
     page.set_rml("rows", rows_rml());

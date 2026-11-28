@@ -1,6 +1,8 @@
 // KF1's interface on RmlUi (shell.h)
 #include "shell.h"
 
+#include "game_window_art.h"
+
 #include "internal.hpp"
 
 #include <verdite/ui.h>
@@ -219,6 +221,7 @@ bool interface_start(SDL_Window *window) {
     setup.host = &shell->host;
     setup.assets = kf1_ui_assets();
     setup.fonts = font_faces;
+    setup.images = &game_window_art();
     shell->screen = verdite::ui::Screen::open(setup);
     if (!shell->screen) {
         std::fprintf(stderr, "[ui] the interface did not start: the game runs without it\n");

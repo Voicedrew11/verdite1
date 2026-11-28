@@ -79,6 +79,69 @@ img.corner {
 #corner-bl { left: -4dp; bottom: -4dp; }
 #corner-br { right: -4dp; bottom: -4dp; }
 
+/* ---- KF1's own window frame (body.game-art: the disc's status window, port/ui/game_window_art.h) ----------------------
+   The game's gold frame in place of the rules and iron corners: 8 of the game's pixels thick at 2.5dp a pixel. Each edge
+   is two halves, the second the first's mirror, so the pattern meets itself in the middle as the game's window does; the
+   window's own shade shows through the frame's gaps, as the game's backdrop does. */
+#game-frame {
+	display: none;
+}
+
+body.game-art #game-frame {
+	display: block;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+#game-frame div {
+	position: absolute;
+}
+
+#frame-tl, #frame-tr, #frame-bl, #frame-br {
+	width: 20dp;
+	height: 20dp;
+}
+
+#frame-tl { left: 0; top: 0; decorator: image(game/frame-corner fill); }
+#frame-tr { right: 0; top: 0; decorator: image(game/frame-corner flip-horizontal fill); }
+#frame-bl { left: 0; bottom: 0; decorator: image(game/frame-corner flip-vertical fill); }
+#frame-br { right: 0; bottom: 0; decorator: image(game/frame-corner rotate-180 fill); }
+
+#frame-top-l, #frame-top-r, #frame-bottom-l, #frame-bottom-r {
+	height: 20dp;
+}
+
+#frame-top-l { left: 20dp; right: 50%; top: 0; decorator: image(game/frame-top cover left top); }
+#frame-top-r { left: 50%; right: 20dp; top: 0; decorator: image(game/frame-top flip-horizontal cover right top); }
+#frame-bottom-l { left: 20dp; right: 50%; bottom: 0; decorator: image(game/frame-top flip-vertical cover left bottom); }
+#frame-bottom-r { left: 50%; right: 20dp; bottom: 0; decorator: image(game/frame-top rotate-180 cover right bottom); }
+
+#frame-left-t, #frame-left-b, #frame-right-t, #frame-right-b {
+	width: 20dp;
+}
+
+#frame-left-t { top: 20dp; bottom: 50%; left: 0; decorator: image(game/frame-left cover left top); }
+#frame-left-b { top: 50%; bottom: 20dp; left: 0; decorator: image(game/frame-left flip-vertical cover left bottom); }
+#frame-right-t { top: 20dp; bottom: 50%; right: 0; decorator: image(game/frame-left flip-horizontal cover right top); }
+#frame-right-b { top: 50%; bottom: 20dp; right: 0; decorator: image(game/frame-left rotate-180 cover right bottom); }
+
+body.game-art #rule-outer {
+	border-width: 0;
+	padding: 20dp;
+}
+
+body.game-art #rule-inner {
+	border-width: 0;
+	decorator: none;
+}
+
+body.game-art img.corner {
+	display: none;
+}
+
 #main {
 	display: flex;
 	flex-direction: row;

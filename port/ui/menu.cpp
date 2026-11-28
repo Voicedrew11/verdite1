@@ -1,6 +1,8 @@
 // The F1 menu (menu.h): KF1's option table on libverdite's option menu.
 #include "menu.h"
 
+#include "game_window_art.h"
+
 #include "internal.hpp"
 #include "menu_input.h"
 #include "menu_page.h"
@@ -212,7 +214,10 @@ void write_document(verdite::ui::Document &page) {
                                                   verdite::PlatformFeature::Touch)) != 0 &&
                        (platform_features() & static_cast<verdite::PlatformFeatures>(
                                                   verdite::PlatformFeature::Mouse)) == 0;
-    page.set_body_classes(touch ? "touch" : "");
+    std::string body = touch ? "touch" : "";
+    if (game_window_art().available())
+        body += body.empty() ? "game-art" : " game-art";
+    page.set_body_classes(body);
 }
 } // namespace
 
