@@ -357,3 +357,18 @@ TEST_CASE("menu model: dimmed choices are passed over and refused") {
     menu.press_choice(3);
     CHECK((!menu.list_open() && rows.tabs[0][0].value == 3));
 }
+
+TEST_CASE("menu model: a page's data-actions press and point by name and value") {
+    FakeRows rows = make_rows();
+    MenuModel menu(rows);
+    menu.open_at(0);
+    CHECK(menu_hover(menu, "row", "2"));
+    CHECK(menu.row() == 2);
+    CHECK(menu_press(menu, "step", "1:-1"));
+    CHECK(rows.tabs[0][1].value == 0);
+    CHECK(menu.row() == 1);
+    CHECK_FALSE(menu_press(menu, "row", "two"));
+    CHECK_FALSE(menu_press(menu, "step", "1"));
+    CHECK_FALSE(menu_press(menu, "nothing", "1"));
+    CHECK_FALSE(menu_hover(menu, "tab", "0"));
+}

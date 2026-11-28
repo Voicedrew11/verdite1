@@ -27,6 +27,8 @@
 // Refused for Confirm on a row with nothing to do or a press on a dimmed row;
 // None when nothing changed (Up at the top).
 
+#include <string_view>
+
 namespace verdite {
 
 enum class MenuRowKind : unsigned char {
@@ -122,6 +124,13 @@ private:
     int slot_ = 0;
     MenuCue cue_ = MenuCue::None;
 };
+
+// A press or hover on a menu's RML, by its data-action and data-value
+// (verdite/option_menu.h's convention: "tab" N, "row" N, "choice" N, "step"
+// N:delta, "slot" N:slot); false for any other name or a value that does not
+// read.
+bool menu_press(MenuModel &model, std::string_view action, std::string_view value);
+bool menu_hover(MenuModel &model, std::string_view action, std::string_view value);
 
 } // namespace verdite
 

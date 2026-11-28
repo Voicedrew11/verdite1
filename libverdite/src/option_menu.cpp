@@ -4,7 +4,6 @@
 #include <verdite/rml_text.h>
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -15,29 +14,6 @@ namespace verdite {
 namespace {
 
 constexpr double continuous_steps = 20;   // a Number with step 0 moves a twentieth a press
-
-std::optional<int> parse_int(std::string_view text) {
-    int value = 0;
-    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (error != std::errc() || end != text.data() + text.size()) {
-        return std::nullopt;
-    }
-    return value;
-}
-
-// "N:M" as two numbers.
-std::optional<std::pair<int, int>> parse_pair(std::string_view text) {
-    size_t colon = text.find(':');
-    if (colon == std::string_view::npos) {
-        return std::nullopt;
-    }
-    std::optional<int> first = parse_int(text.substr(0, colon));
-    std::optional<int> second = parse_int(text.substr(colon + 1));
-    if (!first || !second) {
-        return std::nullopt;
-    }
-    return std::pair(*first, *second);
-}
 
 const char *kind_class(MenuRowKind kind) {
     switch (kind) {
@@ -365,45 +341,11 @@ int OptionMenu::tab_of(std::string_view title) const {
 }
 
 bool OptionMenu::press(MenuModel &model, std::string_view action, std::string_view value) {
-    if (action == "tab" || action == "row" || action == "choice") {
-        std::optional<int> at = parse_int(value);
-        if (!at) {
-            return false;
-        }
-        if (action == "tab") {
-            model.press_tab(*at);
-        } else if (action == "row") {
-            model.press_row(*at);
-        } else {
-            model.press_choice(*at);
-        }
-        return true;
-    }
-    if (action == "step" || action == "slot") {
-        std::optional<std::pair<int, int>> at = parse_pair(value);
-        if (!at) {
-            return false;
-        }
-        if (action == "step") {
-            model.press_step(at->first, at->second);
-        } else {
-            model.press_slot(at->first, at->second);
-        }
-        return true;
-    }
-    return false;
+    return menu_press(model, action, value);
 }
 
 bool OptionMenu::hover(MenuModel &model, std::string_view action, std::string_view value) {
-    if (action != "row") {
-        return false;
-    }
-    std::optional<int> at = parse_int(value);
-    if (!at) {
-        return false;
-    }
-    model.point_at_row(*at);
-    return true;
+    return menu_hover(model, action, value);
 }
 
 } // namespace verdite
