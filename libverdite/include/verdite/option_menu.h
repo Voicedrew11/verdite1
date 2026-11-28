@@ -16,6 +16,7 @@
 //                <value>On</value> (a Number adds <bar><fill style="width: P%"/></bar>,
 //                                   the focused one <arrow data-action="step"
 //                                   data-value="N:-1">, and N:1)
+//                <fixed>the BindingSlots' fixed RML</fixed>, then
 //                <slot data-action="slot" data-value="N:S" class="chosen listening">
 //                  the BindingSlots' RML</slot> (a Binding, instead of value)
 //                <note>why it is dimmed</note>
@@ -41,8 +42,11 @@ public:
     virtual ~BindingSlots() = default;
     // 0: the row is not a binding.
     [[nodiscard]] virtual int slot_count(std::string_view row_id) const = 0;
-    // A slot's RML: a pad glyph, a keycap, or text; empty for an empty slot.
+    // A slot's RML: a pad glyph, a keycap, or text; or what an empty slot shows.
     [[nodiscard]] virtual std::string slot_rml(std::string_view row_id, int slot) const = 0;
+    // Controls the row always has, shown before its slots and never chosen
+    // (a game's fixed keys); empty for none.
+    [[nodiscard]] virtual std::string fixed_rml(std::string_view row_id) const;
     virtual void listen(std::string_view row_id, int slot) = 0;
     virtual void clear(std::string_view row_id, int slot) = 0;
     // Whether that slot is listening for a control now.

@@ -81,6 +81,7 @@ public:
     bool listening(std::string_view row_id, int slot) const override {
         return row_id == listened_row && slot == listened_slot;
     }
+    std::string fixed_rml(std::string_view) const override { return "Esc"; }
 };
 
 bool contains(const std::string &text, std::string_view part) {
@@ -205,7 +206,7 @@ TEST_CASE("option menu: binding rows take their slots from BindingSlots") {
     CHECK(bindings.listened_row == "controls.bindings.keys.jump");
     CHECK(bindings.listened_slot == 1);
     std::string rows = menu.rows_rml(model);
-    CHECK(contains(rows, "<slot data-action=\"slot\" data-value=\"1:0\"><key>Space</key></slot>"));
+    CHECK(contains(rows, "<fixed>Esc</fixed><slot data-action=\"slot\" data-value=\"1:0\"><key>Space</key></slot>"));
     CHECK(contains(rows, "data-value=\"1:1\" class=\"chosen listening\"></slot>"));
     CHECK(contains(rows, "<value>1.0</value>"));
     model.press(MenuInput::Clear);

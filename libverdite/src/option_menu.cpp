@@ -61,6 +61,10 @@ std::string status_text(const OptionValue &value) {
 
 } // namespace
 
+std::string BindingSlots::fixed_rml(std::string_view) const {
+    return {};
+}
+
 int option_choice_index(const OptionRow &row, const OptionValue &value) {
     for (size_t i = 0; i < row.choices.size(); i++) {
         if (row.choices[i].value == value) {
@@ -216,6 +220,9 @@ std::string OptionMenu::tabs_rml(const MenuModel &model) const {
 std::string OptionMenu::slots_rml(const MenuModel &model, int index,
                                   const OptionRowView &row) const {
     std::string out;
+    if (std::string fixed = bindings_->fixed_rml(row.row->id); !fixed.empty()) {
+        out += "<fixed>" + fixed + "</fixed>";
+    }
     int count = bindings_->slot_count(row.row->id);
     bool focused = model.row() == index;
     for (int slot = 0; slot < count; slot++) {
