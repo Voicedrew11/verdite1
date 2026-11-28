@@ -1,22 +1,29 @@
-/* The interface's look for King's Field: the game's own menus, a deep blue panel with a pale rule and
-   cream letters, every word in the menu Mincho (libverdite/res/fonts). One accent, the gold of the
-   game's highlighted line; ember only for a key being listened for. Only borders, colours, straight
-   gradients and radii: the recorder draws no transforms, masks or filters (libverdite/src/ui_recorder.h).
+/* The interface's look for King's Field, laid out as holyland's player menu: a framed window with iron corners, a
+   sidebar with the Verdite logo and the pages, the page's title and rows, the focused row's help, the keys along the
+   bottom. KF1's colours: a near-black navy window, cream letters, one accent (the gold of the game's highlighted line);
+   ember only for a key being listened for. Every word in the menu Mincho (libverdite/res/fonts). The chosen line lit
+   by a glow fading in from the left; no bars or rounded boxes. Only borders, colours, straight gradients and images:
+   the recorder draws no transforms, masks or filters (libverdite/src/ui_recorder.h). The logo and corners are alpha
+   masks (tools/ui_masks.py), coloured here by image-color.
 
-   Colours:  panel #181a34 to #0c0d1c   sidebar #12142a   rule #6a6f9a / #2c2f52   gold #ffe6aa
-             text #e8e2cc   dim #9a96a8   off #5c5a6c   key #2c2f52   ember #d27a5a */
+   Colours:  window #10121e to #07080e   sidebar #0d0f19 to #06070c   frame #545a7a / #262a3e   gold #e8cc8a
+             text #e6e0cc   dim #8f8b9c   off #55536a   key #34384e   ember #d27a5a   corners #a88f5c */
 
 /* (RmlUi has no default style sheet: every element is inline until it says otherwise) */
-div, h2, p, row, list, choice, tab {
+div, h1, h2, p, row, list, choice, tab {
 	display: block;
 }
 
+/* (a flex box, so the window sits in the middle at any size: its auto margins would not, being sized by max-width) */
 body {
 	font-family: Mincho;
 	font-size: 17dp;
-	color: #e8e2cc;
+	color: #e6e0cc;
 	width: 100%;
 	height: 100%;
+	display: flex;
+	justify-content: center;
+	align-items: center;
 }
 
 #shade {
@@ -25,82 +32,160 @@ body {
 	top: 0;
 	width: 100%;
 	height: 100%;
-	background-color: #00000090;
+	decorator: vertical-gradient(#000000a0 #000000d4);
 }
 
+/* ---- The window ---------------------------------------------------------------------------------------------------- */
 #window {
-	position: absolute;
-	left: 5%;
-	right: 5%;
-	top: 6%;
-	bottom: 6%;
-	max-width: 1180dp;
-	margin: 0 auto;
-	border: 2dp #6a6f9a;
-	border-radius: 6dp;
-	padding: 3dp;
-	decorator: vertical-gradient(#181a34f2 #0c0d1cf4);
+	position: relative;
+	width: 92%;
+	height: 90%;
+	max-width: 1200dp;
+	max-height: 760dp;
+}
+
+#rule-outer {
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	border: 2dp #545a7a;
+	padding: 4dp;
+	decorator: vertical-gradient(#10121ef4 #07080ef7);
+}
+
+#rule-inner {
 	display: flex;
 	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	border: 1dp #262a3e;
+	border-top-color: #34384e;
+	padding-bottom: 10dp;
+	decorator: vertical-gradient(#ffffff08 #ffffff00);
 }
 
+/* the window's iron corners, over the frame */
+img.corner {
+	display: block;
+	position: absolute;
+	width: 64dp;
+	height: 64dp;
+	image-color: #a88f5c;
+}
+
+#corner-tl { left: -4dp; top: -4dp; }
+#corner-tr { right: -4dp; top: -4dp; }
+#corner-bl { left: -4dp; bottom: -4dp; }
+#corner-br { right: -4dp; bottom: -4dp; }
+
 #main {
-	flex: 1;
 	display: flex;
 	flex-direction: row;
-	border: 1dp #2c2f52;
-	border-radius: 4dp;
+	flex: 1;
 	min-height: 0;
 }
 
-/* ---- The pages ---------------------------------------------------------------------------------- */
+/* ---- The sidebar: the logo, the pages, the version ----------------------------------------------------------------- */
 #sidebar {
-	width: 210dp;
-	background-color: #12142acc;
-	border-right: 1dp #2c2f52;
-	padding: 18dp 0;
 	display: flex;
 	flex-direction: column;
+	width: 250dp;
+	box-sizing: border-box;
+	padding: 24dp 0 12dp 0;
+	border-right: 1dp #262a3e;
+	decorator: vertical-gradient(#0d0f19c8 #06070cc8);
 }
 
-#title {
-	color: #ffe6aa;
-	font-size: 22dp;
-	letter-spacing: 2dp;
-	padding: 0 22dp 14dp 22dp;
+#crest {
+	padding: 0 22dp 14dp 26dp;
+	margin-bottom: 12dp;
+	border-bottom: 1dp #262a3e;
+}
+
+/* "Verdite" and its 1, as Verdite2's wordmark sets its 2: the top of the letters */
+#wordmark {
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+}
+
+#logo {
+	width: 180dp;
+	height: 48.4dp;
+	image-color: #e6e0cc;
+}
+
+#logo-one {
+	width: 7.6dp;
+	height: 23.3dp;
+	margin-left: 4.2dp;
+	margin-top: 0.6dp;
+	image-color: #e8cc8a;
+}
+
+#subtitle {
+	font-size: 13dp;
+	letter-spacing: 3dp;
+	color: #8f8b9c;
+	margin-top: 10dp;
 }
 
 #tabs {
 	flex: 1;
+	overflow-y: auto;
 }
 
 tab {
-	padding: 7dp 22dp;
-	color: #9a96a8;
+	font-size: 17dp;
+	letter-spacing: 1dp;
+	color: #8f8b9c;
+	padding: 6dp 18dp 6dp 23dp;
+	border-left: 3dp #00000000;
 	cursor: pointer;
 }
 
 tab:hover {
-	color: #e8e2cc;
+	color: #e6e0cc;
 }
 
 tab.chosen {
-	color: #ffe6aa;
-	decorator: horizontal-gradient(#ffe6aa30 #ffe6aa00);
+	color: #f4eedc;
+	border-left-color: #e8cc8a;
+	decorator: horizontal-gradient(#e8cc8a2c #e8cc8a00);
+}
+
+#update {
+	padding: 8dp 18dp 0 26dp;
 }
 
 #version {
-	padding: 0 22dp;
-	font-size: 13dp;
-	color: #5c5a6c;
+	font-size: 12dp;
+	color: #55536a;
+	padding: 8dp 18dp 0 26dp;
 }
 
-/* ---- The rows ----------------------------------------------------------------------------------- */
+/* ---- The page: its title and rows ---------------------------------------------------------------------------------- */
 #content {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	padding: 20dp 12dp 0 26dp;
+}
+
+#heading {
+	font-size: 28dp;
+	letter-spacing: 2dp;
+	color: #e8cc8a;
+	padding-bottom: 4dp;
+	margin-bottom: 16dp;
+}
+
+#page {
 	flex: 1;
 	overflow-y: auto;
-	padding: 14dp 18dp;
-	min-width: 0;
+	padding-right: 10dp;
 }
 
 row {
@@ -108,17 +193,23 @@ row {
 	flex-direction: row;
 	flex-wrap: wrap;
 	align-items: center;
-	padding: 6dp 12dp;
-	border-radius: 3dp;
+	min-height: 34dp;
+	padding: 2dp 12dp 2dp 15dp;
+	border-left: 3dp #00000000;
 	cursor: pointer;
 }
 
 row.heading {
-	color: #ffe6aa;
+	display: block;
+	min-height: 0;
+	line-height: 30dp;
+	margin-top: 12dp;
+	padding: 0 0 0 2dp;
 	font-size: 15dp;
 	letter-spacing: 1.5dp;
-	padding: 16dp 12dp 4dp 12dp;
-	border-bottom: 1dp #2c2f52;
+	color: #c8ae74;
+	border-bottom: 1dp #262a3e;
+	border-left: 0;
 	margin-bottom: 4dp;
 	cursor: auto;
 }
@@ -128,278 +219,326 @@ row.status {
 }
 
 row.focused {
-	decorator: horizontal-gradient(#ffe6aa38 #ffe6aa08);
+	border-left-color: #e8cc8a;
+	decorator: horizontal-gradient(#e8cc8a2c #e8cc8a00);
 }
 
 row.disabled {
-	color: #5c5a6c;
+	color: #55536a;
 	cursor: auto;
 }
 
 label {
+	display: block;
 	flex: 1;
 	min-width: 180dp;
 }
 
 value {
-	color: #ffe6aa;
-	min-width: 140dp;
+	display: block;
+	color: #f4eedc;
 	text-align: right;
+	white-space: nowrap;
 }
 
 row.disabled value, row.status value {
-	color: #9a96a8;
+	color: #8f8b9c;
 }
 
 row.action label {
-	color: #ffe6aa;
+	color: #e8cc8a;
 }
 
+/* the arrows either side of a choice's or a number's value */
 arrow {
-	color: #ffe6aa;
-	padding: 0 8dp;
+	display: inline-block;
+	width: 20dp;
+	text-align: center;
+	color: #e8cc8a;
 	cursor: pointer;
 }
 
+arrow:hover {
+	color: #ffffff;
+}
+
+/* a number's place in its range */
 bar {
 	display: block;
-	width: 120dp;
-	height: 5dp;
-	margin-left: 12dp;
-	background-color: #2c2f52;
-	border-radius: 2dp;
+	width: 110dp;
+	height: 3dp;
+	margin-left: 14dp;
+	background-color: #262a3e;
 }
 
 fill {
 	display: block;
 	height: 100%;
-	background-color: #ffe6aa;
-	border-radius: 2dp;
+	background-color: #e8cc8a;
 }
 
 note {
 	display: block;
 	width: 100%;
 	font-size: 14dp;
-	color: #9a96a8;
-	padding-top: 2dp;
+	color: #8f8b9c;
+	padding: 2dp 0 4dp 0;
 }
 
 /* an open choice's list, under its row */
 list {
-	margin: 2dp 12dp 8dp 40%;
-	border: 1dp #6a6f9a;
-	border-radius: 3dp;
-	background-color: #0c0d1cf6;
-	padding: 4dp 0;
+	margin: 0 12dp 6dp 40%;
+	border: 1dp #545a7a;
+	padding: 2dp;
+	background-color: #07080ef8;
 }
 
 choice {
-	padding: 4dp 14dp;
+	padding: 4dp 12dp;
+	border-left: 3dp #00000000;
 	cursor: pointer;
 }
 
 choice.highlighted {
-	decorator: horizontal-gradient(#ffe6aa38 #ffe6aa08);
+	decorator: horizontal-gradient(#e8cc8a2c #e8cc8a00);
 }
 
 choice.chosen {
-	color: #ffe6aa;
+	color: #e8cc8a;
 }
 
-/* ---- A command's controls ----------------------------------------------------------------------- */
+/* ---- A command's controls ------------------------------------------------------------------------------------------ */
 fixed, chip, slot {
 	display: inline-block;
 }
 
 chip, slot {
-	padding: 2dp 10dp;
-	margin-left: 6dp;
-	border: 1dp #2c2f52;
-	border-radius: 3dp;
-	background-color: #12142a;
+	padding: 2dp 8dp;
+	margin-left: 4dp;
+	border: 1dp #262a3e;
 	min-width: 28dp;
 	text-align: center;
+	font-size: 14dp;
 }
 
 chip {
-	color: #9a96a8;
+	color: #8f8b9c;
 }
 
 slot {
+	color: #c8c2ae;
 	cursor: pointer;
 }
 
+slot:hover {
+	border-color: #545a7a;
+}
+
 slot.chosen {
-	border-color: #ffe6aa;
+	color: #f4eedc;
+	border-color: #e8cc8a;
+	decorator: vertical-gradient(#2e2a1c #17150e);
 }
 
 slot.listening {
+	color: #f0b49a;
 	border-color: #d27a5a;
-	color: #d27a5a;
+	decorator: vertical-gradient(#4a2418 #24110b);
 }
 
 add {
-	color: #9a96a8;
+	color: #8f8b9c;
 }
 
-/* ---- The focused row's help --------------------------------------------------------------------- */
+/* ---- The focused row's help ---------------------------------------------------------------------------------------- */
 #help {
-	width: 300dp;
-	border-left: 1dp #2c2f52;
-	padding: 22dp 22dp;
-	color: #c8c2ac;
-	font-size: 15dp;
+	width: 28%;
+	max-width: 290dp;
+	padding: 26dp 22dp 0 20dp;
+	border-left: 1dp #262a3e;
+	overflow-y: auto;
 }
 
 #help h2 {
-	color: #ffe6aa;
-	font-size: 18dp;
+	font-size: 19dp;
+	color: #e8cc8a;
+	padding-bottom: 6dp;
+	border-bottom: 1dp #262a3e;
 	margin-bottom: 10dp;
 }
 
 #help p {
+	font-size: 15dp;
+	line-height: 1.45;
+	color: #c4beaa;
 	margin-bottom: 8dp;
 }
 
 #help p.note {
-	color: #9a96a8;
+	color: #8f8b9c;
 }
 
-/* ---- The keys along the bottom ------------------------------------------------------------------ */
+/* ---- The keys along the bottom ------------------------------------------------------------------------------------- */
 #prompts {
-	padding: 8dp 14dp 4dp 14dp;
+	text-align: center;
 	font-size: 14dp;
-	color: #9a96a8;
-	text-align: right;
+	color: #8f8b9c;
+	padding-top: 9dp;
+	border-top: 1dp #262a3e;
 }
 
 prompt {
-	margin-left: 18dp;
+	display: inline-block;
+	margin: 0 12dp;
 }
 
 key {
+	display: inline-block;
+	font-size: 13dp;
 	padding: 0 6dp;
-	margin-right: 4dp;
-	border: 1dp #2c2f52;
-	border-radius: 3dp;
-	background-color: #12142a;
-	color: #e8e2cc;
+	margin-right: 5dp;
+	border: 1dp #34384e;
+	color: #e6e0cc;
 }
 
-/* ---- A narrow window or a phone: no help column, larger rows ------------------------------------ */
+/* ---- A narrow window or a phone: no help column, larger rows ------------------------------------------------------ */
 body.touch #help {
 	display: none;
 }
 
 body.touch row {
-	padding: 12dp 14dp;
+	min-height: 46dp;
 }
 
 body.touch tab {
-	padding: 12dp 22dp;
+	padding: 12dp 18dp 12dp 23dp;
 }
 
 body.touch #prompts {
 	display: none;
 }
 
-/* ---- The first-run setup (body.setup: port/ui/setup_screen.cpp) --------------------------------- */
+/* ---- The first-run setup (body.setup: port/ui/setup_screen.cpp) ------------------------------------------------------
+   The same window: the step in the sidebar in place of the pages, the page's title and its few words, its rows (the
+   Welcome's cards, then Back, Next, Finish as buttons). */
 body.setup #shade {
 	background-color: #000000c8;
+	decorator: none;
+}
+
+body.setup #help {
+	max-width: 320dp;
 }
 
 #steps {
-	padding: 0 22dp;
-	color: #9a96a8;
+	padding: 0 18dp 0 26dp;
+	color: #8f8b9c;
 	font-size: 15dp;
+	letter-spacing: 1dp;
 }
 
-#heading {
-	padding: 4dp 12dp 14dp 12dp;
+body.setup #heading {
+	font-size: 17dp;
+	letter-spacing: 0;
+	color: #e6e0cc;
+	margin-bottom: 10dp;
 }
 
 #heading h1 {
-	display: block;
-	color: #ffe6aa;
-	font-size: 26dp;
-	letter-spacing: 1.5dp;
+	font-size: 28dp;
+	letter-spacing: 2dp;
+	color: #e8cc8a;
 	margin-bottom: 10dp;
 }
 
 #heading p {
-	margin-bottom: 8dp;
+	font-size: 15dp;
+	line-height: 1.4;
+	color: #c4beaa;
+	margin-bottom: 6dp;
 }
 
 #heading .dim, #heading p.prompt {
-	color: #9a96a8;
+	color: #8f8b9c;
 }
 
 /* a welcome card: the preset's name, what it does, the display it picks */
 row.card {
 	display: block;
-	border: 1dp #2c2f52;
-	border-radius: 4dp;
-	padding: 12dp 16dp;
-	margin-bottom: 8dp;
-	background-color: #12142a;
+	border: 1dp #262a3e;
+	border-left-width: 3dp;
+	padding: 10dp 16dp;
+	margin-bottom: 6dp;
 }
 
 row.card label {
 	display: block;
-	color: #ffe6aa;
-	font-size: 19dp;
+	color: #e8cc8a;
+	font-size: 20dp;
+	letter-spacing: 1dp;
 	margin-bottom: 4dp;
 }
 
 row.card.focused {
-	border-color: #ffe6aa;
+	border-color: #545a7a;
+	border-left-color: #e8cc8a;
 }
 
 row.card note.dim {
-	color: #5c5a6c;
+	color: #6f6c80;
 }
 
 /* Back, Next, Finish, Skip: the last rows, as buttons */
 row.way {
 	display: inline-block;
+	min-height: 0;
 	margin: 14dp 10dp 0 0;
 	padding: 6dp 22dp;
-	border: 1dp #6a6f9a;
-	border-radius: 3dp;
-	color: #ffe6aa;
+	border: 1dp #545a7a;
+	color: #e8cc8a;
 }
 
 row.way label {
 	min-width: 0;
+	letter-spacing: 1dp;
 }
 
 row.way.focused {
-	border-color: #ffe6aa;
+	border-color: #e8cc8a;
 }
 
 body.touch row.card {
-	padding: 16dp 18dp;
+	padding: 14dp 18dp;
 }
 
-/* ---- The update notice (body.notice: port/ext/update_notice.cpp) and the menu's badge ------------ */
+/* ---- The update notice (body.notice: port/ext/update_notice.cpp) and the menu's badge ------------------------------ */
 #plate {
 	position: absolute;
 	left: 50%;
 	top: 50%;
-	width: 560dp;
-	margin-left: -280dp;
-	margin-top: -110dp;
+	width: 580dp;
+	margin-left: -290dp;
+	margin-top: -150dp;
+	box-sizing: border-box;
+	border: 2dp #545a7a;
+	padding: 4dp;
+	decorator: vertical-gradient(#10121ef8 #07080efa);
+}
+
+#plate-inner {
+	border: 1dp #262a3e;
+	border-top-color: #34384e;
 	padding: 22dp 26dp;
-	border: 2dp #6a6f9a;
-	border-radius: 6dp;
-	decorator: vertical-gradient(#181a34f6 #0c0d1cf8);
+}
+
+#plate #wordmark {
+	margin-bottom: 16dp;
 }
 
 #plate h1 {
-	display: block;
-	color: #ffe6aa;
+	color: #e8cc8a;
 	font-size: 24dp;
+	letter-spacing: 1.5dp;
 	margin-bottom: 12dp;
 }
 
@@ -408,7 +547,7 @@ body.touch row.card {
 }
 
 #plate .dim {
-	color: #9a96a8;
+	color: #8f8b9c;
 }
 
 #buttons {
@@ -423,14 +562,13 @@ button {
 	margin-right: 10dp;
 	padding: 8dp 0;
 	text-align: center;
-	border: 1dp #6a6f9a;
-	border-radius: 3dp;
+	border: 1dp #545a7a;
 	cursor: pointer;
 }
 
 button:hover, button.focused {
-	border-color: #ffe6aa;
-	color: #ffe6aa;
+	border-color: #e8cc8a;
+	color: #e8cc8a;
 }
 
 /* the main way on: the gold of Verdite's update buttons */
@@ -444,14 +582,9 @@ button#download.focused, button#download:hover {
 	color: #14120a;
 }
 
-#update {
-	padding: 0 22dp 10dp 22dp;
-}
-
 badge {
 	display: inline-block;
 	padding: 3dp 10dp;
-	border-radius: 3dp;
 	background-color: #d4b038;
 	color: #14120a;
 	font-size: 14dp;
@@ -464,12 +597,12 @@ badge {
 }
 
 #part {
-	padding: 0 12dp;
+	padding: 0 12dp 0 18dp;
 }
 
 #part h2 {
 	display: block;
-	color: #ffe6aa;
+	color: #e8cc8a;
 	font-size: 20dp;
 	margin-bottom: 4dp;
 }
@@ -479,7 +612,7 @@ badge {
 }
 
 #part .dim {
-	color: #9a96a8;
+	color: #8f8b9c;
 }
 
 .page-text {
@@ -492,22 +625,20 @@ input {
 	width: 320dp;
 	padding: 6dp 10dp;
 	margin: 8dp 0;
-	border: 1dp #6a6f9a;
-	border-radius: 3dp;
-	background-color: #0c0d1c;
-	color: #e8e2cc;
+	border: 1dp #545a7a;
+	background-color: #07080e;
+	color: #e6e0cc;
 	cursor: text;
 }
 
 input:focus {
-	border-color: #ffe6aa;
+	border-color: #e8cc8a;
 }
 
 #console-lines {
 	height: 380dp;
 	overflow-y: auto;
-	border: 1dp #2c2f52;
-	border-radius: 3dp;
+	border: 1dp #262a3e;
 	background-color: #08091480;
 	padding: 6dp 10dp;
 	font-size: 14dp;
@@ -539,12 +670,11 @@ scrollbarvertical slidertrack {
 }
 
 scrollbarvertical sliderbar {
-	background-color: #2c2f52;
-	border-radius: 3dp;
+	background-color: #262a3e;
 }
 
 scrollbarvertical sliderbar:hover {
-	background-color: #6a6f9a;
+	background-color: #545a7a;
 }
 
 scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc {
@@ -557,5 +687,5 @@ scrollbarhorizontal {
 }
 
 scrollbarhorizontal sliderbar {
-	background-color: #2c2f52;
+	background-color: #262a3e;
 }

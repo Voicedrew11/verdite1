@@ -325,7 +325,7 @@ add_custom_target(kf_raw_layer DEPENDS ${KF_RAW_OUT}/raw_layer.stamp)
 file(GLOB_RECURSE KF_UI_SHARED_FILES CONFIGURE_DEPENDS RELATIVE ${CMAKE_SOURCE_DIR}/libverdite/res
   ${CMAKE_SOURCE_DIR}/libverdite/res/*.ttf)
 file(GLOB_RECURSE KF_UI_GAME_FILES CONFIGURE_DEPENDS RELATIVE ${CMAKE_SOURCE_DIR}/port/ui/res
-  ${CMAKE_SOURCE_DIR}/port/ui/res/*.rml ${CMAKE_SOURCE_DIR}/port/ui/res/*.rcss)
+  ${CMAKE_SOURCE_DIR}/port/ui/res/*.rml ${CMAKE_SOURCE_DIR}/port/ui/res/*.rcss ${CMAKE_SOURCE_DIR}/port/ui/res/*.alpha)
 set(KF_UI_ASSET_ENTRIES)
 set(KF_UI_ASSET_DEPENDS)
 foreach(name ${KF_UI_SHARED_FILES})

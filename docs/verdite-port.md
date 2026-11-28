@@ -657,7 +657,11 @@ triangles, textures, clips), `verdite/ui_canvas.h` (shapes and text on a back an
 as tabs of rows). KF1's half is `port/ui/`: `shell.cpp` (the one Screen and its input),
 `menu.cpp` (F1: the option table's pages, then Online, Console and About, each a `MenuPage`),
 `setup_screen.cpp`, `mod_ui.cpp` (the mods' `ui` table), `binding_capture.cpp`, and the documents
-and `kf1.rcss` in `res/`, carried in the binary (`cmake/ui_assets.cmake`). Vulkan draws the frame
+and `kf1.rcss` in `res/`, carried in the binary (`cmake/ui_assets.cmake`). The windows are laid out
+as holyland's player menu: a framed window with iron corners, the Verdite¹ logo over the pages in the
+sidebar, the page's title over its rows, the help column; the logo and corners are alpha masks
+(`port/ui/art/*.png` to `res/*.alpha` by `tools/ui_masks.py`; `verdite/ui.h`: `alpha_mask`), coloured
+by the style sheet. Vulkan draws the frame
 last, in the swapchain's pass (`vulkan_ui.cpp`); a deko3d or citro3d backend draws the same frame.
 
 - **A new page of the F1 menu** is an option table page (rows in `port/ext/options.cpp`, which

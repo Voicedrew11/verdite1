@@ -7,18 +7,31 @@
 <body class="setup">
 	<div id="shade"></div>
 	<div id="window">
-		<div id="main">
-			<div id="sidebar">
-				<div id="title">Setup</div>
-				<div id="steps"></div>
+		<div id="rule-outer">
+			<div id="rule-inner">
+				<div id="main">
+					<div id="sidebar">
+						<div id="crest">
+							<div id="wordmark"><img id="logo" src="logo.alpha"/><img id="logo-one" src="logo_one.alpha"/></div>
+							<div id="subtitle">Setup</div>
+						</div>
+						<div id="steps"></div>
+					</div>
+					<div id="content">
+						<div id="heading"></div>
+						<div id="page">
+							<div id="rows"></div>
+						</div>
+					</div>
+					<div id="help"></div>
+				</div>
+				<div id="prompts"></div>
 			</div>
-			<div id="content">
-				<div id="heading"></div>
-				<div id="rows"></div>
-			</div>
-			<div id="help"></div>
 		</div>
-		<div id="prompts"></div>
+		<img class="corner" id="corner-tl" src="corner_tl.alpha"/>
+		<img class="corner" id="corner-tr" src="corner_tr.alpha"/>
+		<img class="corner" id="corner-bl" src="corner_bl.alpha"/>
+		<img class="corner" id="corner-br" src="corner_br.alpha"/>
 	</div>
 </body>
 </rml>

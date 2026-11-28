@@ -111,6 +111,11 @@ public:
         return out;
     }
 
+    std::string title(int tab) const {
+        const MenuPage *shown = page(tab);
+        return shown ? shown->title() : options_.tab_title(tab);
+    }
+
     int tab_count() const override { return options_.tab_count() + static_cast<int>(pages_.size()); }
     int row_count(int tab) const override {
         const MenuPage *shown = page(tab);
@@ -195,6 +200,7 @@ void write_document(verdite::ui::Document &page) {
     }
     if (shown)
         shown->update(page);
+    page.set_text("heading", m.tabs.title(m.model.tab()));
     page.set_rml("tabs", m.tabs.tabs_rml(m.model));
     page.set_rml("rows", shown ? shown->rows_rml(m.model) : m.options.rows_rml(m.model));
     page.set_rml("help", shown ? std::string() : m.options.help_rml(m.model));
