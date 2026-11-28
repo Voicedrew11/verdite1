@@ -93,66 +93,57 @@ local function hold_ratings()
   return values
 end
 
-local function draw_buttons()
-  if ui.button("Full heal") then attempt(full_heal) end
-  ui.tooltip("Sets HP and MP to their maximums.")
-  if ui.button("Cure") then attempt(cure) end
-  ui.tooltip("Clears the status conditions and the curse, darkness, poison and slow timers.")
-  if ui.button("Level up") then queue[#queue + 1] = level_up end
-  ui.tooltip("Gives the experience to reach the next level, so the game levels you up and grants the gains.")
-  if ui.button("Recalculate") then queue[#queue + 1] = recalculate end
-  ui.tooltip("Has the game work out the combat ratings again from your gear and level.")
+local function draw_buttons(w)
+  w:line()
+  w:button("Full heal", function() attempt(full_heal) end)
+  w:button("Cure", function() attempt(cure) end)
+  w:button("Level up", function() queue[#queue + 1] = level_up end)
+  w:button("Recalculate", function() queue[#queue + 1] = recalculate end)
+  w:line_end()
+  w:help("Cure clears the conditions and their timers. Level up gives the experience for the next level, "
+    .. "so the game grants its gains. Recalculate has the game work out the combat ratings again.")
 end
 
--- Writes one row's value, and keeps it while the ratings are held.
-local function draw_rows(rows)
+-- Steps one row's value, and keeps it while the ratings are held.
+local function draw_rows(w, rows)
   for _, row in ipairs(rows) do
     local field = row[1]
-    local value = kf.player[field]
-    local new = ui.input_int(row[2], value)
-    if new ~= value and attempt(set_player, field, new) then
-      if held and held[field] ~= nil then held[field] = new end
-    end
+    w:stepper(row[2], kf.player[field], {1, 10, 100}, function(new)
+      if attempt(set_player, field, new) and held and held[field] ~= nil then held[field] = new end
+    end, 0)
   end
 end
 
-local function draw_flags()
+local function draw_flags(w)
   local flags = kf.player.status_flags
   for _, row in ipairs(FLAGS) do
     local bit = row[1]
-    local on = (flags & bit) ~= 0
-    local now = ui.checkbox(row[2], on)
-    if now ~= on then
-      local new = now and (flags | bit) or (flags & ~bit)
-      attempt(set_player, "status_flags", new)
-      flags = new
-    end
+    w:toggle(row[2], (flags & bit) ~= 0, function(on)
+      attempt(set_player, "status_flags", on and (flags | bit) or (flags & ~bit))
+    end)
   end
 end
 
-local function draw_hold()
-  local on = held ~= nil
-  local now = ui.checkbox("Hold these values", on)
-  if now ~= on then held = now and hold_ratings() or nil end
-  ui.tooltip("The game recalculates the combat ratings. While this is on, they are kept at the values you set.")
+local function draw_hold(w)
+  w:toggle("Hold these values", held ~= nil, function(on) held = on and hold_ratings() or nil end)
+  w:help("The game recalculates the combat ratings. While this is on, they are kept at the values you set.")
 end
 
-function M.draw()
+function M.draw(w)
   if kf.context() == "opening" then
-    ui.text("Load a save or start a game.")
+    w:text("Load a save or start a game.")
     return
   end
-  draw_buttons()
-  if ui.collapsing_header("Character", true) then draw_rows(CHARACTER) end
-  if ui.collapsing_header("Condition") then
-    draw_rows(CONDITION)
-    draw_flags()
-  end
-  if ui.collapsing_header("Combat ratings") then
-    draw_hold()
-    draw_rows(RATINGS)
-  end
-  if status ~= "" then ui.text_wrapped(status) end
+  draw_buttons(w)
+  w:heading("Character")
+  draw_rows(w, CHARACTER)
+  w:heading("Condition")
+  draw_rows(w, CONDITION)
+  draw_flags(w)
+  w:heading("Combat ratings")
+  draw_hold(w)
+  draw_rows(w, RATINGS)
+  if status ~= "" then w:text(status, "warning") end
 end
 
 -- Keeps the held ratings where the game would move them.

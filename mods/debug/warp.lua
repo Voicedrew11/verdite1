@@ -112,53 +112,54 @@ local function snap_to_floor()
   read_coords()
 end
 
-local function draw_marks()
+local function draw_marks(w)
+  w:heading("Marks")
   for _, slot in ipairs(SLOTS) do
     local mark = config.marks[slot]
-    if ui.button("Save " .. slot) then M.save(slot) end
+    w:line()
+    w:button("Save " .. slot, function() M.save(slot) end)
     if mark then
-      ui.same_line()
-      if ui.button("Go " .. slot) then M.go(slot) end
-      ui.same_line()
-      if ui.button("Clear " .. slot) then clear(slot) end
-      ui.same_line()
-      ui.text(describe(mark))
+      w:button("Go " .. slot, function() M.go(slot) end)
+      w:button("Clear " .. slot, function() clear(slot) end)
+      w:add('<span class="dim">' .. w.escaped(describe(mark)) .. "</span>")
     end
+    w:line_end()
   end
 end
 
-local function draw_coords()
+local function draw_coords(w)
   coords = coords or { x = kf.player.x, y = kf.player.y, z = kf.player.z }
-  coords.x = ui.input_int("X", coords.x)
-  coords.y = ui.input_int("Y", coords.y)
-  ui.tooltip("World Y grows down: a smaller Y is higher up. Y is your eye height.")
-  coords.z = ui.input_int("Z", coords.z)
-  if ui.button("Go##coords") then go_to_coords() end
-  ui.tooltip("Moves you to these coordinates, on this floor.")
-  ui.same_line()
-  if ui.button("Read current") then read_coords() end
-  ui.tooltip("Fills the boxes with where you are now.")
-  ui.same_line()
-  if ui.button("Snap to floor") then snap_to_floor() end
-  ui.tooltip("Drops you onto the floor under you.")
-end
-
-local function draw_floors()
-  ui.text("Current floor: " .. tostring(kf.player.floor))
-  for floor = 1, FLOORS do
-    if ui.button("Warp to floor " .. floor) then warp_to_floor(floor) end
+  w:heading("Coordinates")
+  for _, axis in ipairs({ "x", "y", "z" }) do
+    w:stepper(axis:upper(), coords[axis], {100, 2000}, function(v) coords[axis] = v end)
   end
+  w:help("World Y grows down: a smaller Y is higher up. Y is your eye height. One cell is 2000.")
+  w:line()
+  w:button("Go", go_to_coords)
+  w:button("Read current", read_coords)
+  w:button("Snap to floor", snap_to_floor)
+  w:line_end()
 end
 
-function M.draw()
+local function draw_floors(w)
+  w:heading("Floors")
+  w:text("Current floor: " .. tostring(kf.player.floor))
+  w:line()
+  for floor = 1, FLOORS do
+    w:button("Floor " .. floor, function() warp_to_floor(floor) end)
+  end
+  w:line_end()
+end
+
+function M.draw(w)
   if kf.context() == "opening" then
-    ui.text("Load a save or start a game.")
+    w:text("Load a save or start a game.")
     return
   end
-  draw_marks()
-  draw_coords()
-  draw_floors()
-  if status ~= "" then ui.text_wrapped(status) end
+  if status ~= "" then w:text(status, "warning") end
+  draw_marks(w)
+  draw_coords(w)
+  draw_floors(w)
 end
 
 -- Finishes an exact mark once its floor has loaded.

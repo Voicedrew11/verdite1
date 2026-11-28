@@ -25,7 +25,6 @@ SDL_Window *main_window;
 bool running;
 bool imgui;   // false when headless
 bool open;
-bool show_mods = true;
 int fps_frames;
 Uint64 fps_started;
 float fps_value;
@@ -106,29 +105,6 @@ void set_open(bool value) {
         binding_capture_cancel();
 }
 
-void draw_mods_window() {
-    ImGui::SetNextWindowSize(ImVec2(620, 460), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Mods", &show_mods))
-        mods_draw_panel();
-    ImGui::End();
-}
-
-void draw_menu_bar() {
-    if (!ImGui::BeginMainMenuBar())
-        return;
-    ImGui::MenuItem("Mods", nullptr, &show_mods);
-    // F1 on a keyboard; on a touch screen this is the way out.
-    if (ImGui::MenuItem("Close"))
-        set_open(false);
-    char status[96];
-    std::snprintf(status, sizeof status, "%d mod%s running   Shift+F1 to close%s", mods_loaded_count(),
-                  mods_loaded_count() == 1 ? "" : "s", settings().pause_when_open ? "   (paused)" : "");
-    const float status_x = ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16;
-    ImGui::SameLine(status_x);
-    ImGui::TextDisabled("%s", status);
-    ImGui::EndMainMenuBar();
-}
-
 bool is_input_event(Uint32 type) {
     switch (type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP: case SDL_EVENT_TEXT_INPUT: case SDL_EVENT_TEXT_EDITING:
@@ -171,9 +147,10 @@ static bool covered() {
 
 bool overlay_open() { return covered(); }
 bool overlay_captures_input() { return covered(); }
-// A mod's text box that has the keyboard takes the keys too, but not the mouse.
+// A text field on a mod's page that has the keyboard takes the keys too, but not the mouse.
 bool overlay_captures_keys() {
-    return covered() || (imgui && ImGui::GetIO().WantTextInput);
+    const verdite::ui::Screen *screen = interface_screen();
+    return covered() || (screen && screen->wants_text());
 }
 // Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
@@ -303,18 +280,8 @@ bool process_event(const SDL_Event &event) {
             settings_mark_dirty();
             return true;
         }
-        // F1: the menu. Shift+F1: Dear ImGui's windows, for what has not left it yet (mods, online,
-        // the console).
-        const bool shift = (event.key.mod & SDL_KMOD_SHIFT) != 0;
-        if (event.key.key == SDLK_F1 && !shift) {
-            set_open(false);
+        if (event.key.key == SDLK_F1) {
             menu_set_open(!menu_open());
-            return true;
-        }
-        if ((event.key.key == SDLK_F1 && shift) ||
-            (open && event.key.key == SDLK_ESCAPE && !ImGui::GetIO().WantTextInput)) {
-            menu_set_open(false);
-            set_open(!open);
             return true;
         }
     }
@@ -326,6 +293,8 @@ bool process_event(const SDL_Event &event) {
     if (interface_event(event) || update_notice_event(event) || menu_event(event) || setup_event(event))
         return true;
     ImGui_ImplSDL3_ProcessEvent(&event);
+    if (event.type == SDL_EVENT_MOUSE_WHEEL)
+        mods_ui_wheel(event.wheel.y);
     // A mod that takes the mouse (the full map: zoom, drag, hover) gets it; the keyboard still reaches the game.
     const bool mouse_event = event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
         || event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL;
@@ -337,7 +306,8 @@ bool process_event(const SDL_Event &event) {
     // so a key pressed before the box had the keyboard is not left held.
     const bool typed = event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT ||
                        event.type == SDL_EVENT_TEXT_EDITING;
-    return typed && imgui && ImGui::GetIO().WantTextInput;
+    const verdite::ui::Screen *screen = interface_screen();
+    return typed && screen && screen->wants_text();
 }
 
 void poll() {
@@ -410,16 +380,28 @@ const verdite::ui::Frame *build_interface(int width_px, int height_px) {
     if (!screen || width_px <= 0 || height_px <= 0)
         return nullptr;
     count_frame();
+    // KF_TEST_SETTINGS=<page>: opens the menu on that page, for captures; Android's panel on its first page.
+    static const char *test_page = std::getenv("KF_TEST_SETTINGS");
+    if (test_page) {
+        if (!settings_panel_show())
+            menu_open_page(test_page);
+        test_page = nullptr;
+        // KF_TEST_LANGUAGE_TASK=download: presses "Download English patch".
+        if (const char *task = std::getenv("KF_TEST_LANGUAGE_TASK"); task && std::strcmp(task, "download") == 0)
+            language_task_download_english();
+    }
     while (std::optional<verdite::ui::Action> action = screen->take_action()) {
         menu_action(*action);
         setup_action(*action);
         update_notice_action(*action);
+        mods_ui_action(*action);
     }
     update_notice_frame();
     setup_frame();
     menu_frame();
     verdite::ui::Canvas &front = screen->canvas(verdite::ui::Layer::Front);
     item_description_draw(screen->canvas(verdite::ui::Layer::Back));
+    mods_draw_hud();
     touch_controls_draw(front);
     draw_message(front, width_px, height_px);
     if (settings().show_fps)
@@ -433,22 +415,6 @@ ImDrawData *build_overlay(int width, int height) {
     // The Vulkan renderer's NewFrame only checks that it was started, so it is not called.
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
-    // KF_TEST_SETTINGS=<page>: opens Settings on that page, for captures; Android's panel on its first page.
-    static const char *test_page = std::getenv("KF_TEST_SETTINGS");
-    if (test_page) {
-        if (!settings_panel_show())
-            menu_open_page(test_page);
-        test_page = nullptr;
-        // KF_TEST_LANGUAGE_TASK=download: presses "Download English patch".
-        if (const char *task = std::getenv("KF_TEST_LANGUAGE_TASK"); task && std::strcmp(task, "download") == 0)
-            language_task_download_english();
-    }
-    mods_draw_hud();
-    if (open) {
-        draw_menu_bar();
-        if (show_mods)
-            draw_mods_window();
-    }
     ImGui::Render();
     return ImGui::GetDrawData();
 }

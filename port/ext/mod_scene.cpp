@@ -1,6 +1,6 @@
 #include "mod_scene.h"
 
-#include "mod_draw.h"
+#include "mod_ui.h"
 #include "mod_scene_shapes.h"
 
 #include <kf/platform/mod_scene.h>

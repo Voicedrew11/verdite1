@@ -21,39 +21,34 @@ local function set_all(learned)
   end
 end
 
-local function draw_spell(spell, selected)
+local function draw_spell(w, spell, selected)
   local learned = kf.magic.learned(spell)
-  local now = ui.checkbox(SPELLS[spell + 1], learned)
-  if now ~= learned then attempt(kf.magic.set_learned, spell, now) end
-  ui.same_line()
-  if not learned then
-    ui.text_colored(0.5, 0.5, 0.5, "not learned")
-    return
-  end
+  w:toggle(SPELLS[spell + 1], learned, function(on) attempt(kf.magic.set_learned, spell, on) end)
+  if not learned then return end
   if selected == spell then
-    ui.text("selected")
+    w:text("selected", "dim")
     return
   end
-  if ui.button("Select##" .. spell) then attempt(kf.magic.select, spell) end
+  w:button("Select " .. SPELLS[spell + 1], function() attempt(kf.magic.select, spell) end)
 end
 
-function M.draw()
+function M.draw(w)
   if kf.context() == "opening" then
-    ui.text("Load a save or start a game.")
+    w:text("Load a save or start a game.")
     return
   end
-  ui.text_wrapped("The game's spell menu lists only spells 4 to 8, Lightning Bolt to Light Needle.")
-  if ui.button("Learn all") then attempt(set_all, true) end
-  ui.same_line()
-  if ui.button("Forget all") then attempt(set_all, false) end
-  ui.same_line()
-  if ui.button("Deselect") then attempt(kf.magic.select, nil) end
+  w:help("The game's spell menu lists only spells 4 to 8, Lightning Bolt to Light Needle.")
+  w:line()
+  w:button("Learn all", function() attempt(set_all, true) end)
+  w:button("Forget all", function() attempt(set_all, false) end)
+  w:button("Deselect", function() attempt(kf.magic.select, nil) end)
+  w:line_end()
 
   local selected = kf.magic.selected()
   for spell = 0, #SPELLS - 1 do
-    draw_spell(spell, selected)
+    draw_spell(w, spell, selected)
   end
-  if status ~= "" then ui.text_wrapped(status) end
+  if status ~= "" then w:text(status, "warning") end
 end
 
 return M

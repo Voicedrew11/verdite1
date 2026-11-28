@@ -527,3 +527,35 @@ p.line.error {
 p.line.mods {
 	color: #99ccff;
 }
+
+/* A scroll area's bar: RmlUi gives it no size of its own, so unstyled it covers the content. */
+scrollbarvertical {
+	width: 6dp;
+	margin-left: 4dp;
+}
+
+scrollbarvertical slidertrack {
+	background-color: #00000000;
+}
+
+scrollbarvertical sliderbar {
+	background-color: #2c2f52;
+	border-radius: 3dp;
+}
+
+scrollbarvertical sliderbar:hover {
+	background-color: #6a6f9a;
+}
+
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc {
+	width: 0;
+	height: 0;
+}
+
+scrollbarhorizontal {
+	height: 6dp;
+}
+
+scrollbarhorizontal sliderbar {
+	background-color: #2c2f52;
+}

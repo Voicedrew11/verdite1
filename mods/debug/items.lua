@@ -82,12 +82,10 @@ local function visible_items()
   return list
 end
 
-local function draw_rows(list)
+local function draw_rows(w, list)
   for _, entry in ipairs(list) do
     local count = kf.items.count(entry.id)
-    local new = clamp(ui.input_int(entry.name .. "##" .. entry.id, count), 0, MAX_STACK)
-    if new ~= count then attempt(set_count, entry.id, count, new) end
-    if entry.description then ui.tooltip(entry.description) end
+    w:stepper(entry.name, count, {1, 10}, function(new) attempt(set_count, entry.id, count, new) end, 0, MAX_STACK)
   end
 end
 
@@ -103,7 +101,7 @@ local function slot_choices(slot)
   return choices
 end
 
-local function draw_slot(slot, label)
+local function draw_slot(w, slot, label)
   local choices = slot_choices(slot)
   local worn = kf.equipped(slot)
   local names = { "(none)" }
@@ -112,40 +110,34 @@ local function draw_slot(slot, label)
     names[i + 1] = entry.name
     if entry.id == worn then index = i + 1 end
   end
-  local new = ui.combo(label, index, names)
-  if new == index then return end
-  local item = nil
-  if new > 1 then item = choices[new - 1].id end
-  attempt(kf.equip, slot, item)
+  w:choice(label, names, index, function(new)
+    local item = nil
+    if new > 1 then item = choices[new - 1].id end
+    attempt(kf.equip, slot, item)
+  end)
 end
 
-local function draw_equipment()
-  if not ui.collapsing_header("Equipment", true) then return end
-  for _, row in ipairs(SLOT_ROWS) do
-    draw_slot(row[1], row[2])
-  end
-end
-
-function M.draw()
+function M.draw(w)
   if kf.context() == "opening" then
-    ui.text("Load a save or start a game.")
+    w:text("Load a save or start a game.")
     return
   end
   catalog = catalog or build_catalog()
 
-  search = ui.input_text("Search", search)
-  held_only = ui.checkbox("Held only", held_only)
-  if ui.button("Give one of each") then attempt(give_one_of_each) end
-  ui.tooltip("Gives one of every item you do not already hold, except the gold coin.")
-  ui.same_line()
-  if ui.button("Clear all") then attempt(clear_all) end
-  ui.tooltip("Takes every item out of the pack. It does not take off what is worn.")
-
-  if ui.begin_scroll("items", 320) then draw_rows(visible_items()) end
-  ui.end_scroll()
-
-  draw_equipment()
-  if status ~= "" then ui.text_wrapped(status) end
+  w:heading("Equipment")
+  for _, row in ipairs(SLOT_ROWS) do
+    draw_slot(w, row[1], row[2])
+  end
+  w:heading("Pack")
+  w:field("search", "Search", search, function(text) search = text end)
+  w:toggle("Held only", held_only, function(on) held_only = on end)
+  w:line()
+  w:button("Give one of each", function() attempt(give_one_of_each) end)
+  w:button("Clear all", function() attempt(clear_all) end)
+  w:line_end()
+  w:help("Give one of each: every item you do not hold, but the gold coin. Clear all leaves what is worn.")
+  if status ~= "" then w:text(status, "warning") end
+  draw_rows(w, visible_items())
 end
 
 return M

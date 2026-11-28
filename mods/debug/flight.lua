@@ -286,40 +286,30 @@ local function number(key, value)
   end
 end
 
-local function flight_buttons()
-  if ui.button("Go back") then flight.return_to_start() end
-  ui.tooltip("Back to where flight began, on this floor: the undo for a flight that went too far.")
-  ui.same_line()
-  if ui.button("Snap to floor") then flight.snap_to_floor() end
-  ui.tooltip("Drop to the ground under you.")
-end
-
-local function cinematic_controls()
-  local on = ui.checkbox("Cinematic camera", config.cinematic)
-  if on ~= config.cinematic then
-    config.cinematic = on
-    mod.save_config()
-  end
-  ui.tooltip("Ease the flight and the turn instead of landing on the input, for filming. "
+local function cinematic_controls(w)
+  w:toggle("Cinematic camera", config.cinematic, function(on) number("cinematic", on) end)
+  w:help("Ease the flight and the turn instead of landing on the input, for filming. "
     .. "The velocity builds up and coasts down, and the view trails where you look.")
   if not config.cinematic then return end
-  number("move_smoothing", ui.slider_float("Move smoothing", config.move_smoothing,
-    0.05, 2, "%.2f s"))
-  ui.tooltip("How long the flight takes to reach full speed, in seconds.")
-  number("look_smoothing", ui.slider_float("Look smoothing", config.look_smoothing,
-    0.05, 2, "%.2f s"))
-  ui.tooltip("How long the view takes to catch up with a turn, in seconds.")
+  w:stepper("Move smoothing (s)", config.move_smoothing, {0.05, 0.25},
+    function(v) number("move_smoothing", v) end, 0.05, 2)
+  w:stepper("Look smoothing (s)", config.look_smoothing, {0.05, 0.25},
+    function(v) number("look_smoothing", v) end, 0.05, 2)
 end
 
 -- Drawn in the Cheats tab, under the switches.
-function flight.draw()
+function flight.draw(w)
   if not config.fly then return end
-  number("fly_speed", ui.slider_float("Fly speed", config.fly_speed, 20, 8000))
-  ui.tooltip("World units a second. Hold Run to multiply it by Fast.")
-  number("fly_fast", ui.slider_float("Fast", config.fly_fast, 1, 10))
-  ui.tooltip("How many times faster Run makes flight.")
-  cinematic_controls()
-  flight_buttons()
+  w:heading("Flight")
+  w:stepper("Fly speed", config.fly_speed, {250, 1000}, function(v) number("fly_speed", v) end, 20, 8000)
+  w:help("World units a second. Hold Run to multiply it by Fast.")
+  w:stepper("Fast", config.fly_fast, {0.5, 1}, function(v) number("fly_fast", v) end, 1, 10)
+  cinematic_controls(w)
+  w:line()
+  w:button("Go back", flight.return_to_start)
+  w:button("Snap to floor", flight.snap_to_floor)
+  w:line_end()
+  w:help("Go back: to where flight began, on this floor, the undo for a flight that went too far.")
 end
 
 kf.hook.after.player_update(ease_view_after_player_update)

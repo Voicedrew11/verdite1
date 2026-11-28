@@ -314,8 +314,13 @@ void mods_start();
 void mods_shutdown();
 void mods_poll();                 // hot reload
 void mods_frame(int input_context);
-void mods_draw_hud();             // each enabled mod's on_draw, inside the ImGui frame
-void mods_draw_panel();           // the Mods window contents
+void mods_draw_hud();             // each running mod's on_draw, on the interface's canvases
+void mods_reload_all();           // not while mods are off in a room
+void mods_open_folder();
+bool mods_off_in_room();          // mods stop in a coop room
+// A press on a mod's own page: its on_ui_action. The wheel's steps for ui.mouse_wheel.
+void mods_ui_action(const verdite::ui::Action &action);
+void mods_ui_wheel(float steps);
 int mods_loaded_count();
 bool mods_pause_requested();      // kf.game.paused, combined over the running mods
 bool mods_pause_keeps_music();    // ...and every pausing mod keeps the music (kf.game.music_while_paused)

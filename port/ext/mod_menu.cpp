@@ -61,8 +61,11 @@ verdite::OptionRow option_row(const std::string &mod, const ModMenuRow &row) {
 }
 
 // What the table's rows were built from.
+// Every mod (the Mods page lists them all) and each menu's rows.
 std::string menus_signature() {
     std::string signature;
+    for (const verdite::ModInfo &mod : mods_list())
+        signature += mod.id + '\t' + mod.name + '\t' + mod.version + '\n';
     for (const verdite::ModInfo &mod : mods_list())
         if (!mod.menu.empty()) {
             signature += mod.id + '\n' + mod.name + '\n';
