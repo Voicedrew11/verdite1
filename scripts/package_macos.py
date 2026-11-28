@@ -62,6 +62,9 @@ def main():
     shutil.copy2(sdl / "LICENSE.txt", licenses / "SDL3.txt")
     for source, name in (
         (root / "third_party/imgui/LICENSE.txt", "DearImGui.txt"),
+        (root / "third_party/rmlui/LICENSE.txt", "RmlUi.txt"),
+        (root / "third_party/rmlui/Include/RmlUi/Core/Containers/LICENSE.txt", "RmlUi-containers.txt"),
+        (root / "third_party/freetype/FTL.TXT", "FreeType.txt"),
         (root / "third_party/lua/LICENSE", "Lua.txt"),
         (root / "third_party/cjson/LICENSE", "cJSON.txt"),
         (root / "third_party/libchdr/LICENSE.txt", "libchdr.txt"),

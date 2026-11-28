@@ -18,7 +18,7 @@ option(KF_RELEASE "A build for players: asks GitHub for new releases" OFF)
 #   patches/      Verdite's edits to its game code, one diff per copied directory (tools/patches.py)
 #   port/         the platform layer, renderer and PC extensions: Verdite's own, edited in place
 #   libverdite/   the game-agnostic C++ library the Verdite ports share, to become a subtree; knows no game
-#   third_party/  imgui, lua, cjson, libchdr
+#   third_party/  imgui, rmlui, freetype, lua, cjson, libchdr
 # At configure time the decomp's game code (KF_COPIED) is copied, the patches are applied to the
 # copy, and the copy (build/<preset>/decomp_src/) is compiled with port/.
 set(CMAKE_CXX_STANDARD 20)
@@ -390,6 +390,9 @@ if(TARGET zstd::libzstd_shared)
   target_link_libraries(zstd INTERFACE zstd::libzstd_shared)
 endif()
 add_subdirectory(third_party/libchdr EXCLUDE_FROM_ALL SYSTEM)
+
+# RmlUi and FreeType: the interface (libverdite's verdite_ui, port/ui/)
+include(cmake/rmlui.cmake)
 if(TARGET zstd::libzstd_shared)
   target_compile_definitions(chdr-static PRIVATE CHDR_SYSTEM_ZSTD)
 endif()
