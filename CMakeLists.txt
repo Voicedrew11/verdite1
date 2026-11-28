@@ -400,13 +400,20 @@ add_library(verdite STATIC libverdite/src/agent.cpp libverdite/src/crash.cpp lib
   libverdite/src/desktop_entry.cpp libverdite/src/disc_image.cpp libverdite/src/discord.cpp libverdite/src/fuzz.cpp libverdite/src/memory_card.cpp libverdite/src/update_check.cpp
   libverdite/src/menu_pointer.cpp libverdite/src/menu_settings.cpp libverdite/src/page_swipe.cpp libverdite/src/places.cpp libverdite/src/state_trace.cpp libverdite/src/stick.cpp
   libverdite/src/options.cpp libverdite/src/pickup_feed.cpp libverdite/src/setup.cpp libverdite/src/title_menu.cpp libverdite/src/touch.cpp
-  libverdite/src/message_sample.cpp libverdite/src/content_ids.cpp libverdite/src/mod_value.cpp libverdite/src/mod_archive.cpp libverdite/src/mod_saved.cpp libverdite/src/mods.cpp libverdite/src/raw.cpp libverdite/src/raw_call.cpp libverdite/src/raw_hook.cpp libverdite/src/raw_leaf.cpp libverdite/src/wav.cpp)
+  libverdite/src/message_sample.cpp libverdite/src/content_ids.cpp libverdite/src/mod_value.cpp libverdite/src/mod_archive.cpp libverdite/src/mod_saved.cpp libverdite/src/mods.cpp libverdite/src/raw.cpp libverdite/src/raw_call.cpp libverdite/src/raw_hook.cpp libverdite/src/raw_leaf.cpp libverdite/src/wav.cpp
+  libverdite/src/menu_model.cpp libverdite/src/option_menu.cpp libverdite/src/rml_text.cpp)
 target_include_directories(verdite PUBLIC libverdite/include)
 target_link_libraries(verdite PUBLIC Threads::Threads lua54 PRIVATE cpptrace::cpptrace chdr-static cjson)
 if(WIN32)
   target_link_libraries(verdite PUBLIC ws2_32)
 endif()
 target_compile_options(verdite PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+# libverdite's interface on RmlUi (verdite/ui.h): documents and canvases recorded as triangles for the renderer
+add_library(verdite_ui STATIC libverdite/src/ui.cpp libverdite/src/ui_canvas.cpp libverdite/src/ui_files.cpp
+  libverdite/src/ui_recorder.cpp)
+target_link_libraries(verdite_ui PUBLIC verdite PRIVATE verdite_rmlui)
+target_compile_options(verdite_ui PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 # libverdite's tests, built when doctest is installed (the nix shell has it): ctest --preset linux
 find_package(doctest CONFIG QUIET)
@@ -416,8 +423,10 @@ if(doctest_FOUND)
     libverdite/tests/desktop_entry.cpp libverdite/tests/disc_image.cpp libverdite/tests/discord.cpp libverdite/tests/fuzz.cpp libverdite/tests/memory_card.cpp libverdite/tests/update_check.cpp
     libverdite/tests/menu_pointer.cpp libverdite/tests/menu_settings.cpp libverdite/tests/page_swipe.cpp libverdite/tests/places.cpp libverdite/tests/state_trace.cpp libverdite/tests/stick.cpp
     libverdite/tests/options.cpp libverdite/tests/pickup_feed.cpp libverdite/tests/setup.cpp libverdite/tests/title_menu.cpp libverdite/tests/touch.cpp
-    libverdite/tests/message_sample.cpp libverdite/tests/content_ids.cpp libverdite/tests/mod_archive.cpp libverdite/tests/mod_saved.cpp libverdite/tests/mods.cpp libverdite/tests/raw.cpp libverdite/tests/raw_call.cpp libverdite/tests/raw_hook.cpp libverdite/tests/wav.cpp)
-  target_link_libraries(verdite_tests PRIVATE verdite doctest::doctest)
+    libverdite/tests/message_sample.cpp libverdite/tests/content_ids.cpp libverdite/tests/mod_archive.cpp libverdite/tests/mod_saved.cpp libverdite/tests/mods.cpp libverdite/tests/raw.cpp libverdite/tests/raw_call.cpp libverdite/tests/raw_hook.cpp libverdite/tests/wav.cpp
+    libverdite/tests/menu_model.cpp libverdite/tests/option_menu.cpp libverdite/tests/ui.cpp)
+  target_link_libraries(verdite_tests PRIVATE verdite verdite_ui verdite_rmlui doctest::doctest)
+  target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_FONT="${CMAKE_SOURCE_DIR}/libverdite/res/fonts/HolylandMincho.ttf")
   target_compile_definitions(verdite_tests PRIVATE VERDITE_TEST_DATA="${CMAKE_SOURCE_DIR}/libverdite/tests/data")
   target_compile_options(verdite_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME verdite COMMAND verdite_tests)
