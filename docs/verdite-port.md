@@ -45,7 +45,7 @@ it may move another game. It holds:
 
 - platform: SDL3 window and input, analog tuning, rumble, gyro, focus pause,
   crash reports, hang watchdog;
-- settings and the F1 overlay, Discord IPC, state beacon and command channel,
+- settings and the F1 menu, Discord IPC, state beacon and command channel,
   the fuzz harness, the profiler;
 - the renderer frontend and its backends ([RENDERER_PLAN.md](RENDERER_PLAN.md)).
 
@@ -105,9 +105,9 @@ Holyland's (`../holyland`, `docs/port/README.md` there), set up 2026-10-22:
 ```
 decomp/        submodule: Voicedrew11/kings-field-decomp (our fork of sushi-shi), pinned on `port`
 patches/       Verdite's edits to the decomp's game code, one diff per copied directory
-port/          platform layer, renderer, overlay, settings, mods: ours, edited in place
+port/          platform layer, renderer, interface (port/ui/), settings, mods: ours, edited in place
 libverdite/    the game-agnostic C++ library the ports share (agent channel so far): ours, knows no game
-third_party/   Dear ImGui, Lua, cJSON, the GLES headers and loader (kf1-enhanced's vendor/)
+third_party/   RmlUi, FreeType, Lua, cJSON, the GLES headers and loader (kf1-enhanced's vendor/)
 tools/         patches.py, from holyland
 work/          (gitignored) the editable copy patches.py makes
 ```
@@ -232,7 +232,7 @@ For an agent or a script, without a person or a screen:
 
 - **`--headless`**: SDL's dummy video and audio drivers and the null backend;
   the renderer keeps its state (texture store, target size) but draws nothing, the
-  overlay loads settings and mods without Dear ImGui, frame smoothing is off.
+  overlay loads settings and mods without the interface, frame smoothing is off.
   Runs inside `nix develop`, since nothing needs the host's EGL.
 - **`--turbo`**: the game clock jumps to each wait's deadline instead of
   sleeping, so the game runs as fast as the CPU allows: about 100 game seconds
@@ -646,12 +646,40 @@ font page, 2 pixels apart; kana 13 apart),
   from the thin I's stem so the colour is the font's. The Message Stone's and mods' item names use
   this lettering. Other spelled text (settings, titles, menus' words) keeps the big capitals.
 
+## The interface (RmlUi)
+
+Since 2026-11-28 everything Verdite1 draws over the game is RmlUi, on every platform; Dear ImGui and
+Android's Material panels are gone. The game-agnostic half is libverdite's, for holyland to take
+next: `verdite/ui.h` (a `Screen` of `Document`s: fonts, assets, a mod's folder, the pointer, fingers
+and typing, the presses as `Action`s), `verdite/ui_frame.h` (what a renderer draws: premultiplied
+triangles, textures, clips), `verdite/ui_canvas.h` (shapes and text on a back and a front layer),
+`verdite/menu_model.h` and `verdite/option_menu.h` (pad and key focus over rows; the option table
+as tabs of rows). KF1's half is `port/ui/`: `shell.cpp` (the one Screen and its input),
+`menu.cpp` (F1: the option table's pages, then Online, Console and About, each a `MenuPage`),
+`setup_screen.cpp`, `mod_ui.cpp` (the mods' `ui` table), `binding_capture.cpp`, and the documents
+and `kf1.rcss` in `res/`, carried in the binary (`cmake/ui_assets.cmake`). Vulkan draws the frame
+last, in the swapchain's pass (`vulkan_ui.cpp`); a deko3d or citro3d backend draws the same frame.
+
+- **A new page of the F1 menu** is an option table page (rows in `port/ext/options.cpp`, which
+  the agent and every platform get too), or, for what is not a setting, a `MenuPage`
+  (`port/ui/menu_page.h`): rows for the pad, and a part written once when its tab shows, where its
+  fields live so the typing survives. A row's RML follows `option_menu.h`'s convention
+  (`row-N`, `data-action`), which `menu_press` reads.
+- **What the recorder draws**: colours, borders, radii, straight gradients and images. No
+  transforms, masks, filters or shaders (`libverdite/src/ui_recorder.h`). RmlUi has no default
+  style sheet, and a scroll area's bar needs a size or it covers the area.
+- **Testing**: `libverdite/tests/ui.cpp`, `menu_model.cpp` and `option_menu.cpp`. On the game,
+  `KF_TEST_SETTINGS=<page>` opens the menu on a page, and SDL's offscreen driver with
+  `KF_VK_VALIDATION=1` draws it under the validation layers. How it looks and moves is the
+  user's call.
+
 ## The first-run setup
 
 Built 2026-10-26 and redrawn 2026-11-03 after Verdite2's onboarding, in C++. libverdite's
-`verdite/setup.h` holds the steps and what is staged; KF1's pages are `port/ext/setup.cpp`, the
-Dear ImGui window `port/ext/setup_overlay.cpp`, and Android's Material views
-`android/.../SetupPanel.java` with `port/ext/setup_panel.cpp`.
+`verdite/setup.h` holds the steps and what is staged; KF1's pages are `port/ext/setup.cpp`, and
+its screen, on every platform, the RmlUi page `port/ui/setup_screen.cpp` (`res/setup.rml`), since
+2026-11-28: one list moved about as the F1 menu is, the presets as cards and Back, Next, Finish
+and Skip as its last rows.
 
 - **Welcome**: Original, Balanced and Modern as cards side by side, each with what it does and the
   display it picks, and Custom under them. Each is a starting point: it fills the pages, and the

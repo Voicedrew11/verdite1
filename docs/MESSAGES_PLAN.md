@@ -188,7 +188,7 @@ always shown to them and do not count.
   no HTTP client. No bad rating. The game's text comes as pieces (`message_pieces`), since an
   item's name is drawn from the disc's glyph row, not spelled.
 - 2026-10-31: writing moved from the overlay's "Leave a message" window to the Message Stone, an
-  item in Use Item (`port/ext/extra_items.cpp`), whose menu is drawn in the game's style, not ImGui.
+  item in Use Item (`port/ext/extra_items.cpp`), whose menu is drawn in the game's style, not the interface's.
 - 2026-11-04: a coop room has messages on for everyone, whatever each player's setting says, so all
   have the Message Stone. Alone it stays opt-in.
 - 2026-11-04: reading and rating redone: a prompt, a box with Leave, Good and Next, the player held

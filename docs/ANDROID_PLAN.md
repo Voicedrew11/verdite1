@@ -287,9 +287,10 @@ KF1's layouts, chosen by `kf/platform/screen.h` as Discord already chooses:
 - Options under Controls > Touch: opacity, size, left-handed (mirrored), a
   short vibration on press (if SDL's haptic opens the phone's vibrator).
   Moving buttons around in a layout editor comes later, if wanted.
-- The overlay (ImGui) on touch: SDL's touch-to-mouse events go to ImGui and
-  never to the game; the scale comes from `SDL_GetWindowDisplayScale`; the
-  on-screen keyboard opens with `SDL_StartTextInput` for text fields.
+- The interface (RmlUi, `port/ui/shell.cpp`) on touch: a finger over a page goes to it and
+  never to the game, a tap presses and a drag scrolls; the scale comes from
+  `SDL_GetWindowDisplayScale`; the on-screen keyboard opens with `SDL_StartTextInput` while a
+  text field has the keyboard.
 - Controls and HUD keep clear of the notch through `SDL_GetWindowSafeArea`.
   Phones are 19.5:9 to 21:9, wider than the 16:9 the widescreen work was probed at.
   The cull, HUD-at-edges and menu tiling need a check at 20:9.
@@ -333,8 +334,8 @@ started higher up is drawn lower than the finger, so it stays clear too. The exc
 setting wider than the screen, whose bars at the top push the HUD down into the row (21:9 on a
 16:9 screen).
 
-Settings, 2026-10-26: ImGui was too hard to use by finger, so on Android the gear opens a native
-Material 3 panel in place of the overlay's windows. It fills the screen and the game is suspended
+Settings, 2026-10-26 (replaced 2026-11-28, below): ImGui was too hard to use by finger, so on
+Android the gear opened a native Material 3 panel in place of the overlay's windows. It fills the screen and the game is suspended
 under it, music included, whatever "Pause the game while the overlay is open" says (a sidebar over
 the running game was awkward to use). The settings are one table
 (`verdite/options.h`; KF1's rows in `port/ext/options.cpp`), and each row names what a platform
@@ -344,7 +345,14 @@ the panel from the table's JSON; a change crosses to the game thread through a q
 view comes back (`port/ext/settings_panel.cpp`). Back or a pad's B closes it; "Mods and console"
 opens the ImGui overlay for what has no row yet. `KF_TEST_SETTINGS=<page>` opens the panel. Found
 on the way: with the screen off at launch, Android takes the surface before the overlay starts,
-and the overlay gives up for the run ("cannot initialize Dear ImGui"); not fixed yet.
+and the overlay gives up for the run ("cannot initialize Dear ImGui").
+
+2026-11-28: the phone has the desktop's interface, RmlUi's (verdite-port.md, "The interface
+(RmlUi)"). The gear opens the F1 menu, its rows grow under `body.touch`, Back steps back as Escape
+does, and the setup and the update notice are the same pages. `SettingsPanel.java`,
+`SetupPanel.java`, their C++ halves and the update dialog are gone. The interface's Vulkan pass is
+made with the first frame to a window, so the screen being off at launch no longer loses it. To
+judge on a phone: the gear, taps, drag to scroll, the soft keyboard on the room code, Back.
 
 Done when: floor 1 is played from the start to the first save point on
 touch alone on the Pixel, judged by the user. `touch.h`'s finger tracking has unit tests

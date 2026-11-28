@@ -38,7 +38,9 @@ faces with camera-space positions, material and blend mode, sorted before
 drawing; `port/include/kf/renderer/renderer.h`) is the starting point.
 
 The backend interface stays narrow (draw lists, materials, render targets),
-so another API later touches one directory.
+so another API later touches one directory. What is drawn over the picture is one more thing every
+backend draws the same way: the interface's frame (`verdite/ui_frame.h`: premultiplied triangles,
+textures by id, clips), which RmlUi records (2026-11-28; Vulkan's is `vulkan_ui.cpp`).
 
 ## Tiers
 
