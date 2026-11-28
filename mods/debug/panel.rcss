@@ -4,7 +4,7 @@ div, p, h2 {
 }
 
 body {
-	font-family: Mincho;
+	font-family: Cabin;
 	font-size: 15dp;
 	color: #e8e2cc;
 	width: 100%;

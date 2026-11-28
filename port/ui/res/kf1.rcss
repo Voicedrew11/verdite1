@@ -1,7 +1,7 @@
 /* The interface's look for King's Field, laid out as holyland's player menu: a framed window with iron corners, a
    sidebar with the Verdite logo and the pages, the page's title and rows, the focused row's help, the keys along the
    bottom. KF1's colours: a near-black navy window, cream letters, one accent (the gold of the game's highlighted line);
-   ember only for a key being listened for. Every word in the menu Mincho (libverdite/res/fonts). The chosen line lit
+   ember only for a key being listened for. Every word in the menu Cabin (libverdite/res/fonts). The chosen line lit
    by a glow fading in from the left; no bars or rounded boxes. Only borders, colours, straight gradients and images:
    the recorder draws no transforms, masks or filters (libverdite/src/ui_recorder.h). The logo and corners are alpha
    masks (tools/ui_masks.py), coloured here by image-color.
@@ -16,7 +16,7 @@ div, h1, h2, p, row, list, choice, tab {
 
 /* (a flex box, so the window sits in the middle at any size: its auto margins would not, being sized by max-width) */
 body {
-	font-family: Mincho;
+	font-family: Cabin;
 	font-size: 17dp;
 	color: #e6e0cc;
 	width: 100%;

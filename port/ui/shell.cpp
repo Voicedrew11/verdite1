@@ -20,8 +20,10 @@ std::span<const verdite::ui::Asset> kf1_ui_assets();
 
 namespace kf::ext {
 namespace {
-// The faces the style sheets name: libverdite's menu Mincho and the pad glyphs.
-constexpr std::array<verdite::ui::FontFace, 4> font_faces = {{
+// The faces the style sheets name: libverdite's menu Cabin, the Mincho (still named by mods) and the pad glyphs.
+constexpr std::array<verdite::ui::FontFace, 6> font_faces = {{
+    {"fonts/Cabin-Regular.ttf", "Cabin"},
+    {"fonts/Cabin-Bold.ttf", "Cabin", true},
     {"fonts/HolylandMincho.ttf", "Mincho"},
     {"fonts/kenney_input_xbox_series.ttf", "pad-xbox"},
     {"fonts/kenney_input_playstation_series.ttf", "pad-playstation"},

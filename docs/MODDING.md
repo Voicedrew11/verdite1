@@ -1008,7 +1008,7 @@ Only inside `on_draw`. The shapes go on one of two canvases the interface draws 
 ### A mod's pages
 
 A page is an `.rml` file in the mod's folder, with its `.rcss` styles and images beside it, in
-[RmlUi](https://mikke89.github.io/RmlUiDoc/)'s HTML and CSS. The menu font is named `Mincho`. A page is drawn over the
+[RmlUi](https://mikke89.github.io/RmlUiDoc/)'s HTML and CSS. The menu font is named `Cabin` (regular and bold); `Mincho` is still loaded. A page is drawn over the
 game and under the game's own menus; it takes the mouse where it covers the picture, so a full-screen page that
 should let the game have the mouse gives its body `pointer-events: none` and its panels `pointer-events: auto`.
 RmlUi has no default style sheet: every element is inline until a style says otherwise, and a scroll area's bar
