@@ -174,6 +174,39 @@ Point Canvas::text_size(std::string_view utf8, float size_px, std::string_view f
     return measure_.text_size(utf8, size_px, family);
 }
 
+std::vector<std::string> Canvas::wrap(std::string_view utf8, float width_px, float size_px,
+                                      std::string_view family) const {
+    std::vector<std::string> lines;
+    std::string line;
+    auto fits = [&](const std::string &text) {
+        return measure_.text_size(text, size_px, family).x <= width_px;
+    };
+    size_t at = 0;
+    while (at <= utf8.size()) {
+        size_t end = utf8.find_first_of(" \n", at);
+        std::string_view word = utf8.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at);
+        std::string longer = line.empty() ? std::string(word) : line + " " + std::string(word);
+        if (line.empty() || fits(longer)) {
+            line = std::move(longer);
+        } else {
+            lines.push_back(std::move(line));
+            line = std::string(word);
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        if (utf8[end] == '\n') {
+            lines.push_back(std::move(line));
+            line.clear();
+        }
+        at = end + 1;
+    }
+    if (!line.empty()) {
+        lines.push_back(std::move(line));
+    }
+    return lines;
+}
+
 void Canvas::push_clip(Area area) {
     CanvasPiece &piece = commands_->pieces.emplace_back();
     piece.kind = PieceKind::PushClip;

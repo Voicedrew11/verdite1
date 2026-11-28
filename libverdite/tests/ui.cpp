@@ -199,6 +199,22 @@ TEST_CASE("ui: the canvases draw their shapes once, then start empty") {
     CHECK(f.screen->draw().draws.empty());
 }
 
+TEST_CASE("ui: a canvas wraps text at spaces and line breaks") {
+    struct TenPerLetter final : TextMeasure {
+        Point text_size(std::string_view text, float, std::string_view) const override {
+            return {10.0f * static_cast<float>(text.size()), 12};
+        }
+    } measure;
+    Canvas canvas(measure);
+    std::vector<std::string> lines = canvas.wrap("one two three\nfour", 75, 12);
+    REQUIRE(lines.size() == 3);
+    CHECK(lines[0] == "one two");
+    CHECK(lines[1] == "three");
+    CHECK(lines[2] == "four");
+    CHECK(canvas.wrap("enormousword", 30, 12).size() == 1);
+    CHECK(canvas.wrap("", 30, 12).empty());
+}
+
 TEST_CASE("ui: a canvas keeps what is drawn on it") {
     struct NoText final : TextMeasure {
         Point text_size(std::string_view, float, std::string_view) const override { return {}; }

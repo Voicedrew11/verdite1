@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace verdite::ui {
 
@@ -66,6 +67,10 @@ public:
     // What text would cover: its width and its line height.
     [[nodiscard]] Point text_size(std::string_view utf8, float size_px,
                                   std::string_view family = {}) const;
+    // Text broken into lines no wider than width_px, at spaces and line
+    // breaks (a word wider than the width has a line of its own).
+    [[nodiscard]] std::vector<std::string> wrap(std::string_view utf8, float width_px, float size_px,
+                                                std::string_view family = {}) const;
     // Later shapes only inside the area (and the clips under it); pops past the
     // first are ignored.
     void push_clip(Area area);
