@@ -125,20 +125,22 @@ TEST_CASE("ui: a press and a hover become Actions with the element's value") {
     Fixture f;
     f.page();
     f.screen->pointer_move(10, 10);
-    std::optional<Action> hover = f.screen->take_action();
-    REQUIRE(hover);
-    CHECK(hover->kind == ActionKind::Hover);
-    CHECK(hover->name == "over");
-    CHECK(hover->value == "7");
-    CHECK(hover->document == "page.rml");
+    const std::optional<Action> hover_taken = f.screen->take_action();
+    REQUIRE(hover_taken);
+    const Action hover = hover_taken.value_or(Action{});
+    CHECK(hover.kind == ActionKind::Hover);
+    CHECK(hover.name == "over");
+    CHECK(hover.value == "7");
+    CHECK(hover.document == "page.rml");
     while (f.screen->take_action()) {
     }
     CHECK(f.screen->pointer_over_document());
     f.screen->pointer_down(10, 10);
-    std::optional<Action> press = f.screen->take_action();
-    REQUIRE(press);
-    CHECK(press->kind == ActionKind::Press);
-    CHECK(press->name == "go");
+    const std::optional<Action> press_taken = f.screen->take_action();
+    REQUIRE(press_taken);
+    const Action press = press_taken.value_or(Action{});
+    CHECK(press.kind == ActionKind::Press);
+    CHECK(press.name == "go");
     f.screen->pointer_up(10, 10);
     f.screen->pointer_move(600, 400);
     CHECK_FALSE(f.screen->pointer_over_document());
@@ -171,8 +173,10 @@ TEST_CASE("ui: scrolling to a part just rewritten keeps its place") {
         std::string out;
         for (int i = 0; i < 20; ++i) {
             const std::string n = std::to_string(i);
-            out += "<div id=\"r" + n + "\" class=\"line " + extra + "\" "
-                   "data-hover=\"row\" data-value=\"" + n + "\">" + n + "</div>";
+            out += "<div id=\"r" + n + "\" class=\"line ";
+            out += extra;
+            out += "\" data-hover=\"row\" data-value=\"" + n + "\">";
+            out += n + "</div>";
         }
         return out;
     };
@@ -303,13 +307,15 @@ std::vector<std::byte> mask_file(std::uint32_t width_px, std::uint32_t height_px
 } // namespace
 
 TEST_CASE("ui: an alpha mask becomes a white premultiplied texture; a broken one is nothing") {
-    const std::optional<TextureUpload> mask = alpha_mask(mask_file(3, 2, 6));
-    REQUIRE(mask.has_value());
-    CHECK(mask->width_px == 3);
-    CHECK(mask->height_px == 2);
-    REQUIRE(mask->rgba.size() == 24);
-    CHECK(mask->rgba[5 * 4] == 200);
-    CHECK(mask->rgba[5 * 4 + 3] == 200);
+    const std::optional<TextureUpload> made = alpha_mask(mask_file(3, 2, 6));
+    REQUIRE(made.has_value());
+    const TextureUpload mask = made.value_or(TextureUpload{});
+    CHECK(mask.width_px == 3);
+    CHECK(mask.height_px == 2);
+    REQUIRE(mask.rgba.size() == 24);
+    const std::size_t last_px = std::size_t{5} * 4;   // the sixth pixel's red byte
+    CHECK(mask.rgba[last_px] == 200);
+    CHECK(mask.rgba[last_px + 3] == 200);
 
     CHECK_FALSE(alpha_mask(mask_file(3, 2, 5)).has_value());    // short
     CHECK_FALSE(alpha_mask(mask_file(3, 2, 7)).has_value());    // long
