@@ -458,6 +458,19 @@ TEST_CASE("an event reaches the handler with its fields, and an unknown event do
     CHECK(notes.size() == 1);
 }
 
+TEST_CASE("an event raised for one mod reaches only that mod") {
+    Mods mods;
+    mods.run("a", "function on_test(e) t.note('a ' .. e.label) end");
+    mods.run("b", "function on_test(e) t.note('b ' .. e.label) end");
+    auto values = event_values();
+    mods.host->raise_for("b", "on_test", values);
+    CHECK(notes == std::vector<std::string>{"b hi"});
+    mods.host->raise_for("missing", "on_test", values);
+    mods.host->disable("b");
+    mods.host->raise_for("b", "on_test", values);
+    CHECK(notes.size() == 1);
+}
+
 TEST_CASE("a writable field changed by one mod is seen by the next and written back") {
     Mods mods;
     mods.run("a", "function on_test(e) e.amount = e.amount - 10 end");
