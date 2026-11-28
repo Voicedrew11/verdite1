@@ -18,7 +18,7 @@ option(KF_RELEASE "A build for players: asks GitHub for new releases" OFF)
 #   patches/      Verdite's edits to its game code, one diff per copied directory (tools/patches.py)
 #   port/         the platform layer, renderer and PC extensions: Verdite's own, edited in place
 #   libverdite/   the game-agnostic C++ library the Verdite ports share, to become a subtree; knows no game
-#   third_party/  imgui, rmlui, freetype, lua, cjson, libchdr
+#   third_party/  rmlui, freetype, lua, cjson, libchdr
 # At configure time the decomp's game code (KF_COPIED) is copied, the patches are applied to the
 # copy, and the copy (build/<preset>/decomp_src/) is compiled with port/.
 set(CMAKE_CXX_STANDARD 20)
@@ -267,8 +267,7 @@ if(ANDROID OR WIN32)
   target_link_libraries(kf_support PRIVATE archive_static)
 endif()
 
-# PC extensions: overlay (Dear ImGui), console, settings and Lua mods.
-set(KF_IMGUI ${CMAKE_SOURCE_DIR}/third_party/imgui)
+# PC extensions: the interface (RmlUi, port/ui/), console, settings and Lua mods.
 file(GLOB KF_LUA_SOURCES ${CMAKE_SOURCE_DIR}/third_party/lua/l*.c)
 list(FILTER KF_LUA_SOURCES EXCLUDE REGEX "/(lua|luac|ltests|onelua)\\.c$")
 # Lua is compiled as C++, so a Lua error unwinds C++ frames (an exception) instead of jumping past
@@ -281,12 +280,6 @@ endif()
 target_include_directories(lua54 PUBLIC ${CMAKE_SOURCE_DIR}/third_party/lua)
 add_library(cjson STATIC third_party/cjson/cJSON.c)
 target_include_directories(cjson PUBLIC ${CMAKE_SOURCE_DIR}/third_party/cjson)
-# Dear ImGui's core and its SDL platform backend; each renderer brings its own renderer backend.
-add_library(kf_imgui STATIC
-  ${KF_IMGUI}/imgui.cpp ${KF_IMGUI}/imgui_draw.cpp ${KF_IMGUI}/imgui_tables.cpp ${KF_IMGUI}/imgui_widgets.cpp
-  ${KF_IMGUI}/backends/imgui_impl_sdl3.cpp)
-target_include_directories(kf_imgui PUBLIC ${KF_IMGUI} ${KF_IMGUI}/backends)
-target_link_libraries(kf_imgui PUBLIC SDL3::SDL3)
 # Online play (online/client) where libdatachannel's source is at hand: the nix shells. Without it,
 # port/ext/online.cpp says the build has none.
 set(KF_ONLINE OFF)
@@ -356,9 +349,9 @@ add_library(kf_ext STATIC
   ${KF_RAW_OUT}/raw_layer.cpp)
 add_dependencies(kf_ext kf_raw_layer)
 set_source_files_properties(${KF_RAW_OUT}/raw_layer.cpp PROPERTIES GENERATED TRUE)
-target_include_directories(kf_ext PUBLIC ${KF_INCLUDES} ${KF_IMGUI})
+target_include_directories(kf_ext PUBLIC ${KF_INCLUDES})
 target_compile_definitions(kf_ext PUBLIC KF_EXT=1)
-target_link_libraries(kf_ext PUBLIC kf_imgui SDL3::SDL3 verdite verdite_ui lua54 cjson)
+target_link_libraries(kf_ext PUBLIC SDL3::SDL3 verdite verdite_ui lua54 cjson)
 # settings.json names controls through kf_support's binding_names.cpp, which nothing else links.
 target_link_libraries(kf_ext PRIVATE kf_support)
 target_compile_definitions(kf_ext PRIVATE KF_ONLINE=$<BOOL:${KF_ONLINE}> KF_VERSION="${PROJECT_VERSION}"
@@ -519,12 +512,11 @@ foreach(shader world.vert world.frag surface.frag fullscreen.vert downsample.fra
   list(APPEND KF_SHADER_HEADERS ${KF_SHADER_OUT}/${symbol}.h)
 endforeach()
 # third-party code: built with its own warnings, not ours
-add_library(kf_vulkan_libraries STATIC port/renderer/vulkan/vulkan_libraries.cpp
-  ${KF_IMGUI}/backends/imgui_impl_vulkan.cpp)
+add_library(kf_vulkan_libraries STATIC port/renderer/vulkan/vulkan_libraries.cpp)
 target_compile_definitions(kf_vulkan_libraries PUBLIC VK_NO_PROTOTYPES VMA_STATIC_VULKAN_FUNCTIONS=0
-  VMA_DYNAMIC_VULKAN_FUNCTIONS=1 IMGUI_IMPL_VULKAN_USE_VOLK)
+  VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
 target_link_libraries(kf_vulkan_libraries PUBLIC Vulkan::Headers volk::volk GPUOpen::VulkanMemoryAllocator
-  vk-bootstrap::vk-bootstrap kf_imgui)
+  vk-bootstrap::vk-bootstrap)
 add_library(kf_vulkan STATIC port/renderer/vulkan/vulkan_backend.cpp port/renderer/vulkan/vulkan_device.cpp
   port/renderer/vulkan/vulkan_ambient_occlusion.cpp port/renderer/vulkan/vulkan_downsample.cpp
   port/renderer/vulkan/vulkan_pipelines.cpp port/renderer/vulkan/vulkan_render_pass.cpp port/renderer/vulkan/vulkan_surfaces.cpp

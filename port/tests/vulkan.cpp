@@ -96,7 +96,7 @@ FrameView unmoved_view(const std::vector<Motion> &motions) {
 // Presents the uploaded frame again and returns the picture.
 Image present_and_capture() {
     static const std::vector<Motion> motions(1, Motion{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}});
-    backend->present(unmoved_view(motions), {}, 0, 0, {});
+    backend->present(unmoved_view(motions), {}, 0, 0, nullptr);
     std::optional<Image> picture = backend->capture();
     if (!picture) {
         FAIL("nothing captured");
@@ -655,7 +655,7 @@ namespace {
 // Presents the uploaded frame through motions, each vertex carrying this much of its way back.
 Image present_moved(const std::vector<Motion> &motions, float carry) {
     const FrameView view{motions, carry, true, false, 200, 160, 120, {1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}, {}};
-    backend->present(view, {}, 0, 0, {});
+    backend->present(view, {}, 0, 0, nullptr);
     std::optional<Image> picture = backend->capture();
     if (!picture) {
         FAIL("nothing captured");
@@ -852,7 +852,7 @@ std::vector<int> lit_row(const std::vector<GpuVertex> &vertices, bool per_pixel)
     const std::vector<ShownLightSet> shown = shown_light_sets(sets, {}, motions);
     FrameView view = unmoved_view(motions);
     view.light_sets = shown;
-    backend->present(view, {}, 0, 0, {});
+    backend->present(view, {}, 0, 0, nullptr);
     std::optional<Image> picture = backend->capture();
     backend->set_options({});
     std::vector<int> row;

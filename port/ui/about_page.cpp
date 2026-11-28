@@ -21,7 +21,7 @@ public:
                "<p>Source port: sushi-shi/kings-field-decomp (CC0).</p>"
                "<p>Overlay, settings and mod workflow inspired by Verdite2 (Voicedrew11, MIT).</p>"
                "<p>English translation: John Osborne, Kaz; save fix: HwitVlf.</p>"
-               "<p>RmlUi (MIT), FreeType (FreeType License), Dear ImGui (MIT), Lua 5.4 (MIT), cJSON (MIT), "
+               "<p>RmlUi (MIT), FreeType (FreeType License), Lua 5.4 (MIT), cJSON (MIT), "
                "SDL3 (zlib).</p>"
                "</div>";
     }

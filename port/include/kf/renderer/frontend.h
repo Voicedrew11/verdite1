@@ -21,18 +21,9 @@
 #include <span>
 #include <variant>
 
-struct ImDrawData;
 namespace verdite::ui { struct Frame; }
 
 namespace kf {
-// What is drawn over the picture, in order; either may be null. Dear ImGui's
-// draw lists go once the interface has left it (docs/verdite-port.md, "The
-// interface"); the interface's frame is RmlUi's (verdite/ui_frame.h).
-struct OverlayLayers {
-    ImDrawData *imgui = nullptr;
-    const verdite::ui::Frame *ui = nullptr;
-};
-
 class RenderBackend;
 
 // Feature levels. A backend draws up to one of them, and an option above the
@@ -219,7 +210,7 @@ void renderer_submit(const GameFrame &frame, std::uint64_t at_ns);
 // pending_look (angle units), the look input the game has not consumed yet,
 // so looking has no update of lag.
 void renderer_present(std::uint64_t now_ns, const SVECTOR &pending_look,
-                      int window_width, int window_height, const OverlayLayers &overlay);
+                      int window_width, int window_height, const verdite::ui::Frame *ui);
 // The camera the frame about to be presented shows (as renderer_present would show it at now_ns),
 // for renderer_world_to_picture: call it before the overlay is built, which reads the picture.
 void renderer_begin_picture(std::uint64_t now_ns, const SVECTOR &pending_look);
@@ -233,9 +224,6 @@ std::optional<Image> renderer_capture();
 // Puts a capture back as the picture (a page shown over the game, then taken
 // away). False if the target changed size since.
 [[nodiscard]] bool renderer_restore(const Image &picture);
-// The overlay's renderer: after Dear ImGui's context is made, before it is destroyed.
-[[nodiscard]] bool renderer_overlay_start();
-void renderer_overlay_stop();
 // The window's surface is going away (Android: SDL_EVENT_WILL_ENTER_BACKGROUND).
 // Presenting makes it again once the window is back.
 void renderer_release_window();

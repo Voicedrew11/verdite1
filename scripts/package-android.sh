@@ -21,7 +21,6 @@ nix develop .#android -c bash -euc '
   licenses="$KF_ANDROID_ASSETS_DIR/licenses"
   mkdir -p "$licenses"
   cp LICENSE "$licenses/Verdite1-MIT.txt"
-  cp third_party/imgui/LICENSE.txt "$licenses/DearImGui.txt"
   cp third_party/rmlui/LICENSE.txt "$licenses/RmlUi.txt"
   cp third_party/rmlui/Include/RmlUi/Core/Containers/LICENSE.txt "$licenses/RmlUi-containers.txt"
   cp third_party/freetype/FTL.TXT "$licenses/FreeType.txt"

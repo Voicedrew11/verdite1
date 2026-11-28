@@ -1191,14 +1191,13 @@ static Uint64 frontend_next_present_ns() { return frontend_output.next_present_n
 static void frontend_present(Uint64 now) {
     int width = 0, height = 0;
     SDL_GetWindowSizeInPixels(host.window, &width, &height);
-    // The overlay's on_draw projects through the camera this frame shows (ui.world_to_screen).
+    // The mods' on_draw projects through the camera this frame shows (ui.world_to_screen).
     renderer_begin_picture(now, pending_look());
-    OverlayLayers overlay;
+    const verdite::ui::Frame *interface = nullptr;
 #if KF_EXT
-    overlay.imgui = ext::build_overlay(width, height);
-    overlay.ui = ext::build_interface(width, height);
+    interface = ext::build_interface(width, height);
 #endif
-    renderer_present(now, pending_look(), width, height, overlay);
+    renderer_present(now, pending_look(), width, height, interface);
 #if KF_EXT
     capture_picture_if_requested();
 #endif

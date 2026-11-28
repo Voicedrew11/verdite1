@@ -182,22 +182,17 @@ public:
     // A game update's geometry, drawn by every present until the next upload.
     virtual void upload_frame(std::span<const GpuVertex> vertices, std::span<const DrawRun> runs,
                               const FrameStyle &style, const DepthCue &cue) = 0;
-    // Draws the uploaded frame from view, then the overlay's layers, and
-    // presents. lights: in the shown camera's space, nearest first, with
+    // Draws the uploaded frame from view, then the interface's frame (RmlUi's,
+    // verdite/ui_frame.h; null for none) over it, and presents. lights: in the shown camera's space, nearest first, with
     // strength and this frame's flicker applied. A window of size 0
     // (minimised) draws nothing.
     virtual void present(const FrameView &view, std::span<const RenderLight> lights,
-                         int window_width, int window_height, const OverlayLayers &overlay) = 0;
+                         int window_width, int window_height, const verdite::ui::Frame *ui) = 0;
     // The game's picture as last drawn (renderer_capture).
     virtual std::optional<Image> capture() = 0;
     // Puts a capture back as the picture; the uploaded frame is not drawn over it
     // until the next upload. False if it is not the target's size.
     [[nodiscard]] virtual bool restore(const Image &picture) = 0;
-    // Dear ImGui's renderer for this API, once its context exists; present then
-    // draws the draw lists it is given. Stopped before the context is destroyed.
-    // (The interface's frame needs no start: present draws it when given one.)
-    [[nodiscard]] virtual bool start_overlay() = 0;
-    virtual void stop_overlay() = 0;
     // The window's drawing surface is being taken away (Android, going to the
     // background): let go of everything that draws to it. The next present to a
     // window makes it again.

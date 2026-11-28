@@ -731,7 +731,7 @@ OptionSection interface_overlay() {
     Settings &s = settings();
     OptionRow scale = number("overlay.ui_scale", "Interface scale",
                              "The overlay's size. Applies when you release the slider. Mods are not scaled.", s.ui_scale,
-                             {0.75, 2.5, 0.05, "%.2f"}, overlay_restyle);
+                             {0.75, 2.5, 0.05, "%.2f"}, store_only);
     scale.settle = true;
     return {"", {
         action("overlay.run_setup", "Run setup again",

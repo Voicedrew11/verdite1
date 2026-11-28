@@ -292,8 +292,6 @@ const char *item_english_name(std::uint8_t id);
 // ---- touch controls ----
 void touch_controls_draw(verdite::ui::Canvas &canvas);   // the interface's front canvas
 void touch_commands_poll();   // the gear and the map button, on every host poll
-void overlay_set_open(bool open);
-void overlay_restyle();   // after the interface scale changes
 
 // ---- mods ----
 void mods_start();
@@ -325,18 +323,10 @@ std::optional<verdite::ModConfigValue> mods_config_value(std::string_view id, st
 void mods_set_config_value(std::string_view id, std::string_view key, const verdite::ModConfigValue &value);
 
 // ---- overlay helpers shared with the mod API ----
-// Slider with a typed-value box beside it. `committed` (optional) is set when an
-// edit finishes: slider released, or Enter / focus change in the box.
-bool slider_input(const char *label, float *value, float min, float max, const char *format,
-                  float snap = 0.0f, bool *committed = nullptr);
-bool slider_input(const char *label, int *value, int min, int max, const char *format = "%d",
-                  bool *committed = nullptr);
 inline constexpr float hud_font_size = 18.0f;   // mod drawing ignores the interface scale
 struct ViewRect { float x, y, w, h; };
-ViewRect game_view();             // the whole presented picture, in ImGui/window points
-ViewRect original_view();         // the original 320x240 area within it
-ViewRect game_view_px();          // the same in the window's pixels (the interface's canvases)
-ViewRect original_view_px();
+ViewRect game_view_px();          // the whole presented picture, in the window's pixels
+ViewRect original_view_px();      // the original 320x240 area within it
 bool overlay_captures_input();
 // The keys belong to the overlay, or to a mod's text box that has the keyboard.
 bool overlay_captures_keys();
