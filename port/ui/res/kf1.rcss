@@ -72,6 +72,7 @@ img.corner {
 	width: 64dp;
 	height: 64dp;
 	image-color: #a88f5c;
+	pointer-events: none;
 }
 
 #corner-tl { left: -4dp; top: -4dp; }
@@ -87,8 +88,10 @@ img.corner {
 	display: none;
 }
 
+/* (drawn over the window, so it lets the pointer through to the rows under it) */
 body.game-art #game-frame {
 	display: block;
+	pointer-events: none;
 	position: absolute;
 	left: 0;
 	top: 0;
