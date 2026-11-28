@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <ranges>
 
 namespace kf::ext {
 namespace {
@@ -76,9 +77,9 @@ public:
             if (filter.empty() || line->text.find(filter) != std::string::npos)
                 matching.push_back(&*line);
         std::string rml;
-        for (auto line = matching.rbegin(); line != matching.rend(); ++line)
-            rml += std::string("<p class=\"line ") + line_class((*line)->text) + "\">" +
-                   verdite::rml_escaped((*line)->text) + "</p>";
+        for (const ConsoleLine *line : std::views::reverse(matching))
+            rml += std::string("<p class=\"line ") + line_class(line->text) + "\">" +
+                   verdite::rml_escaped(line->text) + "</p>";
         const bool changed = rml != shown_;
         shown_ = std::move(rml);
         page.set_rml("console-lines", shown_);

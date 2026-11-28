@@ -141,13 +141,16 @@ bool GameWindowArt::available() const {
 }
 
 std::optional<verdite::ui::TextureUpload> GameWindowArt::load(std::string_view source) const {
+    const std::optional<Art> &loaded = art();
+    if (!loaded)
+        return std::nullopt;
     const Texels *texels = nullptr;
     if (source == "game/frame-corner")
-        texels = art() ? &art()->corner : nullptr;
+        texels = &loaded->corner;
     else if (source == "game/frame-top")
-        texels = art() ? &art()->top : nullptr;
+        texels = &loaded->top;
     else if (source == "game/frame-left")
-        texels = art() ? &art()->left : nullptr;
+        texels = &loaded->left;
     if (!texels)
         return std::nullopt;
     return upload(*texels);

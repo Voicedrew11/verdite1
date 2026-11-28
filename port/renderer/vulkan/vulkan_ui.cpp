@@ -378,7 +378,7 @@ void UiPass::draw(VkCommandBuffer commands, int slot_index, const Frame &frame, 
         slot.indices.size() < frame.indices.size() * sizeof(uint32_t))
         return;   // prepare could not make its buffers
     vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, s.pipeline);
-    const VkBuffer vertex_buffer = slot.vertices.buffer();
+    VkBuffer vertex_buffer = slot.vertices.buffer();
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commands, 0, 1, &vertex_buffer, &offset);
     vkCmdBindIndexBuffer(commands, slot.indices.buffer(), 0, VK_INDEX_TYPE_UINT32);

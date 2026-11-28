@@ -80,6 +80,12 @@ struct SetupMenuScreen::State final : verdite::MenuRows {
 
     // ---- MenuRows: the list is one tab ----
     int tab_count() const override { return view ? 1 : 0; }
+
+    // The page on show; there are lines only while there is one.
+    const verdite::SetupPageView &shown() const {
+        static const verdite::SetupPageView none{};
+        return view ? *view : none;
+    }
     int row_count(int) const override { return static_cast<int>(lines.size()); }
     MenuRowShape shape(int, int row) const override;
     void choose(int, int row, int choice) override;
@@ -93,10 +99,10 @@ struct SetupMenuScreen::State final : verdite::MenuRows {
                                                                          : nullptr;
     }
     const verdite::SetupGroupView &group(const Line &line) const {
-        return std::get<verdite::SetupGroupView>(view->items[line.index]);
+        return std::get<verdite::SetupGroupView>(shown().items[line.index]);
     }
     const verdite::SetupOptionView &option(const Line &line) const {
-        return std::get<verdite::SetupOptionView>(view->items[line.index]);
+        return std::get<verdite::SetupOptionView>(shown().items[line.index]);
     }
 
     void build_lines();
@@ -121,27 +127,27 @@ void SetupMenuScreen::State::build_lines() {
     lines.clear();
     if (!view)
         return;
-    switch (view->step) {
+    switch (shown().step) {
     case SetupStep::Welcome:
-        for (std::size_t i = 0; i < view->presets.size(); ++i)
-            lines.push_back({LineKind::Preset, view->presets[i]->label, {}, i});
-        lines.push_back({LineKind::Way, view->welcome->skip_label, "skip"});
+        for (std::size_t i = 0; i < shown().presets.size(); ++i)
+            lines.push_back({LineKind::Preset, shown().presets[i]->label, {}, i});
+        lines.push_back({LineKind::Way, shown().welcome->skip_label, "skip"});
         return;
     case SetupStep::Page:
-        if (!view->tiers.empty())
+        if (!shown().tiers.empty())
             lines.push_back({LineKind::Tier, tier_label});
-        for (std::size_t i = 0; i < view->items.size(); ++i) {
-            if (const auto *group = std::get_if<verdite::SetupGroupView>(&view->items[i]))
+        for (std::size_t i = 0; i < shown().items.size(); ++i) {
+            if (const auto *group = std::get_if<verdite::SetupGroupView>(&shown().items[i]))
                 lines.push_back({LineKind::Group, group->group->label, {}, i});
             else
                 lines.push_back(
-                    {LineKind::Option, std::get<verdite::SetupOptionView>(view->items[i]).row.row->label, {}, i});
+                    {LineKind::Option, std::get<verdite::SetupOptionView>(shown().items[i]).row.row->label, {}, i});
         }
         lines.push_back({LineKind::Way, "Next", "next"});
         lines.push_back({LineKind::Way, "Back", "back"});
         return;
     case SetupStep::Summary:
-        for (const verdite::SetupSummarySection &section : view->summary) {
+        for (const verdite::SetupSummarySection &section : shown().summary) {
             lines.push_back({LineKind::Heading, std::string(section.title)});
             for (const verdite::SetupSummaryLine &each : section.lines)
                 lines.push_back({LineKind::Summary, std::string(each.label), each.value});
@@ -162,8 +168,9 @@ MenuRowShape SetupMenuScreen::State::shape(int, int row) const {
     case LineKind::Preset:
     case LineKind::Way: return {MenuRowKind::Action};
     case LineKind::Tier: {
-        const int current = view->page_tier ? static_cast<int>(*view->page_tier) : -1;
-        return {MenuRowKind::Choice, true, static_cast<int>(view->tiers.size()), current};
+        const std::optional<std::size_t> &tier = shown().page_tier;
+        const int current = tier ? static_cast<int>(*tier) : -1;
+        return {MenuRowKind::Choice, true, static_cast<int>(shown().tiers.size()), current};
     }
     case LineKind::Group: {
         const verdite::SetupGroupView &each = group(*line);
@@ -199,8 +206,8 @@ void SetupMenuScreen::State::choose(int, int row, int choice) {
     if (!line || !setup || choice < 0)
         return;
     const auto at = static_cast<std::size_t>(choice);
-    if (line->kind == LineKind::Tier && at < view->tiers.size()) {
-        setup->choose_page_tier(view->tiers[at]->id);
+    if (line->kind == LineKind::Tier && at < shown().tiers.size()) {
+        setup->choose_page_tier(shown().tiers[at]->id);
     } else if (line->kind == LineKind::Group) {
         const verdite::SetupGroupView &each = group(*line);
         const std::string id = each.group->id;
@@ -233,7 +240,7 @@ void SetupMenuScreen::State::activate(int, int row) {
     if (!line || !setup)
         return;
     if (line->kind == LineKind::Preset)
-        setup->choose_preset(view->presets[line->index]->id);
+        setup->choose_preset(shown().presets[line->index]->id);
     else if (line->kind == LineKind::Way)
         setup->command(line->value);
 }
@@ -241,15 +248,15 @@ void SetupMenuScreen::State::activate(int, int row) {
 void SetupMenuScreen::State::go_on() {
     if (!setup || !view)
         return;
-    if (view->step == SetupStep::Page)
+    if (shown().step == SetupStep::Page)
         setup->next();
-    else if (view->step == SetupStep::Summary)
+    else if (shown().step == SetupStep::Summary)
         setup->finish();
 }
 
 // Never off the welcome, where only its Skip leaves.
 void SetupMenuScreen::State::go_back() {
-    if (setup && view && view->step != SetupStep::Welcome)
+    if (setup && view && shown().step != SetupStep::Welcome)
         setup->back();
 }
 
@@ -271,15 +278,20 @@ void SetupMenuScreen::State::input(verdite::MenuInput input) {
 // ---- the document ----
 
 std::string SetupMenuScreen::State::heading_rml() const {
-    switch (view->step) {
+    const verdite::SetupPageView &page = shown();
+    switch (page.step) {
     case SetupStep::Welcome:
-        return "<h1>" + verdite::rml_escaped(view->welcome->title) + "</h1>" + text_rml(view->welcome->text) +
-               "<p class=\"prompt\">" + verdite::rml_escaped(view->welcome->prompt) + "</p>";
+        if (!page.welcome)
+            return {};
+        return "<h1>" + verdite::rml_escaped(page.welcome->title) + "</h1>" + text_rml(page.welcome->text) +
+               "<p class=\"prompt\">" + verdite::rml_escaped(page.welcome->prompt) + "</p>";
     case SetupStep::Page: {
+        if (!page.spec_page)
+            return {};
         // A one-paragraph intro is secondary, so dim; a page explaining at length is meant to be read.
-        const std::string &text = view->spec_page->text;
+        const std::string &text = page.spec_page->text;
         const bool long_text = text.find("\n\n") != std::string::npos;
-        return "<h1>" + verdite::rml_escaped(view->spec_page->title) + "</h1>" + "<div class=\"" +
+        return "<h1>" + verdite::rml_escaped(page.spec_page->title) + "</h1>" + "<div class=\"" +
                (long_text ? "read" : "dim") + "\">" + text_rml(text) + "</div>";
     }
     case SetupStep::Summary:
@@ -289,16 +301,16 @@ std::string SetupMenuScreen::State::heading_rml() const {
 }
 
 std::string SetupMenuScreen::State::steps_rml() const {
-    if (view->step == SetupStep::Welcome)
+    if (shown().step == SetupStep::Welcome)
         return "<p>Welcome</p>";
-    return "<p>Step " + std::to_string(view->page + 1) + " of " + std::to_string(view->page_count + 1) + "</p>";
+    return "<p>Step " + std::to_string(shown().page + 1) + " of " + std::to_string(shown().page_count + 1) + "</p>";
 }
 
 // A Choice-shaped line's answers, in the list's order.
 std::vector<std::string> SetupMenuScreen::State::answers(const Line &line) const {
     std::vector<std::string> out;
     if (line.kind == LineKind::Tier) {
-        for (const verdite::SetupTier *tier : view->tiers)
+        for (const verdite::SetupTier *tier : shown().tiers)
             out.push_back(tier->label);
     } else if (line.kind == LineKind::Group) {
         const verdite::SetupGroupView &each = group(line);
@@ -385,7 +397,7 @@ std::string SetupMenuScreen::State::row_rml(int index, const Line &line) const {
                       "\" class=\"" + classes + "\">";
     out += "<label>" + verdite::rml_escaped(line.label) + "</label>";
     if (line.kind == LineKind::Preset) {
-        const verdite::SetupPreset &preset = *view->presets[line.index];
+        const verdite::SetupPreset &preset = *shown().presets[line.index];
         out += "<note>" + verdite::rml_escaped(preset.help) + "</note>";
         if (!preset.summary.empty())
             out += "<note class=\"dim\">" + verdite::rml_escaped(preset.summary) + "</note>";
@@ -418,12 +430,12 @@ std::string SetupMenuScreen::State::help_rml() const {
     };
     switch (line->kind) {
     case LineKind::Preset: {
-        const verdite::SetupPreset &preset = *view->presets[line->index];
+        const verdite::SetupPreset &preset = *shown().presets[line->index];
         return block(preset.label, preset.help);
     }
     case LineKind::Tier: {
         std::string out = "<h2>" + std::string(tier_label) + "</h2>";
-        for (const verdite::SetupTier *tier : view->tiers)
+        for (const verdite::SetupTier *tier : shown().tiers)
             out += "<p><b>" + verdite::rml_escaped(tier->label) + "</b>: " + verdite::rml_escaped(tier->help) + "</p>";
         return out;
     }
