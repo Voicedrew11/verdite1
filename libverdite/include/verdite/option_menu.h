@@ -69,6 +69,8 @@ public:
     [[nodiscard]] std::string focused_id(const MenuModel &model) const;
     // A tab by its page title, or -1.
     [[nodiscard]] int tab_of(std::string_view title) const;
+    // A tab's page title, or empty past the last.
+    [[nodiscard]] std::string tab_title(int tab) const;
 
     // A press from the document (tab, row, step, choice, slot, in the RML
     // above) given to the model; false for an action of another name.

@@ -340,6 +340,13 @@ int OptionMenu::tab_of(std::string_view title) const {
     return -1;
 }
 
+std::string OptionMenu::tab_title(int tab) const {
+    if (tab < 0 || static_cast<size_t>(tab) >= pages_.size()) {
+        return {};
+    }
+    return std::string(pages_[static_cast<size_t>(tab)].title);
+}
+
 bool OptionMenu::press(MenuModel &model, std::string_view action, std::string_view value) {
     return menu_press(model, action, value);
 }

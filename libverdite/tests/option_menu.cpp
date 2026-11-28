@@ -108,6 +108,9 @@ TEST_CASE("option menu: pages are tabs, sections a heading and their rows") {
     CHECK(menu.shape(2, 1).kind == MenuRowKind::Status);   // a binding without BindingSlots
     CHECK(menu.tab_of("Audio") == 1);
     CHECK(menu.tab_of("Nope") == -1);
+    CHECK(menu.tab_title(1) == "Audio");
+    CHECK(menu.tab_title(-1).empty());
+    CHECK(menu.tab_title(menu.tab_count()).empty());
 }
 
 TEST_CASE("option menu: the model's inputs change the table's settings") {
