@@ -52,11 +52,20 @@ struct FontFace {
 
 // Images the documents name (<img src>, decorator images) that are not files:
 // keycaps, the game's own art. Nothing when the source is not one of its own.
+// A source it has nothing for is then looked for among the carried alpha masks.
 class ImageSource {
 public:
     virtual ~ImageSource() = default;
     [[nodiscard]] virtual std::optional<TextureUpload> load(std::string_view source) const = 0;
 };
+
+// A carried alpha mask (holyland's tools/ui_masks.py makes them: logos,
+// ornaments): "KF4A", the width and the height as little-endian 32-bit
+// numbers, then a byte of alpha for each pixel, rows top first. As a white
+// texture, premultiplied, for the style sheet to colour (image-color). Nothing
+// when the bytes are not one whole mask. Documents name a mask by its asset
+// path ("logo.alpha").
+[[nodiscard]] std::optional<TextureUpload> alpha_mask(std::span<const std::byte> file);
 
 enum class Cursor : unsigned char { Arrow, Hand, Text };
 

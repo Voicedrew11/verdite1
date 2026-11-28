@@ -2,10 +2,15 @@
 #include "ui_files.h"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <system_error>
+
+#include <verdite/ui.h>
 
 namespace verdite::ui {
 
@@ -174,6 +179,42 @@ bool Files::Seek(Rml::FileHandle file, long offset, int origin) {
 size_t Files::Tell(Rml::FileHandle file) {
     Reading *r = reading(file);
     return r != nullptr ? r->at : 0;
+}
+
+namespace {
+constexpr std::array<char, 4> mask_magic = {'K', 'F', '4', 'A'};
+constexpr size_t mask_header_bytes = 12;
+constexpr std::uint32_t mask_side_max_px = 8192;
+
+std::uint32_t little_endian_u32(std::span<const std::byte> bytes) {
+    return std::to_integer<std::uint32_t>(bytes[0]) | std::to_integer<std::uint32_t>(bytes[1]) << 8U |
+           std::to_integer<std::uint32_t>(bytes[2]) << 16U | std::to_integer<std::uint32_t>(bytes[3]) << 24U;
+}
+} // namespace
+
+std::optional<TextureUpload> alpha_mask(std::span<const std::byte> file) {
+    if (file.size() < mask_header_bytes ||
+        std::memcmp(file.data(), mask_magic.data(), mask_magic.size()) != 0) {
+        return std::nullopt;
+    }
+    const std::uint32_t width_px = little_endian_u32(file.subspan(4, 4));
+    const std::uint32_t height_px = little_endian_u32(file.subspan(8, 4));
+    if (width_px == 0 || height_px == 0 || width_px > mask_side_max_px || height_px > mask_side_max_px) {
+        return std::nullopt;
+    }
+    const size_t pixels = size_t{width_px} * size_t{height_px};
+    const std::span<const std::byte> alpha = file.subspan(mask_header_bytes);
+    if (alpha.size() != pixels) {
+        return std::nullopt;
+    }
+    TextureUpload upload;
+    upload.width_px = static_cast<std::int32_t>(width_px);
+    upload.height_px = static_cast<std::int32_t>(height_px);
+    upload.rgba.resize(pixels * 4);
+    for (size_t i = 0; i < pixels; i++) {
+        std::memset(&upload.rgba[i * 4], std::to_integer<int>(alpha[i]), 4);
+    }
+    return upload;
 }
 
 } // namespace verdite::ui

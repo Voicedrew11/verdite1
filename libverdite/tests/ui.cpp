@@ -5,10 +5,12 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -247,4 +249,60 @@ TEST_CASE("ui: a folder's files never come from outside it") {
     f.screen->remove_folder("mods/test");
     CHECK(f.screen->load("mods/test/docs/panel.rml") == nullptr);
     std::filesystem::remove_all(root);
+}
+
+namespace {
+std::vector<std::byte> mask_file(std::uint32_t width_px, std::uint32_t height_px, size_t alpha_bytes) {
+    std::vector<std::byte> file = {std::byte{'K'}, std::byte{'F'}, std::byte{'4'}, std::byte{'A'}};
+    for (std::uint32_t side : {width_px, height_px}) {
+        for (unsigned shift = 0; shift < 32; shift += 8) {
+            file.push_back(static_cast<std::byte>((side >> shift) & 0xFFU));
+        }
+    }
+    for (size_t i = 0; i < alpha_bytes; i++) {
+        file.push_back(static_cast<std::byte>(i * 40));
+    }
+    return file;
+}
+} // namespace
+
+TEST_CASE("ui: an alpha mask becomes a white premultiplied texture; a broken one is nothing") {
+    const std::optional<TextureUpload> mask = alpha_mask(mask_file(3, 2, 6));
+    REQUIRE(mask.has_value());
+    CHECK(mask->width_px == 3);
+    CHECK(mask->height_px == 2);
+    REQUIRE(mask->rgba.size() == 24);
+    CHECK(mask->rgba[5 * 4] == 200);
+    CHECK(mask->rgba[5 * 4 + 3] == 200);
+
+    CHECK_FALSE(alpha_mask(mask_file(3, 2, 5)).has_value());    // short
+    CHECK_FALSE(alpha_mask(mask_file(3, 2, 7)).has_value());    // long
+    CHECK_FALSE(alpha_mask(mask_file(0, 2, 0)).has_value());    // empty
+    CHECK_FALSE(alpha_mask(mask_file(9000, 1, 0)).has_value()); // too wide
+    CHECK_FALSE(alpha_mask(mask_file(0x40000000, 4, 0)).has_value());   // (size_t overflow on 32-bit)
+    std::vector<std::byte> wrong = mask_file(1, 1, 1);
+    wrong[3] = std::byte{'B'};
+    CHECK_FALSE(alpha_mask(wrong).has_value());
+    CHECK_FALSE(alpha_mask({}).has_value());
+}
+
+TEST_CASE("ui: a document's img draws a carried alpha mask") {
+    TestHost host;
+    std::vector<std::byte> font = read_file(VERDITE_TEST_FONT);
+    const std::vector<std::byte> mask = mask_file(2, 2, 4);
+    constexpr std::string_view rml = R"(<rml><body><img src="logo.alpha"/></body></rml>)";
+    const std::vector<Asset> assets = {{"fonts/test.ttf", font}, {"logo.alpha", mask}, {"img.rml", bytes_of(rml)}};
+    const std::vector<FontFace> fonts = {{"fonts/test.ttf", "Test"}};
+    std::unique_ptr<Screen> screen = Screen::open({&host, assets, fonts, nullptr});
+    REQUIRE(screen != nullptr);
+    screen->resize(64, 64, 1);
+    Document *page = screen->load("img.rml");
+    REQUIRE(page != nullptr);
+    page->show();
+    const Frame &frame = screen->draw();
+    bool drawn = false;
+    for (const TextureUpload &upload : frame.uploads) {
+        drawn |= upload.width_px == 2 && upload.height_px == 2;
+    }
+    CHECK(drawn);
 }

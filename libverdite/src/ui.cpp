@@ -417,10 +417,31 @@ struct Touch {
     float scroll_start = 0;
 };
 
+// The game's images, then the carried alpha masks (alpha_mask).
+class CarriedImages final : public ImageSource {
+public:
+    CarriedImages(const ImageSource *game, const Files &files) : game_(game), files_(files) {}
+
+    std::optional<TextureUpload> load(std::string_view source) const override {
+        if (game_ != nullptr) {
+            if (std::optional<TextureUpload> image = game_->load(source)) {
+                return image;
+            }
+        }
+        const std::optional<std::span<const std::byte>> file = files_.asset(source);
+        return file ? alpha_mask(*file) : std::nullopt;
+    }
+
+private:
+    const ImageSource *game_;
+    const Files &files_;
+};
+
 struct Screen::State {
     ScreenHost *host = nullptr;
     Ties ties;
     Files files;
+    CarriedImages images;
     Recorder recorder;
     FontMeasure fonts;
     bool started = false;
@@ -441,7 +462,8 @@ struct Screen::State {
     explicit State(const ScreenSetup &setup)
         : host(setup.host), ties(*setup.host),
           files(setup.assets, [host = setup.host](std::string_view line) { host->log(line); }),
-          recorder(setup.images, [host = setup.host](std::string_view line) { host->log(line); }) {}
+          images(setup.images, files),
+          recorder(&images, [host = setup.host](std::string_view line) { host->log(line); }) {}
     ~State() {
         if (started) {
             Rml::Shutdown();   // documents, then the canvas elements' instancer below
