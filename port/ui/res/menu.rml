@@ -1,0 +1,24 @@
+<rml>
+<head>
+	<title>Verdite1</title>
+	<link type="text/rcss" href="kf1.rcss"/>
+</head>
+<!-- The F1 menu (port/ui/menu.cpp fills #tabs, #version, #rows, #help and #prompts) -->
+<body>
+	<div id="shade"></div>
+	<div id="window">
+		<div id="main">
+			<div id="sidebar">
+				<div id="title">Settings</div>
+				<div id="tabs"></div>
+				<div id="version"></div>
+			</div>
+			<div id="content">
+				<div id="rows"></div>
+			</div>
+			<div id="help"></div>
+		</div>
+		<div id="prompts"></div>
+	</div>
+</body>
+</rml>

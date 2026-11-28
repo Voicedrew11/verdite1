@@ -2,6 +2,7 @@
 // ImGui over the game's frame. The game pauses while it is open (configurable).
 #include "build_info.h"
 #include "internal.hpp"
+#include "menu.h"
 #include "shell.h"
 #include <verdite/ui.h>
 #include <backends/imgui_impl_sdl3.h>
@@ -24,7 +25,7 @@ SDL_Window *main_window;
 bool running;
 bool imgui;   // false when headless
 bool open;
-bool show_settings, show_mods = true, show_console, show_about, show_online;
+bool show_mods = true, show_console, show_about, show_online;
 bool console_autoscroll = true;
 char console_filter[128];
 std::vector<ConsoleLine> console_lines;
@@ -34,7 +35,6 @@ Uint64 fps_started;
 float fps_value;
 int last_context;
 float applied_scale = 1.0f;   // layout uses this, never the slider's live value
-std::string settings_page = "Display";
 
 void load_font() {
     ImGuiIO &io = ImGui::GetIO();
@@ -108,135 +108,6 @@ void set_open(bool value) {
         SDL_SetWindowRelativeMouseMode(main_window, false);
     else
         binding_capture_cancel();
-}
-
-// ---- Settings: the option table, drawn as it comes ----
-
-// A number with settle set is held here while its slider is dragged.
-std::string settling_id;
-float settling_value;
-
-void show_help(const verdite::OptionRow &row) {
-    if (!row.help.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", row.help.c_str());
-}
-
-void draw_choice(const verdite::OptionRowView &view) {
-    const verdite::OptionRow &row = *view.row;
-    const auto current = std::ranges::find(row.choices, view.value, &verdite::OptionChoice::value);
-    const char *preview = current != row.choices.end() ? current->label.c_str() : "Custom";
-    if (!ImGui::BeginCombo(row.label.c_str(), preview))
-        return;
-    for (const auto &choice : row.choices)
-        if (ImGui::Selectable(choice.label.c_str(), choice.value == view.value))
-            options().set(row.id, choice.value);
-    ImGui::EndCombo();
-}
-
-void draw_number(const verdite::OptionRowView &view) {
-    const verdite::OptionRow &row = *view.row;
-    const bool settling = settling_id == row.id;
-    float value = settling ? settling_value : static_cast<float>(std::get<double>(view.value));
-    bool committed = false;
-    const bool moved = slider_input(row.label.c_str(), &value, static_cast<float>(row.min), static_cast<float>(row.max),
-                                    row.format.empty() ? "%.2f" : row.format.c_str(), static_cast<float>(row.step),
-                                    &committed);
-    if (!row.settle) {
-        if (moved)
-            options().set(row.id, static_cast<double>(value));
-        return;
-    }
-    if (moved) {
-        settling_id = row.id;
-        settling_value = value;
-    }
-    if (committed) {
-        options().set(row.id, static_cast<double>(value));
-        settling_id.clear();
-    }
-}
-
-void draw_status(const verdite::OptionRowView &view) {
-    const std::string &text = std::get<std::string>(view.value);
-    if (view.row->label.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("%s", text.c_str());
-        ImGui::PopStyleColor();
-        return;
-    }
-    ImGui::TextUnformatted(view.row->label.c_str());
-    ImGui::SameLine(180.0f * applied_scale);
-    ImGui::TextDisabled("%s", text.c_str());
-}
-
-void draw_option(const verdite::OptionRowView &view) {
-    if (draw_binding_row(view, 180.0f * applied_scale))
-        return;
-    const verdite::OptionRow &row = *view.row;
-    ImGui::PushID(row.id.c_str());
-    ImGui::BeginDisabled(!view.state.enabled);
-    switch (row.kind) {
-    case verdite::OptionKind::Toggle: {
-        bool on = std::get<bool>(view.value);
-        if (ImGui::Checkbox(row.label.c_str(), &on))
-            options().set(row.id, on);
-        break;
-    }
-    case verdite::OptionKind::Choice:
-        draw_choice(view);
-        break;
-    case verdite::OptionKind::Number:
-        draw_number(view);
-        break;
-    case verdite::OptionKind::Action:
-        if (ImGui::Button(row.label.c_str()))
-            options().run(row.id);
-        break;
-    case verdite::OptionKind::Status:
-        draw_status(view);
-        break;
-    }
-    show_help(row);
-    ImGui::EndDisabled();
-    if (!view.state.note.empty()) {
-        ImGui::Indent();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("%s", view.state.note.c_str());
-        ImGui::PopStyleColor();
-        ImGui::Unindent();
-    }
-    ImGui::PopID();
-}
-
-void draw_option_page(const verdite::OptionPageView &page) {
-    for (const auto &section : page.sections) {
-        if (!section.title.empty())
-            ImGui::SeparatorText(std::string(section.title).c_str());
-        for (const auto &row : section.rows)
-            draw_option(row);
-    }
-}
-
-void draw_settings_window() {
-    ImGui::SetNextWindowSize(ImVec2(560, 420), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Settings", &show_settings)) {
-        ImGui::End();
-        return;
-    }
-    const auto pages = options().view(platform_features());
-    const auto shown = std::ranges::find(pages, std::string_view(settings_page), &verdite::OptionPageView::title);
-    const verdite::OptionPageView *page = shown != pages.end() ? &*shown : pages.empty() ? nullptr : &pages.front();
-    ImGui::BeginChild("pages", ImVec2(130 * applied_scale, 0), ImGuiChildFlags_Borders);
-    for (const auto &each : pages)
-        if (ImGui::Selectable(std::string(each.title).c_str(), &each == page))
-            settings_page = each.title;
-    ImGui::EndChild();
-    ImGui::SameLine();
-    ImGui::BeginChild("page");
-    if (page)
-        draw_option_page(*page);
-    ImGui::EndChild();
-    ImGui::End();
 }
 
 void draw_console_window() {
@@ -318,7 +189,6 @@ void draw_about_window() {
 void draw_menu_bar() {
     if (!ImGui::BeginMainMenuBar())
         return;
-    ImGui::MenuItem("Settings", nullptr, &show_settings);
     ImGui::MenuItem("Mods", nullptr, &show_mods);
     ImGui::MenuItem("Online", nullptr, &show_online);
     ImGui::MenuItem("Console", nullptr, &show_console);
@@ -327,7 +197,7 @@ void draw_menu_bar() {
     if (ImGui::MenuItem("Close"))
         set_open(false);
     char status[96];
-    std::snprintf(status, sizeof status, "%d mod%s running   F1 to close%s", mods_loaded_count(),
+    std::snprintf(status, sizeof status, "%d mod%s running   Shift+F1 to close%s", mods_loaded_count(),
                   mods_loaded_count() == 1 ? "" : "s", settings().pause_when_open ? "   (paused)" : "");
     const float status_x = ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16;
     if (const float badge_px = update_notice_badge_width_px(); badge_px > 0.0f) {
@@ -375,7 +245,9 @@ void overlay_restyle() {
 }
 
 // The overlay's windows or Android's settings panel cover the game.
-static bool covered() { return open || settings_panel_open() || setup_open() || update_notice_open(); }
+static bool covered() {
+    return open || menu_open() || settings_panel_open() || setup_open() || update_notice_open();
+}
 
 bool overlay_open() { return covered(); }
 bool overlay_captures_input() { return covered(); }
@@ -385,17 +257,20 @@ bool overlay_captures_keys() {
 }
 // Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
-    return settings_panel_open() || setup_open() || update_notice_open() || (open && settings().pause_when_open) ||
+    const bool shown = open || menu_open();
+    return settings_panel_open() || setup_open() || update_notice_open() || (shown && settings().pause_when_open) ||
            mods_pause_requested();
 }
 bool pause_keeps_music() {
-    if (settings_panel_open() || (open && settings().pause_when_open))
+    if (settings_panel_open() || ((open || menu_open()) && settings().pause_when_open))
         return false;
     return mods_pause_keeps_music();
 }
 // Nothing of the game shows under Android's panel, so it is not redrawn.
 // A paused mod still gets on_draw, which is how it unpauses.
-bool redraw_while_paused() { return open || setup_shows_game() || update_notice_open() || mods_pause_requested(); }
+bool redraw_while_paused() {
+    return open || menu_open() || setup_shows_game() || update_notice_open() || mods_pause_requested();
+}
 bool wants_cursor() { return covered() || mods_take_mouse(); }
 
 ViewRect game_view() {
@@ -508,7 +383,17 @@ bool process_event(const SDL_Event &event) {
             settings_mark_dirty();
             return true;
         }
-        if (event.key.key == SDLK_F1 || (open && event.key.key == SDLK_ESCAPE && !ImGui::GetIO().WantTextInput)) {
+        // F1: the menu. Shift+F1: Dear ImGui's windows, for what has not left it yet (mods, online,
+        // the console).
+        const bool shift = (event.key.mod & SDL_KMOD_SHIFT) != 0;
+        if (event.key.key == SDLK_F1 && !shift) {
+            set_open(false);
+            menu_set_open(!menu_open());
+            return true;
+        }
+        if ((event.key.key == SDLK_F1 && shift) ||
+            (open && event.key.key == SDLK_ESCAPE && !ImGui::GetIO().WantTextInput)) {
+            menu_set_open(false);
             set_open(!open);
             return true;
         }
@@ -518,7 +403,7 @@ bool process_event(const SDL_Event &event) {
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
         apply_render_settings();
     // The interface is drawn over Dear ImGui, so it is asked first.
-    if (interface_event(event))
+    if (interface_event(event) || menu_event(event))
         return true;
     ImGui_ImplSDL3_ProcessEvent(&event);
     // A mod that takes the mouse (the full map: zoom, drag, hover) gets it; the keyboard still reaches the game.
@@ -605,6 +490,9 @@ const verdite::ui::Frame *build_interface(int width_px, int height_px) {
     if (!screen || width_px <= 0 || height_px <= 0)
         return nullptr;
     count_frame();
+    while (std::optional<verdite::ui::Action> action = screen->take_action())
+        menu_action(*action);
+    menu_frame();
     verdite::ui::Canvas &front = screen->canvas(verdite::ui::Layer::Front);
     item_description_draw(screen->canvas(verdite::ui::Layer::Back));
     touch_controls_draw(front);
@@ -624,9 +512,7 @@ ImDrawData *build_overlay(int width, int height) {
     static const char *test_page = std::getenv("KF_TEST_SETTINGS");
     if (test_page) {
         if (!settings_panel_show())
-            open = show_settings = true;
-        show_mods = false;
-        settings_page = test_page;
+            menu_open_page(test_page);
         test_page = nullptr;
         // KF_TEST_LANGUAGE_TASK=download: presses "Download English patch".
         if (const char *task = std::getenv("KF_TEST_LANGUAGE_TASK"); task && std::strcmp(task, "download") == 0)
@@ -635,8 +521,6 @@ ImDrawData *build_overlay(int width, int height) {
     mods_draw_hud();
     if (open) {
         draw_menu_bar();
-        if (show_settings)
-            draw_settings_window();
         if (show_mods)
             draw_mods_window();
         if (show_online)
@@ -646,7 +530,6 @@ ImDrawData *build_overlay(int width, int height) {
         if (show_about)
             draw_about_window();
     }
-    binding_capture_frame();
     setup_draw();
     update_notice_draw();
     ImGui::Render();

@@ -88,14 +88,18 @@ std::string binding_row_note(BindingRow row);   // the 4 s note, else a missing-
 // or why not ("not a value it takes").
 std::optional<std::string> binding_text_change(std::string_view id, std::string_view text);
 
-// ---- binding rows in the overlay (binding_overlay.cpp) ----
-// Draws a binding row (chips, add, the capture box); false for any other row.
-bool draw_binding_row(const verdite::OptionRowView &view, float label_column_px);
-// Every event, before the overlay's own keys: true when a capture took it, or a key or trigger a
+// ---- the capture behind the F1 menu's binding rows (port/ui/binding_capture.cpp) ----
+// Waits for a control for the row; one wait at a time.
+void binding_capture_start(BindingRow row);
+bool binding_capture_waiting(BindingRow row);
+// Waiting, or a pad control it took not yet let go: the menu takes no pad input.
+bool binding_capture_busy();
+int binding_capture_seconds_left();   // while waiting
+// Every event, before the menu's own keys: true when a capture took it, or a key or trigger a
 // capture took is still held.
 bool binding_capture_event(const SDL_Event &event);
-void binding_capture_frame();    // each drawn frame: timeouts, a row no longer drawn
-void binding_capture_cancel();   // the overlay closed
+void binding_capture_frame();    // each frame: timeouts
+void binding_capture_cancel();   // the menu closed
 
 // ---- the SETTINGS page in the game's menu (kf/platform/settings_page.h) ----
 bool settings_page_holding();   // it has changes not yet saved: the settings file waits

@@ -1,6 +1,7 @@
 // The touch controls drawn over the game, translucent, from what
 // kf/platform/touch.h says is on screen, on the interface's front canvas.
 #include "internal.hpp"
+#include "menu.h"
 #include <kf/platform/touch.h>
 #include <verdite/ui_canvas.h>
 #include <algorithm>
@@ -84,7 +85,7 @@ void touch_commands_poll() {
     switch (host_touch_take_command()) {
     case TouchCommand::Settings:
         if (!settings_panel_show())
-            overlay_set_open(true);
+            menu_set_open(true);
         break;
     case TouchCommand::None: break;
     }

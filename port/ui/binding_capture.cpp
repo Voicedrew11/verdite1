@@ -1,9 +1,8 @@
-// The Controls page's binding rows in the overlay: each row's chips and [+], and the capture that
-// waits for a key, mouse button, pad button or trigger and adds it through binding_add. Events
-// reach the capture before the overlay's own keys, so Escape and F1 can cancel it; pad navigation
-// is off while it waits, and after a pad capture until that control is let go.
+// The capture behind the F1 menu's binding rows: it waits for a key, mouse button, pad button or
+// trigger and adds it through binding_add. Events reach the capture before the menu's own keys, so
+// Escape and F1 can cancel it; the menu takes no pad input while it waits, and after a pad capture
+// until that control is let go (binding_capture_busy).
 #include "internal.hpp"
-#include <imgui.h>
 #include <array>
 #include <bitset>
 #include <cstddef>
@@ -16,14 +15,11 @@ namespace {
 constexpr std::uint64_t capture_wait_ms = 5000;   // a capture nothing answers gives up
 constexpr std::uint64_t release_wait_ms = 2000;   // pad navigation comes back by then at the latest
 
-constexpr const char *keys_hint = "Press a key or mouse button  (Esc cancels)";
-constexpr const char *pad_hint = "Press a pad button or trigger  (Esc cancels)";
 constexpr const char *unchanged_note = "Unchanged.";
 constexpr const char *timeout_note = "Nothing pressed: unchanged.";
 constexpr const char *wants_key_note = "Press a key or mouse button.";
 constexpr const char *wants_pad_note = "Press a pad button or trigger.";
 constexpr const char *reserved_note = "F11 and Alt+Enter switch fullscreen; they cannot be set.";
-constexpr const char *fixed_tip = "Always on this action";
 
 enum class Stage : std::uint8_t { idle, waiting, releasing };
 
@@ -31,40 +27,22 @@ struct Capture {
     Stage stage = Stage::idle;
     BindingRow row{};
     std::uint64_t started_ms = 0;
-    int drawn_frame = 0;   // the last frame the row was drawn in
     SDL_Keycode pending_modifier = SDLK_UNKNOWN;   // bound when let go, if nothing else came first
     Control releasing{};   // the pad control just bound, which holds navigation off until let go
     std::uint64_t releasing_since_ms = 0;
     std::array<Sint16, 2> trigger_value{};   // left, right: as last seen, in any stage
-    // Taken going down, in any stage, until let go: no repeat reaches ImGui as a new press.
+    // Taken going down, in any stage, until let go: no repeat reaches the menu as a new press.
     std::bitset<SDL_SCANCODE_COUNT> keys_taken;
     // Left, right: bound by a capture and still past the deadzone, however long the releasing stage lasts.
     std::array<bool, 2> triggers_taken{};
 };
 Capture capture;
 
-void stop_pad_nav() { ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad; }
-
-void resume_pad_nav() {
-    if (ImGui::GetCurrentContext())
-        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-}
-
 bool same_row(BindingRow a, BindingRow b) { return a.group == b.group && a.action == b.action; }
 
 void go_idle() {
     capture.stage = Stage::idle;
     capture.pending_modifier = SDLK_UNKNOWN;
-    resume_pad_nav();
-}
-
-void start_capture(BindingRow row) {
-    capture.stage = Stage::waiting;
-    capture.row = row;
-    capture.started_ms = SDL_GetTicks();
-    capture.drawn_frame = ImGui::GetFrameCount();
-    capture.pending_modifier = SDLK_UNKNOWN;
-    stop_pad_nav();
 }
 
 // Ends any capture; a waiting one's row gets the note, if there is one.
@@ -82,7 +60,7 @@ void finish_key_or_mouse(Control control) {
     go_idle();
 }
 
-// The pad still holds the control, so navigation stays off until it is let go.
+// The pad still holds the control, so the menu takes no pad input until it is let go.
 void finish_pad(Control control) {
     binding_add(capture.row, control);
     capture.stage = Stage::releasing;
@@ -146,7 +124,7 @@ bool on_key_down(const SDL_KeyboardEvent &key) {
     return true;
 }
 
-// ImGui must see every key let go, so none is taken.
+// The menu and the game must see every key let go, so none is taken.
 bool on_key_up(const SDL_KeyboardEvent &key) {
     if (capture.pending_modifier != SDLK_UNKNOWN && event_key(key) == capture.pending_modifier)
         finish_key_or_mouse({InputDevice::keyboard, capture.pending_modifier});
@@ -154,7 +132,7 @@ bool on_key_up(const SDL_KeyboardEvent &key) {
 }
 
 bool on_mouse_down(const SDL_MouseButtonEvent &button) {
-    if (capture.row.group == BindingGroup::pad)   // ImGui's: [Cancel] and the other widgets
+    if (capture.row.group == BindingGroup::pad)   // the menu's: a press elsewhere on it
         return false;
     if (button.which == SDL_TOUCH_MOUSEID) {
         cancel(unchanged_note);
@@ -236,10 +214,10 @@ std::optional<std::size_t> key_slot(const SDL_KeyboardEvent &key) {
     return slot;
 }
 
-// What the capture took going down stays taken until let go, after the capture too. ImGui never
-// saw a taken key go down, so its first repeat would be a press: [+] again, or a nav move. The
+// What the capture took going down stays taken until let go, after the capture too. The menu never
+// saw a taken key go down, so its first repeat would be a press: a listen again, or a move. The
 // host's table binds a taken trigger at once, so its motion would press the new action. The
-// letting go itself is passed on: ImGui and the host already have it up.
+// letting go itself is passed on: the menu and the host already have it up.
 bool held_takes(const SDL_Event &event) {
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN: {
@@ -284,108 +262,27 @@ void remember_trigger(const SDL_Event &event) {
         capture.trigger_value[*slot] = event.gaxis.value;
 }
 
-// ---- drawing ----
-
-void tooltip(const char *text) {
-    if (text[0] != '\0' && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", text);
-}
-
-// Escape on Pause / back and the left stick's directions; Android's Back has no key to show.
-bool draw_fixed_chips(BindingRow row) {
-    bool any = false;
-    ImGui::PushID("fixed");
-    ImGui::BeginDisabled();
-    for (const InputBinding &binding : fixed_bindings()) {
-        const bool android_back = binding.control == Control{InputDevice::keyboard, SDLK_AC_BACK};
-        if (binding.action != row.action || binding_group(binding.control) != row.group || android_back)
-            continue;
-        ImGui::SmallButton(control_label(binding.control).c_str());
-        tooltip(fixed_tip);
-        ImGui::SameLine();
-        any = true;
-    }
-    ImGui::EndDisabled();
-    ImGui::PopID();
-    return any;
-}
-
-// A chip's popup removes it: two steps, so a stray click removes nothing.
-void draw_chips(BindingRow row, const ActionControls &controls) {
-    for (std::size_t i = 0; i < controls.count; ++i) {
-        const Control control = controls.list[i];
-        const std::string label = control_label(control);
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::SmallButton(label.c_str()))
-            ImGui::OpenPopup("chip");
-        if (ImGui::BeginPopup("chip")) {
-            if (ImGui::MenuItem(("Remove " + label).c_str()))
-                binding_remove(row, control);
-            ImGui::EndPopup();
-        }
-        ImGui::PopID();
-        ImGui::SameLine();
-    }
-}
-
-void draw_capture_box(BindingRow row) {
-    capture.drawn_frame = ImGui::GetFrameCount();
-    const std::uint64_t waited_ms = SDL_GetTicks() - capture.started_ms;
-    const std::uint64_t left_ms = waited_ms < capture_wait_ms ? capture_wait_ms - waited_ms : 0;
-    const int left_s = static_cast<int>((left_ms + 999) / 1000);
-    ImGui::Text("%s  %d s", row.group == BindingGroup::keys ? keys_hint : pad_hint, left_s);
-    if (row.group != BindingGroup::pad)
-        return;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Cancel"))
-        cancel(unchanged_note);
-}
-
-// The capture box on the row capturing, else [+] while the action has room.
-void draw_add(BindingRow row, std::size_t count) {
-    if (capture.stage == Stage::waiting && same_row(capture.row, row)) {
-        draw_capture_box(row);
-        return;
-    }
-    if (count >= controls_per_action) {
-        ImGui::NewLine();
-        return;
-    }
-    if (ImGui::SmallButton("+"))
-        start_capture(row);
-}
-
-void draw_note(const std::string &note) {
-    if (note.empty())
-        return;
-    ImGui::Indent();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("%s", note.c_str());
-    ImGui::PopStyleColor();
-    ImGui::Unindent();
-}
 } // namespace
 
-bool draw_binding_row(const verdite::OptionRowView &view, float label_column_px) {
-    const std::optional<BindingRow> found = binding_row(view.row->id);
-    if (!found)
-        return false;
-    const BindingRow row = *found;
-    const ActionControls controls = bindings_in_play(row.group)[static_cast<std::size_t>(row.action)];
-    ImGui::PushID(view.row->id.c_str());
-    ImGui::TextUnformatted(view.row->label.c_str());
-    tooltip(view.row->help.c_str());
-    ImGui::SameLine(label_column_px);
-    const bool any_fixed = draw_fixed_chips(row);
-    draw_chips(row, controls);
-    if (!any_fixed && controls.count == 0) {
-        ImGui::TextDisabled("None");
-        ImGui::SameLine();
-    }
-    draw_add(row, controls.count);
-    draw_note(view.state.note);
-    ImGui::PopID();
-    return true;
+void binding_capture_start(BindingRow row) {
+    capture.stage = Stage::waiting;
+    capture.row = row;
+    capture.started_ms = SDL_GetTicks();
+    capture.pending_modifier = SDLK_UNKNOWN;
+}
+
+bool binding_capture_waiting(BindingRow row) {
+    return capture.stage == Stage::waiting && same_row(capture.row, row);
+}
+
+bool binding_capture_busy() { return capture.stage != Stage::idle; }
+
+int binding_capture_seconds_left() {
+    if (capture.stage != Stage::waiting)
+        return 0;
+    const std::uint64_t waited_ms = SDL_GetTicks() - capture.started_ms;
+    const std::uint64_t left_ms = waited_ms < capture_wait_ms ? capture_wait_ms - waited_ms : 0;
+    return static_cast<int>((left_ms + 999) / 1000);
 }
 
 bool binding_capture_event(const SDL_Event &event) {
@@ -400,11 +297,7 @@ void binding_capture_frame() {
     const std::uint64_t now_ms = SDL_GetTicks();
     if (capture.stage == Stage::releasing && now_ms - capture.releasing_since_ms >= release_wait_ms)
         go_idle();
-    if (capture.stage != Stage::waiting)
-        return;
-    if (ImGui::GetFrameCount() - capture.drawn_frame > 1)
-        cancel(nullptr);
-    else if (now_ms - capture.started_ms >= capture_wait_ms)
+    if (capture.stage == Stage::waiting && now_ms - capture.started_ms >= capture_wait_ms)
         cancel(timeout_note);
 }
 
