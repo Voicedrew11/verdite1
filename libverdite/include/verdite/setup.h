@@ -3,8 +3,7 @@
 // The first-run setup: a welcome with presets, a few pages of choices, and a
 // summary of what will change. Game-agnostic and drawn by no one here: the
 // game describes the pages (SetupSpec) over its option table, a platform
-// implements SetupScreen to draw them its own way (Dear ImGui on a desktop, a
-// native panel on a phone), and the platform's controls come back as calls on
+// implements SetupScreen to draw them its own way (KF1: an RmlUi page), and the platform's controls come back as calls on
 // Setup.
 //
 //   welcome    a card per preset; choosing one fills every page from it
