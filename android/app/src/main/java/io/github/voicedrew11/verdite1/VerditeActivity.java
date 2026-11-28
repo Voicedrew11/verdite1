@@ -63,20 +63,6 @@ public class VerditeActivity extends SDLActivity {
         });
     }
 
-    static native void nativeUpdateSkip();
-
-    // From the game thread (port/ext/update_notice.cpp): a new release, told once, at the title.
-    public void showUpdateNotice(String available, String running, String pageUrl) {
-        runOnUiThread(() -> new MaterialAlertDialogBuilder(new ContextThemeWrapper(this, R.style.Theme_Verdite_Settings))
-                .setTitle("Update available")
-                .setMessage(available + "\n" + running)
-                .setPositiveButton("Download page", (dialog, which) -> openPage(pageUrl))
-                .setNegativeButton("Skip this version", (dialog, which) -> nativeUpdateSkip())
-                .setNeutralButton("Later", null)
-                .setOnDismissListener(dialog -> mSurface.requestFocus())
-                .show());
-    }
-
     // From the game thread (port/platform/crash.cpp): the last run crashed or hung. A phone has no
     // folder a player can open, so the report goes out through the system's share sheet.
     public void showCrashNotice(String title, String message, String folder) {

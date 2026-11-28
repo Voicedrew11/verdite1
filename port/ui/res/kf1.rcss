@@ -381,3 +381,79 @@ row.way.focused {
 body.touch row.card {
 	padding: 16dp 18dp;
 }
+
+/* ---- The update notice (body.notice: port/ext/update_notice.cpp) and the menu's badge ------------ */
+#plate {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 560dp;
+	margin-left: -280dp;
+	margin-top: -110dp;
+	padding: 22dp 26dp;
+	border: 2dp #6a6f9a;
+	border-radius: 6dp;
+	decorator: vertical-gradient(#181a34f6 #0c0d1cf8);
+}
+
+#plate h1 {
+	display: block;
+	color: #ffe6aa;
+	font-size: 24dp;
+	margin-bottom: 12dp;
+}
+
+#plate p {
+	margin-bottom: 6dp;
+}
+
+#plate .dim {
+	color: #9a96a8;
+}
+
+#buttons {
+	display: flex;
+	flex-direction: row;
+	margin-top: 18dp;
+}
+
+button {
+	display: block;
+	flex: 1;
+	margin-right: 10dp;
+	padding: 8dp 0;
+	text-align: center;
+	border: 1dp #6a6f9a;
+	border-radius: 3dp;
+	cursor: pointer;
+}
+
+button:hover, button.focused {
+	border-color: #ffe6aa;
+	color: #ffe6aa;
+}
+
+/* the main way on: the gold of Verdite's update buttons */
+button#download {
+	background-color: #d4b038;
+	color: #14120a;
+}
+
+button#download.focused, button#download:hover {
+	background-color: #e3cc7d;
+	color: #14120a;
+}
+
+#update {
+	padding: 0 22dp 10dp 22dp;
+}
+
+badge {
+	display: inline-block;
+	padding: 3dp 10dp;
+	border-radius: 3dp;
+	background-color: #d4b038;
+	color: #14120a;
+	font-size: 14dp;
+	cursor: pointer;
+}

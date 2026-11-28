@@ -139,9 +139,12 @@ bool discord_enabled();   // the presence is on, by the setting or KF_DISCORD
 void update_notice_start();   // asks GitHub on its own thread, in a build for players or by KF_UPDATE_CHECK=force
 void update_notice_poll();    // on every host poll: shows the notice once, at the title
 bool update_notice_open();    // its window covers the game
-void update_notice_draw();    // inside the ImGui frame
-void update_notice_draw_badge();           // inside the menu bar
-float update_notice_badge_width_px();      // 0 when there is no badge
+// The notice is an RmlUi document (port/ui/res/notice.rml): its keys and pad while open, a press on
+// it or on the F1 menu's badge, and its frame before the interface is drawn.
+bool update_notice_event(const SDL_Event &event);
+void update_notice_action(const verdite::ui::Action &action);
+void update_notice_frame();
+std::string update_notice_badge_rml();     // the F1 menu's badge; empty when there is no release
 std::string update_notice_setting_note();  // what the setting's row says; empty when there is no release
 
 // ---- messages on the ground (messages_board.cpp, docs/MESSAGES_PLAN.md) ----

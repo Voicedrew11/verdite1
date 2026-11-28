@@ -200,10 +200,6 @@ void draw_menu_bar() {
     std::snprintf(status, sizeof status, "%d mod%s running   Shift+F1 to close%s", mods_loaded_count(),
                   mods_loaded_count() == 1 ? "" : "s", settings().pause_when_open ? "   (paused)" : "");
     const float status_x = ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16;
-    if (const float badge_px = update_notice_badge_width_px(); badge_px > 0.0f) {
-        ImGui::SameLine(status_x - badge_px - ImGui::GetStyle().ItemSpacing.x);
-        update_notice_draw_badge();
-    }
     ImGui::SameLine(status_x);
     ImGui::TextDisabled("%s", status);
     ImGui::EndMainMenuBar();
@@ -403,7 +399,7 @@ bool process_event(const SDL_Event &event) {
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
         apply_render_settings();
     // The interface is drawn over Dear ImGui, so it is asked first.
-    if (interface_event(event) || menu_event(event) || setup_event(event))
+    if (interface_event(event) || update_notice_event(event) || menu_event(event) || setup_event(event))
         return true;
     ImGui_ImplSDL3_ProcessEvent(&event);
     // A mod that takes the mouse (the full map: zoom, drag, hover) gets it; the keyboard still reaches the game.
@@ -493,7 +489,9 @@ const verdite::ui::Frame *build_interface(int width_px, int height_px) {
     while (std::optional<verdite::ui::Action> action = screen->take_action()) {
         menu_action(*action);
         setup_action(*action);
+        update_notice_action(*action);
     }
+    update_notice_frame();
     setup_frame();
     menu_frame();
     verdite::ui::Canvas &front = screen->canvas(verdite::ui::Layer::Front);
@@ -533,7 +531,6 @@ ImDrawData *build_overlay(int width, int height) {
         if (show_about)
             draw_about_window();
     }
-    update_notice_draw();
     ImGui::Render();
     return ImGui::GetDrawData();
 }

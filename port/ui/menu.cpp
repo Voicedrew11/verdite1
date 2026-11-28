@@ -120,6 +120,7 @@ void write_document(verdite::ui::Document &page) {
     page.set_rml("help", m.rows.help_rml(m.model));
     page.set_rml("prompts", prompts_rml());
     page.set_text("version", std::string(product_name) + " " + KF_VERSION);
+    page.set_rml("update", update_notice_badge_rml());
     const bool touch = (platform_features() & static_cast<verdite::PlatformFeatures>(
                                                   verdite::PlatformFeature::Touch)) != 0 &&
                        (platform_features() & static_cast<verdite::PlatformFeatures>(
