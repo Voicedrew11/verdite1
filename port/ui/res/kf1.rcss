@@ -40,8 +40,8 @@ body {
 	position: relative;
 	width: 92%;
 	height: 90%;
-	max-width: 1200dp;
-	max-height: 760dp;
+	max-width: 1600dp;
+	max-height: 1000dp;
 }
 
 #rule-outer {
