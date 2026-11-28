@@ -142,7 +142,7 @@ void overlay_restyle() {
 
 // The overlay's windows or Android's settings panel cover the game.
 static bool covered() {
-    return open || menu_open() || settings_panel_open() || setup_open() || update_notice_open();
+    return open || menu_open() || setup_open() || update_notice_open();
 }
 
 bool overlay_open() { return covered(); }
@@ -152,18 +152,15 @@ bool overlay_captures_keys() {
     const verdite::ui::Screen *screen = interface_screen();
     return covered() || (screen && screen->wants_text());
 }
-// Android's panel fills the screen, so the game is suspended under it, music and all.
 bool pause_requested() {
     const bool shown = open || menu_open();
-    return settings_panel_open() || setup_open() || update_notice_open() || (shown && settings().pause_when_open) ||
-           mods_pause_requested();
+    return setup_open() || update_notice_open() || (shown && settings().pause_when_open) || mods_pause_requested();
 }
 bool pause_keeps_music() {
-    if (settings_panel_open() || ((open || menu_open()) && settings().pause_when_open))
+    if ((open || menu_open()) && settings().pause_when_open)
         return false;
     return mods_pause_keeps_music();
 }
-// Nothing of the game shows under Android's panel, so it is not redrawn.
 // A paused mod still gets on_draw, which is how it unpauses.
 bool redraw_while_paused() {
     return open || menu_open() || setup_shows_game() || update_notice_open() || mods_pause_requested();
@@ -315,8 +312,6 @@ void poll() {
         return;
     mods_poll();
     options_poll();
-    settings_panel_poll();
-    setup_poll();
     update_notice_poll();
     online_poll();
     messages_poll();
@@ -380,11 +375,10 @@ const verdite::ui::Frame *build_interface(int width_px, int height_px) {
     if (!screen || width_px <= 0 || height_px <= 0)
         return nullptr;
     count_frame();
-    // KF_TEST_SETTINGS=<page>: opens the menu on that page, for captures; Android's panel on its first page.
+    // KF_TEST_SETTINGS=<page>: opens the menu on that page, for captures.
     static const char *test_page = std::getenv("KF_TEST_SETTINGS");
     if (test_page) {
-        if (!settings_panel_show())
-            menu_open_page(test_page);
+        menu_open_page(test_page);
         test_page = nullptr;
         // KF_TEST_LANGUAGE_TASK=download: presses "Download English patch".
         if (const char *task = std::getenv("KF_TEST_LANGUAGE_TASK"); task && std::strcmp(task, "download") == 0)

@@ -121,7 +121,6 @@ void settings_page_check();         // at start: the page's words against the me
 void setup_run();                  // from the start, again
 bool setup_open();
 bool setup_shows_game();           // open, and the game is seen behind it
-void setup_poll();                 // on every host poll: a native panel's controls in
 // The RmlUi screen's keys and pad, its document's presses, and its frame before the interface is
 // drawn (setup_json, setup_command: ext.h).
 bool setup_event(const SDL_Event &event);
@@ -295,19 +294,6 @@ void touch_controls_draw(verdite::ui::Canvas &canvas);   // the interface's fron
 void touch_commands_poll();   // the gear and the map button, on every host poll
 void overlay_set_open(bool open);
 void overlay_restyle();   // after the interface scale changes
-
-// ---- Android's settings panel (settings_panel.cpp): native views over the game ----
-// Shows the panel in place of the overlay's windows; false where there is none.
-bool settings_panel_show();
-bool settings_panel_open();
-void settings_panel_poll();   // on every host poll: the panel's changes in, the new view out
-#ifdef __ANDROID__
-void android_call_activity(const char *method);   // a no-argument method of VerditeActivity
-#endif
-
-// ---- Android's setup panel (setup_panel.cpp; null elsewhere) ----
-verdite::SetupScreen *setup_panel_screen();
-std::vector<std::string> setup_panel_take_controls();   // the panel's taps, as Setup::command lines
 
 // ---- mods ----
 void mods_start();

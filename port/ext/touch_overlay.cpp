@@ -84,8 +84,7 @@ void touch_controls_draw(Canvas &canvas) {
 void touch_commands_poll() {
     switch (host_touch_take_command()) {
     case TouchCommand::Settings:
-        if (!settings_panel_show())
-            menu_set_open(true);
+        menu_set_open(true);
         break;
     case TouchCommand::None: break;
     }

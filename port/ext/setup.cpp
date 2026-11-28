@@ -1,5 +1,5 @@
 // KF1's first-run setup (verdite/setup.h): its pages and tiers over the option table, and which
-// screen shows them: setup_screen.cpp's RmlUi page on a desktop, setup_panel.cpp's views on Android.
+// screen shows them: setup_screen.cpp's RmlUi page.
 #include "internal.hpp"
 #include "setup_screen.h"
 #include "shell.h"
@@ -295,8 +295,6 @@ void check_spec(const SetupSpec &spec) {
 verdite::SetupScreen &screen() {
     if (!state.drawn)
         return state.undrawn_screen;
-    if (verdite::SetupScreen *panel = setup_panel_screen())
-        return *panel;
     return state.menu_screen;
 }
 
@@ -304,7 +302,7 @@ verdite::SetupScreen &screen() {
 
 void setup_begin(Overlay overlay) {
     // Without the interface nothing could answer it, and it would hold the game paused.
-    state.drawn = overlay == Overlay::Drawn && (interface_screen() || setup_panel_screen());
+    state.drawn = overlay == Overlay::Drawn && interface_screen();
     check_spec(kf1_spec());
     settings_page_check();
     if (state.drawn && verdite::setup_due(kf1_spec(), settings().setup_seen))
@@ -323,13 +321,8 @@ void setup_run() {
 
 bool setup_open() { return state.setup && state.setup->running(); }
 
-bool setup_shows_game() { return setup_open() && !setup_panel_screen(); }
+bool setup_shows_game() { return setup_open(); }
 
-void setup_poll() {
-    for (const std::string &line : setup_panel_take_controls())
-        if (state.setup && state.setup->running() && !state.setup->command(line))
-            std::printf("[setup] not a control that fits: %s\n", line.c_str());
-}
 
 bool setup_event(const SDL_Event &event) {
     return setup_open() && state.menu_screen.event(event);

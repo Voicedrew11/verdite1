@@ -18,7 +18,7 @@ std::optional<verdite::MenuInput> key_input(const SDL_KeyboardEvent &key) {
     case SDLK_LEFT: case SDLK_A: return MenuInput::Left;
     case SDLK_RIGHT: case SDLK_D: return MenuInput::Right;
     case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: return MenuInput::Confirm;
-    case SDLK_ESCAPE: case SDLK_BACKSPACE: return MenuInput::Back;
+    case SDLK_ESCAPE: case SDLK_BACKSPACE: case SDLK_AC_BACK: return MenuInput::Back;   // (AC_BACK: Android's Back)
     case SDLK_DELETE: return MenuInput::Clear;
     case SDLK_E: case SDLK_PAGEDOWN: return MenuInput::NextTab;
     case SDLK_Q: case SDLK_PAGEUP: return MenuInput::PreviousTab;
