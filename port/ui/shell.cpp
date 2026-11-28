@@ -5,6 +5,7 @@
 
 #include <verdite/ui.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <memory>
@@ -84,10 +85,15 @@ float pixel_density() {
     return density > 0 ? density : 1.0f;
 }
 
-// A dp in pixels: the display's scale times the player's interface scale.
-float px_per_dp() {
+// A dp in pixels, times the player's interface scale: the menu's window
+// (kf1.rcss: 1200 x 760 dp) fitted to the frame with a margin, as holyland's
+// menu is, or the display's own scale where that is larger (a phone).
+float px_per_dp(int width_px, int height_px) {
+    constexpr float fit_width_dp = 1260, fit_height_dp = 800;
+    const float fit = std::min(static_cast<float>(width_px) / fit_width_dp,
+                               static_cast<float>(height_px) / fit_height_dp);
     const float display = SDL_GetWindowDisplayScale(shell->window);
-    return (display > 0 ? display : 1.0f) * settings().ui_scale;
+    return std::max({fit, display > 0 ? display : 1.0f, 0.4f}) * settings().ui_scale;
 }
 
 bool pointer_event(const SDL_Event &event, verdite::ui::Screen &screen) {
@@ -251,7 +257,7 @@ bool interface_event(const SDL_Event &event) {
 const verdite::ui::Frame *interface_frame(int width_px, int height_px) {
     if (!shell || width_px <= 0 || height_px <= 0)
         return nullptr;
-    shell->screen->resize(width_px, height_px, px_per_dp());
+    shell->screen->resize(width_px, height_px, px_per_dp(width_px, height_px));
     follow_typing();
     return &shell->screen->draw();
 }
