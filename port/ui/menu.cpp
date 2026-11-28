@@ -3,6 +3,7 @@
 
 #include "internal.hpp"
 #include "menu_input.h"
+#include "menu_page.h"
 #include "shell.h"
 
 #include <kf/platform/user_folder.h>
@@ -15,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace kf::ext {
 namespace {
@@ -79,13 +81,89 @@ private:
     }
 };
 
+verdite::ui::Document *document() {
+    verdite::ui::Screen *screen = interface_screen();
+    return screen ? screen->load(document_path) : nullptr;
+}
+
+// The option table's pages, then KF1's own (menu_page.h), as one menu's tabs.
+class MenuTabs final : public verdite::MenuRows {
+public:
+    explicit MenuTabs(verdite::OptionMenu &options) : options_(options) {
+        pages_.push_back(make_online_page());
+        pages_.push_back(make_console_page());
+        pages_.push_back(make_about_page());
+    }
+
+    // The page a tab shows, or null for the option table's.
+    MenuPage *page(int tab) const {
+        const int at = tab - options_.tab_count();
+        return at >= 0 && at < static_cast<int>(pages_.size()) ? pages_[static_cast<std::size_t>(at)].get() : nullptr;
+    }
+    std::string tabs_rml(const verdite::MenuModel &model) const {
+        std::string out = options_.tabs_rml(model);
+        for (std::size_t i = 0; i < pages_.size(); ++i) {
+            const int tab = options_.tab_count() + static_cast<int>(i);
+            out += "<tab data-action=\"tab\" data-value=\"" + std::to_string(tab) + "\"";
+            out += tab == model.tab() ? " class=\"chosen\">" : ">";
+            out += verdite::rml_escaped(pages_[i]->title()) + "</tab>";
+        }
+        return out;
+    }
+
+    int tab_count() const override { return options_.tab_count() + static_cast<int>(pages_.size()); }
+    int row_count(int tab) const override {
+        const MenuPage *shown = page(tab);
+        return shown ? shown->row_count() : options_.row_count(tab);
+    }
+    verdite::MenuRowShape shape(int tab, int row) const override {
+        const MenuPage *shown = page(tab);
+        return shown ? shown->shape(row) : options_.shape(tab, row);
+    }
+    void choose(int tab, int row, int choice) override {
+        if (MenuPage *shown = page(tab))
+            shown->choose(row, choice);
+        else
+            options_.choose(tab, row, choice);
+    }
+    void step(int tab, int row, int delta) override {
+        if (!page(tab))
+            options_.step(tab, row, delta);
+    }
+    void activate(int tab, int row) override {
+        MenuPage *shown = page(tab);
+        verdite::ui::Document *doc = document();
+        if (shown && doc)
+            shown->activate(row, *doc);
+        else if (!shown)
+            options_.activate(tab, row);
+    }
+    void listen(int tab, int row, int slot) override {
+        if (!page(tab))
+            options_.listen(tab, row, slot);
+    }
+    void clear(int tab, int row, int slot) override {
+        if (!page(tab))
+            options_.clear(tab, row, slot);
+    }
+    bool choice_enabled(int tab, int row, int choice) const override {
+        return page(tab) ? true : options_.choice_enabled(tab, row, choice);
+    }
+
+private:
+    verdite::OptionMenu &options_;
+    std::vector<std::unique_ptr<MenuPage>> pages_;
+};
+
 struct Menu {
     KfBindingSlots bindings;
-    verdite::OptionMenu rows{options(), platform_features(), &bindings};
-    verdite::MenuModel model{rows};
+    verdite::OptionMenu options{kf::ext::options(), platform_features(), &bindings};
+    MenuTabs tabs{options};
+    verdite::MenuModel model{tabs};
     bool open = false;
     MenuInputs inputs;
-    int shown_row = -1;   // the focused row last scrolled into view
+    int shown_row = -1;      // the focused row last scrolled into view
+    int part_tab = -1;       // the tab whose part #part holds
 };
 std::unique_ptr<Menu> menu;
 
@@ -93,11 +171,6 @@ Menu &the_menu() {
     if (!menu)
         menu = std::make_unique<Menu>();
     return *menu;
-}
-
-verdite::ui::Document *document() {
-    verdite::ui::Screen *screen = interface_screen();
-    return screen ? screen->load(document_path) : nullptr;
 }
 
 void press(verdite::MenuInput input) {
@@ -115,9 +188,17 @@ std::string prompts_rml() {
 
 void write_document(verdite::ui::Document &page) {
     Menu &m = the_menu();
-    page.set_rml("tabs", m.rows.tabs_rml(m.model));
-    page.set_rml("rows", m.rows.rows_rml(m.model));
-    page.set_rml("help", m.rows.help_rml(m.model));
+    MenuPage *shown = m.tabs.page(m.model.tab());
+    if (m.part_tab != m.model.tab()) {   // a page's part is written once, so its fields keep their typing
+        m.part_tab = m.model.tab();
+        page.set_rml("part", shown ? shown->part_rml() : std::string());
+    }
+    if (shown)
+        shown->update(page);
+    page.set_rml("tabs", m.tabs.tabs_rml(m.model));
+    page.set_rml("rows", shown ? shown->rows_rml(m.model) : m.options.rows_rml(m.model));
+    page.set_rml("help", shown ? std::string() : m.options.help_rml(m.model));
+    page.set_classes("help", shown ? "hidden" : "");
     page.set_rml("prompts", prompts_rml());
     page.set_text("version", std::string(product_name) + " " + KF_VERSION);
     page.set_rml("update", update_notice_badge_rml());
@@ -144,7 +225,7 @@ void menu_set_open(bool open) {
     m.inputs.reset();
     if (open) {
         SDL_SetWindowRelativeMouseMode(window(), false);
-        m.rows.refresh();
+        m.options.refresh();
         m.model.open_at(m.model.tab());
         write_document(*page);
         page->show();
@@ -158,7 +239,10 @@ void menu_set_open(bool open) {
 void menu_open_page(std::string_view title) {
     menu_set_open(true);
     Menu &m = the_menu();
-    const int tab = m.rows.tab_of(title);
+    int tab = m.options.tab_of(title);
+    for (int each = m.options.tab_count(); tab < 0 && each < m.tabs.tab_count(); ++each)
+        if (m.tabs.page(each)->title() == title)
+            tab = each;
     m.model.open_at(tab >= 0 ? tab : 0);
 }
 
@@ -180,10 +264,15 @@ void menu_action(const verdite::ui::Action &action) {
     if (!menu_open() || action.document != document_path)
         return;
     Menu &m = the_menu();
+    bool known = false;
     if (action.kind == verdite::ui::ActionKind::Hover)
-        m.rows.hover(m.model, action.name, action.value);
+        known = verdite::menu_hover(m.model, action.name, action.value);
     else if (action.kind == verdite::ui::ActionKind::Press)
-        m.rows.press(m.model, action.name, action.value);
+        known = verdite::menu_press(m.model, action.name, action.value);
+    MenuPage *shown = m.tabs.page(m.model.tab());
+    verdite::ui::Document *page = document();
+    if (!known && shown && page)
+        shown->action(action, *page);
     static_cast<void>(m.model.take_cue());
 }
 
@@ -197,7 +286,7 @@ void menu_frame() {
     Menu &m = the_menu();
     if (const std::optional<verdite::MenuInput> input = m.inputs.repeat())
         press(*input);
-    m.rows.refresh();
+    m.options.refresh();
     m.model.rows_changed();
     write_document(*page);
     if (m.model.row() != m.shown_row) {

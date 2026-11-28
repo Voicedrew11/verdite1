@@ -457,3 +457,73 @@ badge {
 	font-size: 14dp;
 	cursor: pointer;
 }
+
+/* ---- KF1's own pages of the F1 menu: Online, Console, About (port/ui/menu_page.h) --------------- */
+.hidden, #help.hidden {
+	display: none;
+}
+
+#part {
+	padding: 0 12dp;
+}
+
+#part h2 {
+	display: block;
+	color: #ffe6aa;
+	font-size: 20dp;
+	margin-bottom: 4dp;
+}
+
+#part p {
+	margin-bottom: 6dp;
+}
+
+#part .dim {
+	color: #9a96a8;
+}
+
+.page-text {
+	margin: 6dp 0 12dp 0;
+	max-width: 760dp;
+}
+
+input {
+	display: block;
+	width: 320dp;
+	padding: 6dp 10dp;
+	margin: 8dp 0;
+	border: 1dp #6a6f9a;
+	border-radius: 3dp;
+	background-color: #0c0d1c;
+	color: #e8e2cc;
+	cursor: text;
+}
+
+input:focus {
+	border-color: #ffe6aa;
+}
+
+#console-lines {
+	height: 380dp;
+	overflow-y: auto;
+	border: 1dp #2c2f52;
+	border-radius: 3dp;
+	background-color: #08091480;
+	padding: 6dp 10dp;
+	font-size: 14dp;
+	margin-bottom: 6dp;
+}
+
+p.line {
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+p.line.error {
+	color: #ff7466;
+}
+
+p.line.mods {
+	color: #99ccff;
+}

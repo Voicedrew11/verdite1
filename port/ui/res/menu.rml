@@ -3,7 +3,7 @@
 	<title>Verdite1</title>
 	<link type="text/rcss" href="kf1.rcss"/>
 </head>
-<!-- The F1 menu (port/ui/menu.cpp fills #tabs, #update, #version, #rows, #help and #prompts) -->
+<!-- The F1 menu (port/ui/menu.cpp fills #tabs, #update, #version, #part, #rows, #help and #prompts) -->
 <body>
 	<div id="shade"></div>
 	<div id="window">
@@ -15,6 +15,7 @@
 				<div id="version"></div>
 			</div>
 			<div id="content">
+				<div id="part"></div>
 				<div id="rows"></div>
 			</div>
 			<div id="help"></div>

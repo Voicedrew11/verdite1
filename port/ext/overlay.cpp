@@ -25,11 +25,7 @@ SDL_Window *main_window;
 bool running;
 bool imgui;   // false when headless
 bool open;
-bool show_mods = true, show_console, show_about, show_online;
-bool console_autoscroll = true;
-char console_filter[128];
-std::vector<ConsoleLine> console_lines;
-std::uint64_t console_serial;
+bool show_mods = true;
 int fps_frames;
 Uint64 fps_started;
 float fps_value;
@@ -110,53 +106,6 @@ void set_open(bool value) {
         binding_capture_cancel();
 }
 
-void draw_console_window() {
-    ImGui::SetNextWindowSize(ImVec2(760, 360), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Console", &show_console)) {
-        ImGui::End();
-        return;
-    }
-    console_serial = console_copy(console_serial, console_lines);
-    if (console_lines.size() > 8000)
-        console_lines.erase(console_lines.begin(), console_lines.end() - 8000);
-    if (ImGui::Button("Clear")) {
-        console_lines.clear();
-        console_clear();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Copy")) {
-        std::string all;
-        for (const auto &line : console_lines)
-            all += line.text + "\n";
-        ImGui::SetClipboardText(all.c_str());
-    }
-    ImGui::SameLine();
-    ImGui::Checkbox("Auto-scroll", &console_autoscroll);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(220);
-    ImGui::InputTextWithHint("##filter", "filter", console_filter, sizeof console_filter);
-    ImGui::SameLine();
-    ImGui::TextDisabled("log: %s", (user_dir() / "kf.log").string().c_str());
-    ImGui::Separator();
-    ImGui::BeginChild("lines", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-    for (const auto &line : console_lines) {
-        if (console_filter[0] && line.text.find(console_filter) == std::string::npos)
-            continue;
-        const bool error = line.text.find("error") != std::string::npos || line.text.find("Error") != std::string::npos;
-        const bool mods = line.text.rfind("[mods]", 0) == 0;
-        if (error)
-            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", line.text.c_str());
-        else if (mods)
-            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", line.text.c_str());
-        else
-            ImGui::TextUnformatted(line.text.c_str());
-    }
-    if (console_autoscroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4)
-        ImGui::SetScrollHereY(1.0f);
-    ImGui::EndChild();
-    ImGui::End();
-}
-
 void draw_mods_window() {
     ImGui::SetNextWindowSize(ImVec2(620, 460), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Mods", &show_mods))
@@ -164,35 +113,10 @@ void draw_mods_window() {
     ImGui::End();
 }
 
-void draw_online_window() {
-    ImGui::SetNextWindowSize(ImVec2(460, 240), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Online", &show_online))
-        online_draw_panel();
-    ImGui::End();
-}
-
-void draw_about_window() {
-    if (!ImGui::Begin("About", &show_about, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::End();
-        return;
-    }
-    ImGui::Text("%s %s (%s)", product_name, KF_VERSION, KF_BUILD_COMMIT);
-    ImGui::Text("King's Field (SLPS-00017) source port - PC extensions");
-    ImGui::Separator();
-    ImGui::BulletText("Source port: sushi-shi/kings-field-decomp (CC0)");
-    ImGui::BulletText("Overlay, settings and mod workflow inspired by Verdite2 (Voicedrew11, MIT)");
-    ImGui::BulletText("English translation: John Osborne, Kaz; save fix: HwitVlf");
-    ImGui::BulletText("Dear ImGui (MIT), Lua 5.4 (MIT), cJSON (MIT), SDL3 (zlib)");
-    ImGui::End();
-}
-
 void draw_menu_bar() {
     if (!ImGui::BeginMainMenuBar())
         return;
     ImGui::MenuItem("Mods", nullptr, &show_mods);
-    ImGui::MenuItem("Online", nullptr, &show_online);
-    ImGui::MenuItem("Console", nullptr, &show_console);
-    ImGui::MenuItem("About", nullptr, &show_about);
     // F1 on a keyboard; on a touch screen this is the way out.
     if (ImGui::MenuItem("Close"))
         set_open(false);
@@ -524,12 +448,6 @@ ImDrawData *build_overlay(int width, int height) {
         draw_menu_bar();
         if (show_mods)
             draw_mods_window();
-        if (show_online)
-            draw_online_window();
-        if (show_console)
-            draw_console_window();
-        if (show_about)
-            draw_about_window();
     }
     ImGui::Render();
     return ImGui::GetDrawData();

@@ -163,7 +163,20 @@ std::string online_service_url();
 void online_start();   // joins the room given on the command line, if any
 void online_poll();    // on every host poll: the session's events (our pose goes out from online_update)
 void online_stop();    // leaves the room
-void online_draw_panel();   // the Online window: room code, Join/Leave, who is here
+// What the F1 menu's Online page shows: the room, who is here, or how to join one.
+struct OnlinePanel {
+    bool built = true;            // false: this build has no online play
+    bool mods_stay_off = false;   // mods are loaded, and stop in a room
+    bool in_room = false;
+    std::string room, coop_line;
+    bool joining = false;
+    std::vector<std::string> players;   // a line each
+    bool at_title = false;              // rooms are joined from the title's CO-OP there
+    std::string status, service;
+};
+OnlinePanel online_panel();
+void online_panel_join(std::string_view code);   // not in a room, not at the title
+void online_panel_leave();
 #ifdef __linux__
 // Points OpenSSL at the system's root certificates, for the service's wss://: online_android_roots.cpp
 // on a phone, online_linux_roots.cpp on a desktop. Windows' OpenSSL reads the system's store itself.
