@@ -52,10 +52,15 @@ body { font-family: Test; font-size: 16px; color: #fff; }
 #name { position: absolute; left: 0; top: 200px; width: 200px; height: 30px; }
 #scroll { position: absolute; left: 300px; top: 0; width: 100px; height: 100px; overflow-y: auto; }
 #tall { display: block; height: 1000px; }
+#list { position: absolute; left: 300px; top: 200px; width: 100px; height: 100px; overflow-y: auto; }
+#lines { display: block; }
+.line { display: block; height: 30px; }
+scrollbarvertical { width: 4px; }
 </style></head><body>
 <div id="go" data-action="go" data-hover="over" data-value="7"><span id="label">Go</span></div>
 <input id="name" type="text" data-enter="named"/>
 <div id="scroll"><div id="tall" data-action="tall">x</div></div>
+<div id="list"><div id="lines"></div></div>
 </body></rml>)";
 
 struct Fixture {
@@ -157,6 +162,37 @@ TEST_CASE("ui: a tap presses, a drag scrolls and does not") {
     while (std::optional<Action> action = f.screen->take_action()) {
         CHECK(action->kind != ActionKind::Press);
     }
+}
+
+TEST_CASE("ui: scrolling to a part just rewritten keeps its place") {
+    Fixture f;
+    Document &page = f.page();
+    const auto rows = [](const char *extra) {
+        std::string out;
+        for (int i = 0; i < 20; ++i) {
+            const std::string n = std::to_string(i);
+            out += "<div id=\"r" + n + "\" class=\"line " + extra + "\" "
+                   "data-hover=\"row\" data-value=\"" + n + "\">" + n + "</div>";
+        }
+        return out;
+    };
+    page.set_rml("lines", rows(""));
+    f.screen->draw();
+    f.screen->pointer_move(350, 250);
+    std::string hovered;
+    for (int frame = 0; frame < 60; ++frame) {   // the wheel turned, the hovered row chosen as a menu chooses it
+        if (frame % 10 == 0) {
+            f.screen->wheel(1);
+        }
+        f.host.now += 1.0 / 60;
+        f.screen->draw();
+        while (std::optional<Action> action = f.screen->take_action()) {
+            hovered = action->value;
+        }
+        page.set_rml("lines", rows(hovered.c_str()));
+        page.scroll_into_view("r" + hovered);
+    }
+    CHECK(std::stoi(hovered) > 4);   // scrolled down, not held at the top
 }
 
 TEST_CASE("ui: a text field takes typing and Enter") {

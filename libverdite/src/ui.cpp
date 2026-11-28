@@ -327,14 +327,18 @@ void Document::blur() {
     }
 }
 
+// Both lay the document out first: parts just rewritten have no place yet, and
+// scrolling to one would scroll to the top.
 void Document::scroll_to_end(std::string_view id) {
     if (Rml::Element *element = state_->part(id)) {
+        state_->document->UpdateDocument();
         element->SetScrollTop(element->GetScrollHeight());
     }
 }
 
 void Document::scroll_into_view(std::string_view id) {
     if (Rml::Element *element = state_->part(id)) {
+        state_->document->UpdateDocument();
         element->ScrollIntoView(Rml::ScrollIntoViewOptions{Rml::ScrollAlignment::Nearest,
                                                             Rml::ScrollAlignment::Nearest,
                                                             Rml::ScrollBehavior::Instant});
