@@ -24,7 +24,7 @@
 #include <vector>
 
 struct cJSON;
-namespace verdite::ui { class Canvas; }
+namespace verdite::ui { class Canvas; struct Action; }
 
 namespace kf::ext {
 // ---- paths ----
@@ -122,7 +122,11 @@ void setup_run();                  // from the start, again
 bool setup_open();
 bool setup_shows_game();           // open, and the game is seen behind it
 void setup_poll();                 // on every host poll: a native panel's controls in
-void setup_draw();                 // inside the ImGui frame (setup_json, setup_command: ext.h)
+// The RmlUi screen's keys and pad, its document's presses, and its frame before the interface is
+// drawn (setup_json, setup_command: ext.h).
+bool setup_event(const SDL_Event &event);
+void setup_action(const verdite::ui::Action &action);
+void setup_frame();
 
 // ---- Discord Rich Presence ----
 void discord_start();     // reads KF_DISCORD and KF_DISCORD_APP

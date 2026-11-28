@@ -303,3 +303,81 @@ body.touch tab {
 body.touch #prompts {
 	display: none;
 }
+
+/* ---- The first-run setup (body.setup: port/ui/setup_screen.cpp) --------------------------------- */
+body.setup #shade {
+	background-color: #000000c8;
+}
+
+#steps {
+	padding: 0 22dp;
+	color: #9a96a8;
+	font-size: 15dp;
+}
+
+#heading {
+	padding: 4dp 12dp 14dp 12dp;
+}
+
+#heading h1 {
+	display: block;
+	color: #ffe6aa;
+	font-size: 26dp;
+	letter-spacing: 1.5dp;
+	margin-bottom: 10dp;
+}
+
+#heading p {
+	margin-bottom: 8dp;
+}
+
+#heading .dim, #heading p.prompt {
+	color: #9a96a8;
+}
+
+/* a welcome card: the preset's name, what it does, the display it picks */
+row.card {
+	display: block;
+	border: 1dp #2c2f52;
+	border-radius: 4dp;
+	padding: 12dp 16dp;
+	margin-bottom: 8dp;
+	background-color: #12142a;
+}
+
+row.card label {
+	display: block;
+	color: #ffe6aa;
+	font-size: 19dp;
+	margin-bottom: 4dp;
+}
+
+row.card.focused {
+	border-color: #ffe6aa;
+}
+
+row.card note.dim {
+	color: #5c5a6c;
+}
+
+/* Back, Next, Finish, Skip: the last rows, as buttons */
+row.way {
+	display: inline-block;
+	margin: 14dp 10dp 0 0;
+	padding: 6dp 22dp;
+	border: 1dp #6a6f9a;
+	border-radius: 3dp;
+	color: #ffe6aa;
+}
+
+row.way label {
+	min-width: 0;
+}
+
+row.way.focused {
+	border-color: #ffe6aa;
+}
+
+body.touch row.card {
+	padding: 16dp 18dp;
+}

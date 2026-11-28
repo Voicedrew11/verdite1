@@ -1,7 +1,7 @@
 // Android's setup screen: native Material views over the game, drawn by SetupPanel.java from the
 // setup's JSON. The panel lives on Android's UI thread; its taps cross to the game thread as
 // Setup::command lines and the view comes back as a string, both under one mutex. Elsewhere there
-// is no panel, and setup_overlay.cpp draws the setup.
+// is no panel, and setup_screen.cpp draws the setup.
 #include "internal.hpp"
 
 #include <string>

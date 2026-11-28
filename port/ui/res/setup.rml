@@ -1,0 +1,24 @@
+<rml>
+<head>
+	<title>Setup</title>
+	<link type="text/rcss" href="kf1.rcss"/>
+</head>
+<!-- The first-run setup (port/ui/setup_screen.cpp fills #steps, #heading, #rows, #help and #prompts) -->
+<body class="setup">
+	<div id="shade"></div>
+	<div id="window">
+		<div id="main">
+			<div id="sidebar">
+				<div id="title">Setup</div>
+				<div id="steps"></div>
+			</div>
+			<div id="content">
+				<div id="heading"></div>
+				<div id="rows"></div>
+			</div>
+			<div id="help"></div>
+		</div>
+		<div id="prompts"></div>
+	</div>
+</body>
+</rml>

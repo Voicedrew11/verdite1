@@ -403,7 +403,7 @@ bool process_event(const SDL_Event &event) {
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
         apply_render_settings();
     // The interface is drawn over Dear ImGui, so it is asked first.
-    if (interface_event(event) || menu_event(event))
+    if (interface_event(event) || menu_event(event) || setup_event(event))
         return true;
     ImGui_ImplSDL3_ProcessEvent(&event);
     // A mod that takes the mouse (the full map: zoom, drag, hover) gets it; the keyboard still reaches the game.
@@ -490,8 +490,11 @@ const verdite::ui::Frame *build_interface(int width_px, int height_px) {
     if (!screen || width_px <= 0 || height_px <= 0)
         return nullptr;
     count_frame();
-    while (std::optional<verdite::ui::Action> action = screen->take_action())
+    while (std::optional<verdite::ui::Action> action = screen->take_action()) {
         menu_action(*action);
+        setup_action(*action);
+    }
+    setup_frame();
     menu_frame();
     verdite::ui::Canvas &front = screen->canvas(verdite::ui::Layer::Front);
     item_description_draw(screen->canvas(verdite::ui::Layer::Back));
@@ -530,7 +533,6 @@ ImDrawData *build_overlay(int width, int height) {
         if (show_about)
             draw_about_window();
     }
-    setup_draw();
     update_notice_draw();
     ImGui::Render();
     return ImGui::GetDrawData();
